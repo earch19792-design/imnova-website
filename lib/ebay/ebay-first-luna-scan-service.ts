@@ -51,6 +51,12 @@ import {
   type ExistingOpportunityQueueRow,
   type LunaLatestVariantRow,
 } from "./ebay-first-luna-opportunity-queue"
+import { collectSellerOsLongitudinalOpportunityReadV1 } from
+  "./ebay-longitudinal-opportunity-radar-read-v1"
+import { readAlreadyLiveExactLunaIdentitiesV1 } from
+  "./ebay-opportunity-radar-revenue-factory-adapter-v1"
+import { buildSellerOsDashboardOpportunityAuthorityV1 } from
+  "./seller-os-dashboard-opportunity-authority-v1"
 
 const SCAN_BATCH_SIZE = 2
 const QUEUE_LIMIT = 100
@@ -1044,7 +1050,7 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
     : Promise.resolve({ data: [], error: null })
   const [runs, queue, events, activeRisks, total, ready, review, watchlist, holds] = await Promise.all([
     supabase.from("ebay_luna_scan_runs").select("*").order("started_at", { ascending: false }).limit(5),
-    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
+    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,supplier_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
     supabase.from("ebay_luna_opportunity_queue_events").select("*,ebay_luna_opportunity_queue(product_title,supplier_sku)").order("created_at", { ascending: false }).limit(40),
     activeRisksQuery,
     supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }),
@@ -1069,6 +1075,39 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
     projectEffectiveEbayQuotaLane(state, quotaObservedAt))
   const automationHealth = await getSellerAutomationHealth(supabase)
   const rows = queue.data ?? []
+  const exactIdentities = rows.flatMap((row) => {
+    const identityKey = typeof row.id === "string" ? row.id : ""
+    const lunaProductId = typeof row.supplier_product_id === "string"
+      ? row.supplier_product_id : typeof row.market_radar_product_id === "string"
+        ? row.market_radar_product_id : ""
+    const lunaVariantId = typeof row.supplier_variant_id === "string"
+      ? row.supplier_variant_id : ""
+    const supplierSku = typeof row.supplier_sku === "string"
+      ? row.supplier_sku : ""
+    return identityKey && lunaProductId && lunaVariantId && supplierSku
+      ? [{ identityKey, lunaProductId, lunaVariantId, supplierSku }] : []
+  })
+  const liveGuardRead = accountKey
+    ? readAlreadyLiveExactLunaIdentitiesV1({ supabase, accountKey,
+      identities: exactIdentities })
+    : Promise.resolve({ status: "UNAVAILABLE" as const,
+      matches: new Map(), reasonCode: "SELLER_ACCOUNT_SCOPE_UNAVAILABLE" })
+  const [liveGuard, longitudinalRadar] = await Promise.all([
+    liveGuardRead,
+    collectSellerOsLongitudinalOpportunityReadV1({
+      toolName: "seller_os_get_opportunity_radar",
+      arguments: { limit: 20 }, client: supabase,
+    }),
+  ])
+  const opportunityAuthority = buildSellerOsDashboardOpportunityAuthorityV1({
+    queueRows: rows,
+    liveReadStatus: liveGuard.status,
+    liveMatches: liveGuard.matches,
+    radarReadStatus: longitudinalRadar.status === "AVAILABLE"
+      ? "AVAILABLE" : "UNAVAILABLE",
+    radarEntries: "entries" in longitudinalRadar
+      ? longitudinalRadar.entries : [],
+  })
   const supplierVariantIds = [...new Set(rows
     .map((row) => row.supplier_variant_id)
     .filter((id): id is string => typeof id === "string" && id.length > 0))]
@@ -1196,5 +1235,6 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
         ? "EBAY_PRODUCT_RESEARCH_RANKING_UNAVAILABLE"
         : null,
     },
+    commercialOpportunityAuthority: opportunityAuthority,
   }
 }

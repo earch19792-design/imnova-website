@@ -15,10 +15,34 @@ type CompactStatus = "READY" | "WORKING" | "WAITING" | "DEGRADED" |
 type WorkerStatus = CompactStatus | "CONNECTING"
 type DashboardReadState = "REFRESHING" | "STABLE" | "READ_RETRYING"
 
+type RadarSignal = Readonly<{
+  familyId: string
+  family: string
+  demandClass: string
+  soldComparableCount: number | null
+  soldQuantityEvidence: number | null
+  priceBand: Readonly<{ currency: string | null; minimum: number | null;
+    median: number | null; maximum: number | null }>
+  enrichmentNextStage: string
+}>
+
+type QueueClassification = Readonly<{ READY: number; RADAR_SIGNAL: number;
+  LEGACY: number; ALREADY_LIVE: number; UNPROVEN: number }>
+
+type AlreadyLiveOpportunity = Readonly<{ opportunityId: string;
+  candidateKey: string | null; title: string | null; sourceSku: string | null;
+  ebayItemIds: readonly string[]; liveWorkspaceUrl: string | null }>
+
 type DashboardSnapshot = Readonly<{
-  radarReady: number
-  radarReview: number
+  readyForOwnerReviewCount: number
+  readyForOwnerReviewCandidateKeys: readonly string[]
+  readyForOwnerReviewAvailable: boolean
+  radarSignalCount: number
+  radarSignals: readonly RadarSignal[]
   radarAvailable: boolean
+  reviewQueueCount: number
+  reviewQueueClassification: QueueClassification
+  alreadyLiveOpportunities: readonly AlreadyLiveOpportunity[]
   liveAttention: number
   liveAttentionAvailable: boolean
   stockGuard: CompactStatus
@@ -45,9 +69,16 @@ type DashboardSnapshot = Readonly<{
 }>
 
 const emptySnapshot: DashboardSnapshot = {
-  radarReady: 0,
-  radarReview: 0,
+  readyForOwnerReviewCount: 0,
+  readyForOwnerReviewCandidateKeys: [],
+  readyForOwnerReviewAvailable: false,
+  radarSignalCount: 0,
+  radarSignals: [],
   radarAvailable: false,
+  reviewQueueCount: 0,
+  reviewQueueClassification: { READY: 0, RADAR_SIGNAL: 0, LEGACY: 0,
+    ALREADY_LIVE: 0, UNPROVEN: 0 },
+  alreadyLiveOpportunities: [],
   liveAttention: 0,
   liveAttentionAvailable: false,
   stockGuard: "WAITING",
@@ -80,6 +111,58 @@ function record(value: unknown): Record<string, unknown> {
 function safeCount(value: unknown) {
   const count = Number(value)
   return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0
+}
+
+function nullableText(value: unknown, maximum = 500) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, maximum) : null
+}
+
+function parseQueueClassification(value: unknown): QueueClassification {
+  const item = record(value)
+  return { READY: safeCount(item.READY),
+    RADAR_SIGNAL: safeCount(item.RADAR_SIGNAL),
+    LEGACY: safeCount(item.LEGACY),
+    ALREADY_LIVE: safeCount(item.ALREADY_LIVE),
+    UNPROVEN: safeCount(item.UNPROVEN) }
+}
+
+function parseRadarSignals(value: unknown) {
+  return (Array.isArray(value) ? value : []).flatMap((entry) => {
+    const item = record(entry)
+    const familyId = nullableText(item.familyId, 160)
+    const family = nullableText(item.family, 300)
+    const demandClass = nullableText(item.demandClass, 120)
+    if (!familyId || !family || !demandClass) return []
+    const price = record(item.priceBand)
+    return [{ familyId, family, demandClass,
+      soldComparableCount: availableMetric(item.soldComparableCount),
+      soldQuantityEvidence: availableMetric(item.soldQuantityEvidence),
+      priceBand: { currency: nullableText(price.currency, 12),
+        minimum: availableMetric(price.minimum),
+        median: availableMetric(price.median),
+        maximum: availableMetric(price.maximum) },
+      enrichmentNextStage: nullableText(item.enrichmentNextStage, 180) ??
+        "WAITING_NEXT_BOUNDED_ENRICHMENT" }]
+  })
+}
+
+function parseAlreadyLiveOpportunities(value: unknown) {
+  return (Array.isArray(value) ? value : []).flatMap((entry) => {
+    const item = record(entry)
+    const opportunityId = nullableText(item.opportunityId, 120)
+    if (!opportunityId || item.alreadyLiveExactProduct !== true) return []
+    const ebayItemIds = (Array.isArray(item.ebayItemIds)
+      ? item.ebayItemIds : []).flatMap((candidate) => {
+      const parsed = nullableText(candidate, 30)
+      return parsed && /^\d{9,20}$/.test(parsed) ? [parsed] : []
+    })
+    return [{ opportunityId,
+      candidateKey: nullableText(item.candidateKey, 300),
+      title: nullableText(item.title, 500),
+      sourceSku: nullableText(item.sourceSku, 160), ebayItemIds,
+      liveWorkspaceUrl: nullableText(item.liveWorkspaceUrl, 1_000) }]
+  })
 }
 
 function availableMetric(value: unknown) {
@@ -232,6 +315,11 @@ function quickPickBlockerLabel(value: string | null) {
     return "Falta demostrar la condición para eBay"
   }
   return value.replaceAll("_", " ")
+}
+
+function ownerVisibleQuickPickBlockers(card: OwnerRuntimeQuickPickCard) {
+  return card.exactBlockers.filter((value) =>
+    value !== "WINNER_EVIDENCE_PREVIEW_STAGING_REQUIRED")
 }
 
 function usd(value: unknown) {
@@ -440,6 +528,7 @@ export function SellerOsOperationalDashboard() {
     useState<DashboardReadState>("REFRESHING")
   const [radarReadState, setRadarReadState] =
     useState<DashboardReadState>("REFRESHING")
+  const [ownerReviewOpen, setOwnerReviewOpen] = useState(false)
 
   const adminRequest = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error } = await supabase.auth.getSession()
@@ -496,7 +585,15 @@ export function SellerOsOperationalDashboard() {
     const radar = record(radarPayload.dashboard)
     const radarAuthoritative = radarResult.status === "fulfilled" &&
       Object.keys(radar).length > 0
-    const radarSummary = record(radar.summary)
+    const opportunityAuthority = record(
+      radar.commercialOpportunityAuthority)
+    const opportunityAuthorityValid = radarAuthoritative &&
+      opportunityAuthority.contractVersion ===
+        "SELLER_OS_DASHBOARD_OPPORTUNITY_AUTHORITY_V1"
+    const readyAuthority = record(opportunityAuthority.readyForOwnerReview)
+    const radarAuthority = record(opportunityAuthority.radar)
+    const reviewQueueAudit = record(opportunityAuthority.reviewQueueAudit)
+    const alreadyLiveAuthority = record(opportunityAuthority.alreadyLive)
     const runs = Array.isArray(radar.runs) ? radar.runs : []
     const latestRadarRun = record(runs[0])
     for (const item of Array.isArray(radar.activeListingRisks)
@@ -512,12 +609,39 @@ export function SellerOsOperationalDashboard() {
       let next = { ...previous }
       if (radarAuthoritative) {
         next = { ...next,
-          radarReady: safeCount(radarSummary.ready),
-          radarReview: safeCount(radarSummary.review),
-          radarAvailable: true,
           liveAttention: liveListingIds.size,
           liveAttentionAvailable: true,
           nightRadar: normalizedStatus(latestRadarRun.status ?? radar.status),
+        }
+      }
+      if (opportunityAuthorityValid) {
+        const readyRecords = Array.isArray(readyAuthority.records)
+          ? readyAuthority.records.map(record) : []
+        const readyAvailable = readyAuthority.status === "AVAILABLE"
+        const radarAvailable = radarAuthority.status === "AVAILABLE"
+        next = { ...next,
+          readyForOwnerReviewCount: readyAvailable
+            ? safeCount(readyAuthority.count) : previous.readyForOwnerReviewCount,
+          readyForOwnerReviewCandidateKeys: readyAvailable
+            ? readyRecords.flatMap((row) => {
+              const candidateKey = nullableText(row.candidateKey, 300)
+              return candidateKey ? [candidateKey] : []
+            }) : previous.readyForOwnerReviewCandidateKeys,
+          readyForOwnerReviewAvailable: readyAvailable ||
+            previous.readyForOwnerReviewAvailable,
+          radarSignalCount: radarAvailable
+            ? safeCount(radarAuthority.count) : previous.radarSignalCount,
+          radarSignals: radarAvailable
+            ? parseRadarSignals(radarAuthority.signals) : previous.radarSignals,
+          radarAvailable: radarAvailable || previous.radarAvailable,
+          reviewQueueCount: readyAvailable
+            ? safeCount(reviewQueueAudit.total) : previous.reviewQueueCount,
+          reviewQueueClassification: readyAvailable
+            ? parseQueueClassification(reviewQueueAudit.classification)
+            : previous.reviewQueueClassification,
+          alreadyLiveOpportunities: readyAvailable
+            ? parseAlreadyLiveOpportunities(alreadyLiveAuthority.records)
+            : previous.alreadyLiveOpportunities,
         }
       }
       if (commercialAuthoritative) {
@@ -558,7 +682,8 @@ export function SellerOsOperationalDashboard() {
     })
     setCommercialReadState(commercialAuthoritative
       ? "STABLE" : "READ_RETRYING")
-    setRadarReadState(radarAuthoritative ? "STABLE" : "READ_RETRYING")
+    setRadarReadState(opportunityAuthorityValid
+      ? "STABLE" : "READ_RETRYING")
   }, [adminRequest])
 
   useEffect(() => {
@@ -611,10 +736,6 @@ export function SellerOsOperationalDashboard() {
     }
   }
 
-  const opportunitiesReady = ownerRuntime.quickPick.readyForReview +
-    snapshot.radarReady
-  const opportunityDataAvailable = ownerRuntime.quickPickAvailable ||
-    snapshot.radarAvailable
   const health = useMemo(() => [
     ["LUNA_SHIPPING_WORKER", ownerRuntime.lunaWorker.status],
     ["STOCK_GUARD", snapshot.stockGuard],
@@ -630,16 +751,113 @@ export function SellerOsOperationalDashboard() {
   const quickPickCards = useMemo(() => mergeOwnerRuntimeQuickPickCards(
     submittedQuickPickCards, ownerRuntime.quickPickCards),
   [ownerRuntime.quickPickCards, submittedQuickPickCards])
+  const ownerReviewCandidateKeys = useMemo(() => new Set(
+    snapshot.readyForOwnerReviewCandidateKeys),
+  [snapshot.readyForOwnerReviewCandidateKeys])
+  const ownerReviewCards = useMemo(() => quickPickCards.filter((card) =>
+    card.candidateKey && ownerReviewCandidateKeys.has(card.candidateKey) &&
+    card.state === "READY" &&
+    ["MARKET_TEST_READY", "LISTING_READY"].includes(card.disposition)),
+  [ownerReviewCandidateKeys, quickPickCards])
+  const opportunitiesReady = snapshot.readyForOwnerReviewCount
+  const opportunityDataAvailable = snapshot.readyForOwnerReviewAvailable
 
   return <>
     <div className="grid gap-4 md:grid-cols-2" data-primary-dashboard-block-count="4">
       <section data-dashboard-block="opportunities" className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.06] p-5">
         <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/65">💰 Oportunidades para publicar</p>
         <div className="mt-3 flex items-end justify-between gap-4">
-          <div><p className="text-4xl font-black">{opportunityDataAvailable ? opportunitiesReady : "—"}</p><p className="mt-1 text-sm text-white/55">{ownerRuntime.quickPickAvailable && snapshot.radarAvailable ? "listas para revisar" : "lectura parcial"}</p></div>
-          <a href="/admin/ebay/opportunity-queue/research" className="inline-flex min-h-11 items-center rounded-2xl border border-emerald-100/20 px-4 text-sm font-black text-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">Revisar</a>
+          <div><p className="text-4xl font-black" data-ready-for-owner-review-count>{opportunityDataAvailable ? opportunitiesReady : "—"}</p><p className="mt-1 text-sm text-white/55">{opportunityDataAvailable ? "listas para revisar" : "lectura autoritativa pendiente"}</p></div>
+          <button type="button" onClick={() => setOwnerReviewOpen((open) =>
+            !open)} aria-expanded={ownerReviewOpen}
+            aria-controls="dashboard-owner-review-queue"
+            className="inline-flex min-h-11 items-center rounded-2xl border border-emerald-100/20 px-4 text-sm font-black text-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">
+            {ownerReviewOpen ? "Cerrar" : "Revisar"}
+          </button>
         </div>
-        <p className="mt-4 text-sm text-white/55">Quick Pick {ownerRuntime.quickPickAvailable ? ownerRuntime.quickPick.readyForReview : "—"} · Radar {snapshot.radarAvailable ? snapshot.radarReady : "—"} · En revisión {snapshot.radarAvailable ? snapshot.radarReview : "—"}</p>
+        <p className="mt-4 text-sm text-white/55">
+          Owner Review {opportunityDataAvailable ? opportunitiesReady : "—"}
+          {" · "}Señales Radar {snapshot.radarAvailable
+            ? snapshot.radarSignalCount : "—"}
+        </p>
+        {ownerReviewOpen && <div id="dashboard-owner-review-queue"
+          data-owner-review-inline-queue className="mt-4 space-y-3 border-t border-emerald-100/15 pt-4">
+          {ownerReviewCards.map((card) => <article
+            key={card.candidateKey ?? card.sourceUrl}
+            data-owner-review-inline-card
+            className="rounded-2xl border border-emerald-100/15 bg-black/20 p-3">
+            <p className="text-sm font-black">{card.title ?? "Producto Luna"}</p>
+            <p className="mt-1 text-xs text-white/50">{card.sourceSku ??
+              "SKU pendiente"} · {card.disposition === "MARKET_TEST_READY"
+              ? "Prueba de mercado" : "Listing listo"}</p>
+            <QuickPickOwnerReviewInline card={card} request={adminRequest}
+              onUpdated={ownerRuntime.refreshQuickPicks} />
+          </article>)}
+          {opportunityDataAvailable && opportunitiesReady === 0 &&
+            <p className="rounded-xl border border-white/10 p-3 text-sm text-white/50">
+              No hay productos que hayan completado el Golden Path para revisión.
+            </p>}
+          {opportunityDataAvailable && opportunitiesReady >
+              ownerReviewCards.length && <p
+              className="rounded-xl border border-amber-100/15 bg-amber-100/[0.04] p-3 text-xs text-amber-50/75">
+              Reconciliando {opportunitiesReady - ownerReviewCards.length}
+              {" "}paquete durable con la vista owner.
+            </p>}
+        </div>}
+        <details className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3"
+          data-dashboard-radar-signals>
+          <summary className="min-h-11 cursor-pointer list-none py-2 text-sm font-black text-violet-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-200">
+            Radar · {snapshot.radarAvailable ? snapshot.radarSignalCount : "—"}
+            {" "}señales familiares
+          </summary>
+          <p className="mt-1 text-xs leading-5 text-white/50">
+            Señales comerciales; no entran en Owner Review hasta completar el Golden Path.
+          </p>
+          <ul className="mt-2 space-y-2">
+            {snapshot.radarSignals.map((signal) => <li key={signal.familyId}
+              className="rounded-xl bg-white/[0.04] p-2.5 text-xs leading-5 text-white/65">
+              <strong className="text-white/85">{signal.family}</strong>
+              <span className="block">Demanda {signal.demandClass.replaceAll(
+                "FAMILY_DEMAND_", "")} · {signal.soldComparableCount ?? "—"}
+                {" "}comparables · {signal.soldQuantityEvidence ?? "—"} vendidos</span>
+              <span className="block">Banda {signal.priceBand.minimum === null
+                ? "—" : usd(signal.priceBand.minimum)} – {signal.priceBand.maximum
+                === null ? "—" : usd(signal.priceBand.maximum)} · siguiente:
+                {" "}{signal.enrichmentNextStage.replaceAll("_", " ")}</span>
+            </li>)}
+          </ul>
+        </details>
+        <details className="mt-2 text-xs text-white/45"
+          data-dashboard-review-queue-audit>
+          <summary className="min-h-11 cursor-pointer py-3 font-bold">
+            Auditoría de cola histórica · {snapshot.reviewQueueCount} registros
+          </summary>
+          <p className="leading-5">Ready {snapshot.reviewQueueClassification.READY}
+            {" · "}Radar signal {snapshot.reviewQueueClassification.RADAR_SIGNAL}
+            {" · "}Legacy {snapshot.reviewQueueClassification.LEGACY}
+            {" · "}Already LIVE {snapshot.reviewQueueClassification.ALREADY_LIVE}
+            {" · "}No probado {snapshot.reviewQueueClassification.UNPROVEN}</p>
+        </details>
+        {snapshot.alreadyLiveOpportunities.length > 0 && <details
+          className="mt-2 text-xs text-white/45"
+          data-dashboard-already-live-exclusions>
+          <summary className="min-h-11 cursor-pointer py-3 font-bold">
+            Historial excluido por listing LIVE · {snapshot.alreadyLiveOpportunities.length}
+          </summary>
+          <ul className="space-y-2">
+            {snapshot.alreadyLiveOpportunities.map((item) => <li
+              key={item.opportunityId}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white/[0.04] p-2.5">
+              <span><strong className="text-white/70">{item.sourceSku ??
+                item.title ?? "Producto"}</strong> · LIVE {item.ebayItemIds.join(
+                ", ")}</span>
+              {item.liveWorkspaceUrl && <a href={item.liveWorkspaceUrl}
+                className="inline-flex min-h-11 items-center text-emerald-100/70">
+                Abrir listing LIVE
+              </a>}
+            </li>)}
+          </ul>
+        </details>}
       </section>
 
       <section data-dashboard-block="quick-pick" className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.07] p-5">
@@ -731,10 +949,11 @@ export function SellerOsOperationalDashboard() {
                 <p className="truncate text-sm font-black">{card.title ?? "Producto Luna"}</p>
                 <p className="mt-1 truncate text-xs text-white/50">{card.sourceSku ?? "Identificando…"} · {card.disposition}</p>
                 <p className="mt-1 text-xs text-white/65">Etapa: <strong>{quickPickStageLabel(card)}</strong></p>
-                {card.exactBlockers.length > 0 && <ul
+                {ownerVisibleQuickPickBlockers(card).length > 0 && <ul
                   data-quick-pick-commercial-blockers
                   className="mt-1 space-y-1 text-xs font-bold text-amber-100">
-                  {card.exactBlockers.map((blocker) => <li key={blocker}>
+                  {ownerVisibleQuickPickBlockers(card).map((blocker) =>
+                    <li key={blocker}>
                     {quickPickBlockerLabel(blocker)}
                   </li>)}
                 </ul>}
@@ -780,9 +999,6 @@ export function SellerOsOperationalDashboard() {
                   : "ingresar el hecho exacto"}
               </li>)}
             </ul>}
-            {card.listingReview && <QuickPickOwnerReviewInline card={card}
-              request={adminRequest}
-              onUpdated={ownerRuntime.refreshQuickPicks} />}
             {card.exactBlockers.length > 0 && <details className="mt-2">
               <summary className="min-h-11 cursor-pointer py-3 text-xs font-bold text-white/45">
                 Ver evidencia técnica
@@ -802,7 +1018,7 @@ export function SellerOsOperationalDashboard() {
 
       <section data-dashboard-block="live-attention" className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
         <p className="text-xs font-black uppercase tracking-[0.18em] text-white/50">📦 Listings LIVE que requieren atención</p>
-        <div className="mt-3 flex items-end justify-between gap-4"><div><p className="text-4xl font-black">{snapshot.liveAttentionAvailable ? snapshot.liveAttention : "—"}</p><p className="mt-1 text-sm text-white/55">{snapshot.liveAttentionAvailable ? "señales activas" : "lectura no disponible"}</p></div><a href="/admin/ebay/listing-workspace" className="inline-flex min-h-11 items-center rounded-2xl border border-white/15 px-4 text-sm font-black text-white/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver listings</a></div>
+        <div className="mt-3 flex items-end justify-between gap-4"><div><p className="text-4xl font-black">{snapshot.liveAttentionAvailable ? snapshot.liveAttention : "—"}</p><p className="mt-1 text-sm text-white/55">{snapshot.liveAttentionAvailable ? "señales activas" : "lectura no disponible"}</p></div><a href="/admin/ebay/monitor" className="inline-flex min-h-11 items-center rounded-2xl border border-white/15 px-4 text-sm font-black text-white/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver listings</a></div>
         <p className="mt-4 text-sm text-white/50">Sólo alertas durables; evidencia no disponible nunca se muestra como cero comercial.</p>
       </section>
 
