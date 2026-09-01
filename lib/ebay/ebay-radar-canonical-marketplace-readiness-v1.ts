@@ -163,7 +163,6 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
   catalogRow: JsonRecord | null
 }>) {
   const required = input.taxonomy.aspects.filter((aspect) => aspect.required)
-  const byName = new Map(required.map((aspect) => [aspectKey(aspect.name), aspect]))
   const exactIdentity = Boolean(input.catalogRow
     && input.catalogRow.supplier_product_id ===
       input.opportunity.supplier_product_id
@@ -184,22 +183,29 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     source: string | null
     exactProductSupported: boolean
   }>> = {}
-  for (const requestedName of ["Style", "Brand", "Type"] as const) {
-    const aspect = byName.get(aspectKey(requestedName))
+  for (const aspect of required) {
+    const requestedName = aspect.name
     let value: string | null = null
     let source: string | null = null
-    if (aspect && exactIdentity && requestedName === "Brand") {
+    const prior = Object.entries(provenProductValues).find(([name]) =>
+      aspectKey(name) === aspectKey(requestedName))?.[1]
+    if (exactIdentity && prior) {
+      value = exactOfficialValue(aspect, prior)
+        ?? (aspect.mode !== "SELECTION_ONLY" ? text(prior, 500) : null)
+      if (value) source = "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1"
+    }
+    if (!value && exactIdentity && aspectKey(requestedName) === "brand") {
       const allowed = exactOfficialValue(aspect, structuredVendor)
       if (allowed && !SUPPLIER_VENDOR_IDENTITIES.has(
         normalizedPhrase(structuredVendor))) {
         value = allowed
         source = "LUNA_EXACT_STRUCTURED_VENDOR"
       }
-    } else if (aspect && exactIdentity) {
+    } else if (!value && exactIdentity) {
       value = firstExactTitleValue(aspect, exactTitle)
       if (value) source = "LUNA_EXACT_PRODUCT_TITLE"
     }
-    if (value) provenProductValues[aspect?.name ?? requestedName] = value
+    if (value) provenProductValues[aspect.name] = value
     resolutions[requestedName] = Object.freeze({
       value,
       source,
@@ -226,10 +232,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
       delete unprovenAspectEvidenceRequirements[name]
     }
   }
-  const aspectContracts = ["Style", "Brand", "Type"].flatMap((name) => {
-    const aspect = byName.get(aspectKey(name))
-    return aspect ? [compactAspectContract(aspect)] : []
-  })
+  const aspectContracts = required.map(compactAspectContract)
   const evidenceCore = {
     contractVersion: RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION,
     authority: "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",

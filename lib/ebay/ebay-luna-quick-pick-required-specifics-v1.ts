@@ -19,6 +19,7 @@ export const QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1 =
   "QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1" as const
 
 const MAXIMUM_QUICK_PICKS = 20
+const REQUIRED_ASPECT_SCOPE = "ALL_OFFICIAL_REQUIRED_ASPECTS" as const
 type JsonRecord = Record<string, unknown>
 
 function record(value: unknown): JsonRecord {
@@ -194,7 +195,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     .in("candidate_key", candidateKeys).limit(MAXIMUM_QUICK_PICKS)
   if (read.error) throw new Error("LUNA_QUICK_PICK_SPECIFICS_READ_FAILED")
   const claimed: Array<Readonly<{ row: JsonRecord, candidate: NonNullable<
-    ReturnType<typeof durableQuickPickRequiredSpecificsCandidateV1>> }>> = []
+    ReturnType<typeof durableQuickPickRequiredSpecificsCandidateV1>>,
+    aiExhausted: boolean }>> = []
   for (const row of rows(read.data)) {
     const assessment = record(row.assessment)
     const factory = record(assessment.sellerOsDeterministicFactory)
@@ -202,21 +204,33 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       ? factory.blockers as unknown[] : []
     const existingResolution = record(
       assessment.marketplaceRequiredSpecificsBatchResolutionV1)
+    const currentMarker = marker(
+      assessment.quickPickRequiredSpecificsContinuationV1)
     const candidate = durableQuickPickRequiredSpecificsCandidateV1(row)
-    if (!candidate || marker(assessment.quickPickRequiredSpecificsContinuationV1)
-      || existingResolution.contractVersion ===
-        MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1
-      || !blockers.some((blocker) => text(blocker, 120)?.startsWith(
-        "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN"))) continue
+    const blockedBySpecifics = blockers.some((blocker) => text(blocker, 120)
+      ?.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN"))
+    const legacyScopeReconciliation = Boolean(currentMarker
+      && currentMarker.completedAt
+      && currentMarker.aspectScope !== REQUIRED_ASPECT_SCOPE
+      && blockedBySpecifics)
+    if (!candidate || !blockedBySpecifics
+      || (currentMarker && !legacyScopeReconciliation)
+      || (!legacyScopeReconciliation && existingResolution.contractVersion ===
+        MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1)) continue
     const now = new Date().toISOString()
+    const nextMarker = currentMarker ? {
+      ...currentMarker, aspectScope: REQUIRED_ASPECT_SCOPE,
+      reconciliationClaimedAt: now,
+    } : {
+      contractVersion: QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1,
+      claimedAt: now, aspectScope: REQUIRED_ASPECT_SCOPE,
+      noArtificialBatchWait: true,
+      opportunisticBatching: true, maximumAiCallsPerQuickPick: 1,
+      aiCallCount: 0, factInvented: false, marketplaceWrites: 0,
+    }
     const claim = await input.supabase.from("ebay_luna_opportunity_queue")
       .update({ assessment: { ...assessment,
-        quickPickRequiredSpecificsContinuationV1: {
-          contractVersion: QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1,
-          claimedAt: now, noArtificialBatchWait: true,
-          opportunisticBatching: true, maximumAiCallsPerQuickPick: 1,
-          aiCallCount: 0, factInvented: false, marketplaceWrites: 0,
-        } }, updated_at: now })
+        quickPickRequiredSpecificsContinuationV1: nextMarker }, updated_at: now })
       .eq("id", row.id).eq("candidate_key", row.candidate_key)
       .eq("updated_at", row.updated_at)
       .eq("supplier_product_id", row.supplier_product_id)
@@ -226,6 +240,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       .maybeSingle()
     if (!claim.error && claim.data) claimed.push(Object.freeze({
       row: record(claim.data), candidate,
+      aiExhausted: Number(nextMarker.aiCallCount ?? 0) >= 1,
     }))
   }
   if (!claimed.length) return Object.freeze({ attempted: candidateKeys.length,
@@ -267,8 +282,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       }
       return baseAiResolver(aiInput)
     } : null
-  let resolvedBatch: Awaited<ReturnType<
-    typeof resolveMarketplaceRequiredSpecificsBatchV1>> | null = null
+  const resolvedBatches: Awaited<ReturnType<
+    typeof resolveMarketplaceRequiredSpecificsBatchV1>>[] = []
   let resolverReasonCode: string | null = null
   if (claimed.some((entry) => {
     const initial = before.get(entry.candidate.radarCandidateId)
@@ -279,13 +294,25 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   })) resolverReasonCode = "LUNA_QUICK_PICK_SPECIFICS_BATCH_INPUT_INVALID"
   if (pending.length) {
     try {
-      resolvedBatch = await resolveMarketplaceRequiredSpecificsBatchV1({
-        products: pending, aiResolver: guardedAiResolver, aiStages: ["TEXT"],
-      })
-      for (const resolution of resolvedBatch.candidates) {
-        const entry = claimedByCandidate.get(resolution.radarCandidateId)
-        if (entry) await persistResolution({ supabase: input.supabase,
-          candidate: entry.candidate, resolution })
+      const aiEligible = pending.filter((product) =>
+        claimedByCandidate.get(product.radarCandidateId)?.aiExhausted !== true)
+      const aiExhausted = pending.filter((product) =>
+        claimedByCandidate.get(product.radarCandidateId)?.aiExhausted === true)
+      if (aiEligible.length) resolvedBatches.push(
+        await resolveMarketplaceRequiredSpecificsBatchV1({
+          products: aiEligible, aiResolver: guardedAiResolver,
+          aiStages: ["TEXT"],
+        }))
+      if (aiExhausted.length) resolvedBatches.push(
+        await resolveMarketplaceRequiredSpecificsBatchV1({
+          products: aiExhausted, aiResolver: null, aiStages: [],
+        }))
+      for (const batch of resolvedBatches) {
+        for (const resolution of batch.candidates) {
+          const entry = claimedByCandidate.get(resolution.radarCandidateId)
+          if (entry) await persistResolution({ supabase: input.supabase,
+            candidate: entry.candidate, resolution })
+        }
       }
     } catch (error) {
       resolverReasonCode = error instanceof Error
@@ -372,10 +399,13 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     requiredItemSpecificsCount: pending.reduce((sum, product) =>
       sum + product.unresolvedRequiredAspects.length, 0),
     deterministicResolvedCount:
-      resolvedBatch?.deterministicResolvedCount ?? 0,
+      resolvedBatches.reduce((total, batch) =>
+        total + batch.deterministicResolvedCount, 0),
     marketplaceFallbackResolvedCount:
-      resolvedBatch?.marketplaceFallbackResolvedCount ?? 0,
-    aiCallCount: resolvedBatch?.aiCallCount ?? 0,
+      resolvedBatches.reduce((total, batch) =>
+        total + batch.marketplaceFallbackResolvedCount, 0),
+    aiCallCount: resolvedBatches.reduce((total, batch) =>
+      total + batch.aiCallCount, 0),
     candidateReadinessReevaluated: reevaluated,
     resolverReasonCode, marketplaceWrites: 0 as const })
 }
