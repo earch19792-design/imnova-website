@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server"
 import { getBlockedEbayProResponsePayload, getEbayProRuntimeBoundary } from "@/lib/ebay/environment-boundaries"
 
 const ADMIN_COOKIE = "seller_os_admin_session"
+const ADMIN_TOKEN_VERIFY_TIMEOUT_MS = 15_000
 const RETIRED_PUBLIC_PREFIXES = ["/store", "/products", "/community", "/miembro", "/about", "/contact"]
 const LEGACY_ADMIN_REDIRECTS: Readonly<Record<string, string>> = {
   "/admin/campaigns": "/admin",
@@ -19,19 +20,52 @@ function startsAtRoute(pathname: string, route: string) {
   return pathname === route || pathname.startsWith(`${route}/`)
 }
 
-async function isVerifiedAdminToken(token: string) {
+type AdminTokenVerification =
+  | "VERIFIED"
+  | "INVALID"
+  | "UNAVAILABLE"
+
+async function fetchWithAdminTimeout(
+  input: string,
+  init: RequestInit
+) {
+  const controller = new AbortController()
+  const timeout = globalThis.setTimeout(
+    () => controller.abort(),
+    ADMIN_TOKEN_VERIFY_TIMEOUT_MS
+  )
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    })
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
+}
+
+async function isVerifiedAdminToken(
+  token: string
+): Promise<AdminTokenVerification> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim()
-  if (!url || !anonKey || !token) return false
+  if (!token) return "INVALID"
+  if (!url || !anonKey) return "UNAVAILABLE"
   try {
-    const userResponse = await fetch(`${url}/auth/v1/user`, { headers: { apikey: anonKey, Authorization: `Bearer ${token}` }, cache: "no-store" })
-    if (!userResponse.ok) return false
+    const userResponse = await fetchWithAdminTimeout(`${url}/auth/v1/user`, { headers: { apikey: anonKey, Authorization: `Bearer ${token}` }, cache: "no-store" })
+    if (userResponse.status === 401 || userResponse.status === 403) return "INVALID"
+    if (!userResponse.ok) return "UNAVAILABLE"
     const user = await userResponse.json() as { app_metadata?: { is_admin?: boolean; role?: string } }
-    if (user.app_metadata?.is_admin === true || user.app_metadata?.role === "admin") return true
-    const permissionResponse = await fetch(`${url}/rest/v1/rpc/is_admin`, { method: "POST", headers: { apikey: anonKey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}", cache: "no-store" })
-    return permissionResponse.ok && await permissionResponse.json() === true
+    if (user.app_metadata?.is_admin === true || user.app_metadata?.role === "admin") return "VERIFIED"
+    const permissionResponse = await fetchWithAdminTimeout(`${url}/rest/v1/rpc/is_admin`, { method: "POST", headers: { apikey: anonKey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}", cache: "no-store" })
+    if (permissionResponse.status === 401 || permissionResponse.status === 403) return "INVALID"
+    if (!permissionResponse.ok) return "UNAVAILABLE"
+    return await permissionResponse.json() === true
+      ? "VERIFIED"
+      : "INVALID"
   } catch {
-    return false
+    return "UNAVAILABLE"
   }
 }
 
@@ -54,11 +88,19 @@ export async function middleware(request: NextRequest) {
 
   if (startsAtRoute(pathname, "/admin") && pathname !== "/admin/login") {
     const token = request.cookies.get(ADMIN_COOKIE)?.value ?? ""
-    if (!await isVerifiedAdminToken(token)) {
+    const verification =
+      await isVerifiedAdminToken(token)
+    if (verification !== "VERIFIED") {
       const login = new URL("/admin/login", request.url)
       login.searchParams.set("returnTo", `${pathname}${request.nextUrl.search}`)
+      if (verification === "UNAVAILABLE") {
+        login.searchParams.set(
+          "authError",
+          "ADMIN_AUTH_TEMPORARILY_UNAVAILABLE"
+        )
+      }
       const response = NextResponse.redirect(login, 307)
-      if (token) response.cookies.set(ADMIN_COOKIE, "", { path: "/admin", maxAge: 0 })
+      if (token && verification === "INVALID") response.cookies.set(ADMIN_COOKIE, "", { path: "/admin", maxAge: 0 })
       return response
     }
   }

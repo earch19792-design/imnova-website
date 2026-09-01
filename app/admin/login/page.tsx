@@ -1,7 +1,6 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
 
 import {
   signInAdmin,
@@ -10,10 +9,61 @@ import {
   getSafeAdminReturnPath,
 } from "@/lib/admin-auth-return"
 
+const ADMIN_SESSION_ESTABLISH_TIMEOUT_MS =
+  20_000
+
+type LoginPhase =
+  | "IDLE"
+  | "AUTHENTICATING"
+  | "ESTABLISHING_SESSION"
+  | "OPENING_DASHBOARD"
+
+async function establishProtectedAdminSession(
+  accessToken: string
+) {
+  const controller =
+    new AbortController()
+  const timeout = globalThis.setTimeout(
+    () => controller.abort(),
+    ADMIN_SESSION_ESTABLISH_TIMEOUT_MS
+  )
+
+  try {
+    return await fetch("/api/admin/session", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        "admin_session_establishment_timeout"
+      )
+    }
+    throw error
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
+}
+
+function loginErrorMessage(error: unknown) {
+  if (
+    error instanceof Error &&
+    error.message ===
+      "admin_session_establishment_timeout"
+  ) {
+    return "La sesión segura tardó demasiado en responder. No se cambió tu contraseña; vuelve a intentarlo en unos segundos."
+  }
+
+  return error instanceof Error &&
+    error.message
+    ? error.message
+    : "No se pudo conectar con Supabase para validar el acceso."
+}
+
 export default function AdminLoginPage() {
-
-  const router = useRouter()
-
   const [email, setEmail] =
     useState("")
 
@@ -26,6 +76,24 @@ export default function AdminLoginPage() {
   const [isLoading, setIsLoading] =
     useState(false)
 
+  const [loginPhase, setLoginPhase] =
+    useState<LoginPhase>("IDLE")
+
+  useEffect(() => {
+    const reason = new URLSearchParams(
+      window.location.search
+    ).get("authError")
+
+    if (
+      reason ===
+      "ADMIN_AUTH_TEMPORARILY_UNAVAILABLE"
+    ) {
+      setError(
+        "La validación administrativa tardó demasiado. Tu sesión no fue borrada; vuelve a intentarlo en unos segundos."
+      )
+    }
+  }, [])
+
   const handleLogin = async (
     e: React.FormEvent
   ) => {
@@ -34,6 +102,7 @@ export default function AdminLoginPage() {
 
     setError("")
     setIsLoading(true)
+    setLoginPhase("AUTHENTICATING")
 
     try {
       const result =
@@ -55,15 +124,30 @@ export default function AdminLoginPage() {
         return
       }
 
-      const sessionResponse = await fetch("/api/admin/session", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${result.session.access_token}`,
-        },
-      })
+      setLoginPhase("ESTABLISHING_SESSION")
+
+      const sessionResponse =
+        await establishProtectedAdminSession(
+          result.session.access_token
+        )
 
       if (!sessionResponse.ok) {
-        setError("No se pudo proteger la sesión administrativa.")
+        const body = await sessionResponse
+          .json()
+          .catch(() => null) as {
+            error?: unknown
+          } | null
+        const errorCode =
+          typeof body?.error === "string"
+            ? body.error
+            : ""
+
+        setError(
+          errorCode ===
+            "admin_session_validation_timeout"
+            ? "La validación administrativa tardó demasiado. Vuelve a intentarlo en unos segundos."
+            : "No se pudo proteger la sesión administrativa."
+        )
         return
       }
 
@@ -74,21 +158,18 @@ export default function AdminLoginPage() {
           ).get("returnTo")
         )
 
-      router.replace(returnTo)
+      setLoginPhase("OPENING_DASHBOARD")
+      window.location.replace(returnTo)
     } catch (loginError) {
       console.error(
         "ADMIN LOGIN ERROR:",
         loginError
       )
 
-      setError(
-        loginError instanceof Error &&
-          loginError.message
-          ? loginError.message
-          : "No se pudo conectar con Supabase para validar el acceso."
-      )
+      setError(loginErrorMessage(loginError))
     } finally {
       setIsLoading(false)
+      setLoginPhase("IDLE")
     }
 
   }
@@ -243,7 +324,13 @@ export default function AdminLoginPage() {
           >
 
             {isLoading
-              ? "Validando..."
+              ? loginPhase ===
+                  "ESTABLISHING_SESSION"
+                ? "Protegiendo sesión..."
+                : loginPhase ===
+                    "OPENING_DASHBOARD"
+                  ? "Abriendo Seller OS..."
+                  : "Validando credenciales..."
               : "Entrar al sistema"}
 
           </button>
