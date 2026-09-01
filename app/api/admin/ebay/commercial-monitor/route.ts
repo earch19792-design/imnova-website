@@ -38,6 +38,8 @@ import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
+import { getSellerOsDashboardCommercialHealthV1 } from
+  "@/lib/ebay/seller-os-dashboard-commercial-health-v1"
 import {
   REVERSIBLE_OOS_TARGET_ITEM_ID,
   REVERSIBLE_OOS_TARGET_SKU,
@@ -149,9 +151,22 @@ export async function GET(req: Request) {
     safety: { productionUnchanged: true, ebayWriteUsed: false },
   }, { status: 403 })
   try {
+    const supabase = getSupabaseAdminClient()
+    const account = getEbaySellerAccountScopeConfiguration()
+    const [dashboard, commercialHealth] = await Promise.all([
+      getEbayCommercialMonitorDashboard(supabase),
+      account.accountKey
+        ? getSellerOsDashboardCommercialHealthV1({
+            supabase,
+            accountKey: account.accountKey,
+            accountAlias: account.accountAlias,
+          })
+        : Promise.resolve(null),
+    ])
     return NextResponse.json({
       success: true,
-      dashboard: await getEbayCommercialMonitorDashboard(getSupabaseAdminClient()),
+      dashboard,
+      commercialHealth,
     })
   } catch (error) {
     return NextResponse.json({ success: false, error: safeCode(error) }, { status: 502 })

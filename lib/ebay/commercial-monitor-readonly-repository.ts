@@ -253,7 +253,7 @@ async function readLiveListingShippingEvidence(
     (data ?? []) as ReadonlyLiveListingShippingEvidenceRowV1[], maximum)
 }
 
-async function readCanonicalLunaLinkageDecisions(
+export async function readCanonicalLunaLinkageDecisions(
   supabase: SupabaseClient,
   accountKey: string,
 ): Promise<ReadonlySourceResult<ReadonlyLunaLinkageDecisionRowV1>> {
@@ -278,7 +278,7 @@ async function readCanonicalLunaLinkageDecisions(
   )
 }
 
-async function readCanonicalLunaStockJobs(
+export async function readCanonicalLunaStockJobs(
   supabase: SupabaseClient,
   accountKey: string,
 ): Promise<ReadonlySourceResult<ReadonlyLunaStockJobRowV1>> {
@@ -303,7 +303,7 @@ async function readCanonicalLunaStockJobs(
   )
 }
 
-async function readCanonicalLunaStockObservations(
+export async function readCanonicalLunaStockObservations(
   supabase: SupabaseClient,
   accountKey: string,
 ): Promise<ReadonlySourceResult<ReadonlyLunaStockObservationRowV1>> {
@@ -447,7 +447,7 @@ async function readIdentityVerifications(
   )
 }
 
-async function readCommercialSnapshots(
+export async function readCommercialSnapshots(
   supabase: SupabaseClient,
   accountKey: string,
 ) : Promise<ReadonlySourceResult<ReadonlyCommercialSnapshotRow>> {

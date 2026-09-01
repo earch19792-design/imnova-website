@@ -1,23 +1,16 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from
+import { FormEvent, useCallback, useEffect, useMemo, useState } from
   "react"
 
 import { supabase } from "@/lib/supabase"
+import { useAdminOwnerRuntime } from "./admin-owner-runtime-provider"
 
 type CompactStatus = "READY" | "WORKING" | "WAITING" | "DEGRADED" |
   "OFFLINE"
-
-type QuickPickSummary = Readonly<{
-  inProgress: number
-  readyForReview: number
-  blocked: number
-  total: number
-}>
+type WorkerStatus = CompactStatus | "CONNECTING"
 
 type DashboardSnapshot = Readonly<{
-  quickPick: QuickPickSummary
-  quickPickAvailable: boolean
   radarReady: number
   radarReview: number
   radarAvailable: boolean
@@ -27,21 +20,26 @@ type DashboardSnapshot = Readonly<{
   nightRadar: CompactStatus
   analytics: CompactStatus
   orders: CompactStatus
+  activeListings: number | null
+  impressions: number | null
+  views: number | null
+  ctr: number | null
+  quantitySold: number | null
+  officialOrders: number | null
+  analyticsDataStatus: "AVAILABLE_CURRENT" | "AVAILABLE_STALE" |
+    "UNAVAILABLE"
+  analyticsSnapshotCapturedAt: string | null
+  stockScopeCount: number | null
+  stockCertifiedCount: number | null
+  stockFreshCount: number | null
+  stockStaleCount: number | null
+  stockUnknownCount: number | null
+  stockRiskCount: number | null
+  ordersSourceStatus: string
+  ordersLastSuccessfulReadAt: string | null
 }>
-
-type LunaWorkerMessage = Readonly<{
-  type: "SELLER_OS_LUNA_WORKER_STATUS_V1"
-  status: CompactStatus
-  autoClaimEnabled: boolean
-}>
-
-const emptySummary: QuickPickSummary = {
-  inProgress: 0, readyForReview: 0, blocked: 0, total: 0,
-}
 
 const emptySnapshot: DashboardSnapshot = {
-  quickPick: emptySummary,
-  quickPickAvailable: false,
   radarReady: 0,
   radarReview: 0,
   radarAvailable: false,
@@ -51,6 +49,22 @@ const emptySnapshot: DashboardSnapshot = {
   nightRadar: "WAITING",
   analytics: "WAITING",
   orders: "WAITING",
+  activeListings: null,
+  impressions: null,
+  views: null,
+  ctr: null,
+  quantitySold: null,
+  officialOrders: null,
+  analyticsDataStatus: "UNAVAILABLE",
+  analyticsSnapshotCapturedAt: null,
+  stockScopeCount: null,
+  stockCertifiedCount: null,
+  stockFreshCount: null,
+  stockStaleCount: null,
+  stockUnknownCount: null,
+  stockRiskCount: null,
+  ordersSourceStatus: "UNPROVEN",
+  ordersLastSuccessfulReadAt: null,
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -61,6 +75,21 @@ function record(value: unknown): Record<string, unknown> {
 function safeCount(value: unknown) {
   const count = Number(value)
   return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0
+}
+
+function availableMetric(value: unknown) {
+  if (typeof value !== "number" && typeof value !== "string") return null
+  if (typeof value === "string" && value.trim() === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function compactStatus(value: unknown,
+  fallback: CompactStatus = "DEGRADED"): CompactStatus {
+  const normalized = String(value ?? "").toUpperCase()
+  return new Set<CompactStatus>(["READY", "WORKING", "WAITING", "DEGRADED",
+    "OFFLINE"]).has(normalized as CompactStatus)
+    ? normalized as CompactStatus : fallback
 }
 
 function normalizedStatus(value: unknown,
@@ -83,32 +112,51 @@ function normalizedStatus(value: unknown,
   return "WAITING"
 }
 
-function readerStatus(latestRun: Record<string, unknown>, reader: string) {
-  const readers = record(latestRun.readers)
-  return record(readers[reader]).status ?? readers[reader]
-}
-
-function tone(status: CompactStatus) {
+function tone(status: WorkerStatus) {
   if (status === "READY") return "bg-emerald-300 text-emerald-950"
   if (status === "WORKING") return "bg-cyan-300 text-cyan-950"
+  if (status === "CONNECTING") return "bg-sky-200 text-sky-950"
   if (status === "WAITING") return "bg-amber-200 text-amber-950"
   if (status === "DEGRADED") return "bg-orange-300 text-orange-950"
   return "bg-rose-300 text-rose-950"
 }
 
-function StatusPill({ status }: { status: CompactStatus }) {
+function StatusPill({ status }: { status: WorkerStatus }) {
   return <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${tone(status)}`}>
     {status}
   </span>
 }
 
+function metricLabel(value: number | null, suffix = "") {
+  return value === null ? "—" : `${new Intl.NumberFormat("es-NI", {
+    maximumFractionDigits: suffix ? 2 : 0,
+  }).format(value)}${suffix}`
+}
+
+function shortTimestamp(value: string | null) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "—"
+  return new Intl.DateTimeFormat("es-NI", {
+    dateStyle: "short", timeStyle: "short",
+  }).format(new Date(value))
+}
+
+function workerDetail(status: WorkerStatus, reasonCode: string) {
+  if (status === "READY") return "Chrome owner conectado · sin trabajo pendiente"
+  if (status === "WORKING") return "Procesando una evidencia de envío"
+  if (status === "CONNECTING") return "Conectando con Chrome owner…"
+  if (reasonCode.includes("BIND") || reasonCode.includes("DESTINATION")) {
+    return "Falta confirmar el perfil canónico de envío"
+  }
+  if (status === "OFFLINE") return "Extensión o Chrome owner no disponible"
+  return "Esperando una condición requerida del worker"
+}
+
 export function SellerOsOperationalDashboard() {
+  const ownerRuntime = useAdminOwnerRuntime()
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(emptySnapshot)
-  const [workerStatus, setWorkerStatus] = useState<CompactStatus>("WAITING")
   const [input, setInput] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState("")
-  const workerFrame = useRef<HTMLIFrameElement>(null)
 
   const adminRequest = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error } = await supabase.auth.getSession()
@@ -129,27 +177,19 @@ export function SellerOsOperationalDashboard() {
   }, [])
 
   const load = useCallback(async () => {
-    const [quickPickResult, commercialResult, radarResult] =
+    const [commercialResult, radarResult] =
       await Promise.allSettled([
-        adminRequest("/api/admin/ebay/luna-quick-pick"),
         adminRequest("/api/admin/ebay/commercial-monitor"),
         adminRequest("/api/admin/ebay/luna-opportunity-queue"),
       ])
 
-    const quickPickPayload = quickPickResult.status === "fulfilled"
-      ? record(quickPickResult.value) : {}
-    const quickPickRaw = record(quickPickPayload.summary)
-    const quickPick = quickPickResult.status === "fulfilled" ? {
-      inProgress: safeCount(quickPickRaw.inProgress),
-      readyForReview: safeCount(quickPickRaw.readyForReview),
-      blocked: safeCount(quickPickRaw.blocked),
-      total: safeCount(quickPickRaw.total),
-    } : emptySummary
-
     const commercialPayload = commercialResult.status === "fulfilled"
       ? record(commercialResult.value) : {}
     const commercial = record(commercialPayload.dashboard)
-    const latestRun = record(commercial.latestRun)
+    const commercialHealth = record(commercialPayload.commercialHealth)
+    const stockHealth = record(commercialHealth.stockGuard)
+    const orderHealth = record(commercialHealth.orders)
+    const analyticsHealth = record(commercialHealth.analytics)
     const liveListingIds = new Set<string>()
     for (const value of [commercial.supplyActions,
       commercial.optimizationTasks]) {
@@ -177,8 +217,6 @@ export function SellerOsOperationalDashboard() {
     }
 
     setSnapshot({
-      quickPick,
-      quickPickAvailable: quickPickResult.status === "fulfilled",
       radarReady: safeCount(radarSummary.ready),
       radarReview: safeCount(radarSummary.review),
       radarAvailable: radarResult.status === "fulfilled",
@@ -186,13 +224,37 @@ export function SellerOsOperationalDashboard() {
       liveAttentionAvailable: commercialResult.status === "fulfilled" ||
         radarResult.status === "fulfilled",
       stockGuard: commercialResult.status === "rejected" ? "DEGRADED"
-        : normalizedStatus(readerStatus(latestRun, "watchers")),
+        : compactStatus(stockHealth.dashboardStatus),
       nightRadar: radarResult.status === "rejected" ? "DEGRADED"
         : normalizedStatus(latestRadarRun.status ?? radar.status),
       analytics: commercialResult.status === "rejected" ? "DEGRADED"
-        : normalizedStatus(readerStatus(latestRun, "analytics")),
+        : compactStatus(analyticsHealth.dashboardStatus),
       orders: commercialResult.status === "rejected" ? "DEGRADED"
-        : normalizedStatus(readerStatus(latestRun, "orders")),
+        : compactStatus(orderHealth.dashboardStatus),
+      activeListings: commercialResult.status === "fulfilled"
+        ? availableMetric(commercialHealth.activeListings) : null,
+      impressions: availableMetric(analyticsHealth.impressions),
+      views: availableMetric(analyticsHealth.views),
+      ctr: availableMetric(analyticsHealth.ctr),
+      quantitySold: availableMetric(analyticsHealth.quantitySold),
+      officialOrders: availableMetric(orderHealth.officialOrderCount),
+      analyticsDataStatus: new Set(["AVAILABLE_CURRENT", "AVAILABLE_STALE"])
+        .has(String(analyticsHealth.snapshotDataStatus))
+        ? analyticsHealth.snapshotDataStatus as
+          "AVAILABLE_CURRENT" | "AVAILABLE_STALE" : "UNAVAILABLE",
+      analyticsSnapshotCapturedAt:
+        typeof analyticsHealth.snapshotCapturedAt === "string"
+          ? analyticsHealth.snapshotCapturedAt : null,
+      stockScopeCount: availableMetric(stockHealth.scopeCount),
+      stockCertifiedCount: availableMetric(stockHealth.certifiedCount),
+      stockFreshCount: availableMetric(stockHealth.freshCount),
+      stockStaleCount: availableMetric(stockHealth.staleCount),
+      stockUnknownCount: availableMetric(stockHealth.unknownCount),
+      stockRiskCount: availableMetric(stockHealth.riskCount),
+      ordersSourceStatus: String(orderHealth.sourceStatus ?? "UNPROVEN"),
+      ordersLastSuccessfulReadAt:
+        typeof orderHealth.lastSuccessfulReadAt === "string"
+          ? orderHealth.lastSuccessfulReadAt : null,
     })
   }, [adminRequest])
 
@@ -204,20 +266,6 @@ export function SellerOsOperationalDashboard() {
     }, 15_000)
     return () => { active = false; window.clearInterval(timer) }
   }, [load])
-
-  useEffect(() => {
-    const receiveWorkerStatus = (event: MessageEvent<unknown>) => {
-      if (event.origin !== window.location.origin ||
-          event.source !== workerFrame.current?.contentWindow) return
-      const message = record(event.data) as Partial<LunaWorkerMessage>
-      if (message.type !== "SELLER_OS_LUNA_WORKER_STATUS_V1") return
-      if (!new Set<CompactStatus>(["READY", "WORKING", "WAITING",
-        "DEGRADED", "OFFLINE"]).has(message.status as CompactStatus)) return
-      setWorkerStatus(message.status as CompactStatus)
-    }
-    window.addEventListener("message", receiveWorkerStatus)
-    return () => window.removeEventListener("message", receiveWorkerStatus)
-  }, [])
 
   async function submitQuickPick(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -242,27 +290,27 @@ export function SellerOsOperationalDashboard() {
     }
   }
 
-  const opportunitiesReady = snapshot.quickPick.readyForReview +
+  const opportunitiesReady = ownerRuntime.quickPick.readyForReview +
     snapshot.radarReady
-  const opportunityDataAvailable = snapshot.quickPickAvailable ||
+  const opportunityDataAvailable = ownerRuntime.quickPickAvailable ||
     snapshot.radarAvailable
   const health = useMemo(() => [
-    ["LUNA_SHIPPING_WORKER", workerStatus],
+    ["LUNA_SHIPPING_WORKER", ownerRuntime.lunaWorker.status],
     ["STOCK_GUARD", snapshot.stockGuard],
     ["NIGHT_RADAR", snapshot.nightRadar],
     ["ANALYTICS", snapshot.analytics],
     ["ORDERS", snapshot.orders],
-  ] as const, [snapshot, workerStatus])
+  ] as const, [ownerRuntime.lunaWorker.status, snapshot])
 
   return <>
     <div className="grid gap-4 md:grid-cols-2" data-primary-dashboard-block-count="4">
       <section data-dashboard-block="opportunities" className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.06] p-5">
         <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/65">💰 Oportunidades para publicar</p>
         <div className="mt-3 flex items-end justify-between gap-4">
-          <div><p className="text-4xl font-black">{opportunityDataAvailable ? opportunitiesReady : "—"}</p><p className="mt-1 text-sm text-white/55">{snapshot.quickPickAvailable && snapshot.radarAvailable ? "listas para revisar" : "lectura parcial"}</p></div>
+          <div><p className="text-4xl font-black">{opportunityDataAvailable ? opportunitiesReady : "—"}</p><p className="mt-1 text-sm text-white/55">{ownerRuntime.quickPickAvailable && snapshot.radarAvailable ? "listas para revisar" : "lectura parcial"}</p></div>
           <a href="/admin/ebay/opportunity-queue/research" className="inline-flex min-h-11 items-center rounded-2xl border border-emerald-100/20 px-4 text-sm font-black text-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">Revisar</a>
         </div>
-        <p className="mt-4 text-sm text-white/55">Quick Pick {snapshot.quickPickAvailable ? snapshot.quickPick.readyForReview : "—"} · Radar {snapshot.radarAvailable ? snapshot.radarReady : "—"} · En revisión {snapshot.radarAvailable ? snapshot.radarReview : "—"}</p>
+        <p className="mt-4 text-sm text-white/55">Quick Pick {ownerRuntime.quickPickAvailable ? ownerRuntime.quickPick.readyForReview : "—"} · Radar {snapshot.radarAvailable ? snapshot.radarReady : "—"} · En revisión {snapshot.radarAvailable ? snapshot.radarReview : "—"}</p>
       </section>
 
       <section data-dashboard-block="quick-pick" className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.07] p-5">
@@ -276,7 +324,7 @@ export function SellerOsOperationalDashboard() {
           <button type="submit" disabled={submitting || !input.trim()}
             className="min-h-11 min-w-24 rounded-2xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">{submitting ? "Procesando…" : "Procesar"}</button>
         </form>
-        <p aria-live="polite" className="mt-3 text-sm text-white/60">{feedback || (snapshot.quickPickAvailable ? `${snapshot.quickPick.inProgress} en proceso · ${snapshot.quickPick.readyForReview} para revisar · ${snapshot.quickPick.blocked} bloqueados` : "Operaciones no disponibles temporalmente")}</p>
+        <p aria-live="polite" className="mt-3 text-sm text-white/60">{feedback || (ownerRuntime.quickPickAvailable ? `${ownerRuntime.quickPick.inProgress} en proceso · ${ownerRuntime.quickPick.readyForReview} para revisar · ${ownerRuntime.quickPick.blocked} bloqueados` : "Operaciones no disponibles temporalmente")}</p>
       </section>
 
       <section data-dashboard-block="live-attention" className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
@@ -290,12 +338,40 @@ export function SellerOsOperationalDashboard() {
         <dl className="mt-3 grid gap-2 sm:grid-cols-2">
           {health.map(([label, status]) => <div key={label} className="flex min-h-11 items-center justify-between gap-2 rounded-xl bg-black/20 px-3"><dt className="truncate text-xs font-bold text-white/60">{label.replaceAll("_", " ")}</dt><dd><StatusPill status={status} /></dd></div>)}
         </dl>
+        <p className="mt-3 text-xs leading-5 text-white/50" data-luna-worker-detail>
+          {workerDetail(ownerRuntime.lunaWorker.status,
+            ownerRuntime.lunaWorker.reasonCode)}
+        </p>
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-white/50">Métricas comerciales</p>
+            {snapshot.analyticsDataStatus === "AVAILABLE_STALE" ?
+              <p className="text-[11px] font-bold text-amber-100">Última lectura válida · {shortTimestamp(snapshot.analyticsSnapshotCapturedAt)}</p> : null}
+          </div>
+          <dl className="mt-3 grid grid-cols-3 gap-2 text-center sm:grid-cols-6">
+            {([
+              ["Activos", metricLabel(snapshot.activeListings)],
+              ["Impresiones", metricLabel(snapshot.impressions)],
+              ["Vistas", metricLabel(snapshot.views)],
+              ["CTR", metricLabel(snapshot.ctr, "%")],
+              ["Vendidos", metricLabel(snapshot.quantitySold)],
+              ["Órdenes", metricLabel(snapshot.officialOrders)],
+            ] as const).map(([label, value]) => <div key={label}
+              className="rounded-xl bg-black/20 px-2 py-2.5">
+              <dt className="truncate text-[10px] font-bold uppercase tracking-wide text-white/40">{label}</dt>
+              <dd className="mt-1 text-base font-black">{value}</dd>
+            </div>)}
+          </dl>
+          <p className="mt-3 text-xs leading-5 text-white/55" data-stock-freshness-summary>
+            StockGuard {snapshot.stockCertifiedCount === null ||
+              snapshot.stockScopeCount === null ? "—" :
+              `${snapshot.stockCertifiedCount}/${snapshot.stockScopeCount}`} · FRESH {snapshot.stockFreshCount ?? "—"} · STALE {snapshot.stockStaleCount ?? "—"} · UNKNOWN {snapshot.stockUnknownCount ?? "—"} · RISKS {snapshot.stockRiskCount ?? "—"}
+          </p>
+          <p className="mt-1 text-[11px] text-white/40">
+            Orders {snapshot.ordersSourceStatus} · última lectura {shortTimestamp(snapshot.ordersLastSuccessfulReadAt)}
+          </p>
+        </div>
       </section>
     </div>
-    <iframe ref={workerFrame}
-      src="/admin/ebay/luna-shipping-capture?dashboardWorker=1"
-      title="Control plane Luna Shipping de Seller OS"
-      aria-hidden="true" tabIndex={-1}
-      className="pointer-events-none absolute h-px w-px overflow-hidden opacity-0" />
   </>
 }
