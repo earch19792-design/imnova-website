@@ -4,6 +4,9 @@ export const dynamic = "force-dynamic"
 import { NextRequest, NextResponse } from "next/server"
 
 import {
+  SELLER_OS_PUBLICATION_OAUTH_START_SESSION_COOKIE,
+} from "@/lib/admin-session-cookie-contract"
+import {
   getEbayPublicationOAuthConfiguration,
   startEbayPublicationOAuthBrowserCeremony,
 } from "@/lib/ebay/ebay-publication-oauth-authorization"
@@ -58,7 +61,14 @@ function callbackConfigured(callbackUrl: string) {
 
 export async function POST(request: NextRequest) {
   const requestHost = request.nextUrl.host.trim().toLowerCase()
-  const authorization = request.headers.get("authorization")?.trim() ?? ""
+  const headerAuthorization =
+    request.headers.get("authorization")?.trim() ?? ""
+  const scopedAdminSession = request.cookies.get(
+    SELLER_OS_PUBLICATION_OAUTH_START_SESSION_COOKIE,
+  )?.value.trim() ?? ""
+  const authorization = headerAuthorization || (scopedAdminSession
+    ? `Bearer ${scopedAdminSession}`
+    : "")
   let hostMatch = false
   let callbackConfigPresent = false
   let deploymentEnvironment = "UNPROVEN"
@@ -75,6 +85,8 @@ export async function POST(request: NextRequest) {
   let adminSessionValid = false
   let ownerAuthorityMatch = false
   let stateCreated = false
+  let cookieSerialized = false
+  let redirectBuilt = false
   let stateCookieSet = false
   let responseStatus = 403
   let redirectHost: "auth.ebay.com" | null = null
@@ -130,6 +142,16 @@ export async function POST(request: NextRequest) {
       STATE_COOKIE_SET: stateCookieSet,
       SET_COOKIE_HEADER_PRESENT: stateCookieSet,
       REDIRECT_HOST: redirectHost,
+      ADMIN_AUTH_PASS: adminSessionValid,
+      HOST_PASS: hostMatch,
+      ENVIRONMENT_PASS: environmentMatch,
+      CONFIG_PASS: productionOauthEnabled && writeGatesAllOff &&
+        clientConfigPresent && runameConfigPresent &&
+        callbackConfigPresent && operatorPublicKeyPresent &&
+        credentialMatchCertified && accountScopeReady && identityBound,
+      STATE_SECRET_PASS: stateSecretPresent,
+      COOKIE_SERIALIZED: cookieSerialized,
+      REDIRECT_BUILT: redirectBuilt,
     })
     console.info(EBAY_PUBLICATION_OAUTH_START_DIAGNOSTIC_EVENT,
       JSON.stringify(diagnostic))
@@ -169,7 +191,14 @@ export async function POST(request: NextRequest) {
     assertEbaySellerOAuthReauthSameOrigin(request)
     let validation: Awaited<ReturnType<typeof validateAdminApiRequest>>
     try {
-      validation = await validateAdminApiRequest(request)
+      const validationHeaders = new Headers(request.headers)
+      if (!headerAuthorization && authorization) {
+        validationHeaders.set("Authorization", authorization)
+      }
+      validation = await validateAdminApiRequest(new Request(request.url, {
+        method: request.method,
+        headers: validationHeaders,
+      }))
     } catch {
       responseStatus = 503
       throw new Error("EBAY_PUBLICATION_OAUTH_ADMIN_AUTH_UNAVAILABLE")
@@ -195,15 +224,17 @@ export async function POST(request: NextRequest) {
         actorUserId,
         requestHost: request.nextUrl.host,
         ledger: createSupabaseEbaySellerOAuthReauthStateLedger(supabase),
+        onBoundaryMarker(marker) {
+          if (marker === "STATE_CREATED") stateCreated = true
+          if (marker === "COOKIE_SERIALIZED") cookieSerialized = true
+          if (marker === "REDIRECT_BUILT") redirectBuilt = true
+        },
       },
     )
-    stateCreated = true
-    const response = NextResponse.json({
-      success: true,
-      authorizationUrl: prepared.authorizationUrl,
-      expiresAt: new Date(prepared.expiresAt).toISOString(),
-      ceremony: prepared.ceremony,
-    }, { status: 200, headers: responseHeaders })
+    const response = NextResponse.redirect(prepared.authorizationUrl, {
+      status: 303,
+      headers: responseHeaders,
+    })
     response.cookies.set(
       EBAY_SELLER_OAUTH_REAUTH_COOKIE,
       "",
@@ -222,17 +253,21 @@ export async function POST(request: NextRequest) {
       ),
     )
     stateCookieSet = true
-    responseStatus = 200
+    responseStatus = 303
     redirectHost = "auth.ebay.com"
     emitDiagnostic(null)
     return response
   } catch (cause) {
     const failureCode = safeEbayPublicationOAuthStartCode(cause)
     emitDiagnostic(failureCode)
-    return NextResponse.json({
-      success: false,
-      error: failureCode,
-      failureClass: ebayPublicationOAuthStartFailedGuard(failureCode),
-    }, { status: responseStatus, headers: responseHeaders })
+    const returnUrl = new URL("/admin", request.url)
+    returnUrl.searchParams.set("ebayPublicationOauthError", failureCode)
+    return new NextResponse(`<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${returnUrl.pathname}?${returnUrl.searchParams.toString()}"><title>OAuth no iniciado</title><p>OAuth no iniciado · ${failureCode}</p>`, {
+      status: responseStatus,
+      headers: {
+        ...responseHeaders,
+        "Content-Type": "text/html; charset=utf-8",
+      },
+    })
   }
 }

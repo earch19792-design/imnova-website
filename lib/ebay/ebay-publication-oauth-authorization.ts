@@ -39,6 +39,9 @@ import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-pr
 import {
   getEbayPublicationOAuthEnvironmentBoundary,
 } from "./environment-boundaries"
+import {
+  safeEbayPublicationOAuthHandoffPersistenceCode,
+} from "./ebay-publication-oauth-start-diagnostic"
 
 const AUTHORIZED_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
@@ -50,6 +53,11 @@ const OPERATOR_PUBLIC_KEY_ENV = "EBAY_PUBLICATION_OAUTH_OPERATOR_PUBLIC_KEY"
 
 type FetchLike = typeof fetch
 type JsonRecord = Record<string, unknown>
+
+export type EbayPublicationOAuthBrowserStartMarker =
+  | "STATE_CREATED"
+  | "COOKIE_SERIALIZED"
+  | "REDIRECT_BUILT"
 
 type OAuthCredentials = {
   clientId: string
@@ -215,6 +223,7 @@ async function createPendingPublicationHandoff(
     publicKeyPem: string
     actorUserId?: string | null
     expiresAt: string
+    now?: string
   },
   environment: NodeJS.ProcessEnv,
 ) {
@@ -225,6 +234,22 @@ async function createPendingPublicationHandoff(
   if (!accountScope.accountKey ||
       !accountScope.identity.expectedAccountFingerprint) {
     throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_UNBOUND")
+  }
+  const now = input.now ?? new Date().toISOString()
+  const { error: expiryError } = await supabase
+    .from("ebay_publication_oauth_handoffs")
+    .update({
+      status: "expired",
+      encrypted_credential_bundle: null,
+      error_code: "EBAY_PUBLICATION_OAUTH_HANDOFF_EXPIRED",
+      updated_at: now,
+    })
+    .in("status", ["pending", "claimed"])
+    .lte("expires_at", now)
+  if (expiryError) {
+    throw new Error(
+      "EBAY_PUBLICATION_OAUTH_STALE_HANDOFF_EXPIRY_FAILED",
+    )
   }
   const { data, error } = await supabase
     .from("ebay_publication_oauth_handoffs")
@@ -240,8 +265,13 @@ async function createPendingPublicationHandoff(
     })
     .select("id")
     .single()
-  if (error || !data?.id) {
-    throw new Error("EBAY_PUBLICATION_OAUTH_HANDOFF_FAILED")
+  if (error) {
+    throw new Error(
+      safeEbayPublicationOAuthHandoffPersistenceCode(error),
+    )
+  }
+  if (!data?.id) {
+    throw new Error("EBAY_PUBLICATION_OAUTH_HANDOFF_RESULT_MISSING")
   }
   return String(data.id)
 }
@@ -252,13 +282,15 @@ export async function startEbayPublicationOAuth(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const credentials = assertAuthorizationReady(environment)
+  const now = Date.now()
   const state = createEbayPublicationOAuthState()
-  const expiresAt = new Date(Date.now() + HANDOFF_TTL_MS).toISOString()
+  const expiresAt = new Date(now + HANDOFF_TTL_MS).toISOString()
   const handoffId = await createPendingPublicationHandoff(supabase, {
     state,
     publicKeyPem: input.publicKeyPem,
     actorUserId: input.actorUserId,
     expiresAt,
+    now: new Date(now).toISOString(),
   }, environment)
   return {
     authorizationUrl: buildEbayPublicationConsentUrl({
@@ -287,6 +319,9 @@ export async function startEbayPublicationOAuthBrowserCeremony(
     requestHost: string
     ledger: EbaySellerOAuthReauthStateLedger
     clock?: () => number
+    onBoundaryMarker?: (
+      marker: EbayPublicationOAuthBrowserStartMarker,
+    ) => void
   },
   environment: NodeJS.ProcessEnv = process.env,
 ) {
@@ -323,11 +358,13 @@ export async function startEbayPublicationOAuthBrowserCeremony(
   const expiresAtMs = now + EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS
   const expiresAt = new Date(expiresAtMs).toISOString()
   const state = createEbayPublicationOAuthState()
+  input.onBoundaryMarker?.("STATE_CREATED")
   const handoffId = await createPendingPublicationHandoff(supabase, {
     state,
     publicKeyPem,
     actorUserId: input.actorUserId,
     expiresAt,
+    now: new Date(now).toISOString(),
   }, environment)
   try {
     const stateCreated = await input.ledger.createPending({
@@ -346,13 +383,13 @@ export async function startEbayPublicationOAuthBrowserCeremony(
     )
     throw cause
   }
-  return {
-    authorizationUrl: buildEbayPublicationConsentUrl({
+  const authorizationUrl = buildEbayPublicationConsentUrl({
       clientId: credentials.clientId,
       runame: credentials.runame,
       state,
-    }),
-    cookie: createEbaySellerOAuthReauthCookie({
+    })
+  input.onBoundaryMarker?.("REDIRECT_BUILT")
+  const cookie = createEbaySellerOAuthReauthCookie({
       state,
       expiresAt: expiresAtMs,
       actorUserId: input.actorUserId,
@@ -361,7 +398,11 @@ export async function startEbayPublicationOAuthBrowserCeremony(
       expectedAccountFingerprint:
         sellerConfiguration.expectedAccountFingerprint,
       purpose: "PUBLICATION_PRODUCTION",
-    }),
+    })
+  input.onBoundaryMarker?.("COOKIE_SERIALIZED")
+  return {
+    authorizationUrl,
+    cookie,
     expiresAt: expiresAtMs,
     handoffId,
     ceremony: {

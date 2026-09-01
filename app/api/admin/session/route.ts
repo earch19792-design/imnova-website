@@ -3,9 +3,14 @@ export const dynamic = "force-dynamic"
 
 import { NextResponse } from "next/server"
 import { isSameSellerOsAdminOriginV1 } from "@/lib/admin-session-origin-v1"
+import {
+  SELLER_OS_ADMIN_SESSION_COOKIE,
+  SELLER_OS_PUBLICATION_OAUTH_START_PATH,
+  SELLER_OS_PUBLICATION_OAUTH_START_SESSION_COOKIE,
+  sellerOsAdminSessionCookieOptions,
+} from "@/lib/admin-session-cookie-contract"
 import { validateAdminApiRequest } from "@/lib/supabase-admin"
 
-const SELLER_OS_ADMIN_COOKIE = "seller_os_admin_session"
 const ADMIN_SESSION_VALIDATION_TIMEOUT_MS = 15_000
 
 async function withValidationTimeout<T>(
@@ -76,13 +81,19 @@ export async function POST(request: Request) {
   }
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? ""
   const response = NextResponse.json({ success: true, role: "ADMIN" })
-  response.cookies.set(SELLER_OS_ADMIN_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    path: "/admin",
-    maxAge: 60 * 60,
-  })
+  response.cookies.set(
+    SELLER_OS_ADMIN_SESSION_COOKIE,
+    token,
+    sellerOsAdminSessionCookieOptions("/admin", 60 * 60),
+  )
+  response.cookies.set(
+    SELLER_OS_PUBLICATION_OAUTH_START_SESSION_COOKIE,
+    token,
+    sellerOsAdminSessionCookieOptions(
+      SELLER_OS_PUBLICATION_OAUTH_START_PATH,
+      60 * 60,
+    ),
+  )
   response.headers.set("Cache-Control", "no-store")
   return response
 }
@@ -90,7 +101,19 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   if (!sameOrigin(request)) return NextResponse.json({ success: false, error: "cross_site_request_rejected" }, { status: 403 })
   const response = NextResponse.json({ success: true })
-  response.cookies.set(SELLER_OS_ADMIN_COOKIE, "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict", path: "/admin", maxAge: 0 })
+  response.cookies.set(
+    SELLER_OS_ADMIN_SESSION_COOKIE,
+    "",
+    sellerOsAdminSessionCookieOptions("/admin", 0),
+  )
+  response.cookies.set(
+    SELLER_OS_PUBLICATION_OAUTH_START_SESSION_COOKIE,
+    "",
+    sellerOsAdminSessionCookieOptions(
+      SELLER_OS_PUBLICATION_OAUTH_START_PATH,
+      0,
+    ),
+  )
   response.headers.set("Cache-Control", "no-store")
   return response
 }

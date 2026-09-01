@@ -68,10 +68,11 @@ test("public home is Seller OS, static, and admin-login-only", () => {
 test("admin login has no public signup and creates protected server session", () => {
   const login = read("app/admin/login/page.tsx")
   const session = read("app/api/admin/session/route.ts")
+  const cookieContract = read("lib/admin-session-cookie-contract.ts")
   assert.doesNotMatch(login, /signUp|registrarse|crear cuenta/i)
   assert.match(login, /SELLER OS/)
-  assert.match(session, /httpOnly:\s*true/)
-  assert.match(session, /sameSite:\s*"strict"/)
+  assert.match(cookieContract, /httpOnly:\s*true/)
+  assert.match(cookieContract, /sameSite:\s*"strict"/)
   assert.match(session, /cross_site_request_rejected/)
   assert.match(session, /authenticationMode !== "admin_user"/)
 })

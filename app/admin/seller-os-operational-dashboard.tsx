@@ -532,6 +532,15 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
     setDescription(String(review.description ?? ""))
   }, [editing, review.description, review.title])
 
+  useEffect(() => {
+    const safeFailureCode = new URL(window.location.href).searchParams.get(
+      "ebayPublicationOauthError",
+    ) ?? ""
+    if (!/^[A-Z0-9_]{3,180}$/.test(safeFailureCode)) return
+    setPublicationOauthFeedback(`OAuth no iniciado · ${safeFailureCode}`)
+    setPublicationOauthStarting(false)
+  }, [])
+
   async function persist(intent: "EDIT" | "CONFIRM") {
     if (!card.candidateKey || !card.listingPackageId || busy) return
     setBusy(true)
@@ -578,35 +587,12 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
     }
   }
 
-  async function connectEbayProduction() {
+  function connectEbayProduction() {
     if (publicationOauthStarting) return
     setPublicationOauthStarting(true)
     setPublicationOauthFeedback(
       "Preparando ceremonia segura en este mismo Chrome…",
     )
-    try {
-      const payload = await request(
-        "/api/admin/ebay/publication-oauth/start",
-        { method: "POST" },
-      )
-      const authorizationUrl = String(payload.authorizationUrl ?? "")
-      const target = new URL(authorizationUrl)
-      if (target.origin !== "https://auth.ebay.com" ||
-          target.pathname !== "/oauth2/authorize") {
-        throw new Error("EBAY_PUBLICATION_OAUTH_REDIRECT_INVALID")
-      }
-      setPublicationOauthFeedback("Abriendo autorización oficial de eBay…")
-      window.location.assign(authorizationUrl)
-    } catch (cause) {
-      const safeFailureCode = cause instanceof Error &&
-          /^[A-Z0-9_]{3,180}$/.test(cause.message)
-        ? cause.message
-        : "EBAY_PUBLICATION_OAUTH_BROWSER_START_FAILED"
-      setPublicationOauthFeedback(
-        `OAuth no iniciado · ${safeFailureCode}`,
-      )
-      setPublicationOauthStarting(false)
-    }
   }
 
   if (!Object.keys(review).length) return null
@@ -791,13 +777,16 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
           Inicia y termina OAuth desde este mismo Chrome owner. Seller OS
           emitirá la cookie protegida antes de enviarte a eBay.
         </p>
-        <button type="button" onClick={() => void connectEbayProduction()}
-          disabled={publicationOauthStarting}
-          data-ebay-production-oauth-browser-start
-          className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-cyan-200/40 px-5 text-sm font-black text-cyan-100 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
-          {publicationOauthStarting ? "CONECTANDO…" :
-            "CONECTAR EBAY PRODUCTION"}
-        </button>
+        <form method="post"
+          action="/api/admin/ebay/publication-oauth/start"
+          onSubmit={connectEbayProduction}>
+          <button type="submit" disabled={publicationOauthStarting}
+            data-ebay-production-oauth-browser-start
+            className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-cyan-200/40 px-5 text-sm font-black text-cyan-100 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+            {publicationOauthStarting ? "CONECTANDO…" :
+              "CONECTAR EBAY PRODUCTION"}
+          </button>
+        </form>
         {publicationOauthFeedback && <p aria-live="polite"
           className="mt-2 text-xs font-bold text-white/60">
           {publicationOauthFeedback}
