@@ -503,6 +503,79 @@ test("exact durable Smart Stocking authorization replaces only the legacy candid
   assert.ok(forged.blockers.includes("LUNA_STOCK_UNAVAILABLE"))
 })
 
+test("exact durable Quick Pick authorization bypasses stale legacy opportunity guards only", async () => {
+  const module = await importTypeScript(readinessSource)
+  const now = new Date("2026-09-01T17:00:00.000Z")
+  const input = validInput(now)
+  const packageDigest = `sha256:${"e".repeat(64)}`
+  input.listingPackage.source_observed_at = "2026-08-01T00:00:00.000Z"
+  input.listingPackage.package_data.quickPickOwnerReviewV1 = {
+    reviewedPackageDigest: packageDigest,
+  }
+  input.opportunity.hard_gates = [
+    "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN",
+  ]
+  input.opportunity.supplier_available = false
+  input.opportunity.supplier_inventory_quantity = null
+  input.opportunity.supplier_snapshot_at = "2026-08-01T00:00:00.000Z"
+  input.opportunity.supplier_product_id = "9220000000001"
+  input.opportunity.supplier_variant_id = "48800000000001"
+  input.opportunity.supplier_sku = "QP-CANONICAL-1"
+  input.opportunity.assessment.identity.exactIdentityConfirmed = false
+  input.opportunity.assessment.scores = {
+    potentialScore: 10,
+    confidenceScore: 10,
+  }
+  const core = {
+    version: "SELLER_OS_QUICK_PICK_CANONICAL_PUBLICATION_AUTHORIZATION_V1",
+    validated: true,
+    listingPackageId: input.listingPackage.id,
+    opportunityId: input.opportunity.id,
+    candidateKey: input.listingPackage.candidate_key,
+    packageDigest,
+    productTruthDigest: `sha256:${"d".repeat(64)}`,
+    lunaProductId: input.opportunity.supplier_product_id,
+    lunaVariantId: input.opportunity.supplier_variant_id,
+    supplierSku: input.opportunity.supplier_sku,
+    stockState: "IN_STOCK_SUPPLIER_STATED",
+    stockFreshness: "FRESH",
+    supplierInventoryQuantity: 7,
+    stockObservedAt: now.toISOString(),
+    safeCapacity: null,
+    finalEconomicsStatus: "PASS",
+    requiredSpecificsStatus: "PASS",
+    marketplaceReadinessStatus: "PASS",
+    marketTestReadiness: "PASS",
+    publishableAsMarketTest: true,
+    demandProven: false,
+    sourceRevalidationAuthority:
+      "QUICK_PICK_DURABLE_GOLDEN_PATH_REVALIDATION_V1",
+    finalHumanAuthorizationRequired: true,
+    unattendedPublicationAllowed: false,
+  }
+  input.quickPickPublicationAuthorization = {
+    ...core,
+    authorizationDigest: `sha256:${module.hashEbayDraftOnlyPayload(core)}`,
+  }
+  const authorized = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(authorized.ready, true)
+  assert.equal(authorized.blockers.includes("POTENTIAL_SCORE_BELOW_70"), false)
+  assert.equal(authorized.blockers.includes("LUNA_STOCK_UNAVAILABLE"), false)
+  assert.equal(authorized.blockers.includes("LUNA_SNAPSHOT_STALE"), false)
+  assert.equal(authorized.blockers.includes("PACKAGE_SOURCE_STALE"), false)
+  assert.deepEqual(
+    authorized.payload.compliance.quickPickPublicationAuthorization,
+    input.quickPickPublicationAuthorization,
+  )
+
+  input.quickPickPublicationAuthorization.authorizationDigest =
+    `sha256:${"0".repeat(64)}`
+  const forged = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(forged.ready, false)
+  assert.ok(forged.blockers.includes("POTENTIAL_SCORE_BELOW_70"))
+  assert.ok(forged.blockers.includes("LUNA_STOCK_UNAVAILABLE"))
+})
+
 test("SUPERSEDED_AUTHORITY_REINTRODUCED: ITEM3404 canonical prewrite stays blocker-free", async () => {
   const module = await importTypeScript(readinessSource)
   const now = new Date("2026-08-28T12:00:00.000Z")

@@ -19,8 +19,14 @@ import { mergeSellerOsQuickPickPresentationV1 } from
   "@/lib/ebay/seller-os-quick-pick-presentation-v1"
 import { buildQuickPickOwnerReviewPackageDataV1 } from
   "@/lib/ebay/ebay-quick-pick-market-test-package-v1"
+import { resolveQuickPickCanonicalPublishHandoffV1 } from
+  "@/lib/ebay/ebay-quick-pick-canonical-publish-handoff-v1"
 import { readLatestQuickPickRadarOvernightEnrichmentV1 } from
   "@/lib/ebay/ebay-quick-pick-radar-overnight-enrichment-v1"
+import { loadFinalListingReviewPublicationGate } from
+  "@/lib/ebay/final-listing-review-publication-gate"
+import { ensureAutomaticLunaSupplierImagesV1 } from
+  "@/lib/ebay/luna-supplier-image-auto-runtime-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
@@ -221,6 +227,56 @@ export async function POST(req: Request) {
         actorUserId: auth.userId, body,
       })
       return response({ success: true, ownerReview,
+        safety: { marketplaceWrites: 0, listingPublications: 0,
+          canPublish: false, customerProductionTouched: false } })
+    }
+    if (body.action === "PUBLISH_HANDOFF") {
+      const candidateKey = typeof body.candidateKey === "string" &&
+        /^sha256:[0-9a-f]{64}$/.test(body.candidateKey)
+        ? body.candidateKey : null
+      const listingPackageId = uuid(body.listingPackageId)
+      if (!candidateKey || !listingPackageId) return response({
+        success: false,
+        error: "QUICK_PICK_CANONICAL_PUBLISH_HANDOFF_INPUT_INVALID",
+      }, 400)
+      const supabase = getSupabaseAdminClient()
+      let canonical = await resolveQuickPickCanonicalPublishHandoffV1({
+        supabase, accountKey, actorUserId: auth.userId, candidateKey,
+        listingPackageId,
+      })
+      let visualPublicationGate =
+        await loadFinalListingReviewPublicationGate({
+          supabase, listingPackageId, actorId: auth.userId,
+        })
+      let automaticImageAuthorityReused = false
+      if (!visualPublicationGate.allowed) {
+        await ensureAutomaticLunaSupplierImagesV1({ supabase, accountKey,
+          actor: auth.userId, packageRow: canonical.listingPackage })
+        automaticImageAuthorityReused = true
+        canonical = await resolveQuickPickCanonicalPublishHandoffV1({
+          supabase, accountKey, actorUserId: auth.userId, candidateKey,
+          listingPackageId,
+        })
+        visualPublicationGate =
+          await loadFinalListingReviewPublicationGate({
+            supabase, listingPackageId, actorId: auth.userId,
+          })
+      }
+      if (!visualPublicationGate.allowed) return response({
+        success: false,
+        error: visualPublicationGate.reason ??
+          "QUICK_PICK_CANONICAL_PUBLISH_IMAGE_GATE_NOT_READY",
+        handoff: canonical.handoff,
+        visualPublicationGate,
+        safety: { marketplaceWrites: 0, listingPublications: 0,
+          canPublish: false, customerProductionTouched: false },
+      }, 409)
+      return response({ success: true,
+        listingPackage: canonical.listingPackage,
+        opportunity: canonical.opportunity,
+        handoff: canonical.handoff,
+        visualPublicationGate,
+        automaticImageAuthorityReused,
         safety: { marketplaceWrites: 0, listingPublications: 0,
           canPublish: false, customerProductionTouched: false } })
     }

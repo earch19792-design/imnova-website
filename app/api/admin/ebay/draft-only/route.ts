@@ -106,6 +106,11 @@ import {
 } from
   "@/lib/ebay/ebay-smart-stocking-authorized-publication-v1"
 import {
+  isQuickPickCanonicalPublishPackageV1,
+  resolveQuickPickCanonicalPublishHandoffV1,
+} from
+  "@/lib/ebay/ebay-quick-pick-canonical-publish-handoff-v1"
+import {
   bindCanonicalPublicationImageSet,
   loadFinalListingReviewPublicationGate,
   type FinalListingReviewPublicationGate,
@@ -507,6 +512,7 @@ async function loadFinalPublicationContext(
       opportunity: opportunity as JsonRecord,
       sameDayPilotAuthorization: null,
       smartStockingPublicationAuthorization: null,
+      quickPickPublicationAuthorization: null,
       runtime,
       accountKey,
     }
@@ -532,7 +538,17 @@ async function loadFinalPublicationContext(
       opportunity: effectiveOpportunity,
     })
     : null
-  if (!sameDayContext && !smartStockingContext) {
+  const quickPickContext = accountKey && !smartStockingContext &&
+    isQuickPickCanonicalPublishPackageV1(
+      record(listingPackage.package_data),
+    ) ? await resolveQuickPickCanonicalPublishHandoffV1({
+      supabase,
+      accountKey,
+      actorUserId: actor,
+      candidateKey: text(listingPackage.candidate_key),
+      listingPackageId: text(listingPackage.id),
+    }) : null
+  if (!sameDayContext && !smartStockingContext && !quickPickContext) {
     throw new Error("EBAY_FINAL_PUBLICATION_SOURCE_BINDING_REQUIRED")
   }
   if (
@@ -544,8 +560,8 @@ async function loadFinalPublicationContext(
     || !accountKey
     || listingPackage.account_key !== accountKey
     || listingPackage.status !== "approved"
-    || effectiveOpportunity.supplier_available !== true
-    || (!smartStockingContext &&
+    || (!quickPickContext && effectiveOpportunity.supplier_available !== true)
+    || (!smartStockingContext && !quickPickContext &&
       Number(effectiveOpportunity.supplier_inventory_quantity) < 1)
   ) throw new Error("EBAY_FINAL_PUBLICATION_SCOPE_OR_STOCK_INVALID")
   const approvedSourceEvidence = record(record(approval.approved_payload).sourceEvidence)
@@ -600,6 +616,33 @@ async function loadFinalPublicationContext(
       })
     }
   }
+  if (quickPickContext) {
+    const approvedPayload = record(approval.approved_payload)
+    const approvedCompliance = record(approvedPayload.compliance)
+    const approvedAuthorization = record(
+      approvedCompliance.quickPickPublicationAuthorization,
+    )
+    const approvedStockguard = record(
+      approvedCompliance.publishWithStockguardContract,
+    )
+    if (
+      hashEbayDraftOnlyPayload(approvedAuthorization) !==
+        hashEbayDraftOnlyPayload(quickPickContext.handoff.authorization)
+      || hashEbayDraftOnlyPayload(approvedStockguard) !==
+        hashEbayDraftOnlyPayload(
+          quickPickContext.handoff.publishWithStockguardContract,
+        )
+    ) throw new Error("EBAY_FINAL_PUBLICATION_QUICK_PICK_BINDING_CHANGED")
+    if (hasOneClickControlledPublicationIntent(approvedPayload)) {
+      assertOneClickControlledPublicationIntentV1({
+        approvedPayload,
+        actorUserId: actor,
+        listingPackage: listingPackage as JsonRecord,
+        opportunity: effectiveOpportunity,
+        accountFingerprint: runtime.accountFingerprint,
+      })
+    }
+  }
   return {
     execution: execution as JsonRecord,
     approval: approval as JsonRecord,
@@ -608,6 +651,8 @@ async function loadFinalPublicationContext(
     sameDayPilotAuthorization: sameDayContext?.authorization ?? null,
     smartStockingPublicationAuthorization:
       smartStockingContext?.authorization ?? null,
+    quickPickPublicationAuthorization:
+      quickPickContext?.handoff.authorization ?? null,
     runtime,
     accountKey,
   }
@@ -658,6 +703,11 @@ async function revalidateFinalPublicationSource(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   context: Awaited<ReturnType<typeof loadFinalPublicationContext>>,
 ) {
+  if (context.quickPickPublicationAuthorization) {
+    return { authority: text(
+      context.quickPickPublicationAuthorization.sourceRevalidationAuthority,
+    ) }
+  }
   if (context.smartStockingPublicationAuthorization) {
     return { authority: text(
       context.smartStockingPublicationAuthorization.sourceRevalidationAuthority,
@@ -842,6 +892,16 @@ async function loadPackageContext(
     listingPackage: listingPackage as JsonRecord,
     opportunity: effectiveOpportunity,
   }) : null
+  const quickPickContext = !smartStockingContext &&
+    isQuickPickCanonicalPublishPackageV1(
+      record(listingPackage.package_data),
+    ) ? await resolveQuickPickCanonicalPublishHandoffV1({
+      supabase,
+      accountKey: sellerAccountKey,
+      actorUserId,
+      candidateKey: text(listingPackage.candidate_key),
+      listingPackageId: text(listingPackage.id),
+    }) : null
   const collisionSku = expectedEbayDraftOnlySku(listingPackage as JsonRecord)
   const candidateKey = text(listingPackage.candidate_key)
   const supplierSku = text(effectiveOpportunity.supplier_sku)
@@ -944,10 +1004,16 @@ async function loadPackageContext(
     sameDayPilotAuthorization: sameDayContext?.authorization ?? null,
     smartStockingPublicationAuthorization:
       smartStockingContext?.authorization ?? null,
+    quickPickPublicationAuthorization:
+      quickPickContext?.handoff.authorization ?? null,
     economicsConfig: sameDayContext?.economicsConfig ??
-      smartStockingContext?.economicsConfig,
+      smartStockingContext?.economicsConfig ??
+      quickPickContext?.handoff.economicsConfig,
     publishWithStockguardContract:
-      smartStockingContext?.publishWithStockguardContract ?? null,
+      smartStockingContext?.publishWithStockguardContract ??
+      quickPickContext?.handoff.publishWithStockguardContract ?? null,
+    accountPolicySelection:
+      quickPickContext?.handoff.policySelection ?? null,
     activeSkuCollision: Boolean(ebaySkuResult.data?.length),
     ledgerSkuCollision: Boolean(ledgerResult.data?.length),
     identityCollisionReasons,
@@ -1152,6 +1218,14 @@ function bindServerPublicationContracts(
     : draftConfiguration
 }
 
+function canonicalOneClickPublicationSource(context: {
+  smartStockingPublicationAuthorization?: unknown
+  quickPickPublicationAuthorization?: unknown
+}) {
+  return Boolean(context.smartStockingPublicationAuthorization ||
+    context.quickPickPublicationAuthorization)
+}
+
 function finalPublicationStockguardContract(approvedPayload: JsonRecord) {
   const value = record(record(approvedPayload.compliance)
     .publishWithStockguardContract)
@@ -1293,12 +1367,34 @@ export async function GET(req: Request) {
     let requestedConfiguration: JsonRecord = latestApproval
       ? configurationFromApprovedPayload(approvedPayload)
       : record(packageConfig)
+    const quickPickPolicySelection = record(
+      initialContext.accountPolicySelection,
+    )
+    if (initialContext.quickPickPublicationAuthorization &&
+        Object.values(quickPickPolicySelection).every((value) =>
+          Boolean(text(value)))) {
+      requestedConfiguration = {
+        ...requestedConfiguration,
+        quantity: 1,
+        condition: "NEW",
+        merchantLocationKey: text(
+          quickPickPolicySelection.merchantLocationKey,
+        ),
+        businessPolicies: {
+          fulfillmentPolicyId: text(
+            quickPickPolicySelection.fulfillmentPolicyId,
+          ),
+          paymentPolicyId: text(quickPickPolicySelection.paymentPolicyId),
+          returnPolicyId: text(quickPickPolicySelection.returnPolicyId),
+        },
+      }
+    }
     let canonicalFreshPreflight: Awaited<ReturnType<
       typeof preflightEbayDraftOnlyMobile
     >> | null = null
     if (isSmartStockingListingIntakeV1(
       record(initialContext.opportunity.assessment),
-    )) {
+    ) || initialContext.quickPickPublicationAuthorization) {
       const policies = record(requestedConfiguration.businessPolicies)
       const selection = {
         fulfillmentPolicyId: text(policies.fulfillmentPolicyId),
@@ -1375,7 +1471,8 @@ export async function GET(req: Request) {
       accountFingerprint: fingerprint,
     })
     const oneClickEligible = target === "PRODUCTION"
-      && Boolean(context.smartStockingPublicationAuthorization)
+      && Boolean(context.smartStockingPublicationAuthorization ||
+        context.quickPickPublicationAuthorization)
     const oneClickValidation = latestApproval
       && hasOneClickControlledPublicationIntent(approvedPayload)
       ? validateOneClickControlledPublicationIntentV1({
@@ -1412,6 +1509,9 @@ export async function GET(req: Request) {
     const smartStockingAuthorization = record(
       context.smartStockingPublicationAuthorization,
     )
+    const quickPickAuthorization = record(
+      context.quickPickPublicationAuthorization,
+    )
     const authenticatedPublicationRecovery =
       classifyAuthenticatedPublicationRecoveryV1({
         readiness,
@@ -1420,7 +1520,8 @@ export async function GET(req: Request) {
         publication,
         controlledIntentValidation: oneClickValidation,
         canonicalStockAuthorized:
-          smartStockingAuthorization.validated === true,
+          smartStockingAuthorization.validated === true ||
+          quickPickAuthorization.validated === true,
         expected: {
           listingPackageId: packageId,
           opportunityId: expectedOpportunityId,
@@ -2050,18 +2151,18 @@ async function previewDraft(body: JsonRecord, actor: string) {
     runtime,
     controlledPublication: {
       eligible: target === "PRODUCTION"
-        && Boolean(context.smartStockingPublicationAuthorization),
+        && canonicalOneClickPublicationSource(context),
       authorized: false,
       blocker: null,
       version: EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
       ...oneClickPublicationRequirements(target === "PRODUCTION"
-        && Boolean(context.smartStockingPublicationAuthorization)),
+        && canonicalOneClickPublicationSource(context)),
     },
     approvalRequirements: {
       exactPhrase: ebayDraftOnlyApprovalPhrase(target),
       oneClickExactIntent: EBAY_ONE_CLICK_PUBLICATION_LABEL,
       singleHumanPublicationEligible: target === "PRODUCTION"
-        && Boolean(context.smartStockingPublicationAuthorization),
+        && canonicalOneClickPublicationSource(context),
       target,
       productionAccountConfirmationRequired: target === "PRODUCTION",
     },
@@ -2086,6 +2187,24 @@ async function refreshOneClickSmartStockingSource(
     || text(opportunity.id) !== opportunityId
     || text(opportunity.candidate_key) !== candidateKey
   ) throw new Error("EBAY_ONE_CLICK_EXACT_IDENTITY_INVALID")
+
+  if (isQuickPickCanonicalPublishPackageV1(
+    record(listingPackage.package_data),
+  )) {
+    const canonical = await resolveQuickPickCanonicalPublishHandoffV1({
+      supabase, accountKey, actorUserId: actor, candidateKey,
+      listingPackageId: packageId,
+    })
+    return {
+      listingPackage: canonical.listingPackage,
+      opportunity: canonical.opportunity,
+      sourceObservedAt: text(
+        canonical.handoff.authorization.stockObservedAt,
+      ),
+      sourceClassification: "QUICK_PICK_DURABLE_REVALIDATED" as const,
+      marketplaceWrites: 0 as const,
+    }
+  }
 
   const refreshedIntake = candidateKey === WINDOW_FILM_LISTING_INTAKE_KEY
     ? await materializeWindowFilmListingIntakeV1({ supabase, accountKey })
@@ -2173,6 +2292,7 @@ async function refreshOneClickSmartStockingSource(
     listingPackage: savedPackage,
     opportunity: refreshedOpportunity as JsonRecord,
     sourceObservedAt: rebuilt.sourceObservedAt,
+    sourceClassification: "SMART_STOCKING_AUTO_REFRESHED" as const,
     marketplaceWrites: 0 as const,
   }
 }
@@ -2277,7 +2397,12 @@ async function approveDraft(body: JsonRecord, actor: string) {
         fingerprint,
         exactSelfLineage.classification,
       )
-      if (
+      if (refreshedSource.sourceClassification ===
+          "QUICK_PICK_DURABLE_REVALIDATED") {
+        if (!context.quickPickPublicationAuthorization) throw new Error(
+          "EBAY_ONE_CLICK_PUBLICATION_QUICK_PICK_AUTHORITY_REQUIRED",
+        )
+      } else if (
         Date.parse(text(context.listingPackage.source_observed_at)) !==
           Date.parse(refreshedSource.sourceObservedAt)
         || Date.parse(text(context.opportunity.supplier_snapshot_at)) !==
@@ -2332,8 +2457,12 @@ async function approveDraft(body: JsonRecord, actor: string) {
         ebayPreflightSnapshot: ebayPreflight.snapshot,
       }
       oneClickFreshness = {
-        lunaSnapshot: "AUTO_REFRESHED",
-        packageSource: "AUTO_REVALIDATED",
+        lunaSnapshot: refreshedSource.sourceClassification ===
+          "QUICK_PICK_DURABLE_REVALIDATED"
+          ? "DURABLE_REVALIDATED" : "AUTO_REFRESHED",
+        packageSource: refreshedSource.sourceClassification ===
+          "QUICK_PICK_DURABLE_REVALIDATED"
+          ? "DURABLE_REUSED" : "AUTO_REVALIDATED",
         ebayPreflightSnapshot: "AUTO_REFRESHED",
         sourceObservedAt: refreshedSource.sourceObservedAt,
         marketplaceWritesBeforeRefreshPass: 0,
@@ -2948,6 +3077,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     context.economicsConfig,
     context.sameDayPilotAuthorization,
     context.smartStockingPublicationAuthorization,
+    context.quickPickPublicationAuthorization,
   )
   const currentBasePayload = Object.keys(v3Binding).length
     ? withV3FinalSetAuthorization(rebuiltPayload, v3Binding)
@@ -3561,12 +3691,19 @@ async function completeFinalPublicationMonitor(input: {
         p_active_listing_id: activeListingId,
         p_manual_registration_id: manualRegistrationId,
       },
-    )
+  )
   const linkageHandoff = record(linkageHandoffData)
-  const smartStockingAuthorization = record(record(
+  const approvedCompliance = record(record(
     input.context.approval.approved_payload,
-  ).compliance).smartStockingPublicationAuthorization
-  const exactAuthorization = record(smartStockingAuthorization)
+  ).compliance)
+  const quickPickAuthorization = record(
+    approvedCompliance.quickPickPublicationAuthorization,
+  )
+  const smartStockingAuthorization = record(
+    approvedCompliance.smartStockingPublicationAuthorization,
+  )
+  const exactAuthorization = Object.keys(quickPickAuthorization).length
+    ? quickPickAuthorization : smartStockingAuthorization
   if (
     linkageHandoffError
     || text(linkageHandoff.status) !== "CERTIFIED"

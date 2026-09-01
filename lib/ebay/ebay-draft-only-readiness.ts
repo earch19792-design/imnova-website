@@ -29,6 +29,7 @@ export type DraftOnlyReadinessInput = {
   draftConfiguration: JsonRecord
   sameDayPilotAuthorization?: JsonRecord | null
   smartStockingPublicationAuthorization?: JsonRecord | null
+  quickPickPublicationAuthorization?: JsonRecord | null
   revalidatedExecutionEvidence?: {
     freshSameDaySourceVerified?: boolean
     finalV3ImageTransportVerified?: boolean
@@ -414,6 +415,7 @@ export function buildEbayDraftOnlyPayload(
   economicsConfig: Partial<EbayUnitEconomicsConfig> = {},
   sameDayPilotAuthorization: JsonRecord | null = null,
   smartStockingPublicationAuthorization: JsonRecord | null = null,
+  quickPickPublicationAuthorization: JsonRecord | null = null,
 ) {
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
@@ -523,6 +525,9 @@ export function buildEbayDraftOnlyPayload(
         : {}),
       ...(smartStockingPublicationAuthorization?.validated === true
         ? { smartStockingPublicationAuthorization }
+        : {}),
+      ...(quickPickPublicationAuthorization?.validated === true
+        ? { quickPickPublicationAuthorization }
         : {}),
     },
     sku,
@@ -634,6 +639,61 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       === "SMART_STOCKING_EXACT_PRODUCT_TRUTH_DURABLE_REVALIDATION_V1"
     && smartStockingPublicationAuthorization.finalHumanAuthorizationRequired === true
     && smartStockingPublicationAuthorization.unattendedPublicationAllowed === false
+  const quickPickPublicationAuthorization = record(
+    input.quickPickPublicationAuthorization,
+  )
+  const quickPickAuthorizationCore = {
+    ...quickPickPublicationAuthorization,
+  }
+  delete quickPickAuthorizationCore.authorizationDigest
+  const quickPickSupplierStock = numberOrNull(
+    quickPickPublicationAuthorization.supplierInventoryQuantity,
+  )
+  const quickPickPublicationAuthorized =
+    quickPickPublicationAuthorization.validated === true
+    && text(quickPickPublicationAuthorization.version)
+      === "SELLER_OS_QUICK_PICK_CANONICAL_PUBLICATION_AUTHORIZATION_V1"
+    && text(quickPickPublicationAuthorization.listingPackageId)
+      === text(listingPackage.id)
+    && text(quickPickPublicationAuthorization.opportunityId)
+      === text(opportunity.id)
+    && text(quickPickPublicationAuthorization.candidateKey)
+      === text(listingPackage.candidate_key)
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      quickPickPublicationAuthorization.packageDigest,
+    ))
+    && text(quickPickPublicationAuthorization.packageDigest)
+      === text(record(packageData.quickPickOwnerReviewV1)
+        .reviewedPackageDigest)
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      quickPickPublicationAuthorization.productTruthDigest,
+    ))
+    && text(quickPickPublicationAuthorization.lunaProductId)
+      === text(opportunity.supplier_product_id)
+    && text(quickPickPublicationAuthorization.lunaVariantId)
+      === text(opportunity.supplier_variant_id)
+    && text(quickPickPublicationAuthorization.supplierSku)
+      === text(opportunity.supplier_sku)
+    && quickPickPublicationAuthorization.stockState
+      === "IN_STOCK_SUPPLIER_STATED"
+    && quickPickPublicationAuthorization.stockFreshness === "FRESH"
+    && (quickPickSupplierStock === null || (
+      Number.isInteger(quickPickSupplierStock) && quickPickSupplierStock > 0))
+    && Number.isFinite(Date.parse(text(
+      quickPickPublicationAuthorization.stockObservedAt)))
+    && quickPickPublicationAuthorization.safeCapacity === null
+    && quickPickPublicationAuthorization.finalEconomicsStatus === "PASS"
+    && quickPickPublicationAuthorization.requiredSpecificsStatus === "PASS"
+    && quickPickPublicationAuthorization.marketplaceReadinessStatus === "PASS"
+    && quickPickPublicationAuthorization.marketTestReadiness === "PASS"
+    && quickPickPublicationAuthorization.publishableAsMarketTest === true
+    && quickPickPublicationAuthorization.demandProven === false
+    && quickPickPublicationAuthorization.sourceRevalidationAuthority
+      === "QUICK_PICK_DURABLE_GOLDEN_PATH_REVALIDATION_V1"
+    && quickPickPublicationAuthorization.finalHumanAuthorizationRequired === true
+    && quickPickPublicationAuthorization.unattendedPublicationAllowed === false
+    && text(quickPickPublicationAuthorization.authorizationDigest)
+      === `sha256:${hashEbayDraftOnlyPayload(quickPickAuthorizationCore)}`
   const supplierPrice = numberOrNull(opportunity.supplier_price)
   const price = numberOrNull(pricing.targetPrice)
   const economicsConfig = ebayDraftOnlyEconomicsConfig(input.economicsConfig)
@@ -726,7 +786,8 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     ['hold', 'rejected', 'listed', 'archived'].includes(
       text(opportunity.queue_status),
     )) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
-  if (!sameDayPilotAuthorized && !smartStockingPublicationAuthorized) {
+  if (!sameDayPilotAuthorized && !smartStockingPublicationAuthorized &&
+      !quickPickPublicationAuthorized) {
     if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
     if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
     if (confidenceScore < 70) blockers.push("CONFIDENCE_SCORE_BELOW_70")
@@ -734,15 +795,21 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     blockers.push(...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`))
   }
   if (
-    opportunity.supplier_available !== true
-    || (!smartStockingPublicationAuthorized
-      && (supplierStock === null || supplierStock <= 0))
+    !smartStockingPublicationAuthorized
+    && !quickPickPublicationAuthorized
+    && (opportunity.supplier_available !== true
+      || supplierStock === null || supplierStock <= 0)
   ) blockers.push("LUNA_STOCK_UNAVAILABLE")
   if (supplierPrice === null || supplierPrice <= 0) blockers.push("LUNA_COST_REQUIRED")
-  if (!recent(opportunity.supplier_snapshot_at ?? opportunity.last_scanned_at, sourceMaxAge, now)) blockers.push("LUNA_SNAPSHOT_STALE")
+  if (
+    !quickPickPublicationAuthorized
+    && !recent(opportunity.supplier_snapshot_at ?? opportunity.last_scanned_at,
+      sourceMaxAge, now)
+  ) blockers.push("LUNA_SNAPSHOT_STALE")
   if (
     !recent(listingPackage.source_observed_at, sourceMaxAge, now)
     && !freshSameDaySourceVerified
+    && !quickPickPublicationAuthorized
   ) blockers.push("PACKAGE_SOURCE_STALE")
   if (!text(packageData.title) || text(packageData.title).length > 80) blockers.push("TITLE_INVALID")
   if (!/^\d{1,12}$/.test(categoryId)) blockers.push("CATEGORY_ID_REQUIRED")
@@ -780,7 +847,8 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   }
   if (
     !Number.isInteger(quantity) || quantity < 1
-    || (!smartStockingPublicationAuthorized && supplierStock === null)
+    || (!smartStockingPublicationAuthorized &&
+      !quickPickPublicationAuthorized && supplierStock === null)
     || (supplierStock !== null && quantity > supplierStock)
   ) blockers.push("QUANTITY_EXCEEDS_FRESH_STOCK")
   if (target === "PRODUCTION" && quantity !== 1) blockers.push("PRODUCTION_QUANTITY_MUST_EQUAL_ONE")
@@ -820,6 +888,9 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     sameDayPilotAuthorized ? sameDayPilotAuthorization : null,
     smartStockingPublicationAuthorized
       ? smartStockingPublicationAuthorization
+      : null,
+    quickPickPublicationAuthorized
+      ? quickPickPublicationAuthorization
       : null,
   )
   const uniqueBlockers = unique(blockers)

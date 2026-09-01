@@ -1309,6 +1309,8 @@ function ListingWorkspacePageContent() {
   const searchParams = useSearchParams()
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null)
   const [listingPackage, setListingPackage] = useState<ListingPackage | null>(null)
+  const [quickPickCanonicalHandoff, setQuickPickCanonicalHandoff] =
+    useState<Record<string, unknown> | null>(null)
   const [workspaceGateBlockers, setWorkspaceGateBlockers] = useState<string[]>([])
   const [publicationLunaRecheck, setPublicationLunaRecheck] = useState<PublicationLunaRecheck | null>(null)
   const [publicationLunaPrice, setPublicationLunaPrice] = useState("")
@@ -1783,10 +1785,31 @@ function ListingWorkspacePageContent() {
     return payload
   }, [])
 
+  const quickPickHandoffRequest = useCallback(async (body: Record<string,
+  unknown>) => {
+    const { data, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
+    const response = await fetch("/api/admin/ebay/luna-quick-pick", {
+      method: "POST", cache: "no-store",
+      headers: { Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    const payload = await readMobileReviewJson<Record<string, any>>(
+      response, "No se pudo validar el handoff canónico Quick Pick",
+    )
+    if (!payload.success) throw new Error(getMobileReviewPayloadError(
+      payload, "No se pudo validar el handoff canónico Quick Pick."))
+    return payload
+  }, [])
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const opportunityId = params.get("opportunity") ?? ""
     const candidateKey = params.get("candidate") ?? ""
+    const requestedPackageId = validUuid(params.get("package"))
+    const quickPickCanonicalRequested =
+      params.get("source") === "quick-pick-canonical"
     const requestedItemId = params.get("ebayItemId") ?? ""
     const visualReviewRevisionId = validUuid(params.get("revisionId"))
     const maintenanceRequested = params.get("mode") === "maintenance" || /^\d{9,20}$/.test(requestedItemId)
@@ -1855,9 +1878,30 @@ function ListingWorkspacePageContent() {
         })
         let prepared: Record<string, any>
         try {
-          prepared = await request(maintenanceRequested
+          prepared = quickPickCanonicalRequested
+            ? await quickPickHandoffRequest({ action: "PUBLISH_HANDOFF",
+              candidateKey, listingPackageId: requestedPackageId })
+            : await request(maintenanceRequested
             ? { action: "open_active_maintenance", opportunityId, candidateKey, ebayItemId: requestedItemId }
             : { action: "prepare_package", opportunityId, candidateKey })
+          if (quickPickCanonicalRequested) {
+            const handoff = object(prepared.handoff)
+            if (!requestedPackageId || handoff.publishAuthorizationReady !== true ||
+                handoff.canonicalQuickPickPackageUsed !== true ||
+                String(prepared.listingPackage?.id ?? "") !==
+                  requestedPackageId ||
+                String(prepared.listingPackage?.opportunity_id ?? "") !==
+                  opportunityId ||
+                String(prepared.listingPackage?.candidate_key ?? "") !==
+                  candidateKey ||
+                object(prepared.visualPublicationGate).allowed !== true) {
+              throw new Error("QUICK_PICK_CANONICAL_PUBLISH_HANDOFF_MISMATCH")
+            }
+            setQuickPickCanonicalHandoff(handoff)
+            accountPolicyProfileSaved.current = true
+          } else {
+            setQuickPickCanonicalHandoff(null)
+          }
         } catch (prepareError) {
           const typedPrepareError = prepareError as Error & {
             blockers?: string[]
@@ -1930,6 +1974,9 @@ function ListingWorkspacePageContent() {
         setPublicationLunaReconfirmed(false)
         setListingPackage(nextPackage)
         setForm(fromPackage(object(nextPackage.package_data)))
+        const quickPickPolicySelection = object(
+          object(prepared.handoff).policySelection,
+        )
         const persistedTaxonomy = taxonomyFromPackage(
           nextPackage,
           selected,
@@ -1950,13 +1997,21 @@ function ListingWorkspacePageContent() {
           return {
             ...next,
             fulfillmentPolicyId: preservePolicies
-              ? current.fulfillmentPolicyId || next.fulfillmentPolicyId : next.fulfillmentPolicyId,
+              ? String(quickPickPolicySelection.fulfillmentPolicyId ?? "") ||
+                current.fulfillmentPolicyId || next.fulfillmentPolicyId
+              : next.fulfillmentPolicyId,
             paymentPolicyId: preservePolicies
-              ? current.paymentPolicyId || next.paymentPolicyId : next.paymentPolicyId,
+              ? String(quickPickPolicySelection.paymentPolicyId ?? "") ||
+                current.paymentPolicyId || next.paymentPolicyId
+              : next.paymentPolicyId,
             returnPolicyId: preservePolicies
-              ? current.returnPolicyId || next.returnPolicyId : next.returnPolicyId,
+              ? String(quickPickPolicySelection.returnPolicyId ?? "") ||
+                current.returnPolicyId || next.returnPolicyId
+              : next.returnPolicyId,
             merchantLocationKey: preservePolicies
-              ? current.merchantLocationKey || next.merchantLocationKey : next.merchantLocationKey,
+              ? String(quickPickPolicySelection.merchantLocationKey ?? "") ||
+                current.merchantLocationKey || next.merchantLocationKey
+              : next.merchantLocationKey,
           }
         })
         void loadImageAssets(nextPackage.id, nextPackage.candidate_key)
@@ -2047,7 +2102,8 @@ function ListingWorkspacePageContent() {
           current === "loading" ? "error" : current)
       }
     })()
-  }, [request, draftRequest, loadImageAssets, loadImageRevision, workspaceRetry])
+  }, [request, draftRequest, quickPickHandoffRequest, loadImageAssets,
+    loadImageRevision, workspaceRetry])
 
   useEffect(() => {
     if (!listingPackage || !opportunity || workspaceMode !== "CREATION") return
@@ -2465,6 +2521,9 @@ function ListingWorkspacePageContent() {
   ) ? Number(canonicalOffer.availableQuantity) : null
   const canonicalMarketplace = String(canonicalOffer.marketplaceId ?? "")
   const productionTarget = draftTarget === "PRODUCTION"
+  const quickPickCanonicalMode =
+    quickPickCanonicalHandoff?.publishAuthorizationReady === true &&
+    quickPickCanonicalHandoff?.canonicalQuickPickPackageUsed === true
   const singleHumanPublicationEligible = canonicalReadinessAvailable && (
     draftState.approvalRequirements?.singleHumanPublicationEligible === true
     || draftState.controlledPublication?.eligible === true
@@ -2495,7 +2554,8 @@ function ListingWorkspacePageContent() {
     || publicationPhase === "terminal_failure"
   const publicationButtonBlockReason = !listingPackage
     ? "El paquete V3 aprobado todavía no terminó de cargarse."
-    : !referenceGuidedAttemptId || !finalReviewRecord.previewHash
+    : !quickPickCanonicalMode &&
+        (!referenceGuidedAttemptId || !finalReviewRecord.previewHash)
       ? "La firma visual final todavía no terminó de enlazarse."
       : publicationPhase === "terminal_failure"
         ? "La publicación quedó detenida para evitar un duplicado; primero debe verificarse el resultado existente."
@@ -3747,9 +3807,10 @@ function ListingWorkspacePageContent() {
           throw new Error("EBAY_ONE_CLICK_PUBLICATION_INTENT_NOT_PERSISTED")
         }
         if (
-          authorized.oneClickFreshness?.lunaSnapshot !== "AUTO_REFRESHED"
-          || authorized.oneClickFreshness?.packageSource !==
-            "AUTO_REVALIDATED"
+          !["AUTO_REFRESHED", "DURABLE_REVALIDATED"].includes(String(
+            authorized.oneClickFreshness?.lunaSnapshot ?? ""))
+          || !["AUTO_REVALIDATED", "DURABLE_REUSED"].includes(String(
+            authorized.oneClickFreshness?.packageSource ?? ""))
           || authorized.oneClickFreshness?.ebayPreflightSnapshot !==
             "AUTO_REFRESHED"
           || authorized.oneClickFreshness

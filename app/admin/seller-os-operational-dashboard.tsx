@@ -495,6 +495,8 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
     String(review.description ?? ""))
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState("")
+  const [canonicalPublishAuthorization, setCanonicalPublishAuthorization] =
+    useState<Record<string, unknown> | null>(null)
   const ready = review.finalListingPackageReady === true
   const marketTest = publishHandoff.publishableAsMarketTest === true
   const confirmed = ownerReview.ownerReviewConfirmed === true &&
@@ -502,10 +504,22 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
   const publishAuthorizationReady = confirmed &&
     publishHandoff.readyForOwnerPublishAuthorization === true &&
     publishHandoff.publishCtaEnabled === true
-  const publishAuthorizationUrl = card.opportunityId && card.candidateKey
+  const canonicalHandoff = record(canonicalPublishAuthorization?.handoff)
+  const canonicalSummary = record(canonicalHandoff.summary)
+  const visualPublicationGate = record(
+    canonicalPublishAuthorization?.visualPublicationGate,
+  )
+  const canonicalPublishReady =
+    canonicalHandoff.publishAuthorizationReady === true &&
+    canonicalHandoff.policiesBound === true &&
+    canonicalHandoff.legacyFalseGuardCount === 0 &&
+    visualPublicationGate.allowed === true
+  const publishAuthorizationUrl = canonicalPublishReady &&
+    card.opportunityId && card.candidateKey && card.listingPackageId
     ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(
       card.opportunityId)}&candidate=${encodeURIComponent(
-      card.candidateKey)}&intent=publish#seller-os-final-publication`
+      card.candidateKey)}&package=${encodeURIComponent(
+      card.listingPackageId)}&source=quick-pick-canonical&intent=publish#seller-os-final-publication`
     : null
 
   useEffect(() => {
@@ -527,12 +541,34 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
           ...(intent === "EDIT" ? { edits: { title, description } } : {}) }),
       })
       await onUpdated()
+      setCanonicalPublishAuthorization(null)
       setEditing(false)
       setFeedback(intent === "EDIT"
         ? "Cambios guardados · confirma cuando estés conforme"
         : "Paquete confirmado · listo para autorización de publicación")
     } catch {
       setFeedback("No pude guardar la revisión · el paquete no cambió")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function authorizeCanonicalPublishHandoff() {
+    if (!card.candidateKey || !card.listingPackageId || busy) return
+    setBusy(true)
+    setFeedback("Validando paquete, policies e imágenes canónicas…")
+    try {
+      const payload = await request("/api/admin/ebay/luna-quick-pick", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "PUBLISH_HANDOFF",
+          candidateKey: card.candidateKey,
+          listingPackageId: card.listingPackageId }),
+      })
+      setCanonicalPublishAuthorization(payload)
+      setFeedback("Handoff canónico listo · ninguna guarda legacy bloquea el paquete")
+    } catch {
+      setCanonicalPublishAuthorization(null)
+      setFeedback("El handoff canónico encontró un requisito actual · no se autorizó ningún write")
     } finally {
       setBusy(false)
     }
@@ -678,14 +714,46 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
         className="min-h-11 rounded-xl bg-emerald-200 px-5 text-sm font-black text-emerald-950 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">
         {confirmed ? "CONFIRMADO" : "CONFIRMAR"}
       </button>}
-      {!editing && publishAuthorizationReady && publishAuthorizationUrl &&
-        <a href={publishAuthorizationUrl}
+      {!editing && publishAuthorizationReady &&
+        <button type="button" onClick={() => void authorizeCanonicalPublishHandoff()}
+          disabled={busy || canonicalPublishReady}
           data-quick-pick-publish-authorization-cta
           data-publishable-as-market-test={marketTest ? "true" : "false"}
           className="inline-flex min-h-11 items-center justify-center rounded-xl bg-rose-200 px-5 text-sm font-black text-rose-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200">
-          AUTORIZAR PUBLICACIÓN
-        </a>}
+          {canonicalPublishReady ? "AUTORIZACIÓN LISTA" :
+            "AUTORIZAR PUBLICACIÓN"}
+        </button>}
     </div>
+    {canonicalPublishReady && publishAuthorizationUrl && <div
+      data-quick-pick-canonical-publish-summary
+      className="mt-3 rounded-2xl border border-rose-200/30 bg-rose-200/[0.07] p-3">
+      <p className="text-xs font-black uppercase tracking-widest text-rose-100/70">
+        Listo para publicar en eBay
+      </p>
+      <p className="mt-1 text-sm font-black">{String(
+        canonicalSummary.title ?? review.title ?? "Producto Luna")}</p>
+      <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-5">
+        <div><dt className="text-white/45">Precio</dt><dd className="font-black">
+          {usd(canonicalSummary.price)}</dd></div>
+        <div><dt className="text-white/45">Ganancia</dt><dd className="font-black">
+          {usd(canonicalSummary.expectedProfit)}</dd></div>
+        <div><dt className="text-white/45">Margen</dt><dd className="font-black">
+          {percentage(canonicalSummary.margin)}</dd></div>
+        <div><dt className="text-white/45">Shipping</dt><dd className="font-black">
+          {usd(canonicalSummary.shipping)}</dd></div>
+        <div><dt className="text-white/45">Policies</dt><dd className="font-black text-emerald-100">
+          BOUND</dd></div>
+      </dl>
+      <p className="mt-2 text-[11px] text-white/55">
+        Paquete Quick Pick confirmado · guardas legacy falsas: 0 · el próximo
+        clic abre el publisher existente y es la autorización comercial final.
+      </p>
+      <a href={publishAuthorizationUrl}
+        data-quick-pick-final-publish-cta
+        className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-rose-200 px-5 text-sm font-black text-rose-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200">
+        PUBLICAR EN EBAY
+      </a>
+    </div>}
     {feedback && <p aria-live="polite"
       className="mt-2 text-right text-xs font-bold text-white/60">{feedback}</p>}
   </section>
