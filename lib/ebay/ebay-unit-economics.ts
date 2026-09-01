@@ -52,6 +52,21 @@ function minimumMoney(value: number) {
   return Math.ceil((value + 1e-9) * 100) / 100
 }
 
+function contributionBreakEvenPrice(
+  supplierCost: number,
+  estimatedOutboundShipping: number,
+  variableRate: number,
+  fixedOrderFee: number,
+) {
+  const lowPriceFixedFee = Math.min(fixedOrderFee, 0.30)
+  const lowPrice = (supplierCost + estimatedOutboundShipping +
+    lowPriceFixedFee) / Math.max(0.01, 1 - variableRate)
+  if (lowPrice <= 10) return money(lowPrice)
+  const standardFixedFee = Math.max(fixedOrderFee, 0.40)
+  return money((supplierCost + estimatedOutboundShipping +
+    standardFixedFee) / Math.max(0.01, 1 - variableRate))
+}
+
 export function normalizeEbayUnitEconomicsConfig(
   input: Partial<EbayUnitEconomicsConfig> = {},
 ): EbayUnitEconomicsConfig {
@@ -126,6 +141,7 @@ export function calculateEbayUnitEconomics(
       estimatedNetProfit: null,
       estimatedNetMarginPercent: null,
       estimatedRoiPercent: null,
+      contributionBreakEvenPrice: null,
       minimumProfitablePrice: null,
       passesProfitGate: false,
       config,
@@ -149,6 +165,9 @@ export function calculateEbayUnitEconomics(
       : 0
   const variableRate = config.estimatedEbayFeeRate + config.returnsReserveRate +
     config.promotedListingsReserveRate
+  const exactContributionBreakEvenPrice = contributionBreakEvenPrice(
+    supplierCost, config.estimatedOutboundShipping, variableRate,
+    config.fixedOrderFee)
   const minimumProfitablePrice = (
     supplierCost + config.estimatedOutboundShipping + appliedFixedOrderFee + config.minimumNetProfit
   ) / Math.max(0.01, 1 - variableRate)
@@ -169,6 +188,7 @@ export function calculateEbayUnitEconomics(
     estimatedRoiPercent: Number.isFinite(estimatedRoiPercent)
       ? money(estimatedRoiPercent)
       : null,
+    contributionBreakEvenPrice: exactContributionBreakEvenPrice,
     minimumProfitablePrice: money(minimumProfitablePrice),
     passesProfitGate,
     config,

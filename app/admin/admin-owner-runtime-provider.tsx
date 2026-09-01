@@ -29,6 +29,7 @@ export type OwnerRuntimeQuickPickCard = Readonly<{
   lunaProductId: string | null
   lunaVariantId: string | null
   opportunityId: string | null
+  listingPackageId: string | null
   title: string | null
   candidateKey: string | null
   state: "WAITING" | "RUNNING" | "BLOCKED" | "READY"
@@ -51,6 +52,7 @@ export type OwnerRuntimeQuickPickCard = Readonly<{
     ownerAction: "CONFIRM" | "ENTER_FACT"
   }>[]
   nextOwnerAction: "CONFIRM" | "ENTER_FACT" | null
+  listingReview: Readonly<Record<string, unknown>> | null
   stages: Readonly<Record<string, OwnerRuntimeQuickPickStageState>>
 }>
 
@@ -166,6 +168,7 @@ export function parseOwnerRuntimeQuickPickCard(value: unknown):
     lunaProductId: nullableText(item.lunaProductId, 100),
     lunaVariantId: nullableText(item.lunaVariantId, 100),
     opportunityId: nullableText(item.opportunityId, 100),
+    listingPackageId: nullableText(item.listingPackageId, 100),
     title: nullableText(item.title, 400),
     candidateKey: nullableText(item.candidateKey, 160),
     state: new Set(["WAITING", "RUNNING", "BLOCKED", "READY"]).has(state)
@@ -191,6 +194,8 @@ export function parseOwnerRuntimeQuickPickCard(value: unknown):
     nextOwnerAction: ["CONFIRM", "ENTER_FACT"].includes(
       String(item.nextOwnerAction ?? ""))
       ? item.nextOwnerAction as "CONFIRM" | "ENTER_FACT" : null,
+    listingReview: Object.keys(record(item.listingReview)).length
+      ? Object.freeze(record(item.listingReview)) : null,
     stages: Object.freeze(stages) })
 }
 

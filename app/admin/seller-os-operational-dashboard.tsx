@@ -234,6 +234,198 @@ function quickPickBlockerLabel(value: string | null) {
   return value.replaceAll("_", " ")
 }
 
+function usd(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD",
+  }).format(parsed) : "—"
+}
+
+function percentage(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : "—"
+}
+
+function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
+  card: OwnerRuntimeQuickPickCard
+  request: (path: string, init?: RequestInit) => Promise<Record<string, unknown>>
+  onUpdated: () => Promise<void>
+}>) {
+  const review = record(card.listingReview)
+  const category = record(review.category)
+  const condition = record(review.condition)
+  const shipping = record(review.shipping)
+  const dollar = record(review.dollarCheck)
+  const band = record(review.supportedPriceBand)
+  const ownerReview = record(review.ownerReview)
+  const keywords = Array.isArray(review.keywords)
+    ? review.keywords.map(record) : []
+  const specifics = record(review.itemSpecifics)
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState(String(review.title ?? ""))
+  const [description, setDescription] = useState(
+    String(review.description ?? ""))
+  const [busy, setBusy] = useState(false)
+  const [feedback, setFeedback] = useState("")
+  const ready = review.finalListingPackageReady === true
+  const confirmed = ownerReview.status === "CONFIRMED" &&
+    ownerReview.readyForOwnerPublishAuthorization === true
+
+  useEffect(() => {
+    if (editing) return
+    setTitle(String(review.title ?? ""))
+    setDescription(String(review.description ?? ""))
+  }, [editing, review.description, review.title])
+
+  async function persist(intent: "EDIT" | "CONFIRM") {
+    if (!card.candidateKey || !card.listingPackageId || busy) return
+    setBusy(true)
+    setFeedback(intent === "EDIT" ? "Guardando cambios…" : "Confirmando…")
+    try {
+      await request("/api/admin/ebay/luna-quick-pick", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "OWNER_REVIEW", intent,
+          candidateKey: card.candidateKey,
+          listingPackageId: card.listingPackageId,
+          ...(intent === "EDIT" ? { edits: { title, description } } : {}) }),
+      })
+      await onUpdated()
+      setEditing(false)
+      setFeedback(intent === "EDIT"
+        ? "Cambios guardados · confirma cuando estés conforme"
+        : "Paquete confirmado · listo para autorización de publicación")
+    } catch {
+      setFeedback("No pude guardar la revisión · el paquete no cambió")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!Object.keys(review).length) return null
+  return <section data-quick-pick-owner-review-inline
+    className="mt-3 rounded-2xl border border-amber-200/20 bg-amber-100/[0.04] p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div><p className="text-[11px] font-black uppercase tracking-[0.16em] text-amber-100/70">
+        {review.demand && record(review.demand).status ===
+          "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE"
+          ? "🟡 Prueba de mercado" : "Paquete final"}
+      </p><p className="mt-1 text-xs text-white/50">
+        Revisión owner inline · ningún cambio se publica desde aquí
+      </p></div>
+      <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${
+        confirmed ? "bg-emerald-200 text-emerald-950" : ready
+          ? "bg-amber-200 text-amber-950" : "bg-white/10 text-white/55"}`}>
+        {confirmed ? "CONFIRMADO" : ready ? "LISTO PARA REVISAR" : "INCOMPLETO"}
+      </span>
+    </div>
+
+    <div className="mt-3 grid gap-3 xl:grid-cols-[1.2fr_1fr_0.9fr]">
+      <div className="rounded-xl bg-black/20 p-3">
+        <p className="text-[10px] font-black uppercase tracking-wide text-white/40">
+          Título final optimizado
+        </p>
+        {editing ? <input value={title} maxLength={80}
+          onChange={(event) => setTitle(event.target.value)}
+          className="mt-2 min-h-11 w-full rounded-xl border border-white/15 bg-black/30 px-3 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200" />
+          : <p className="mt-2 text-sm font-black leading-5">{String(
+            review.title ?? "—")}</p>}
+        <p className="mt-3 text-[10px] font-black uppercase tracking-wide text-white/40">
+          Keywords con evidencia
+        </p>
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {keywords.map((keyword) => <li key={String(keyword.term)}
+            className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-[11px]">
+            <strong>{String(keyword.term)}</strong>
+            <span className="ml-1 text-white/45">· {keyword.productRelevance ===
+              "EXACT_PRODUCT" ? "producto exacto" : "proyección"}</span>
+          </li>)}
+          {!keywords.length && <li className="text-xs text-amber-100">
+            No hay términos comerciales con evidencia suficiente
+          </li>}
+        </ul>
+        <p className="mt-3 text-[10px] font-black uppercase tracking-wide text-white/40">
+          Descripción
+        </p>
+        {editing ? <textarea value={description} rows={6} maxLength={5_000}
+          onChange={(event) => setDescription(event.target.value)}
+          className="mt-2 min-h-32 w-full rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-sm leading-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200" />
+          : <p className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-xs leading-5 text-white/70">
+            {String(review.description ?? "—")}
+          </p>}
+      </div>
+
+      <div className="rounded-xl bg-black/20 p-3">
+        <p className="text-[10px] font-black uppercase tracking-wide text-white/40">
+          Item specifics
+        </p>
+        <dl className="mt-2 space-y-1.5 text-xs">
+          {Object.entries(specifics).map(([key, value]) => <div key={key}
+            className="flex min-h-8 items-center justify-between gap-3 border-b border-white/[0.06] pb-1">
+            <dt className="text-white/50">{key}</dt>
+            <dd className="text-right font-bold">{String(value)}</dd>
+          </div>)}
+        </dl>
+        <dl className="mt-3 space-y-2 border-t border-white/10 pt-3 text-xs">
+          <div><dt className="text-white/40">Categoría</dt>
+            <dd className="mt-1 font-bold">{String(category.name ?? "—")}
+              {category.id ? ` · ${String(category.id)}` : ""}</dd></div>
+          <div><dt className="text-white/40">Condición</dt>
+            <dd className="mt-1 font-bold">{String(condition.label ?? "—")}</dd></div>
+          <div><dt className="text-white/40">Shipping supplier</dt>
+            <dd className="mt-1 font-bold">{usd(shipping.amount)}</dd></div>
+        </dl>
+      </div>
+
+      <div className="rounded-xl bg-black/20 p-3">
+        <p className="text-[10px] font-black uppercase tracking-wide text-white/40">
+          Dollar Check
+        </p>
+        <dl className="mt-2 space-y-2 text-xs">
+          {([
+            ["Supplier cost", usd(dollar.supplierCost)],
+            ["Shipping", usd(dollar.shipping)],
+            ["eBay fees", usd(dollar.ebayFees)],
+            ["Target price", usd(dollar.targetPrice)],
+            ["Ganancia esperada", usd(dollar.expectedContribution)],
+            ["Margen", percentage(dollar.expectedMargin)],
+            ["ROI", percentage(dollar.expectedRoi)],
+            ["Break-even", usd(dollar.breakEvenPrice)],
+            ["Mínimo rentable", usd(dollar.minimumProfitablePrice)],
+          ] as const).map(([label, value]) => <div key={label}
+            className="flex min-h-8 items-center justify-between gap-2 border-b border-white/[0.06] pb-1">
+            <dt className="text-white/50">{label}</dt><dd className="font-black">{value}</dd>
+          </div>)}
+        </dl>
+        <p className="mt-3 rounded-xl border border-amber-200/15 bg-amber-200/[0.06] p-2 text-[11px] leading-4 text-amber-50">
+          Precio soportado: {String(band.status ?? "UNPROVEN")}.
+          La demanda y competitividad del precio no están probadas.
+        </p>
+      </div>
+    </div>
+
+    <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <button type="button" onClick={() => setEditing((value) => !value)}
+        disabled={busy || confirmed}
+        className="min-h-11 rounded-xl border border-cyan-200/35 px-5 text-sm font-black text-cyan-100 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+        {editing ? "CANCELAR" : "EDITAR"}
+      </button>
+      {editing && <button type="button" onClick={() => void persist("EDIT")}
+        disabled={busy || !title.trim() || !description.trim()}
+        className="min-h-11 rounded-xl bg-cyan-200 px-5 text-sm font-black text-cyan-950 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+        GUARDAR CAMBIOS
+      </button>}
+      {!editing && <button type="button"
+        onClick={() => void persist("CONFIRM")}
+        disabled={busy || !ready || confirmed}
+        className="min-h-11 rounded-xl bg-emerald-200 px-5 text-sm font-black text-emerald-950 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">
+        {confirmed ? "CONFIRMADO" : "CONFIRMAR"}
+      </button>}
+    </div>
+    {feedback && <p aria-live="polite"
+      className="mt-2 text-right text-xs font-bold text-white/60">{feedback}</p>}
+  </section>
+}
+
 export function SellerOsOperationalDashboard() {
   const ownerRuntime = useAdminOwnerRuntime()
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(emptySnapshot)
@@ -549,6 +741,9 @@ export function SellerOsOperationalDashboard() {
                   : "ingresar el hecho exacto"}
               </li>)}
             </ul>}
+            {card.listingReview && <QuickPickOwnerReviewInline card={card}
+              request={adminRequest}
+              onUpdated={ownerRuntime.refreshQuickPicks} />}
             {card.exactBlockers.length > 0 && <details className="mt-2">
               <summary className="min-h-11 cursor-pointer py-3 text-xs font-bold text-white/45">
                 Ver evidencia técnica

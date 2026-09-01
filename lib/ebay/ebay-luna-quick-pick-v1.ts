@@ -34,6 +34,10 @@ import {
   // @ts-expect-error Node direct TypeScript tests require the explicit extension;
   // the production bundler resolves the same source module.
   "./ebay-demand-first-broad-net-orchestrator-v1.ts"
+import { buildQuickPickMarketTestListingReviewV1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit
+  // extension; the production bundler resolves the same source module.
+  "./ebay-quick-pick-market-test-package-v1.ts"
 
 export const LUNA_QUICK_PICK_FAST_LISTING_V1 =
   "LUNA_QUICK_PICK_FAST_LISTING_V1" as const
@@ -112,6 +116,7 @@ export type LunaQuickPickCardV1 = Readonly<{
   updatedAt: string | null
   stages: Readonly<Record<string, "WAITING" | "RUNNING" | "PASS" | "BLOCKED">>
   dollarCheck: JsonRecord | null
+  listingReview: JsonRecord | null
   elapsedMs: number
 }>
 
@@ -325,6 +330,7 @@ function batchCardSnapshotV1(value: LunaQuickPickCardV1) {
     variantSelectionRequired: value.variantSelectionRequired,
     variants: value.variants, alreadyLive: value.alreadyLive,
     linkedLiveItemIds: value.linkedLiveItemIds, stages: value.stages,
+    listingReview: value.listingReview,
     updatedAt: value.updatedAt ?? new Date().toISOString(),
     marketplaceWrites: 0 as const })
 }
@@ -685,6 +691,7 @@ function card(input: Partial<LunaQuickPickCardV1> &
     rehydrated: input.rehydrated ?? false,
     updatedAt: input.updatedAt ?? null,
     stages: input.stages ?? emptyStages(), dollarCheck: input.dollarCheck ?? null,
+    listingReview: input.listingReview ?? null,
     elapsedMs: input.elapsedMs ?? 0 })
 }
 
@@ -1181,17 +1188,30 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       ? [String(row.supplier_variant_id)] : []))]
   const packageRead = opportunityIds.length
     ? await input.supabase.from("ebay_listing_packages")
-      .select("id,opportunity_id").in("opportunity_id", opportunityIds)
+      .select("id,account_key,opportunity_id,candidate_key,status,package_data,readiness,source_observed_at,created_by,updated_at")
+      .in("opportunity_id", opportunityIds)
+      .order("updated_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(LUNA_QUICK_PICK_MAX_INPUTS)
     : { data: [], error: null }
   if (packageRead.error) throw new Error("LUNA_QUICK_PICK_PACKAGE_READ_FAILED")
   const catalogRead = variantIds.length
     ? await input.supabase.from("market_radar_latest_variants")
-      .select("supplier_product_id,supplier_variant_id,sku,product_url")
+      .select("product_id,supplier_product_id,supplier_variant_id,sku,product_url,title,variant_title,vendor,product_type,tags,metadata,featured_image_url,image_urls,captured_at")
       .eq("source_key", "lunaportex")
       .in("supplier_variant_id", variantIds).limit(100)
     : { data: [], error: null }
   if (catalogRead.error) throw new Error("LUNA_QUICK_PICK_CATALOG_READ_FAILED")
+  const productIds = [...new Set(rows(catalogRead.data).flatMap((row) =>
+    text(row.product_id, 80) ? [String(row.product_id)] : []))]
+  const productRead = productIds.length
+    ? await input.supabase.from("market_radar_products")
+      .select("id,body_html,metadata").in("id", productIds)
+      .limit(LUNA_QUICK_PICK_MAX_INPUTS)
+    : { data: [], error: null }
+  if (productRead.error) {
+    throw new Error("LUNA_QUICK_PICK_PRODUCT_CATALOG_READ_FAILED")
+  }
   const frontierRead = variantIds.length && input.accountKey
     ? await input.supabase.rpc(
       "get_seller_os_latest_profitability_frontiers_v1", {
@@ -1204,8 +1224,13 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
   if (frontierRead.error) {
     throw new Error("LUNA_QUICK_PICK_FRONTIER_READ_FAILED")
   }
-  const packages = new Map(rows(packageRead.data).map((row) =>
-    [String(row.opportunity_id), String(row.id)]))
+  const packages = new Map<string, JsonRecord>()
+  for (const row of rows(packageRead.data)) {
+    const opportunityId = String(row.opportunity_id)
+    if (!packages.has(opportunityId)) packages.set(opportunityId, row)
+  }
+  const products = new Map(rows(productRead.data).map((row) =>
+    [String(row.id), row]))
   const catalog = new Map(rows(catalogRead.data).map((row) => [identityKey(
     String(row.supplier_product_id), String(row.supplier_variant_id),
     String(row.sku)), row]))
@@ -1256,6 +1281,15 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       ? sourceUrlWithVariant(canonicalUrl,
         String(row.supplier_variant_id)) : `quick-pick:${row.candidate_key}`)
     const frontier = frontiers.get(identity)
+    const listingPackage = packages.get(String(row.id))
+    const listingReview = reviewReady && listingPackage
+      ? buildQuickPickMarketTestListingReviewV1({
+        opportunity: row,
+        listingPackage,
+        frontier,
+        catalogRow,
+        catalogProduct: products.get(String(catalogRow?.product_id ?? "")),
+      }) : null
     const shippingUsd = frontier?.shippingStatus ===
       "SHIPPING_DURABLY_PERSISTED"
       ? number(frontier.shippingValue) : null
@@ -1315,7 +1349,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     return Object.freeze({ sourceUrl, canonicalUrl,
       candidateKey: String(row.candidate_key),
       candidateId: String(row.candidate_key), opportunityId: String(row.id),
-      listingPackageId: packages.get(String(row.id)) ?? null,
+      listingPackageId: listingPackage ? String(listingPackage.id) : null,
       sourceSku: text(row.supplier_sku, 120),
       lunaProductId: text(row.supplier_product_id, 80),
       lunaVariantId: text(row.supplier_variant_id, 80),
@@ -1392,6 +1426,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         stock: "STOCK_SAFE",
         demandGrain: marketTestReady ? "UNPROVEN" : "FAMILY",
       }) : null,
+      listingReview,
       updatedAt: text(row.updated_at, 80),
       elapsedMs: 0,
     })
