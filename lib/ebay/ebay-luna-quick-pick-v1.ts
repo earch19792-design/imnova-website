@@ -84,6 +84,15 @@ export type LunaQuickPickCardV1 = Readonly<{
   marketTestPathEligible: boolean
   marketTestReady: boolean
   marketTestReview: JsonRecord | null
+  requiredItemSpecificsCount: number | null
+  requiredItemSpecificsSatisfied: number | null
+  unresolvedRequiredAspects: readonly string[]
+  deterministicResolvedCount: number
+  marketplaceFallbackResolvedCount: number
+  aiCallCount: number
+  aiAspectsResolvedCount: number
+  factInvented: false
+  marketplaceReadinessReady: boolean
   shippingUsd: number | null
   rehydrated: boolean
   updatedAt: string | null
@@ -421,6 +430,21 @@ function card(input: Partial<LunaQuickPickCardV1> &
     marketTestPathEligible: input.marketTestPathEligible ?? false,
     marketTestReady: input.marketTestReady ?? false,
     marketTestReview: input.marketTestReview ?? null,
+    requiredItemSpecificsCount:
+      input.requiredItemSpecificsCount ?? null,
+    requiredItemSpecificsSatisfied:
+      input.requiredItemSpecificsSatisfied ?? null,
+    unresolvedRequiredAspects: Object.freeze([
+      ...(input.unresolvedRequiredAspects ?? []),
+    ]),
+    deterministicResolvedCount: input.deterministicResolvedCount ?? 0,
+    marketplaceFallbackResolvedCount:
+      input.marketplaceFallbackResolvedCount ?? 0,
+    aiCallCount: input.aiCallCount ?? 0,
+    aiAspectsResolvedCount: input.aiAspectsResolvedCount ?? 0,
+    factInvented: false,
+    marketplaceReadinessReady:
+      input.marketplaceReadinessReady ?? false,
     shippingUsd: input.shippingUsd ?? null,
     rehydrated: input.rehydrated ?? false,
     updatedAt: input.updatedAt ?? null,
@@ -960,6 +984,13 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const intake = record(assessment.smartStockingListingIntakeV1)
     const shipping = record(assessment.radarAutomaticLunaShippingContinuationV1)
     const marketTestReview = record(assessment.quickPickMarketTestReviewV1)
+    const specificsContinuation = record(
+      assessment.quickPickRequiredSpecificsContinuationV1)
+    const canonicalMarketplaceReadiness = record(
+      assessment.canonicalMarketplaceReadinessV1)
+    const specificsResolution = record(
+      assessment.marketplaceRequiredSpecificsBatchResolutionV1)
+    const specificsResolutions = rows(specificsResolution.resolutions)
     const listingReady = intake.finalDecision === "LISTING_READY" ||
       row.decision === "LISTING_READY"
     const marketTestReady = marketTestReview.finalDecision ===
@@ -1024,6 +1055,33 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       marketTestPathEligible: marketTestReady,
       marketTestReady,
       marketTestReview: marketTestReady ? marketTestReview : null,
+      requiredItemSpecificsCount:
+        number(canonicalMarketplaceReadiness.requiredItemSpecificsCount) ??
+        number(specificsContinuation.requiredItemSpecificsCount),
+      requiredItemSpecificsSatisfied:
+        number(canonicalMarketplaceReadiness.requiredItemSpecificsSatisfied) ??
+        number(specificsContinuation.requiredItemSpecificsSatisfiedAfter),
+      unresolvedRequiredAspects: Array.isArray(
+        canonicalMarketplaceReadiness.unsupportedRequiredSpecifics)
+        ? canonicalMarketplaceReadiness.unsupportedRequiredSpecifics
+          .flatMap((value) => text(value, 120) ? [String(value)] : [])
+        : Array.isArray(specificsContinuation.unresolvedAspectsAfter)
+          ? specificsContinuation.unresolvedAspectsAfter.flatMap((value) =>
+            text(value, 120) ? [String(value)] : []) : [],
+      deterministicResolvedCount: specificsResolutions.filter((value) =>
+        ["EXPLICIT_PRODUCT_TRUTH", "DETERMINISTIC_DERIVATION"]
+          .includes(String(value.resolutionClass)) &&
+        value.humanReviewRequired !== true).length,
+      marketplaceFallbackResolvedCount: specificsResolutions.filter((value) =>
+        value.resolutionClass === "MARKETPLACE_ALLOWED_FALLBACK" &&
+        value.humanReviewRequired !== true).length,
+      aiCallCount: number(specificsContinuation.aiCallCount) ?? 0,
+      aiAspectsResolvedCount: specificsResolutions.filter((value) =>
+        String(value.resolutionClass).startsWith("AI_") &&
+        value.humanReviewRequired !== true).length,
+      factInvented: false,
+      marketplaceReadinessReady:
+        canonicalMarketplaceReadiness.ready === true || reviewReady,
       shippingUsd,
       rehydrated: input.includeRecent === true,
       stages: mapped,

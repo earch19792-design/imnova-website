@@ -36,6 +36,15 @@ type QuickPickCard = {
   marketTestPathEligible: boolean
   marketTestReady: boolean
   marketTestReview: Record<string, unknown> | null
+  requiredItemSpecificsCount: number | null
+  requiredItemSpecificsSatisfied: number | null
+  unresolvedRequiredAspects: string[]
+  deterministicResolvedCount: number
+  marketplaceFallbackResolvedCount: number
+  aiCallCount: number
+  aiAspectsResolvedCount: number
+  factInvented: false
+  marketplaceReadinessReady: boolean
   shippingUsd: number | null
   rehydrated: boolean
   updatedAt: string | null
@@ -130,6 +139,12 @@ export default function LunaQuickPickPage() {
       demandEvidenceClass: null, demandNegativeEvidencePresent: false,
       marketTestPathEligible: false, marketTestReady: false,
       marketTestReview: null,
+      requiredItemSpecificsCount: null,
+      requiredItemSpecificsSatisfied: null,
+      unresolvedRequiredAspects: [], deterministicResolvedCount: 0,
+      marketplaceFallbackResolvedCount: 0, aiCallCount: 0,
+      aiAspectsResolvedCount: 0, factInvented: false,
+      marketplaceReadinessReady: false,
       shippingUsd: null, rehydrated: false, updatedAt: null,
       dollarCheck: null, elapsedMs: 0 })))
     try {
@@ -291,7 +306,7 @@ export default function LunaQuickPickPage() {
               : "Abre la autoridad de publicación existente. Este Quick Pick no publica automáticamente."}</p>
           </section>}
 
-          <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="flex min-h-11 cursor-pointer items-center font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Operación rehidratada: {card.rehydrated ? "sí" : "no"}</div><div>Demanda durable previa: {card.durableFamilyHit ? "sí" : "no"}</div><div>Discovery bajo demanda: {card.onDemandDemandDiscoveryExecuted ? "ejecutado" : card.onDemandDemandDiscoveryRequired ? "requerido" : "no requerido"}</div><div>Estado demanda: {card.familyDemandStatus ?? "—"}</div><div>Comparables sold: {card.soldComparableCount}</div><div>Binding familia: {card.familyBindingCreatedOrReused ? "creado/reutilizado" : "—"}</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Actualizado: {card.updatedAt ? new Date(card.updatedAt).toLocaleString("es-NI") : "—"}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>
+          <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="flex min-h-11 cursor-pointer items-center font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Operación rehidratada: {card.rehydrated ? "sí" : "no"}</div><div>Demanda durable previa: {card.durableFamilyHit ? "sí" : "no"}</div><div>Discovery bajo demanda: {card.onDemandDemandDiscoveryExecuted ? "ejecutado" : card.onDemandDemandDiscoveryRequired ? "requerido" : "no requerido"}</div><div>Estado demanda: {card.familyDemandStatus ?? "—"}</div><div>Comparables sold: {card.soldComparableCount}</div><div>Binding familia: {card.familyBindingCreatedOrReused ? "creado/reutilizado" : "—"}</div><div>Specifics requeridos: {card.requiredItemSpecificsCount ?? "—"}</div><div>Specifics satisfechos: {card.requiredItemSpecificsSatisfied ?? "—"}</div><div>Specifics pendientes: {card.unresolvedRequiredAspects.length ? card.unresolvedRequiredAspects.join(", ") : "ninguno"}</div><div>Resueltos determinísticamente: {card.deterministicResolvedCount}</div><div>Fallbacks marketplace: {card.marketplaceFallbackResolvedCount}</div><div>Llamadas IA: {card.aiCallCount}</div><div>Aspectos resueltos por IA: {card.aiAspectsResolvedCount}</div><div>Fact inventado: no</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Actualizado: {card.updatedAt ? new Date(card.updatedAt).toLocaleString("es-NI") : "—"}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>
         </article>)}
         </div>}
       </section>)}
