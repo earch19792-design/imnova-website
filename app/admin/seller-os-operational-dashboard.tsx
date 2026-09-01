@@ -597,9 +597,13 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
       }
       setPublicationOauthFeedback("Abriendo autorización oficial de eBay…")
       window.location.assign(authorizationUrl)
-    } catch {
+    } catch (cause) {
+      const safeFailureCode = cause instanceof Error &&
+          /^[A-Z0-9_]{3,180}$/.test(cause.message)
+        ? cause.message
+        : "EBAY_PUBLICATION_OAUTH_BROWSER_START_FAILED"
       setPublicationOauthFeedback(
-        "No pude iniciar la ceremonia segura · no se creó ningún token",
+        `OAuth no iniciado · ${safeFailureCode}`,
       )
       setPublicationOauthStarting(false)
     }

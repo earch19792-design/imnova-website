@@ -168,6 +168,7 @@ export function getEbayPublicationOAuthConfiguration(
     clientPair: credentials.clientId && credentials.clientSecret
       ? "PRESENT" as const
       : "MISSING" as const,
+    clientPairComplete: credentials.pairComplete,
     clientSource: credentials.clientSource,
     runame: credentials.runame ? "PRESENT" as const : "MISSING" as const,
     runameSource: credentials.runameSource,
@@ -190,6 +191,16 @@ function assertAuthorizationReady(environment: NodeJS.ProcessEnv) {
   }
   if (!configuration.writeGatesAllOff) {
     throw new Error("EBAY_PUBLICATION_OAUTH_WRITE_GATES_MUST_REMAIN_OFF")
+  }
+  if (configuration.clientPair !== "PRESENT" ||
+      !configuration.clientPairComplete) {
+    throw new Error("EBAY_PUBLICATION_OAUTH_CLIENT_CONFIG_MISSING")
+  }
+  if (configuration.runame !== "PRESENT") {
+    throw new Error("EBAY_PUBLICATION_OAUTH_RUNAME_MISSING")
+  }
+  if (!configuration.accountScopeReady || !configuration.identityBound) {
+    throw new Error("EBAY_PUBLICATION_OAUTH_ACCOUNT_BINDING_MISSING")
   }
   if (!configuration.configured) {
     throw new Error("EBAY_PUBLICATION_OAUTH_NOT_CONFIGURED")
