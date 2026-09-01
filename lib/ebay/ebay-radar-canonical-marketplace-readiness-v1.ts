@@ -20,6 +20,7 @@ import type { EbayTaxonomyAspectIntelligence } from
   "./ebay-seller-keyword-demand-gateway"
 import {
   MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
+  REQUIRED_SPECIFICS_DIGEST_VERSION,
   requiredSpecificBatchEvidenceDigestV1,
 } from "./ebay-marketplace-required-specifics-batch-resolution-v1"
 
@@ -327,6 +328,7 @@ function compatibleBatchResolution(input: Readonly<{
   if (stored.contractVersion !==
       MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1
       || stored.aspectScope !== REQUIRED_ASPECT_SCOPE
+      || stored.digestVersion !== REQUIRED_SPECIFICS_DIGEST_VERSION
       || stored.authority !== "SELLER_OS_DETERMINISTIC_FACTORY"
       || stored.radarCandidateId !== input.batchInput.radarCandidateId
       || stored.lunaProductId !== input.batchInput.lunaProductId
@@ -455,6 +457,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
       ? text(storedBatchResolution.evidenceDigest, 80) : null
   const requiredSpecificsBatchResolutionCompleteScope =
     storedBatchResolution.aspectScope === REQUIRED_ASPECT_SCOPE
+    && storedBatchResolution.digestVersion === REQUIRED_SPECIFICS_DIGEST_VERSION
   const reusable = listingPackageId ? existingEvidence({
     opportunity: input.opportunity,
     productTruthDigest,

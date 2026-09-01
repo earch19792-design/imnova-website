@@ -7,6 +7,7 @@ import type { RadarMarketplaceTaxonomyReaderV1 } from
 import {
   createOpenAiRequiredSpecificsBatchResolverV1,
   MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
+  REQUIRED_SPECIFICS_DIGEST_VERSION,
   requiredSpecificBatchEvidenceDigestV1,
   resolveMarketplaceRequiredSpecificsBatchV1,
 } from "./ebay-marketplace-required-specifics-batch-resolution-v1"
@@ -155,6 +156,7 @@ async function persistResolution(input: Readonly<{
     marketplaceId: input.resolution.marketplaceId,
     categoryId: input.resolution.categoryId,
     aspectScope: REQUIRED_ASPECT_SCOPE,
+    digestVersion: REQUIRED_SPECIFICS_DIGEST_VERSION,
     inputEvidenceDigest: input.resolution.inputEvidenceDigest,
     resolutions: input.resolution.resolutions,
     groupedBy: "EBAY_MARKETPLACE_PLUS_CATEGORY_ID",
@@ -213,6 +215,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const legacyScopeReconciliation = Boolean(currentMarker
       && currentMarker.completedAt
       && (currentMarker.aspectScope !== REQUIRED_ASPECT_SCOPE
+        || existingResolution.digestVersion !==
+          REQUIRED_SPECIFICS_DIGEST_VERSION
         || (["LUNA_QUICK_PICK_SPECIFICS_BATCH_INPUT_INVALID",
           "REQUIRED_SPECIFICS_AI_CONFIGURATION_MISSING"].includes(
           String(currentMarker.resolverReasonCode ?? ""))

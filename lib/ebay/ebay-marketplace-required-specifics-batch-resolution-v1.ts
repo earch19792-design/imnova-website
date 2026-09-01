@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 
 export const MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1 =
   "MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1" as const
+export const REQUIRED_SPECIFICS_DIGEST_VERSION = "CANONICAL_JSON_V1" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -94,9 +95,21 @@ function key(value: unknown) {
     .toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ").trim()
 }
 
+function canonical(value: unknown): string {
+  if (value === undefined) return "null"
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as JsonRecord)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, entry]) => `${JSON.stringify(name)}:${canonical(entry)}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
+}
+
 export function requiredSpecificBatchEvidenceDigestV1(value: unknown) {
   return `sha256:${createHash("sha256")
-    .update(JSON.stringify(value)).digest("hex")}`
+    .update(canonical(value)).digest("hex")}`
 }
 
 function officialValue(
