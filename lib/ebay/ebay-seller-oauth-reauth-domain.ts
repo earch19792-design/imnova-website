@@ -13,6 +13,7 @@ import {
   getEbayProRuntimeBoundary,
   SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION,
 } from "./environment-boundaries"
+import { EBAY_PUBLICATION_OAUTH_SCOPES } from "./ebay-publication-oauth-domain"
 
 export const EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION =
   "EBAY_SELLER_OAUTH_REAUTH_V1" as const
@@ -28,6 +29,8 @@ export const EBAY_SELLER_OAUTH_REAUTH_COOKIE =
   "__Secure-ebay_seller_oauth_reauth" as const
 export const EBAY_MARKETING_READONLY_OAUTH_COOKIE =
   "__Secure-ebay_marketing_readonly_oauth" as const
+export const EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE =
+  "__Secure-ebay_publication_production_oauth" as const
 export const EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS = 5 * 60 * 1_000
 export const EBAY_SELLER_OAUTH_REAUTH_PLATFORM_LIMIT_MS = 30_000
 export const EBAY_SELLER_OAUTH_REAUTH_INTERNAL_HARD_BUDGET_MS = 24_000
@@ -53,6 +56,7 @@ export const EBAY_MARKETING_READONLY_OAUTH_SCOPES = [
 export const EBAY_SELLER_OAUTH_REAUTH_PURPOSES = [
   "SELLER_GENERAL",
   "MARKETING_READONLY",
+  "PUBLICATION_PRODUCTION",
 ] as const
 export type EbaySellerOAuthReauthPurpose =
   typeof EBAY_SELLER_OAUTH_REAUTH_PURPOSES[number]
@@ -289,9 +293,13 @@ export function assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
 }
 
 function scopesForPurpose(purpose: EbaySellerOAuthReauthPurpose) {
-  return purpose === "MARKETING_READONLY"
-    ? EBAY_MARKETING_READONLY_OAUTH_SCOPES
-    : EBAY_SELLER_OAUTH_REAUTH_SCOPES
+  if (purpose === "MARKETING_READONLY") {
+    return EBAY_MARKETING_READONLY_OAUTH_SCOPES
+  }
+  if (purpose === "PUBLICATION_PRODUCTION") {
+    return EBAY_PUBLICATION_OAUTH_SCOPES
+  }
+  return EBAY_SELLER_OAUTH_REAUTH_SCOPES
 }
 
 function exactScopeSet(

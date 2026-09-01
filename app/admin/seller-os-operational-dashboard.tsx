@@ -497,6 +497,10 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
   const [feedback, setFeedback] = useState("")
   const [canonicalPublishAuthorization, setCanonicalPublishAuthorization] =
     useState<Record<string, unknown> | null>(null)
+  const [publicationOauthStarting, setPublicationOauthStarting] =
+    useState(false)
+  const [publicationOauthFeedback, setPublicationOauthFeedback] =
+    useState("")
   const ready = review.finalListingPackageReady === true
   const marketTest = publishHandoff.publishableAsMarketTest === true
   const confirmed = ownerReview.ownerReviewConfirmed === true &&
@@ -571,6 +575,33 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
       setFeedback("El handoff canónico encontró un requisito actual · no se autorizó ningún write")
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function connectEbayProduction() {
+    if (publicationOauthStarting) return
+    setPublicationOauthStarting(true)
+    setPublicationOauthFeedback(
+      "Preparando ceremonia segura en este mismo Chrome…",
+    )
+    try {
+      const payload = await request(
+        "/api/admin/ebay/publication-oauth/start",
+        { method: "POST" },
+      )
+      const authorizationUrl = String(payload.authorizationUrl ?? "")
+      const target = new URL(authorizationUrl)
+      if (target.origin !== "https://auth.ebay.com" ||
+          target.pathname !== "/oauth2/authorize") {
+        throw new Error("EBAY_PUBLICATION_OAUTH_REDIRECT_INVALID")
+      }
+      setPublicationOauthFeedback("Abriendo autorización oficial de eBay…")
+      window.location.assign(authorizationUrl)
+    } catch {
+      setPublicationOauthFeedback(
+        "No pude iniciar la ceremonia segura · no se creó ningún token",
+      )
+      setPublicationOauthStarting(false)
     }
   }
 
@@ -748,6 +779,26 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
         Paquete Quick Pick confirmado · guardas legacy falsas: 0 · el próximo
         clic abre el publisher existente y es la autorización comercial final.
       </p>
+      <div className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3">
+        <p className="text-xs font-black text-cyan-100">
+          Conexión eBay Production
+        </p>
+        <p className="mt-1 text-[11px] leading-4 text-white/55">
+          Inicia y termina OAuth desde este mismo Chrome owner. Seller OS
+          emitirá la cookie protegida antes de enviarte a eBay.
+        </p>
+        <button type="button" onClick={() => void connectEbayProduction()}
+          disabled={publicationOauthStarting}
+          data-ebay-production-oauth-browser-start
+          className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-cyan-200/40 px-5 text-sm font-black text-cyan-100 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+          {publicationOauthStarting ? "CONECTANDO…" :
+            "CONECTAR EBAY PRODUCTION"}
+        </button>
+        {publicationOauthFeedback && <p aria-live="polite"
+          className="mt-2 text-xs font-bold text-white/60">
+          {publicationOauthFeedback}
+        </p>}
+      </div>
       <a href={publishAuthorizationUrl}
         data-quick-pick-final-publish-cta
         className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-rose-200 px-5 text-sm font-black text-rose-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200">

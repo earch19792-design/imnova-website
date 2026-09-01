@@ -1,69 +1,84 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 
 import {
-  getEbayPublicationOAuthConfiguration,
-  startEbayPublicationOAuth,
+  startEbayPublicationOAuthBrowserCeremony,
 } from "@/lib/ebay/ebay-publication-oauth-authorization"
+import {
+  assertEbaySellerOAuthReauthAdmin,
+  assertEbaySellerOAuthReauthSameOrigin,
+  ebaySellerOAuthReauthCookieOptions,
+  EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+  EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE,
+  EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+  EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
+} from "@/lib/ebay/ebay-seller-oauth-reauth-domain"
+import {
+  createSupabaseEbaySellerOAuthReauthStateLedger,
+} from "@/lib/ebay/ebay-seller-oauth-reauth-ledger"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
 
-function safeCode(error: unknown) {
-  const code = error instanceof Error ? error.message : ""
+function safeCode(cause: unknown) {
+  const code = cause instanceof Error ? cause.message : ""
   return /^[A-Z0-9_]{3,180}$/.test(code)
     ? code
-    : "EBAY_PUBLICATION_OAUTH_START_FAILED"
+    : "EBAY_PUBLICATION_OAUTH_BROWSER_START_FAILED"
 }
 
-export async function POST(req: Request) {
-  const validation = await validateAdminApiRequest(req)
-  if (!validation.ok) {
-    return NextResponse.json(
-      { success: false, error: validation.error ?? "admin_forbidden" },
-      { status: validation.status || 403 },
-    )
-  }
-  let input: { publicKeyPem?: unknown } = {}
+const responseHeaders = {
+  "Cache-Control": "private, no-store, no-cache, max-age=0",
+  Pragma: "no-cache",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+} as const
+
+export async function POST(request: NextRequest) {
   try {
-    input = await req.json()
-  } catch {
-    return NextResponse.json(
-      { success: false, error: "EBAY_PUBLICATION_OAUTH_INVALID_JSON" },
-      { status: 400 },
-    )
-  }
-  if (typeof input.publicKeyPem !== "string") {
-    return NextResponse.json(
-      { success: false, error: "EBAY_PUBLICATION_OAUTH_PUBLIC_KEY_REQUIRED" },
-      { status: 400 },
-    )
-  }
-  try {
-    const result = await startEbayPublicationOAuth(
-      getSupabaseAdminClient(),
+    assertEbaySellerOAuthReauthSameOrigin(request)
+    const validation = await validateAdminApiRequest(request)
+    const actorUserId = assertEbaySellerOAuthReauthAdmin(validation)
+    const supabase = getSupabaseAdminClient()
+    const prepared = await startEbayPublicationOAuthBrowserCeremony(
+      supabase,
       {
-        publicKeyPem: input.publicKeyPem,
-        actorUserId: validation.userId,
+        actorUserId,
+        requestHost: request.nextUrl.host,
+        ledger: createSupabaseEbaySellerOAuthReauthStateLedger(supabase),
       },
     )
-    return NextResponse.json({ success: true, ...result }, {
-      headers: {
-        "Cache-Control": "no-store",
-        "Referrer-Policy": "no-referrer",
-      },
-    })
-  } catch (error) {
+    const response = NextResponse.json({
+      success: true,
+      authorizationUrl: prepared.authorizationUrl,
+      expiresAt: new Date(prepared.expiresAt).toISOString(),
+      ceremony: prepared.ceremony,
+    }, { status: 200, headers: responseHeaders })
+    response.cookies.set(
+      EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+      "",
+      ebaySellerOAuthReauthCookieOptions(0),
+    )
+    response.cookies.set(
+      EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+      "",
+      ebaySellerOAuthReauthCookieOptions(0),
+    )
+    response.cookies.set(
+      EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE,
+      prepared.cookie,
+      ebaySellerOAuthReauthCookieOptions(
+        Math.floor(EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS / 1_000),
+      ),
+    )
+    return response
+  } catch (cause) {
     return NextResponse.json({
       success: false,
-      error: safeCode(error),
-      configuration: getEbayPublicationOAuthConfiguration(),
-    }, {
-      status: 502,
-      headers: { "Cache-Control": "no-store" },
-    })
+      error: safeCode(cause),
+    }, { status: 403, headers: responseHeaders })
   }
 }

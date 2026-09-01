@@ -21,7 +21,7 @@ export const EBAY_PUBLICATION_OAUTH_BUNDLE_VERSION =
   "EBAY_PUBLICATION_OAUTH_CREDENTIAL_BUNDLE_V1" as const
 
 export const EBAY_PUBLICATION_OAUTH_CALLBACK_PATH =
-  "/api/admin/ebay/commercial-orders-oauth/callback" as const
+  "/api/admin/ebay/monitor/seller-oauth-reauth" as const
 
 export function createEbayPublicationOAuthState() {
   return randomBytes(32).toString("base64url")

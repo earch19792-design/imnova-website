@@ -10,6 +10,8 @@ import {
   assertEbaySellerOAuthReauthAdmin,
   assertEbaySellerOAuthReauthSameOrigin,
   ebaySellerOAuthReauthCookieOptions,
+  EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+  EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE,
   EBAY_SELLER_OAUTH_REAUTH_COOKIE,
   EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
 } from "@/lib/ebay/ebay-seller-oauth-reauth-domain"
@@ -74,6 +76,16 @@ export async function POST(request: NextRequest) {
       ebaySellerOAuthReauthCookieOptions(
         Math.floor(EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS / 1_000),
       ),
+    )
+    response.cookies.set(
+      EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+      "",
+      ebaySellerOAuthReauthCookieOptions(0),
+    )
+    response.cookies.set(
+      EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE,
+      "",
+      ebaySellerOAuthReauthCookieOptions(0),
     )
     return response
   } catch (cause) {

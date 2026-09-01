@@ -23,6 +23,18 @@ import {
   getEbayProductionIdentityBindingConfiguration,
   getEbaySellerAccountScopeConfiguration,
 } from "./ebay-seller-account-scope"
+import {
+  assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified,
+  createEbaySellerOAuthReauthCookie,
+  EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
+  EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
+  getEbaySellerOAuthReauthConfiguration,
+  getEbaySellerOAuthReauthRuntimeCredentialMatch,
+  hashEbaySellerOAuthReauthState,
+} from "./ebay-seller-oauth-reauth-domain"
+import type {
+  EbaySellerOAuthReauthStateLedger,
+} from "./ebay-seller-oauth-reauth-ledger"
 import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
 import {
   getEbayPublicationOAuthEnvironmentBoundary,
@@ -34,6 +46,7 @@ const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const IDENTITY_ENDPOINT = "https://apiz.ebay.com/commerce/identity/v1/user/"
 const HANDOFF_TTL_MS = 30 * 60 * 1_000
 const REQUEST_TIMEOUT_MS = 12_000
+const OPERATOR_PUBLIC_KEY_ENV = "EBAY_PUBLICATION_OAUTH_OPERATOR_PUBLIC_KEY"
 
 type FetchLike = typeof fetch
 type JsonRecord = Record<string, unknown>
@@ -184,45 +197,65 @@ function assertAuthorizationReady(environment: NodeJS.ProcessEnv) {
   return oauthCredentials(environment)
 }
 
-export async function startEbayPublicationOAuth(
+async function createPendingPublicationHandoff(
   supabase: SupabaseClient,
-  input: { publicKeyPem: string; actorUserId?: string | null },
-  environment: NodeJS.ProcessEnv = process.env,
+  input: {
+    state: string
+    publicKeyPem: string
+    actorUserId?: string | null
+    expiresAt: string
+  },
+  environment: NodeJS.ProcessEnv,
 ) {
-  const credentials = assertAuthorizationReady(environment)
   if (!validateEbayPublicationOAuthPublicKey(input.publicKeyPem)) {
     throw new Error("EBAY_PUBLICATION_OAUTH_PUBLIC_KEY_INVALID")
   }
   const accountScope = getEbaySellerAccountScopeConfiguration(environment)
-  if (!accountScope.accountKey || !accountScope.identity.expectedAccountFingerprint) {
+  if (!accountScope.accountKey ||
+      !accountScope.identity.expectedAccountFingerprint) {
     throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_UNBOUND")
   }
-  const state = createEbayPublicationOAuthState()
-  const expiresAt = new Date(Date.now() + HANDOFF_TTL_MS).toISOString()
   const { data, error } = await supabase
     .from("ebay_publication_oauth_handoffs")
     .insert({
-      state_hash: hashEbayPublicationOAuthState(state),
+      state_hash: hashEbayPublicationOAuthState(input.state),
       public_key_pem: input.publicKeyPem,
       status: "pending",
       account_key: accountScope.accountKey,
       expected_identity_fingerprint:
         accountScope.identity.expectedAccountFingerprint,
       requested_by: input.actorUserId ?? null,
-      expires_at: expiresAt,
+      expires_at: input.expiresAt,
     })
     .select("id")
     .single()
   if (error || !data?.id) {
     throw new Error("EBAY_PUBLICATION_OAUTH_HANDOFF_FAILED")
   }
+  return String(data.id)
+}
+
+export async function startEbayPublicationOAuth(
+  supabase: SupabaseClient,
+  input: { publicKeyPem: string; actorUserId?: string | null },
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const credentials = assertAuthorizationReady(environment)
+  const state = createEbayPublicationOAuthState()
+  const expiresAt = new Date(Date.now() + HANDOFF_TTL_MS).toISOString()
+  const handoffId = await createPendingPublicationHandoff(supabase, {
+    state,
+    publicKeyPem: input.publicKeyPem,
+    actorUserId: input.actorUserId,
+    expiresAt,
+  }, environment)
   return {
     authorizationUrl: buildEbayPublicationConsentUrl({
       clientId: credentials.clientId,
       runame: credentials.runame,
       state,
     }),
-    handoffId: String(data.id),
+    handoffId,
     expiresAt,
     configuration: getEbayPublicationOAuthConfiguration(environment),
     safety: {
@@ -232,6 +265,114 @@ export async function startEbayPublicationOAuth(
       writeGatesChanged: false,
       ebayWrites: 0,
       secretsReturned: false,
+    },
+  }
+}
+
+export async function startEbayPublicationOAuthBrowserCeremony(
+  supabase: SupabaseClient,
+  input: {
+    actorUserId: string
+    requestHost: string
+    ledger: EbaySellerOAuthReauthStateLedger
+    clock?: () => number
+  },
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const credentials = assertAuthorizationReady(environment)
+  const publicationConfiguration =
+    getEbayPublicationOAuthConfiguration(environment)
+  const requestHost = input.requestHost.trim().toLowerCase()
+  const sellerConfiguration = getEbaySellerOAuthReauthConfiguration({
+    environment,
+    requestHost,
+  })
+  if (!sellerConfiguration.ready) {
+    throw new Error(
+      sellerConfiguration.reason ??
+        "EBAY_PUBLICATION_OAUTH_BROWSER_CONFIGURATION_INVALID",
+    )
+  }
+  assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
+    getEbaySellerOAuthReauthRuntimeCredentialMatch(sellerConfiguration),
+  )
+  const exactHostBinding = requestHost === sellerConfiguration.branchHost
+  const exactCallbackBinding = publicationConfiguration.callbackPath ===
+      new URL(sellerConfiguration.callbackUrl).pathname &&
+    credentials.runame === sellerConfiguration.runame
+  if (!exactHostBinding || !exactCallbackBinding) {
+    throw new Error("EBAY_PUBLICATION_OAUTH_BROWSER_BINDING_MISMATCH")
+  }
+  const publicKeyPem = environment[OPERATOR_PUBLIC_KEY_ENV]?.trim() ?? ""
+  if (!validateEbayPublicationOAuthPublicKey(publicKeyPem)) {
+    throw new Error("EBAY_PUBLICATION_OAUTH_OPERATOR_PUBLIC_KEY_MISSING")
+  }
+  const clock = input.clock ?? Date.now
+  const now = clock()
+  const expiresAtMs = now + EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS
+  const expiresAt = new Date(expiresAtMs).toISOString()
+  const state = createEbayPublicationOAuthState()
+  const handoffId = await createPendingPublicationHandoff(supabase, {
+    state,
+    publicKeyPem,
+    actorUserId: input.actorUserId,
+    expiresAt,
+  }, environment)
+  try {
+    const stateCreated = await input.ledger.createPending({
+      stateHash: hashEbaySellerOAuthReauthState(state),
+      expiresAt,
+      flowVersion: EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
+    })
+    if (!stateCreated) {
+      throw new Error("EBAY_PUBLICATION_OAUTH_STATE_COLLISION")
+    }
+  } catch (cause) {
+    await failPendingEbayPublicationOAuth(
+      supabase,
+      state,
+      safeCode(cause),
+    )
+    throw cause
+  }
+  return {
+    authorizationUrl: buildEbayPublicationConsentUrl({
+      clientId: credentials.clientId,
+      runame: credentials.runame,
+      state,
+    }),
+    cookie: createEbaySellerOAuthReauthCookie({
+      state,
+      expiresAt: expiresAtMs,
+      actorUserId: input.actorUserId,
+      branchHost: sellerConfiguration.branchHost,
+      clientSecret: sellerConfiguration.clientSecret,
+      expectedAccountFingerprint:
+        sellerConfiguration.expectedAccountFingerprint,
+      purpose: "PUBLICATION_PRODUCTION",
+    }),
+    expiresAt: expiresAtMs,
+    handoffId,
+    ceremony: {
+      contractVersion:
+        "EBAY_PUBLICATION_PRODUCTION_BROWSER_CEREMONY_V1" as const,
+      purpose: "PUBLICATION_PRODUCTION" as const,
+      startHost: sellerConfiguration.branchHost,
+      callbackHost: new URL(sellerConfiguration.callbackUrl).host,
+      startHostMatchesCallbackHost: true as const,
+      cookieDomainEnvironmentMatch: true as const,
+      callbackEnvironmentMatch: true as const,
+      redirectUriEnvironmentMatch: true as const,
+      cookieRequired: true as const,
+      stateOneTime: true as const,
+      stateExpiring: true as const,
+      stateTamperProtected: true as const,
+      stateHashPersisted: true as const,
+      rawStatePersisted: false as const,
+      serverSideExchange: true as const,
+      rawAuthorizationUrlPrimaryOwnerFlow: false as const,
+      ebayWrites: 0 as const,
+      secretsReturned: false as const,
     },
   }
 }

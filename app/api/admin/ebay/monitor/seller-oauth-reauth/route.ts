@@ -30,6 +30,7 @@ import {
   ebaySellerOAuthReauthCookieOptions,
   ebaySellerOAuthReauthSuccessResponseHeaders,
   EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+  EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE,
   EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
   EBAY_SELLER_OAUTH_REAUTH_COOKIE,
   EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
@@ -53,6 +54,12 @@ import {
   prepareEbayMarketingReadonlyOAuthStart,
 } from "@/lib/ebay/ebay-marketing-readonly-oauth-ceremony-v1"
 import {
+  completeEbayPublicationOAuth,
+  failPendingEbayPublicationOAuth,
+  hasPendingEbayPublicationOAuth,
+  sanitizeEbayPublicationOAuthCallbackError,
+} from "@/lib/ebay/ebay-publication-oauth-authorization"
+import {
   EbayRegistryRepairExecutorError,
   executeApprovedRegistryRepairV1,
 } from "@/lib/ebay/ebay-registry-repair-executor"
@@ -73,9 +80,39 @@ function clearOAuthStateCookies(response: NextResponse) {
   for (const name of [
     EBAY_SELLER_OAUTH_REAUTH_COOKIE,
     EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+    EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE,
   ]) {
     response.cookies.set(name, "", ebaySellerOAuthReauthCookieOptions(0))
   }
+}
+
+function publicationRedirect(
+  request: NextRequest,
+  outcome: "ready" | "error",
+  reason?: string,
+) {
+  const target = new URL("/admin", request.url)
+  target.searchParams.set("ebayPublicationOAuth", outcome)
+  if (reason) target.searchParams.set("reason", reason)
+  const response = NextResponse.redirect(target, {
+    status: 303,
+    headers: {
+      "Cache-Control": "private, no-store, no-cache, max-age=0",
+      Pragma: "no-cache",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "X-Robots-Tag": "noindex",
+    },
+  })
+  clearOAuthStateCookies(response)
+  return response
+}
+
+function safePublicationCode(cause: unknown) {
+  const code = cause instanceof Error ? cause.message : ""
+  return /^EBAY_PUBLICATION_OAUTH_[A-Z0-9_]{3,150}$/.test(code)
+    ? code
+    : "EBAY_PUBLICATION_OAUTH_CALLBACK_REJECTED"
 }
 
 function callbackHtml(code: string, status: number) {
@@ -547,6 +584,11 @@ export async function POST(request: NextRequest) {
         "",
         ebaySellerOAuthReauthCookieOptions(0),
       )
+      response.cookies.set(
+        EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE,
+        "",
+        ebaySellerOAuthReauthCookieOptions(0),
+      )
       return response
     }
     const prepared = await prepareEbaySellerOAuthReauthStart({
@@ -577,6 +619,11 @@ export async function POST(request: NextRequest) {
     )
     response.cookies.set(
       EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+      "",
+      ebaySellerOAuthReauthCookieOptions(0),
+    )
+    response.cookies.set(
+      EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE,
       "",
       ebaySellerOAuthReauthCookieOptions(0),
     )
@@ -711,29 +758,90 @@ export async function GET(request: NextRequest) {
       request.cookies.getAll(EBAY_SELLER_OAUTH_REAUTH_COOKIE)
     const marketingCookies =
       request.cookies.getAll(EBAY_MARKETING_READONLY_OAUTH_COOKIE)
+    const publicationCookies =
+      request.cookies.getAll(EBAY_PUBLICATION_PRODUCTION_OAUTH_COOKIE)
     if (sellerCookies.length > 1 || marketingCookies.length > 1 ||
-        sellerCookies.length + marketingCookies.length !== 1) {
+        publicationCookies.length > 1 || sellerCookies.length +
+          marketingCookies.length + publicationCookies.length !== 1) {
       return callbackHtml(
         "EBAY_SELLER_OAUTH_REAUTH_STATE_COOKIE_INVALID",
         400,
       )
     }
     const marketingCallback = marketingCookies.length === 1
+    const publicationCallback = publicationCookies.length === 1
     const transaction = verifyEbaySellerOAuthReauthCookie({
-      cookie: marketingCallback
-        ? marketingCookies[0]?.value ?? ""
-        : sellerCookies[0]?.value ?? "",
+      cookie: publicationCallback
+        ? publicationCookies[0]?.value ?? ""
+        : marketingCallback
+          ? marketingCookies[0]?.value ?? ""
+          : sellerCookies[0]?.value ?? "",
       state: callback.state,
       now: callbackStartedAt,
       branchHost: configuration.branchHost,
       clientSecret: configuration.clientSecret,
       expectedAccountFingerprint: configuration.expectedAccountFingerprint,
-      expectedPurpose: marketingCallback
-        ? "MARKETING_READONLY"
-        : "SELLER_GENERAL",
+      expectedPurpose: publicationCallback
+        ? "PUBLICATION_PRODUCTION"
+        : marketingCallback
+          ? "MARKETING_READONLY"
+          : "SELLER_GENERAL",
     })
     const supabase = getSupabaseAdminClient()
     const ledger = createSupabaseEbaySellerOAuthReauthStateLedger(supabase)
+    if (transaction.purpose === "PUBLICATION_PRODUCTION") {
+      const pending = await hasPendingEbayPublicationOAuth(
+        supabase,
+        callback.state,
+      )
+      if (!pending) {
+        return publicationRedirect(
+          request,
+          "error",
+          "EBAY_PUBLICATION_OAUTH_STATE_INVALID",
+        )
+      }
+      const claimed = await ledger.claimPending({
+        stateHash: transaction.stateHash,
+        flowVersion: EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
+      })
+      if (!claimed) {
+        await failPendingEbayPublicationOAuth(
+          supabase,
+          callback.state,
+          "EBAY_PUBLICATION_OAUTH_STATE_NOT_CLAIMED",
+        )
+        return publicationRedirect(
+          request,
+          "error",
+          "EBAY_PUBLICATION_OAUTH_STATE_NOT_CLAIMED",
+        )
+      }
+      if (callback.kind === "DENIED") {
+        const reason = sanitizeEbayPublicationOAuthCallbackError(
+          "access_denied",
+        )
+        await failPendingEbayPublicationOAuth(
+          supabase,
+          callback.state,
+          reason,
+        )
+        return publicationRedirect(request, "error", reason)
+      }
+      try {
+        await completeEbayPublicationOAuth(supabase, {
+          state: callback.state,
+          code: callback.code,
+        })
+        return publicationRedirect(request, "ready")
+      } catch (cause) {
+        return publicationRedirect(
+          request,
+          "error",
+          safePublicationCode(cause),
+        )
+      }
+    }
     const commercialOrdersCeremony =
       await hasPendingEbayCommercialOrdersAuthorization(
         supabase,
