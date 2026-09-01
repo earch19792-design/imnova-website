@@ -19,6 +19,8 @@ import { mergeSellerOsQuickPickPresentationV1 } from
   "@/lib/ebay/seller-os-quick-pick-presentation-v1"
 import { buildQuickPickOwnerReviewPackageDataV1 } from
   "@/lib/ebay/ebay-quick-pick-market-test-package-v1"
+import { readLatestQuickPickRadarOvernightEnrichmentV1 } from
+  "@/lib/ebay/ebay-quick-pick-radar-overnight-enrichment-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
@@ -145,7 +147,11 @@ export async function GET(req: Request) {
     if (!accountKey) return response({ success: false,
       error: "LUNA_QUICK_PICK_ACCOUNT_SCOPE_REQUIRED" }, 400)
     const supabase = getSupabaseAdminClient()
-    const receipts = await readLunaQuickPickBatchReceiptsV1({ supabase })
+    const [receipts, overnightEnrichment] = await Promise.all([
+      readLunaQuickPickBatchReceiptsV1({ supabase }),
+      readLatestQuickPickRadarOvernightEnrichmentV1(supabase)
+        .catch(() => null),
+    ])
     const receiptKeys = receipts.flatMap((receipt) => receipt.candidateKeys)
     const requestedKeys = [...new Set([...keys, ...receiptKeys])]
     let durableProgress = await readLunaQuickPickProgressV1({
@@ -189,6 +195,7 @@ export async function GET(req: Request) {
       blocked: progress.filter((card) => card.state === "BLOCKED").length,
       total: progress.length }, receipt: receipts[0] ?? null, receipts,
       requiredSpecificsContinuation,
+      overnightEnrichment,
       safety: { marketplaceWrites: 0, canPublish: false } })
   } catch (error) {
     return response({ success: false, error: safeError(error) }, 400)

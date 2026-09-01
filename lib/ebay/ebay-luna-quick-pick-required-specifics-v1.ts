@@ -352,6 +352,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   candidateKeys: readonly string[]
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
   aiResolver?: RequiredSpecificsAiBatchV1 | null
+  trigger?: "IMMEDIATE" | "OVERNIGHT_ENRICHMENT"
 }>) {
   const candidateKeys = [...new Set(input.candidateKeys.filter((value) =>
     /^sha256:[0-9a-f]{64}$/.test(value)))].slice(0, MAXIMUM_QUICK_PICKS)
@@ -397,9 +398,12 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const incompleteClaimStale = Boolean(currentMarker
       && !currentMarker.completedAt && Number.isFinite(claimedAt)
       && Date.now() - claimedAt >= STALE_CLAIM_MS)
+    const overnightReevaluation = input.trigger === "OVERNIGHT_ENRICHMENT"
+      && Boolean(currentMarker?.completedAt)
     if (!candidate || !metadataBlocked
       || (currentMarker && !legacyScopeReconciliation
-        && !autonomousUpgradeRequired && !incompleteClaimStale)) continue
+        && !autonomousUpgradeRequired && !incompleteClaimStale
+        && !overnightReevaluation)) continue
     const now = new Date().toISOString()
     const aiCallCountBefore = Number(currentMarker?.aiCallCount ?? 0)
     const nextMarker = currentMarker ? {
@@ -422,6 +426,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       finalDisposition: "RESOLVING",
       completedAt: null,
       aiCallCountBefore,
+      resolutionTrigger: input.trigger ?? "IMMEDIATE",
+      ...(overnightReevaluation ? { overnightClaimedAt: now } : {}),
     })
     const claim = await input.supabase.from("ebay_luna_opportunity_queue")
       .update({ assessment: { ...assessment,
@@ -615,6 +621,9 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
           requiredItemSpecificsReady:
             refreshed?.requiredItemSpecificsReady === true,
           ...autonomous,
+          resolutionTrigger: input.trigger ?? "IMMEDIATE",
+          ...(input.trigger === "OVERNIGHT_ENRICHMENT"
+            ? { lastOvernightEnrichedAt: new Date().toISOString() } : {}),
           resolverStatus: resolverReasonCode
             ? "COMPLETED_WITH_SAFE_RESIDUAL"
             : autonomous.residualOwnerActions.length

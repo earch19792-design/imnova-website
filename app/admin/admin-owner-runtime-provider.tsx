@@ -53,7 +53,28 @@ export type OwnerRuntimeQuickPickCard = Readonly<{
   }>[]
   nextOwnerAction: "CONFIRM" | "ENTER_FACT" | null
   listingReview: Readonly<Record<string, unknown>> | null
+  overnightEnrichmentPending: boolean
+  overnightEnrichmentStatus: string | null
+  overnightEnrichmentLastRunAt: string | null
   stages: Readonly<Record<string, OwnerRuntimeQuickPickStageState>>
+}>
+
+export type OwnerRuntimeQuickPickOvernightSummary = Readonly<{
+  observedAt: string | null
+  enrichedCount: number
+  readyAfterCount: number
+  ownerConfirmationRequiredCount: number
+  ownerFactRequiredCount: number
+  outcomes: readonly Readonly<{
+    sourceSku: string | null
+    productTitle: string | null
+    beforeStatus: string
+    afterStatus: string
+    fieldsResolvedOvernight: readonly string[]
+    demandEvidenceAdded: boolean
+    listingIntelligenceUpdated: boolean
+    ownerActionRequired: "CONFIRM" | "ENTER_FACT" | null
+  }>[]
 }>
 
 export type OwnerRuntimeQuickPickReceipt = Readonly<{
@@ -73,6 +94,7 @@ type OwnerRuntimeContextValue = Readonly<{
   quickPickAvailable: boolean
   quickPickReadState: OwnerRuntimeQuickPickReadState
   quickPickReconciliationActive: boolean
+  overnightEnrichment: OwnerRuntimeQuickPickOvernightSummary | null
   refreshQuickPicks: () => Promise<void>
 }>
 
@@ -97,6 +119,7 @@ const OwnerRuntimeContext = createContext<OwnerRuntimeContextValue>({
   quickPickAvailable: false,
   quickPickReadState: "REFRESHING",
   quickPickReconciliationActive: false,
+  overnightEnrichment: null,
   refreshQuickPicks: async () => undefined,
 })
 
@@ -196,7 +219,45 @@ export function parseOwnerRuntimeQuickPickCard(value: unknown):
       ? item.nextOwnerAction as "CONFIRM" | "ENTER_FACT" : null,
     listingReview: Object.keys(record(item.listingReview)).length
       ? Object.freeze(record(item.listingReview)) : null,
+    overnightEnrichmentPending: item.overnightEnrichmentPending === true,
+    overnightEnrichmentStatus:
+      nullableText(item.overnightEnrichmentStatus, 120),
+    overnightEnrichmentLastRunAt:
+      nullableText(item.overnightEnrichmentLastRunAt, 80),
     stages: Object.freeze(stages) })
+}
+
+export function parseOwnerRuntimeQuickPickOvernightSummary(value: unknown):
+  OwnerRuntimeQuickPickOvernightSummary | null {
+  const item = record(value)
+  if (item.contractVersion !== "QUICK_PICK_RADAR_OVERNIGHT_ENRICHMENT_V1") {
+    return null
+  }
+  const outcomes = Object.freeze((Array.isArray(item.outcomes)
+    ? item.outcomes : []).flatMap((value) => {
+    const outcome = record(value)
+    const beforeStatus = nullableText(outcome.beforeStatus, 120)
+    const afterStatus = nullableText(outcome.afterStatus, 120)
+    if (!beforeStatus || !afterStatus) return []
+    const action = String(outcome.ownerActionRequired ?? "")
+    return [Object.freeze({ sourceSku: nullableText(outcome.sourceSku, 160),
+      productTitle: nullableText(outcome.productTitle, 400), beforeStatus,
+      afterStatus,
+      fieldsResolvedOvernight: boundedTextList(
+        outcome.fieldsResolvedOvernight),
+      demandEvidenceAdded: outcome.demandEvidenceAdded === true,
+      listingIntelligenceUpdated:
+        outcome.listingIntelligenceUpdated === true,
+      ownerActionRequired: ["CONFIRM", "ENTER_FACT"].includes(action)
+        ? action as "CONFIRM" | "ENTER_FACT" : null })]
+  }).slice(0, 20))
+  return Object.freeze({ observedAt: nullableText(item.observedAt, 80),
+    enrichedCount: nullableCount(item.enrichedCount) ?? 0,
+    readyAfterCount: nullableCount(item.readyAfterCount) ?? 0,
+    ownerConfirmationRequiredCount:
+      nullableCount(item.ownerConfirmationRequiredCount) ?? 0,
+    ownerFactRequiredCount: nullableCount(item.ownerFactRequiredCount) ?? 0,
+    outcomes })
 }
 
 export function mergeOwnerRuntimeQuickPickCards(
@@ -251,6 +312,8 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
     useState<OwnerRuntimeQuickPickReadState>("REFRESHING")
   const [quickPickReconciliationActive, setQuickPickReconciliationActive] =
     useState(false)
+  const [overnightEnrichment, setOvernightEnrichment] =
+    useState<OwnerRuntimeQuickPickOvernightSummary | null>(null)
   const quickPickRequest = useRef<Promise<void> | null>(null)
   const runtimeEnabled = runtimeRouteEligible && adminSessionReady
 
@@ -295,6 +358,9 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
         setQuickPickCards(cards)
         const receipt = parseOwnerRuntimeQuickPickReceipt(payload.receipt)
         if (receipt) setQuickPickReceipt(receipt)
+        const overnight = parseOwnerRuntimeQuickPickOvernightSummary(
+          payload.overnightEnrichment)
+        if (overnight) setOvernightEnrichment(overnight)
         setQuickPickAvailable(true)
         setQuickPickReadState("STABLE")
       } catch (error) {
@@ -322,11 +388,11 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
 
   const value = useMemo(() => ({ lunaWorker, quickPick, quickPickCards,
     quickPickReceipt, quickPickAvailable, quickPickReadState,
-    quickPickReconciliationActive,
+    quickPickReconciliationActive, overnightEnrichment,
     refreshQuickPicks: reconcileQuickPicks }),
   [lunaWorker, quickPick, quickPickCards, quickPickReceipt,
     quickPickAvailable, quickPickReadState, quickPickReconciliationActive,
-    reconcileQuickPicks])
+    overnightEnrichment, reconcileQuickPicks])
 
   return <OwnerRuntimeContext.Provider value={value}>
     {runtimeEnabled ? <LunaShippingCaptureControlPlane runtimeOnly

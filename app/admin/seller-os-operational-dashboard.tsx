@@ -683,6 +683,41 @@ export function SellerOsOperationalDashboard() {
               : ownerRuntime.quickPickAvailable
                 ? `${ownerRuntime.quickPick.inProgress} en proceso · ${ownerRuntime.quickPick.readyForReview} para revisar · ${ownerRuntime.quickPick.blocked} bloqueados`
                 : "Recuperando operaciones durables…")}</p>
+        <section data-quick-pick-overnight-summary
+          className="mt-3 rounded-2xl border border-violet-200/15 bg-violet-200/[0.05] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-xs font-black uppercase tracking-[0.16em] text-violet-100/75">Trabajo nocturno</h3>
+            {ownerRuntime.overnightEnrichment?.observedAt && <span
+              className="text-[10px] font-bold text-white/40">
+              {shortTimestamp(ownerRuntime.overnightEnrichment.observedAt)}
+            </span>}
+          </div>
+          {ownerRuntime.overnightEnrichment ? <>
+            <p className="mt-2 text-xs leading-5 text-white/65">
+              {ownerRuntime.overnightEnrichment.enrichedCount} enriquecidos · {ownerRuntime.overnightEnrichment.readyAfterCount} listos · {ownerRuntime.overnightEnrichment.ownerConfirmationRequiredCount} necesitan confirmación · {ownerRuntime.overnightEnrichment.ownerFactRequiredCount} necesitan un dato
+            </p>
+            {ownerRuntime.overnightEnrichment.outcomes.length > 0 && <ul
+              className="mt-2 space-y-1.5">
+              {ownerRuntime.overnightEnrichment.outcomes.map((outcome,
+                index) => <li
+                key={`${outcome.sourceSku ?? "quick-pick"}-${index}`}
+                className="rounded-xl bg-black/20 px-2.5 py-2 text-xs text-white/60">
+                <strong className="text-white/80">{outcome.productTitle ??
+                  outcome.sourceSku ?? "Producto Luna"}</strong>
+                <span className="ml-1">{outcome.beforeStatus} → {outcome.afterStatus}</span>
+                {outcome.fieldsResolvedOvernight.length > 0 && <span>
+                  {` · resuelto: ${outcome.fieldsResolvedOvernight.join(", ")}`}
+                </span>}
+                {outcome.demandEvidenceAdded && <span> · nueva evidencia de demanda</span>}
+                {outcome.listingIntelligenceUpdated && <span> · listing actualizado</span>}
+                {outcome.ownerActionRequired === "CONFIRM" && <span> · confirmar</span>}
+                {outcome.ownerActionRequired === "ENTER_FACT" && <span> · introducir dato</span>}
+              </li>)}
+            </ul>}
+          </> : <p className="mt-2 text-xs leading-5 text-white/50">
+            La segunda pasada aparecerá aquí después del próximo Night Radar. Los productos listos durante el día no esperan a la noche.
+          </p>}
+        </section>
         <div className="mt-3 space-y-2" data-quick-pick-inline-operation-view>
           {quickPickCards.map((card) => <details
             key={card.opportunityId ?? card.candidateKey ??
@@ -708,6 +743,10 @@ export function SellerOsOperationalDashboard() {
                   {card.nextOwnerAction === "ENTER_FACT"
                     ? "Falta un dato exacto del owner"
                     : "Listo para confirmación final del owner"}
+                </p>}
+                {card.overnightEnrichmentPending && <p
+                  className="mt-2 text-xs font-bold text-violet-100">
+                  Segunda pasada nocturna pendiente · no retrasa una resolución diurna
                 </p>}
               </div>
               <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${quickPickStageTone(card.state === "READY" ? "PASS" : card.state)}`}>{card.state}</span>

@@ -23,7 +23,7 @@ test("Mobile Review offers login only for AUTH_REQUIRED and login returns safely
   assert.match(mobileReviewSource, /\/admin\/login\?returnTo=%2Fadmin%2Febay%2Fmobile-review/)
   assert.match(mobileReviewSource, /Iniciar sesión/)
   assert.match(loginSource, /getSafeAdminReturnPath/)
-  assert.match(loginSource, /router\.replace\(returnTo\)/)
+  assert.match(loginSource, /window\.location\.replace\(returnTo\)/)
 })
 
 test("auth return fix does not add external writes or secrets", () => {

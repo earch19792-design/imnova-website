@@ -25,6 +25,8 @@ import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { runQuickPickRadarOvernightEnrichmentV1 } from
+  "@/lib/ebay/ebay-quick-pick-radar-overnight-enrichment-v1"
 
 function authorized(req: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
@@ -105,6 +107,37 @@ export async function GET(req: Request) {
           newEbayOffers: 0, withdrawCalls: 0 },
       }
     }
+    let quickPickOvernightEnrichment
+    try {
+      quickPickOvernightEnrichment =
+        await runQuickPickRadarOvernightEnrichmentV1({
+          supabase, accountKey,
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+          runId: automationRunId,
+        })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ""
+      quickPickOvernightEnrichment = {
+        contractVersion: "QUICK_PICK_RADAR_OVERNIGHT_ENRICHMENT_V1",
+        status: "PARTIAL",
+        reasonCode: /^[A-Z][A-Z0-9_]{2,119}$/.test(message)
+          ? message : "QUICK_PICK_OVERNIGHT_ENRICHMENT_FAILED",
+        existingRadarReused: true,
+        existingSchedulerReused: true,
+        existingQuickPickResolversReused: true,
+        existingResolversReused: true,
+        readyNowNotDelayed: true,
+        readyProductsNeverWaitForNight: true,
+        comparableFactPromotedToProductTruth: false,
+        ownerOnlyAfterExhaustion: true,
+        ownerActionVisibleOnlyAfterAutomaticResolutionExhausted: true,
+        radarSignalsNotCountedAsReady: true,
+        remoteOwnerLastMileReady: true,
+        overnightEnrichmentReuseCertified: false,
+        safety: { marketplaceWrites: 0, listingPublications: 0,
+          customerProductionTouched: false },
+      }
+    }
     const taskReconciliation = await reconcileSellerScanTasks(supabase, {
       forceDue: false,
       limit: 300,
@@ -124,6 +157,7 @@ export async function GET(req: Request) {
       radarRefreshExecuted: true,
       freshFamilyObservationsCreated: broadNet.freshObservationsCreated,
       factory,
+      quickPickOvernightEnrichment,
       taskReconciliation,
       protection,
       whatsapp,
@@ -138,6 +172,7 @@ export async function GET(req: Request) {
       sync,
       broadNet,
       factory,
+      quickPickOvernightEnrichment,
       taskReconciliation,
       protection,
       whatsapp,

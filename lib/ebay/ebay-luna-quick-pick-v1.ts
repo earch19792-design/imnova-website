@@ -38,6 +38,8 @@ import { buildQuickPickMarketTestListingReviewV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit
   // extension; the production bundler resolves the same source module.
   "./ebay-quick-pick-market-test-package-v1.ts"
+import { projectQuickPickOvernightEligibilityV1 } from
+  "./ebay-quick-pick-radar-overnight-enrichment-v1"
 
 export const LUNA_QUICK_PICK_FAST_LISTING_V1 =
   "LUNA_QUICK_PICK_FAST_LISTING_V1" as const
@@ -117,6 +119,9 @@ export type LunaQuickPickCardV1 = Readonly<{
   stages: Readonly<Record<string, "WAITING" | "RUNNING" | "PASS" | "BLOCKED">>
   dollarCheck: JsonRecord | null
   listingReview: JsonRecord | null
+  overnightEnrichmentPending: boolean
+  overnightEnrichmentStatus: string | null
+  overnightEnrichmentLastRunAt: string | null
   elapsedMs: number
 }>
 
@@ -331,6 +336,9 @@ function batchCardSnapshotV1(value: LunaQuickPickCardV1) {
     variants: value.variants, alreadyLive: value.alreadyLive,
     linkedLiveItemIds: value.linkedLiveItemIds, stages: value.stages,
     listingReview: value.listingReview,
+    overnightEnrichmentPending: value.overnightEnrichmentPending,
+    overnightEnrichmentStatus: value.overnightEnrichmentStatus,
+    overnightEnrichmentLastRunAt: value.overnightEnrichmentLastRunAt,
     updatedAt: value.updatedAt ?? new Date().toISOString(),
     marketplaceWrites: 0 as const })
 }
@@ -692,6 +700,10 @@ function card(input: Partial<LunaQuickPickCardV1> &
     updatedAt: input.updatedAt ?? null,
     stages: input.stages ?? emptyStages(), dollarCheck: input.dollarCheck ?? null,
     listingReview: input.listingReview ?? null,
+    overnightEnrichmentPending: input.overnightEnrichmentPending ?? false,
+    overnightEnrichmentStatus: input.overnightEnrichmentStatus ?? null,
+    overnightEnrichmentLastRunAt:
+      input.overnightEnrichmentLastRunAt ?? null,
     elapsedMs: input.elapsedMs ?? 0 })
 }
 
@@ -1257,6 +1269,8 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       assessment.canonicalMarketplaceReadinessV1)
     const specificsResolution = record(
       assessment.marketplaceRequiredSpecificsBatchResolutionV1)
+    const overnightAudit = record(
+      assessment.quickPickRadarOvernightEnrichmentV1)
     const specificsResolutions = rows(specificsResolution.resolutions)
     const listingReady = intake.finalDecision === "LISTING_READY" ||
       row.decision === "LISTING_READY"
@@ -1321,6 +1335,9 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       === "boolean" ? canonicalMarketplaceReadiness.conditionReady : null
     const marketplaceReadinessReady =
       canonicalMarketplaceReadiness.ready === true || reviewReady
+    const overnightEligibility = projectQuickPickOvernightEligibilityV1({
+      row, alreadyLive: false,
+    })
     const requiredSpecificsBlocked = !requiredItemSpecificsReady &&
       (unresolvedRequiredAspects.length > 0 || exactBlockers.some((value) =>
         value.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")))
@@ -1427,6 +1444,12 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         demandGrain: marketTestReady ? "UNPROVEN" : "FAMILY",
       }) : null,
       listingReview,
+      overnightEnrichmentPending: overnightEligibility.eligible,
+      overnightEnrichmentStatus: overnightEligibility.eligible
+        ? "OVERNIGHT_ENRICHMENT_PENDING"
+        : text(overnightAudit.afterStatus, 120),
+      overnightEnrichmentLastRunAt:
+        text(overnightAudit.enrichedAt, 80),
       updatedAt: text(row.updated_at, 80),
       elapsedMs: 0,
     })
