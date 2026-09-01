@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit
+  // extension; the production bundler resolves the same source module.
+  "./ebay-luna-quick-pick-required-specifics-v1.ts"
 
 import {
   fetchDirectedLunaProduct,
@@ -97,6 +101,7 @@ export type LunaQuickPickCardV1 = Readonly<{
   aiAspectsResolvedCount: number
   factInvented: false
   automaticResolutionExhausted: boolean
+  automaticResolutionContractCurrent: boolean
   exactUnresolvedFields: readonly string[]
   ownerResidualActions: readonly JsonRecord[]
   nextOwnerAction: "CONFIRM" | "ENTER_FACT" | null
@@ -664,6 +669,8 @@ function card(input: Partial<LunaQuickPickCardV1> &
     factInvented: false,
     automaticResolutionExhausted:
       input.automaticResolutionExhausted ?? false,
+    automaticResolutionContractCurrent:
+      input.automaticResolutionContractCurrent ?? false,
     exactUnresolvedFields: Object.freeze([
       ...(input.exactUnresolvedFields ?? []),
     ]),
@@ -1351,6 +1358,9 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       factInvented: false,
       automaticResolutionExhausted:
         specificsContinuation.automaticResolutionExhausted === true,
+      automaticResolutionContractCurrent:
+        specificsContinuation.autonomousResolutionContractVersion ===
+          QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1,
       exactUnresolvedFields: textList(
         specificsContinuation.exactUnresolvedFields),
       ownerResidualActions: Object.freeze(ownerResidualActions),

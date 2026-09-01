@@ -64,7 +64,8 @@ export async function GET(req: Request) {
     const receiptCards = receipts.flatMap((receipt) => receipt.cards)
     let progress = mergeProgress(receiptCards, durableProgress)
     const pendingSpecifics = progress.flatMap((card) =>
-      card.candidateKey && !card.automaticResolutionExhausted
+      card.candidateKey && (!card.automaticResolutionExhausted
+        || !card.automaticResolutionContractCurrent)
         && (card.unresolvedRequiredAspects.length > 0
         || card.exactBlocker?.startsWith(
           "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")

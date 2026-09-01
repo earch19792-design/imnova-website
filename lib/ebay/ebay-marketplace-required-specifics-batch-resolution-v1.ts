@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 export const MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1 =
   "MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1" as const
 export const REQUIRED_SPECIFICS_DIGEST_VERSION =
-  "CANONICAL_JSON_V2_POLICY_FALLBACKS" as const
+  "CANONICAL_JSON_V3_POLICY_FALLBACKS_EXACT_MATERIAL" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -135,6 +135,9 @@ const EXPLICIT_MPN_FIELD_KEYS = new Set([
   "mpn", "manufacturer part number", "manufacturer part no",
   "manufacturer part #", "part number", "part no",
 ])
+const EXPLICIT_MATERIAL_TERMS = Object.freeze([
+  "Aluminum", "Aluminium",
+])
 
 function exactSources(product: RequiredSpecificsBatchProductV1) {
   return {
@@ -200,6 +203,31 @@ function deterministicResolution(
         resolutionClass: "EXPLICIT_PRODUCT_TRUTH",
         sourceEvidence: Object.freeze({ sourceField: "SPECS",
           sourceExcerpt: explicitMpn, imageIndex: null }),
+        confidence: "HIGH", factInvented: false,
+        humanReviewRequired: false,
+      })
+    }
+  }
+  if (key(definition.name) === "material"
+      && product.exactProductIdentityProven === true
+      && definition.freeTextAllowed === true) {
+    const corpus = exactSources(product)
+    const matches = EXPLICIT_MATERIAL_TERMS.flatMap((material) =>
+      (Object.entries(corpus) as [keyof typeof corpus, string][])
+        .filter(([, source]) => ` ${key(source)} `.includes(
+          ` ${key(material)} `))
+        .map(([sourceField]) => ({ material, sourceField })))
+    const uniqueMaterials = [...new Map(matches.map((match) =>
+      [key(match.material), match])).values()]
+    if (uniqueMaterials.length === 1) {
+      const match = uniqueMaterials[0]
+      return Object.freeze({
+        aspectName: definition.name,
+        resolvedValue: match.material === "Aluminium"
+          ? "Aluminum" : match.material,
+        resolutionClass: "DETERMINISTIC_DERIVATION",
+        sourceEvidence: Object.freeze({ sourceField: match.sourceField,
+          sourceExcerpt: match.material, imageIndex: null }),
         confidence: "HIGH", factInvented: false,
         humanReviewRequired: false,
       })
