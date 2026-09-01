@@ -47,8 +47,9 @@ export async function GET(req: Request) {
       includeRecent: keys.length === 0,
     })
     const pendingSpecifics = progress.flatMap((card) =>
-      card.candidateKey && card.exactBlocker?.startsWith(
-        "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")
+      card.candidateKey && (card.unresolvedRequiredAspects.length > 0
+        || card.exactBlocker?.startsWith(
+          "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN"))
         ? [card.candidateKey] : [])
     let requiredSpecificsContinuation: unknown = null
     if (pendingSpecifics.length) {
