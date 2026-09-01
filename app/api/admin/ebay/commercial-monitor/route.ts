@@ -162,6 +162,22 @@ export async function GET(req: Request) {
   try {
     const supabase = getSupabaseAdminClient()
     const account = getEbaySellerAccountScopeConfiguration()
+    const healthOnly = new URL(req.url).searchParams.get(
+      "dashboardHealthOnly") === "1"
+    if (healthOnly) {
+      const commercialHealth = account.accountKey
+        ? await getSellerOsDashboardCommercialHealthV1({
+            supabase,
+            accountKey: account.accountKey,
+            accountAlias: account.accountAlias,
+          })
+        : null
+      return NextResponse.json({
+        success: true,
+        dashboard: null,
+        commercialHealth,
+      })
+    }
     const [dashboard, commercialHealth] = await Promise.all([
       getEbayCommercialMonitorDashboard(supabase),
       account.accountKey

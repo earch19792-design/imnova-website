@@ -450,13 +450,18 @@ async function readIdentityVerifications(
 export async function readCommercialSnapshots(
   supabase: SupabaseClient,
   accountKey: string,
+  listingIds?: readonly string[],
 ) : Promise<ReadonlySourceResult<ReadonlyCommercialSnapshotRow>> {
   const maximum = 2_000
-  const { data, error } = await supabase
+  let query = supabase
     .from("listing_commercial_snapshots")
     .select("id,listing_id,sku,listing_status,impressions,views,ctr,transactions,sales_conversion_rate,revenue,current_watchers,stock_available,supplier_cost,estimated_margin_percent,observed_at,window_start,window_end,source,completeness_status")
     .eq("marketplace_account_key", accountKey)
     .eq("marketplace", "EBAY_US")
+  if (listingIds?.length) {
+    query = query.in("listing_id", [...new Set(listingIds)].slice(0, 100))
+  }
+  const { data, error } = await query
     .order("observed_at", { ascending: false })
     .limit(maximum + 1)
   if (error) {

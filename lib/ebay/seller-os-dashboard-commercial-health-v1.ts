@@ -307,14 +307,13 @@ export async function getSellerOsDashboardCommercialHealthV1(input: Readonly<{
   accountAlias: string | null
   now?: Date
 }>) {
-  const [registry, decisions, jobs, observations, snapshots, runRows,
-    stockRunRows] =
+  const now = input.now ?? new Date()
+  const [registry, decisions, jobs, observations, runRows, stockRunRows] =
     await Promise.all([
       readRegistry(input.supabase, input.accountKey),
       readCanonicalLunaLinkageDecisions(input.supabase, input.accountKey),
       readCanonicalLunaStockJobs(input.supabase, input.accountKey),
       readCanonicalLunaStockObservations(input.supabase, input.accountKey),
-      readCommercialSnapshots(input.supabase, input.accountKey),
       input.supabase.from("commercial_monitor_runs")
         .select("started_at,readers,status")
         .eq("marketplace_account_key", input.accountKey)
@@ -333,11 +332,23 @@ export async function getSellerOsDashboardCommercialHealthV1(input: Readonly<{
   if (stockRunRows.error) {
     throw new Error("DASHBOARD_CURRENT_LIVE_RECEIPT_UNAVAILABLE")
   }
+  const receipt = canonicalCurrentLiveReceipt(
+    (stockRunRows.data ?? []) as StockAutomationRunRow[], now)
+  const snapshots = receipt
+    ? await readCommercialSnapshots(input.supabase, input.accountKey,
+        receipt.itemIds)
+    : {
+        source: "COMMERCIAL_SNAPSHOT_REGISTRY",
+        status: "ERROR" as const,
+        rows: [],
+        limitationCode: "CURRENT_LIVE_RECEIPT_UNAVAILABLE",
+        truncated: false,
+      }
   return deriveSellerOsDashboardCommercialHealthV1({
     registry, decisions, jobs, observations, snapshots,
     runs: (runRows.data ?? []) as RunRow[],
     stockRuns: (stockRunRows.data ?? []) as StockAutomationRunRow[],
     accountAlias: input.accountAlias,
-    now: input.now,
+    now,
   })
 }

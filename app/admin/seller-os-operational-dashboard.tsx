@@ -179,7 +179,9 @@ export function SellerOsOperationalDashboard() {
   const load = useCallback(async () => {
     const [commercialResult, radarResult] =
       await Promise.allSettled([
-        adminRequest("/api/admin/ebay/commercial-monitor"),
+        adminRequest(
+          "/api/admin/ebay/commercial-monitor?dashboardHealthOnly=1",
+        ),
         adminRequest("/api/admin/ebay/luna-opportunity-queue"),
       ])
 
