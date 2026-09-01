@@ -358,7 +358,7 @@ async function verifyExactUnpublishedPublicationState(input: {
 }) {
   const inventoryItemPayload = record(input.approvedPayload.inventoryItemPayload)
   const offerPayload = record(input.approvedPayload.offerPayload)
-  const [inventory, offer] = await Promise.all([
+  const [inventory, offer, skuState] = await Promise.all([
     verifyEbayDraftInventoryItem(input.sku, inventoryItemPayload),
     verifyEbayUnpublishedOffer(
       input.offerId,
@@ -366,6 +366,7 @@ async function verifyExactUnpublishedPublicationState(input: {
       "EBAY_US",
       offerPayload,
     ),
+    preflightEbayDraftSkuCollision(input.sku),
   ])
   if (!inventory.safe) {
     throw new Error(
@@ -376,7 +377,21 @@ async function verifyExactUnpublishedPublicationState(input: {
     throw new Error(offer.blocker ||
       "EBAY_FINAL_PUBLICATION_OFFER_EXACT_READBACK_MISMATCH")
   }
-  return { inventory, offer }
+  if (!skuState.inventoryExists || skuState.offerCount !== 1) {
+    throw new Error(
+      "EBAY_FINAL_PUBLICATION_UNPUBLISHED_DRAFT_IDEMPOTENCY_MISMATCH",
+    )
+  }
+  return {
+    inventory,
+    offer,
+    idempotency: {
+      inventoryItemCountForReservedSku: 1,
+      offerCountForReservedSku: skuState.offerCount,
+      duplicateInventoryItemCount: 0,
+      duplicateOfferCount: skuState.offerCount - 1,
+    },
+  }
 }
 
 function buildFinalPublicationPreview(
@@ -3462,7 +3477,7 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   const oneClickAuthorized = hasOneClickControlledPublicationIntent(
     approvedPayload,
   )
-  await verifyExactUnpublishedPublicationState({
+  const officialReadback = await verifyExactUnpublishedPublicationState({
     approvedPayload,
     offerId: built.offerId,
     sku: built.sku,
@@ -3510,6 +3525,14 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
       canPublishOnlyWithExactConfirmation: !oneClickAuthorized,
       machineContinuationAuthorized: oneClickAuthorized,
       exactInventoryAndOfferReadbackMatched: true,
+      officialReadbackMatch: true,
+      inventoryItemCountForReservedSku:
+        officialReadback.idempotency.inventoryItemCountForReservedSku,
+      offerCountForCanonicalPackage:
+        officialReadback.idempotency.offerCountForReservedSku,
+      duplicateInventoryItemCount:
+        officialReadback.idempotency.duplicateInventoryItemCount,
+      duplicateOfferCount: officialReadback.idempotency.duplicateOfferCount,
     },
   }, { status: 201 })
 }
