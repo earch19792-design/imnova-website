@@ -8,6 +8,7 @@ import {
   createOpenAiRequiredSpecificsBatchResolverV1,
   MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
   REQUIRED_SPECIFICS_DIGEST_VERSION,
+  revalidateCompatiblePriorAiResolutionsV1,
   requiredSpecificBatchEvidenceDigestV1,
   resolveMarketplaceRequiredSpecificsBatchV1,
 } from "./ebay-marketplace-required-specifics-batch-resolution-v1"
@@ -506,8 +507,29 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       for (const batch of resolvedBatches) {
         for (const resolution of batch.candidates) {
           const entry = claimedByCandidate.get(resolution.radarCandidateId)
-          if (entry) await persistResolution({ supabase: input.supabase,
-            candidate: entry.candidate, resolution })
+          const product = pending.find((candidate) =>
+            candidate.radarCandidateId === resolution.radarCandidateId)
+          if (entry && product) {
+            const priorAssessment = record(entry.row.assessment)
+            const priorDurable = record(priorAssessment
+              .marketplaceRequiredSpecificsBatchResolutionV1)
+            const priorMarker = marker(priorAssessment
+              .quickPickRequiredSpecificsContinuationV1)
+            const priorStage = priorMarker?.aiStage === "VISION"
+              ? "VISION" as const : "TEXT" as const
+            const compatiblePrior =
+              revalidateCompatiblePriorAiResolutionsV1({ product,
+                stage: priorStage, resolutions: priorDurable.resolutions })
+            const merged = { ...resolution,
+              resolutions: resolution.resolutions.map((current) => {
+                if (!current.humanReviewRequired) return current
+                return compatiblePrior.find((prior) =>
+                  normalized(prior.aspectName) ===
+                    normalized(current.aspectName)) ?? current
+              }) }
+            await persistResolution({ supabase: input.supabase,
+              candidate: entry.candidate, resolution: merged })
+          }
         }
       }
     } catch (error) {

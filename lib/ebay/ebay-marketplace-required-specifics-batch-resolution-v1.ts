@@ -363,6 +363,61 @@ function validateAiResolution(input: Readonly<{
     resolvedValue: value, factInvented: false as const })
 }
 
+function priorAiResolution(value: unknown): RequiredSpecificResolutionV1 | null {
+  const raw = record(value)
+  const resolutionClass = text(raw.resolutionClass, 80)
+  const source = record(raw.sourceEvidence)
+  const sourceField = text(source.sourceField, 80)
+  const confidence = text(raw.confidence, 20)
+  if (!text(raw.aspectName, 120) || !text(raw.resolvedValue, 500)
+      || !["AI_CLASSIFICATION", "AI_NORMALIZATION", "AI_MAPPING"]
+        .includes(resolutionClass)
+      || !["TITLE", "DESCRIPTION", "SPECS", "VARIANT", "IMAGE",
+        "MARKETPLACE_POLICY", "NONE"].includes(sourceField)
+      || !["HIGH", "MEDIUM", "LOW"].includes(confidence)
+      || raw.factInvented !== false || raw.humanReviewRequired === true) {
+    return null
+  }
+  const imageIndex = source.imageIndex === null ? null
+    : Number.isInteger(source.imageIndex) ? Number(source.imageIndex) : null
+  return {
+    aspectName: text(raw.aspectName, 120),
+    resolvedValue: text(raw.resolvedValue, 500),
+    resolutionClass: resolutionClass as RequiredSpecificResolutionV1[
+      "resolutionClass"],
+    sourceEvidence: {
+      sourceField: sourceField as RequiredSpecificResolutionV1[
+        "sourceEvidence"]["sourceField"],
+      sourceExcerpt: text(source.sourceExcerpt, 500) || null,
+      imageIndex,
+    },
+    confidence: confidence as RequiredSpecificResolutionV1["confidence"],
+    factInvented: false,
+    humanReviewRequired: false,
+  }
+}
+
+/**
+ * Revalidates already-paid AI evidence against the current exact product text,
+ * images, category aspect and allowed value. A policy/digest upgrade therefore
+ * cannot erase a still-compatible result or spend the one-shot budget again.
+ */
+export function revalidateCompatiblePriorAiResolutionsV1(input: Readonly<{
+  product: RequiredSpecificsBatchProductV1
+  stage: "TEXT" | "VISION"
+  resolutions: unknown
+}>) {
+  const values = Array.isArray(input.resolutions) ? input.resolutions : []
+  return Object.freeze(values.flatMap((value) => {
+    const prior = priorAiResolution(value)
+    if (!prior || !input.product.unresolvedRequiredAspects.some((aspect) =>
+      key(aspect) === key(prior.aspectName))) return []
+    const validated = validateAiResolution({ stage: input.stage,
+      product: input.product, raw: prior })
+    return validated.humanReviewRequired ? [] : [validated]
+  }))
+}
+
 function chunkProducts(products: readonly RequiredSpecificsBatchProductV1[],
   maximumChars: number, maximumProducts: number) {
   const chunks: RequiredSpecificsBatchProductV1[][] = []
