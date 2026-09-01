@@ -6,6 +6,16 @@ import { supabase } from "@/lib/supabase"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 
 type StageState = "WAITING" | "RUNNING" | "PASS" | "BLOCKED"
+type QuickPickReceipt = {
+  batchId: string
+  ownerReference: string
+  status: string
+  rawInputCount: number | null
+  urlDedupedCount: number | null
+  rejectedInputCount: number | null
+  durableOperationCount: number | null
+  exactProductCount: number | null
+}
 type QuickPickCard = {
   sourceUrl: string
   canonicalUrl: string | null
@@ -62,6 +72,7 @@ const stages = [
   ["ECONOMICS", "Comprobando margen"],
   ["PRODUCT_TRUTH", "Verificando producto exacto"],
   ["LISTING_PACKAGE", "Preparando eBay"],
+  ["REQUIRED_SPECIFICS", "Comprobando datos requeridos"],
   ["MARKETPLACE_READINESS", "Comprobando requisitos eBay"],
   ["LISTING_READY", "Listo para publicar"],
 ] as const
@@ -97,6 +108,7 @@ export default function LunaQuickPickPage() {
   const [cards, setCards] = useState<QuickPickCard[]>([])
   const [error, setError] = useState("")
   const [rehydrating, setRehydrating] = useState(true)
+  const [receipt, setReceipt] = useState<QuickPickReceipt | null>(null)
 
   const candidateKeys = useMemo(() => cards.flatMap((card) =>
     card.candidateKey ? [card.candidateKey] : []), [cards])
@@ -117,8 +129,16 @@ export default function LunaQuickPickPage() {
     setCards((current) => {
       const key = (card: QuickPickCard) => card.candidateKey ?? card.sourceUrl
       const merged = new Map(current.map((card) => [key(card), card]))
-      incoming.forEach((card) => merged.set(key(card),
-        { ...merged.get(key(card)), ...card }))
+      incoming.forEach((card) => {
+        const previousEntry = [...merged.entries()].find(([, previous]) =>
+          previous.sourceUrl === card.sourceUrl || Boolean(card.canonicalUrl &&
+            previous.canonicalUrl === card.canonicalUrl))
+        const previous = previousEntry?.[1]
+        if (previousEntry && previousEntry[0] !== key(card)) {
+          merged.delete(previousEntry[0])
+        }
+        merged.set(key(card), { ...previous, ...card })
+      })
       return [...merged.values()]
     })
   }, [])
@@ -126,6 +146,7 @@ export default function LunaQuickPickPage() {
   const processLinks = useCallback(async (urls: string[],
     selectedVariants: Record<string, string> = {}) => {
     setError("")
+    let batchAccepted = false
     mergeCards(urls.map((sourceUrl) => ({ sourceUrl, canonicalUrl: null,
       sourceSku: null, lunaProductId: null, lunaVariantId: null,
       candidateId: null, opportunityId: null, candidateKey: null,
@@ -148,14 +169,26 @@ export default function LunaQuickPickPage() {
       shippingUsd: null, rehydrated: false, updatedAt: null,
       dollarCheck: null, elapsedMs: 0 })))
     try {
+      const received = await request("/api/admin/ebay/luna-quick-pick", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "RECEIVE", urls }),
+      })
+      batchAccepted = true
+      setReceipt(received.receipt)
+      mergeCards(received.receipt.cards ?? [])
       const payload = await request("/api/admin/ebay/luna-quick-pick", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls, selectedVariants }),
+        body: JSON.stringify({ action: "PROCESS",
+          batchId: received.receipt.batchId, urls, selectedVariants }),
       })
       mergeCards(payload.result.cards)
+      setReceipt(payload.receipt ?? received.receipt)
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : ""
-      setError(message || "LUNA_QUICK_PICK_REQUEST_FAILED")
+      setError(batchAccepted
+        ? "Lote recibido · reconciliando el progreso durable"
+        : message || "LUNA_QUICK_PICK_REQUEST_FAILED")
+      if (batchAccepted) return
       setCards((current) => current.map((card) => urls.includes(card.sourceUrl)
         && card.state === "RUNNING" ? { ...card, state: "BLOCKED",
           disposition: "BLOCKED", exactBlocker: message,
@@ -178,7 +211,10 @@ export default function LunaQuickPickPage() {
   useEffect(() => {
     let cancelled = false
     request("/api/admin/ebay/luna-quick-pick").then((payload) => {
-      if (!cancelled) mergeCards(payload.progress ?? [])
+      if (!cancelled) {
+        mergeCards(payload.progress ?? [])
+        setReceipt(payload.receipt ?? null)
+      }
     }).catch((caught) => {
       if (!cancelled) setError(caught instanceof Error ? caught.message :
         "LUNA_QUICK_PICK_REHYDRATION_FAILED")
@@ -187,7 +223,6 @@ export default function LunaQuickPickPage() {
   }, [mergeCards, request])
 
   useEffect(() => {
-    if (!candidateKeys.length) return
     let cancelled = false
     const poll = async () => {
       try {
@@ -195,19 +230,17 @@ export default function LunaQuickPickPage() {
         candidateKeys.forEach((key) => params.append("candidate", key))
         const payload = await request(`/api/admin/ebay/luna-quick-pick?${params}`)
         if (cancelled) return
-        setCards((current) => current.map((card) => {
-          const progress = payload.progress.find((entry: Record<string, unknown>) =>
-            entry.candidateKey === card.candidateKey)
-          return progress ? { ...card, ...progress } : card
-        }))
+        mergeCards(payload.progress ?? [])
+        setReceipt(payload.receipt ?? null)
+        setError("")
       } catch {
-        // A transient polling failure never erases the last durable state.
+        setError("No pude cargar el estado del lote · reintentando")
       }
     }
     void poll()
-    const timer = window.setInterval(() => void poll(), 2_000)
+    const timer = window.setInterval(() => void poll(), 2_500)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [candidateKeys.join("\n"), request])
+  }, [candidateKeys.join("\n"), mergeCards, request])
 
   const sections = useMemo(() => [
     { id: "in-progress", title: "En proceso",
@@ -242,6 +275,13 @@ export default function LunaQuickPickPage() {
         <p className="mt-2 text-xs text-white/45">Puedes agregar más links mientras los anteriores continúan. Máximo 20 por envío; concurrencia bounded de 4 productos.</p>
         {error && <p role="alert" className="mt-3 rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">{error}</p>}
       </section>
+
+      {receipt && <section aria-live="polite"
+        className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/70">Lote recibido · {receipt.ownerReference}</p>
+        <p className="mt-2 text-lg font-black">{receipt.rawInputCount ?? "—"} links recibidos · {receipt.urlDedupedCount ?? "—"} únicos · {receipt.rejectedInputCount ?? "—"} rechazados · {receipt.durableOperationCount ?? "—"} productos materializados</p>
+        <p className="mt-1 text-sm text-white/55">Seller OS conserva este lote y actualiza sus productos automáticamente.</p>
+      </section>}
 
       {rehydrating && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4 text-sm text-cyan-50">Recuperando tus Quick Picks guardados…</p>}
 

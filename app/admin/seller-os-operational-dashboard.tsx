@@ -77,6 +77,12 @@ function safeCount(value: unknown) {
   return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0
 }
 
+function nullableCount(value: unknown) {
+  const parsed = Number(value)
+  return value !== null && value !== undefined && Number.isSafeInteger(parsed) &&
+    parsed >= 0 ? parsed : null
+}
+
 function availableMetric(value: unknown) {
   if (typeof value !== "number" && typeof value !== "string") return null
   if (typeof value === "string" && value.trim() === "") return null
@@ -157,6 +163,11 @@ export function SellerOsOperationalDashboard() {
   const [input, setInput] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState("")
+  const [quickPickReceipt, setQuickPickReceipt] = useState<{
+    ownerReference: string; rawInputCount: number | null
+    urlDedupedCount: number | null; rejectedInputCount: number | null
+    durableOperationCount: number | null
+  } | null>(null)
 
   const adminRequest = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error } = await supabase.auth.getSession()
@@ -271,22 +282,38 @@ export function SellerOsOperationalDashboard() {
 
   async function submitQuickPick(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const urls = [...new Set(input.split(/\r?\n/).map((value) => value.trim())
-      .filter(Boolean))].slice(0, 20)
+    const urls = input.split(/\r?\n/).map((value) => value.trim())
+      .filter(Boolean).slice(0, 20)
     if (!urls.length || submitting) return
     setSubmitting(true)
-    setFeedback("")
+    setFeedback(`${urls.length} links recibidos · registrando lote…`)
     try {
-      await adminRequest("/api/admin/ebay/luna-quick-pick", {
+      const received = await adminRequest("/api/admin/ebay/luna-quick-pick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls, selectedVariants: {} }),
+        body: JSON.stringify({ action: "RECEIVE", urls }),
       })
+      const receipt = record(received.receipt)
+      setQuickPickReceipt({ ownerReference: String(receipt.ownerReference),
+        rawInputCount: nullableCount(receipt.rawInputCount),
+        urlDedupedCount: nullableCount(receipt.urlDedupedCount),
+        rejectedInputCount: nullableCount(receipt.rejectedInputCount),
+        durableOperationCount: nullableCount(receipt.durableOperationCount) })
       setInput("")
-      setFeedback(`${urls.length} Quick Pick${urls.length === 1 ? "" : "s"} en proceso`)
-      await load()
+      setFeedback(`Lote recibido · ${String(receipt.ownerReference)}`)
+      void adminRequest("/api/admin/ebay/luna-quick-pick", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "PROCESS", batchId: receipt.batchId,
+          urls, selectedVariants: {} }),
+      }).then((payload) => {
+        const completed = record(payload.receipt)
+        setQuickPickReceipt((current) => current ? { ...current,
+          durableOperationCount:
+            nullableCount(completed.durableOperationCount) } : current)
+      }).catch(() => setFeedback(
+        "Lote recibido · reconciliando el progreso durable"))
     } catch {
-      setFeedback("No pudimos iniciar esos links. Revisa el formato e inténtalo de nuevo.")
+      setFeedback("No pude registrar el lote · reintentando cuando vuelvas a procesar")
     } finally {
       setSubmitting(false)
     }
@@ -326,7 +353,8 @@ export function SellerOsOperationalDashboard() {
           <button type="submit" disabled={submitting || !input.trim()}
             className="min-h-11 min-w-24 rounded-2xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">{submitting ? "Procesando…" : "Procesar"}</button>
         </form>
-        <p aria-live="polite" className="mt-3 text-sm text-white/60">{feedback || (ownerRuntime.quickPickAvailable ? `${ownerRuntime.quickPick.inProgress} en proceso · ${ownerRuntime.quickPick.readyForReview} para revisar · ${ownerRuntime.quickPick.blocked} bloqueados` : "Operaciones no disponibles temporalmente")}</p>
+        {quickPickReceipt && <p aria-live="polite" className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.06] p-2 text-sm text-emerald-50"><strong>LOTE RECIBIDO · {quickPickReceipt.ownerReference}</strong><span className="mt-1 block">{quickPickReceipt.rawInputCount ?? "—"} links · {quickPickReceipt.urlDedupedCount ?? "—"} únicos · {quickPickReceipt.rejectedInputCount ?? "—"} rechazados · {quickPickReceipt.durableOperationCount ?? "—"} materializados</span></p>}
+        <p aria-live="polite" className="mt-3 text-sm text-white/60">{feedback || (ownerRuntime.quickPickAvailable ? `${ownerRuntime.quickPick.inProgress} en proceso · ${ownerRuntime.quickPick.readyForReview} para revisar · ${ownerRuntime.quickPick.blocked} bloqueados` : "No pude cargar el estado del lote · reintentando")}</p>
       </section>
 
       <section data-dashboard-block="live-attention" className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">

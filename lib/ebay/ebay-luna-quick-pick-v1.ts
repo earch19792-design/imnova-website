@@ -38,6 +38,8 @@ export const LUNA_QUICK_PICK_CONCURRENCY = 4
 export const LUNA_QUICK_PICK_DEMAND_DISCOVERY_CONCURRENCY = 2
 export const QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1 =
   "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1" as const
+export const QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1 =
+  "QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1" as const
 
 type JsonRecord = Record<string, unknown>
 type RadarBatch = ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1>
@@ -149,6 +151,7 @@ function canonicalRowUrl(row: JsonRecord) {
 }
 
 function sourceUrlWithVariant(canonicalUrl: string, variantId: string) {
+  if (!variantId) return canonicalUrl
   try {
     const parsed = new URL(canonicalUrl)
     parsed.searchParams.set("variant", variantId)
@@ -185,6 +188,7 @@ async function persistQuickPickOperationV1(input: Readonly<{
   lunaProductId: string
   lunaVariantId: string
   supplierSku: string
+  batchId?: string | null
 }>) {
   const existing = await input.supabase.from("ebay_luna_opportunity_queue")
     .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment")
@@ -211,6 +215,7 @@ async function persistQuickPickOperationV1(input: Readonly<{
     firstObservedAt: text(previous.firstObservedAt, 80) ?? now,
     lastSubmittedAt: now,
     ownerSurface: "/admin/ebay/quick-pick",
+    batchId: text(input.batchId, 80),
     marketplaceWrites: 0 as const,
   })
   const write = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -242,20 +247,23 @@ export function normalizeLunaQuickPickUrlsV1(value: unknown) {
   return collected.urls
 }
 
-function collectLunaQuickPickInputsV1(value: unknown): Readonly<{
+export function collectLunaQuickPickInputsV1(value: unknown): Readonly<{
+  rawInputCount: number
   urls: readonly string[]
   invalid: readonly Readonly<{ sourceUrl: string; blocker: string }>[]
 }> {
   const input = Array.isArray(value) ? value : typeof value === "string"
     ? value.split(/\r?\n/) : []
+  const rawInputs = input.flatMap((entry) => text(entry, 2_000)
+    ? [entry] : [])
+  if (rawInputs.length > LUNA_QUICK_PICK_MAX_INPUTS) {
+    throw new Error("LUNA_QUICK_PICK_INPUT_LIMIT_EXCEEDED")
+  }
   const normalized = new Map<string, string>()
   const invalid: Readonly<{ sourceUrl: string; blocker: string }>[] = []
-  for (const entry of input) {
+  for (const entry of rawInputs) {
     const source = text(entry, 2_000)
     if (!source) continue
-    if (normalized.size + invalid.length >= LUNA_QUICK_PICK_MAX_INPUTS) {
-      throw new Error("LUNA_QUICK_PICK_INPUT_LIMIT_EXCEEDED")
-    }
     try {
       const parsed = parseDirectedLunaProductUrl(source)
       const variant = explicitVariantId(source)
@@ -269,8 +277,197 @@ function collectLunaQuickPickInputsV1(value: unknown): Readonly<{
   if (!normalized.size && !invalid.length) {
     throw new Error("LUNA_QUICK_PICK_URL_REQUIRED")
   }
-  return Object.freeze({ urls: Object.freeze([...normalized.values()]),
+  return Object.freeze({ rawInputCount: rawInputs.length,
+    urls: Object.freeze([...normalized.values()]),
     invalid: Object.freeze(invalid) })
+}
+
+function batchInputReceiptV1(sourceUrl: string) {
+  const parsed = parseDirectedLunaProductUrl(sourceUrl)
+  const variantId = explicitVariantId(sourceUrl)
+  const canonicalUrl = parsed.canonicalUrl
+  return Object.freeze({ inputId: digest({ canonicalUrl, variantId }),
+    canonicalUrl, variantId, status: "WAITING" as const })
+}
+
+function ownerBatchReferenceV1(batchId: string) {
+  return `QP-${batchId.replaceAll("-", "").slice(0, 8).toUpperCase()}`
+}
+
+function batchCardSnapshotV1(value: LunaQuickPickCardV1) {
+  return Object.freeze({ sourceUrl: value.sourceUrl,
+    canonicalUrl: value.canonicalUrl, sourceSku: value.sourceSku,
+    lunaProductId: value.lunaProductId, lunaVariantId: value.lunaVariantId,
+    candidateId: value.candidateId, candidateKey: value.candidateKey,
+    opportunityId: value.opportunityId, listingPackageId: value.listingPackageId,
+    title: value.title, state: value.state, lastStage: value.lastStage,
+    disposition: value.disposition, exactBlocker: value.exactBlocker,
+    variantSelectionRequired: value.variantSelectionRequired,
+    variants: value.variants, alreadyLive: value.alreadyLive,
+    linkedLiveItemIds: value.linkedLiveItemIds, stages: value.stages,
+    updatedAt: value.updatedAt ?? new Date().toISOString(),
+    marketplaceWrites: 0 as const })
+}
+
+export async function receiveLunaQuickPickBatchV1(input: Readonly<{
+  supabase: SupabaseClient
+  urls: unknown
+}>) {
+  const collected = collectLunaQuickPickInputsV1(input.urls)
+  const inputs = collected.urls.map(batchInputReceiptV1)
+  const startedAt = new Date().toISOString()
+  const metrics = Object.freeze({
+    contractVersion: QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1,
+    rawInputCount: collected.rawInputCount,
+    urlDedupedCount: collected.urls.length,
+    rejectedInputCount: collected.invalid.length,
+    durableOperationCount: 0,
+    exactProductCount: 0,
+    duplicateOperationCount: 0,
+    inputs,
+    candidateKeys: Object.freeze([]),
+    cards: Object.freeze([]),
+    receiptStatus: "RECEIVED",
+    marketplaceWrites: 0,
+  })
+  const write = await input.supabase.from("ebay_seller_automation_runs")
+    .insert({ run_kind: "manual_acceleration", trigger_source: "admin",
+      status: "running", lanes: ["quick_pick"], metrics,
+      heartbeat_at: startedAt })
+    .select("id,status,metrics,started_at").single()
+  const stored = record(write.data)
+  if (write.error || !write.data ||
+      record(stored.metrics).contractVersion !==
+        QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1) {
+    throw new Error("LUNA_QUICK_PICK_BATCH_RECEIPT_WRITE_FAILED")
+  }
+  const batchId = String(stored.id)
+  return Object.freeze({ batchId, ownerReference: ownerBatchReferenceV1(batchId),
+    status: "RECEIVED" as const, rawInputCount: collected.rawInputCount,
+    urlDedupedCount: collected.urls.length,
+    rejectedInputCount: collected.invalid.length,
+    durableOperationCount: 0, exactProductCount: 0,
+    duplicateOperationCount: 0, receivedAt: text(stored.started_at, 80),
+    cards: Object.freeze(inputs.map((entry) => card({
+      sourceUrl: sourceUrlWithVariant(entry.canonicalUrl,
+        entry.variantId ?? ""), canonicalUrl: entry.canonicalUrl,
+      state: "RUNNING", lastStage: "IDENTITY", disposition: "RUNNING",
+      stages: emptyStages({ IDENTITY: "RUNNING" }),
+    }))) })
+}
+
+export async function completeLunaQuickPickBatchReceiptV1(input: Readonly<{
+  supabase: SupabaseClient
+  batchId: string
+  result?: Readonly<{ cards: readonly LunaQuickPickCardV1[] }>
+  failureCode?: string | null
+}>) {
+  if (!/^[0-9a-f-]{36}$/.test(input.batchId)) {
+    throw new Error("LUNA_QUICK_PICK_BATCH_ID_INVALID")
+  }
+  const currentRead = await input.supabase.from("ebay_seller_automation_runs")
+    .select("id,status,lanes,metrics").eq("id", input.batchId)
+    .eq("run_kind", "manual_acceleration").contains("lanes", ["quick_pick"])
+    .maybeSingle()
+  const current = record(currentRead.data)
+  const metrics = record(current.metrics)
+  if (currentRead.error || !currentRead.data ||
+      metrics.contractVersion !== QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1) {
+    throw new Error("LUNA_QUICK_PICK_BATCH_RECEIPT_NOT_FOUND")
+  }
+  const cards = [...(input.result?.cards ?? [])]
+  const candidateKeys = [...new Set(cards.flatMap((entry) =>
+    entry.candidateKey ? [entry.candidateKey] : []))]
+  const failureCode = actionable(input.failureCode)
+  const now = new Date().toISOString()
+  const nextMetrics = { ...metrics,
+    durableOperationCount: candidateKeys.length,
+    exactProductCount: new Set(cards.flatMap((entry) => entry.sourceSku &&
+      entry.lunaProductId && entry.lunaVariantId
+      ? [identityKey(entry.lunaProductId, entry.lunaVariantId,
+        entry.sourceSku)] : [])).size,
+    duplicateOperationCount: 0,
+    duplicateInputCount: cards.filter((entry) =>
+      entry.disposition === "EXCLUDED_DUPLICATE_INPUT").length,
+    candidateKeys, cards: cards.map(batchCardSnapshotV1),
+    receiptStatus: failureCode ? "FAILED" : "MATERIALIZED",
+    safeFailureCode: failureCode,
+    updatedAt: now,
+  }
+  const status = failureCode ? "failed" : "completed"
+  const write = await input.supabase.from("ebay_seller_automation_runs")
+    .update({ status, metrics: nextMetrics, last_error_code: failureCode,
+      heartbeat_at: now, completed_at: now }).eq("id", input.batchId)
+    .eq("run_kind", "manual_acceleration")
+    .select("id,status,metrics").single()
+  if (write.error || !write.data || record(record(write.data).metrics)
+      .receiptStatus !== nextMetrics.receiptStatus) {
+    throw new Error("LUNA_QUICK_PICK_BATCH_RECEIPT_UPDATE_FAILED")
+  }
+  return Object.freeze({ batchId: input.batchId,
+    ownerReference: ownerBatchReferenceV1(input.batchId), status,
+    ...nextMetrics })
+}
+
+export async function readLunaQuickPickBatchReceiptsV1(input: Readonly<{
+  supabase: SupabaseClient
+  limit?: number
+}>) {
+  const limit = Math.max(1, Math.min(20, input.limit ?? 10))
+  const read = await input.supabase.from("ebay_seller_automation_runs")
+    .select("id,status,metrics,last_error_code,started_at,heartbeat_at,completed_at")
+    .eq("run_kind", "manual_acceleration").contains("lanes", ["quick_pick"])
+    .order("started_at", { ascending: false }).limit(limit)
+  if (read.error) throw new Error("LUNA_QUICK_PICK_BATCH_RECEIPT_READ_FAILED")
+  return Object.freeze(rows(read.data).flatMap((row) => {
+    const metrics = record(row.metrics)
+    if (metrics.contractVersion !==
+        QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1) return []
+    const batchId = String(row.id)
+    const storedCards = rows(metrics.cards)
+    const inputs = rows(metrics.inputs)
+    const materializedInputIds = new Set(storedCards.flatMap((entry) => {
+      const canonicalUrl = text(entry.canonicalUrl, 2_000)
+      if (!canonicalUrl) return []
+      return [digest({ canonicalUrl,
+        variantId: explicitVariantId(String(entry.sourceUrl ?? "")) })]
+    }))
+    const waitingCards = inputs.filter((entry) =>
+      !materializedInputIds.has(String(entry.inputId))).flatMap((entry) => {
+      const canonicalUrl = text(entry.canonicalUrl, 2_000)
+      if (!canonicalUrl) return []
+      const failed = row.status === "failed"
+      return [card({ sourceUrl: sourceUrlWithVariant(canonicalUrl,
+        text(entry.variantId, 40) ?? ""), canonicalUrl,
+      state: failed ? "BLOCKED" : "RUNNING",
+      lastStage: "IDENTITY", disposition: failed ? "BLOCKED" : "RUNNING",
+      exactBlocker: failed ? text(row.last_error_code, 120) : null,
+      stages: emptyStages({ IDENTITY: failed ? "BLOCKED" : "RUNNING" }),
+      rehydrated: true,
+      updatedAt: text(row.heartbeat_at, 80) })]
+    })
+    return [Object.freeze({ batchId,
+      ownerReference: ownerBatchReferenceV1(batchId), status: row.status,
+      rawInputCount: number(metrics.rawInputCount),
+      urlDedupedCount: number(metrics.urlDedupedCount),
+      rejectedInputCount: number(metrics.rejectedInputCount),
+      durableOperationCount: number(metrics.durableOperationCount),
+      exactProductCount: number(metrics.exactProductCount),
+      duplicateOperationCount: number(metrics.duplicateOperationCount),
+      countEvidenceClass: text(metrics.countEvidenceClass, 120) ??
+        "DURABLE_BATCH_RECEIPT",
+      candidateKeys: Object.freeze(Array.isArray(metrics.candidateKeys)
+        ? metrics.candidateKeys.flatMap((value) => text(value, 120)
+          ? [String(value)] : []) : []),
+      cards: Object.freeze([...storedCards.map((entry) => card({
+        ...entry, sourceUrl: String(entry.sourceUrl ?? "quick-pick:unknown"),
+        rehydrated: true,
+      })), ...waitingCards]),
+      receivedAt: text(row.started_at, 80),
+      updatedAt: text(row.heartbeat_at, 80),
+      safeFailureCode: text(row.last_error_code, 120),
+    })]
+  }))
 }
 
 function publicProductRows(product: DirectedLunaProduct, observedAt: string) {
@@ -393,7 +590,8 @@ function emptyStages(overrides: Record<string, "WAITING" | "RUNNING" |
   return Object.freeze({ IDENTITY: "WAITING", DUPLICATE: "WAITING",
     STOCK: "WAITING", DEMAND: "WAITING", SHIPPING: "WAITING",
     ECONOMICS: "WAITING", PRODUCT_TRUTH: "WAITING",
-    LISTING_PACKAGE: "WAITING", MARKETPLACE_READINESS: "WAITING",
+    LISTING_PACKAGE: "WAITING", REQUIRED_SPECIFICS: "WAITING",
+    MARKETPLACE_READINESS: "WAITING",
     LISTING_READY: "WAITING", ...overrides })
 }
 
@@ -473,6 +671,8 @@ function outcomeStages(outcome: JsonRecord,
       pass("ECONOMICS_READY"),
     PRODUCT_TRUTH: pass("PRODUCT_TRUTH_READY"),
     LISTING_PACKAGE: pass("LISTING_PACKAGE_READY"),
+    REQUIRED_SPECIFICS:
+      outcome.requiredItemSpecificsReady === true ? "PASS" : "BLOCKED",
     MARKETPLACE_READINESS:
       outcome.canonicalMarketplaceReadinessReady === true ? "PASS" : "BLOCKED",
     LISTING_READY: outcome.listingReady === true ? "PASS" : "BLOCKED" })
@@ -500,6 +700,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
   fetchImpl?: typeof fetch
   onDemandDemandDiscovery?: typeof discoverAndPersistSellerOsOnDemandFamilyDemandV1
+  batchId?: string | null
 }>) {
   const startedAt = Date.now()
   const collected = collectLunaQuickPickInputsV1(input.urls)
@@ -780,6 +981,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       lunaProductId: candidate.lunaProductId as string,
       lunaVariantId: candidate.lunaVariantId as string,
       supplierSku: candidate.supplierSku as string,
+      batchId: input.batchId,
     }))
   for (const entry of resolved) {
     if (cards.has(entry.sourceUrl) || !entry.selected) continue
@@ -1026,6 +1228,12 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         ? "PASS" : "BLOCKED",
       LISTING_PACKAGE: stages.LISTING_PACKAGE_READY === "READY"
         ? "PASS" : "BLOCKED",
+      REQUIRED_SPECIFICS:
+        canonicalMarketplaceReadiness.requiredItemSpecificsReady === true ||
+        (Number(canonicalMarketplaceReadiness.requiredItemSpecificsSatisfied) ===
+          Number(canonicalMarketplaceReadiness.requiredItemSpecificsCount) &&
+          Number(canonicalMarketplaceReadiness.requiredItemSpecificsCount) > 0)
+          ? "PASS" : "BLOCKED",
       MARKETPLACE_READINESS: reviewReady ? "PASS" : "BLOCKED",
       LISTING_READY: listingReady ? "PASS" : "BLOCKED" })
     return Object.freeze({ sourceUrl, canonicalUrl,
@@ -1105,6 +1313,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         demandGrain: marketTestReady ? "UNPROVEN" : "FAMILY",
       }) : null,
       updatedAt: text(row.updated_at, 80),
+      elapsedMs: 0,
     })
   }))
 }

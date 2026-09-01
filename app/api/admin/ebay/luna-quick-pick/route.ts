@@ -8,7 +8,10 @@ import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
-import { processLunaQuickPickBatchV1, readLunaQuickPickProgressV1 } from
+import { completeLunaQuickPickBatchReceiptV1,
+  processLunaQuickPickBatchV1, readLunaQuickPickBatchReceiptsV1,
+  readLunaQuickPickProgressV1, receiveLunaQuickPickBatchV1,
+  type LunaQuickPickCardV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-v1"
 import { continueLunaQuickPickRequiredSpecificsV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-required-specifics-v1"
@@ -32,6 +35,16 @@ function safeError(error: unknown) {
     ? code : "LUNA_QUICK_PICK_REQUEST_FAILED"
 }
 
+function mergeProgress(receiptCards: readonly LunaQuickPickCardV1[],
+  durableCards: readonly LunaQuickPickCardV1[]) {
+  const key = (card: LunaQuickPickCardV1) => String(card.candidateKey ??
+    card.sourceUrl ?? "")
+  const merged = new Map(receiptCards.map((card) => [key(card), card]))
+  durableCards.forEach((card) => merged.set(key(card), {
+    ...merged.get(key(card)), ...card }))
+  return [...merged.values()]
+}
+
 export async function GET(req: Request) {
   const auth = await validateAdminApiRequest(req)
   if (!auth.ok || !auth.userId) return response({ success: false,
@@ -42,10 +55,16 @@ export async function GET(req: Request) {
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) return response({ success: false,
       error: "LUNA_QUICK_PICK_ACCOUNT_SCOPE_REQUIRED" }, 400)
-    let progress = await readLunaQuickPickProgressV1({
-      supabase: getSupabaseAdminClient(), candidateKeys: keys, accountKey,
-      includeRecent: keys.length === 0,
+    const supabase = getSupabaseAdminClient()
+    const receipts = await readLunaQuickPickBatchReceiptsV1({ supabase })
+    const receiptKeys = receipts.flatMap((receipt) => receipt.candidateKeys)
+    const requestedKeys = [...new Set([...keys, ...receiptKeys])]
+    let durableProgress = await readLunaQuickPickProgressV1({
+      supabase, candidateKeys: requestedKeys, accountKey,
+      includeRecent: requestedKeys.length === 0,
     })
+    const receiptCards = receipts.flatMap((receipt) => receipt.cards)
+    let progress = mergeProgress(receiptCards, durableProgress)
     const pendingSpecifics = progress.flatMap((card) =>
       card.candidateKey && (card.unresolvedRequiredAspects.length > 0
         || card.exactBlocker?.startsWith(
@@ -56,7 +75,7 @@ export async function GET(req: Request) {
       try {
         requiredSpecificsContinuation =
           await continueLunaQuickPickRequiredSpecificsV1({
-            supabase: getSupabaseAdminClient(), accountKey,
+            supabase, accountKey,
             candidateKeys: pendingSpecifics,
             taxonomyReader: getEbayTaxonomyListingIntelligence,
           })
@@ -64,17 +83,19 @@ export async function GET(req: Request) {
         requiredSpecificsContinuation = { status: "BLOCKED",
           reasonCode: safeError(error), marketplaceWrites: 0 }
       }
-      progress = await readLunaQuickPickProgressV1({
-        supabase: getSupabaseAdminClient(), candidateKeys: keys, accountKey,
-        includeRecent: keys.length === 0,
+      durableProgress = await readLunaQuickPickProgressV1({
+        supabase, candidateKeys: requestedKeys, accountKey,
+        includeRecent: requestedKeys.length === 0,
       })
+      progress = mergeProgress(receiptCards, durableProgress)
     }
     return response({ success: true, progress,
       summary: { inProgress: progress.filter((card) =>
         card.state === "RUNNING").length,
       readyForReview: progress.filter((card) => card.state === "READY").length,
       blocked: progress.filter((card) => card.state === "BLOCKED").length,
-      total: progress.length }, requiredSpecificsContinuation,
+      total: progress.length }, receipt: receipts[0] ?? null, receipts,
+      requiredSpecificsContinuation,
       safety: { marketplaceWrites: 0, canPublish: false } })
   } catch (error) {
     return response({ success: false, error: safeError(error) }, 400)
@@ -94,13 +115,36 @@ export async function POST(req: Request) {
     error: "LUNA_QUICK_PICK_INPUT_TOO_LARGE" }, 413)
   try {
     const body = record(await req.json())
-    const result = await processLunaQuickPickBatchV1({
-      supabase: getSupabaseAdminClient(), accountKey,
-      urls: body.urls,
-      selectedVariants: record(body.selectedVariants) as Record<string, string>,
-      taxonomyReader: getEbayTaxonomyListingIntelligence,
-    })
-    return response({ success: true, result,
+    if (body.action === "RECEIVE") {
+      const receipt = await receiveLunaQuickPickBatchV1({
+        supabase: getSupabaseAdminClient(), urls: body.urls,
+      })
+      return response({ success: true, receipt,
+        safety: { marketplaceWrites: 0, canPublish: false,
+          customerProductionTouched: false } }, 202)
+    }
+    const batchId = typeof body.batchId === "string" ? body.batchId : null
+    if (body.action === "PROCESS" && !batchId) return response({ success: false,
+      error: "LUNA_QUICK_PICK_BATCH_ID_REQUIRED" }, 400)
+    const supabase = getSupabaseAdminClient()
+    let result
+    try {
+      result = await processLunaQuickPickBatchV1({
+        supabase, accountKey,
+        urls: body.urls,
+        selectedVariants: record(body.selectedVariants) as Record<string, string>,
+        taxonomyReader: getEbayTaxonomyListingIntelligence,
+        batchId,
+      })
+    } catch (error) {
+      if (batchId) await completeLunaQuickPickBatchReceiptV1({ supabase,
+        batchId, failureCode: safeError(error) }).catch(() => undefined)
+      throw error
+    }
+    const receipt = batchId
+      ? await completeLunaQuickPickBatchReceiptV1({ supabase, batchId,
+        result }) : null
+    return response({ success: true, result, receipt,
       safety: { marketplaceWrites: 0, canPublish: false,
         customerProductionTouched: false } })
   } catch (error) {
