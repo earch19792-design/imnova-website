@@ -29,6 +29,7 @@ export const RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION =
   "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V1" as const
 
 const TAXONOMY_REVALIDATION_MS = 6 * 60 * 60 * 1_000
+const REQUIRED_ASPECT_SCOPE = "ALL_OFFICIAL_REQUIRED_ASPECTS" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -325,6 +326,7 @@ function compatibleBatchResolution(input: Readonly<{
   const { evidenceDigest, ...core } = stored
   if (stored.contractVersion !==
       MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1
+      || stored.aspectScope !== REQUIRED_ASPECT_SCOPE
       || stored.authority !== "SELLER_OS_DETERMINISTIC_FACTORY"
       || stored.radarCandidateId !== input.batchInput.radarCandidateId
       || stored.lunaProductId !== input.batchInput.lunaProductId
@@ -397,6 +399,7 @@ function existingEvidence(input: Readonly<{
   accountKey: string
   now: Date
   requiredSpecificsBatchResolutionDigest: string | null
+  requiredSpecificsBatchResolutionCompleteScope: boolean
 }>) {
   const assessment = record(input.opportunity.assessment)
   const value = record(assessment.canonicalMarketplaceReadinessV1)
@@ -414,6 +417,8 @@ function existingEvidence(input: Readonly<{
     && value.listingPackageId === input.listingPackageId
     && (value.requiredSpecificsBatchResolutionDigest ?? null) ===
       input.requiredSpecificsBatchResolutionDigest
+    && (!input.requiredSpecificsBatchResolutionDigest
+      || input.requiredSpecificsBatchResolutionCompleteScope)
     && validCandidateId(value.radarCandidateId)
     && value.demandEvidenceGrain === "FAMILY"
     && value.exactProductDemandClaimed === false
@@ -448,6 +453,8 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     /^sha256:[0-9a-f]{64}$/.test(text(
       storedBatchResolution.evidenceDigest, 80))
       ? text(storedBatchResolution.evidenceDigest, 80) : null
+  const requiredSpecificsBatchResolutionCompleteScope =
+    storedBatchResolution.aspectScope === REQUIRED_ASPECT_SCOPE
   const reusable = listingPackageId ? existingEvidence({
     opportunity: input.opportunity,
     productTruthDigest,
@@ -455,6 +462,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     accountKey: input.accountKey,
     now,
     requiredSpecificsBatchResolutionDigest,
+    requiredSpecificsBatchResolutionCompleteScope,
   }) : null
   if (reusable) {
     const truthEvidence = record(record(input.productTruth.sourceEvidence)

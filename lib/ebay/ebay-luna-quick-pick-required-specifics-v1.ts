@@ -154,6 +154,7 @@ async function persistResolution(input: Readonly<{
     supplierSku: input.resolution.supplierSku,
     marketplaceId: input.resolution.marketplaceId,
     categoryId: input.resolution.categoryId,
+    aspectScope: REQUIRED_ASPECT_SCOPE,
     inputEvidenceDigest: input.resolution.inputEvidenceDigest,
     resolutions: input.resolution.resolutions,
     groupedBy: "EBAY_MARKETPLACE_PLUS_CATEGORY_ID",
@@ -211,7 +212,10 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       ?.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN"))
     const legacyScopeReconciliation = Boolean(currentMarker
       && currentMarker.completedAt
-      && currentMarker.aspectScope !== REQUIRED_ASPECT_SCOPE
+      && (currentMarker.aspectScope !== REQUIRED_ASPECT_SCOPE
+        || (currentMarker.resolverReasonCode ===
+            "LUNA_QUICK_PICK_SPECIFICS_BATCH_INPUT_INVALID"
+          && Number(currentMarker.scopeReconciliationRetryCount ?? 0) < 1))
       && blockedBySpecifics)
     if (!candidate || !blockedBySpecifics
       || (currentMarker && !legacyScopeReconciliation)
@@ -221,6 +225,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const nextMarker = currentMarker ? {
       ...currentMarker, aspectScope: REQUIRED_ASPECT_SCOPE,
       reconciliationClaimedAt: now,
+      scopeReconciliationRetryCount:
+        Number(currentMarker.scopeReconciliationRetryCount ?? 0) + 1,
     } : {
       contractVersion: QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1,
       claimedAt: now, aspectScope: REQUIRED_ASPECT_SCOPE,
