@@ -68,6 +68,18 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
 }
 
+function validGtinChecksum(value: string) {
+  if (!/^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(value)) return false
+  const digits = [...value].map(Number)
+  const check = digits.pop() ?? -1
+  let sum = 0
+  for (let index = digits.length - 1, position = 0; index >= 0;
+    index -= 1, position += 1) {
+    sum += digits[index] * (position % 2 === 0 ? 3 : 1)
+  }
+  return (10 - (sum % 10)) % 10 === check
+}
+
 function numberOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
@@ -449,6 +461,9 @@ export function buildEbayDraftOnlyPayload(
     },
   }
   const aspects = normalizeAspects(packageData.aspects)
+  const exactGtin = text(opportunity.gtin).replace(/[\s-]/g, "")
+  const upc = /^\d{12}$/.test(exactGtin) && validGtinChecksum(exactGtin)
+    ? exactGtin : null
   const categoryId = text(packageData.categoryId)
   const dimensionValues = [dimensions.height, dimensions.length, dimensions.width]
     .map(numberOrNull)
@@ -469,6 +484,7 @@ export function buildEbayDraftOnlyPayload(
       description: text(packageData.description).slice(0, 100_000),
       aspects,
       imageUrls,
+      ...(upc ? { upc: [upc] } : {}),
     },
     ...(packageMeasurementsReady ? { packageWeightAndSize: {
       dimensions: {

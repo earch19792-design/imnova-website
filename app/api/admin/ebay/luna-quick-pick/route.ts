@@ -27,6 +27,10 @@ import { loadFinalListingReviewPublicationGate } from
   "@/lib/ebay/final-listing-review-publication-gate"
 import { ensureAutomaticLunaSupplierImagesV1 } from
   "@/lib/ebay/luna-supplier-image-auto-runtime-v1"
+import { persistQuickPickRequiredUpcResolutionV1 } from
+  "@/lib/ebay/ebay-quick-pick-required-upc-resolution-v1"
+import { preflightEbayCategoryProductIdentifiers } from
+  "@/lib/ebay/ebay-draft-only-gateway"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
@@ -221,6 +225,37 @@ export async function POST(req: Request) {
     error: "LUNA_QUICK_PICK_INPUT_TOO_LARGE" }, 413)
   try {
     const body = record(await req.json())
+    if (body.action === "RESOLVE_REQUIRED_UPC") {
+      const candidateKey = typeof body.candidateKey === "string" &&
+        /^sha256:[0-9a-f]{64}$/.test(body.candidateKey)
+        ? body.candidateKey : null
+      const listingPackageId = uuid(body.listingPackageId)
+      if (!candidateKey || !listingPackageId) return response({
+        success: false,
+        error: "QUICK_PICK_REQUIRED_UPC_INPUT_INVALID",
+      }, 400)
+      const resolution = await persistQuickPickRequiredUpcResolutionV1({
+        supabase: getSupabaseAdminClient(), accountKey,
+        actorUserId: auth.userId, candidateKey, listingPackageId,
+      })
+      if (!resolution.categoryId) throw new Error(
+        "QUICK_PICK_REQUIRED_UPC_CATEGORY_REQUIRED")
+      const categoryPolicyPreflight =
+        await preflightEbayCategoryProductIdentifiers({
+          categoryId: resolution.categoryId,
+          marketplaceId: "EBAY_US",
+          inventoryItemPayload: resolution.inventoryItemPayload,
+        })
+      if (!categoryPolicyPreflight.safe) throw new Error(
+        categoryPolicyPreflight.blocker
+          ?? "QUICK_PICK_REQUIRED_UPC_CATEGORY_PREFLIGHT_FAILED")
+      return response({ success: true, resolution,
+        categoryPolicyPreflight,
+        safety: { marketplaceWrites: 0, listingPublications: 0,
+          publishCallIncrement: 0, offerRecreations: 0,
+          inventoryItemRecreations: 0,
+          customerProductionTouched: false } })
+    }
     if (body.action === "OWNER_REVIEW") {
       const ownerReview = await persistQuickPickOwnerReview({
         supabase: getSupabaseAdminClient(), accountKey,

@@ -310,10 +310,18 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     && ebayFees !== null && profit !== null && margin !== null && roi !== null
     && breakEven !== null)
   const sourceTerms = keywords.map((entry) => entry.term)
+  const exactGtin = text(input.opportunity.gtin, 32)
+    ?? text(record(packageData.productIdentifiers).upc, 32)
+  const productIdentifiers = Object.freeze({
+    upc: exactGtin,
+    evidenceClass: exactGtin
+      ? "EXACT_PRODUCT_IDENTITY" : "UNPROVEN",
+  })
   const contentCore = Object.freeze({ title, keywords, itemSpecifics:
     aspects.values, description: description.value, categoryId, categoryName,
   conditionId, conditionLabel, targetPrice, supplierCost, shipping,
-  ebayFees, profit, margin, roi })
+  ebayFees, profit, margin, roi,
+  ...(exactGtin ? { productIdentifiers } : {}) })
   const packageDigest = digest(contentCore)
   const currentListingPackageId = text(input.listingPackage.id, 80)
   const ownerReviewConfirmed = ownerReview.status === "CONFIRMED" &&
@@ -346,6 +354,7 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     condition: Object.freeze({ id: conditionId, label: conditionLabel,
       source: text(readiness.conditionSource, 160)
         ?? "EXISTING_CANONICAL_MARKETPLACE_READINESS" }),
+    productIdentifiers,
     shipping: Object.freeze({ amount: shipping, currency: "USD",
       source: "DURABLE_LUNA_SHIPPING_EVIDENCE" }),
     demand: Object.freeze({ status: marketTest
