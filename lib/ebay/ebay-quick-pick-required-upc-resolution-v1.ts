@@ -118,7 +118,7 @@ export function buildRequiredUpcPackageProjectionV1(input: Readonly<{
 export async function persistQuickPickRequiredUpcResolutionV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
-  actorUserId: string
+  actorUserId?: string | null
   candidateKey: string
   listingPackageId: string
   fetchImpl?: typeof fetch
@@ -130,6 +130,11 @@ export async function persistQuickPickRequiredUpcResolutionV1(input: Readonly<{
   const listingPackage = record(packageRead.data)
   if (packageRead.error || !listingPackage.id) {
     throw new Error("QUICK_PICK_REQUIRED_UPC_PACKAGE_NOT_FOUND")
+  }
+  const actorUserId = text(input.actorUserId, 80)
+    ?? text(listingPackage.created_by, 80)
+  if (!actorUserId || !/^[0-9a-f-]{36}$/i.test(actorUserId)) {
+    throw new Error("QUICK_PICK_REQUIRED_UPC_ACTOR_AUTHORITY_REQUIRED")
   }
   const opportunityRead = await input.supabase
     .from("ebay_luna_opportunity_queue").select("*")
@@ -195,7 +200,7 @@ export async function persistQuickPickRequiredUpcResolutionV1(input: Readonly<{
   })
   const nextPackageData = buildRequiredUpcPackageProjectionV1({
     packageData: preliminaryPackageData, review, evidence,
-    actorUserId: input.actorUserId, now,
+    actorUserId, now,
   })
 
   const packageWrite = await input.supabase.from("ebay_listing_packages")

@@ -214,7 +214,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const auth = await validateAdminApiRequest(req)
-  if (!auth.ok || !auth.userId) return response({ success: false,
+  if (!auth.ok) return response({ success: false,
     error: auth.error ?? "LUNA_QUICK_PICK_ADMIN_REQUIRED" },
   auth.status || 403)
   const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
@@ -256,6 +256,8 @@ export async function POST(req: Request) {
           inventoryItemRecreations: 0,
           customerProductionTouched: false } })
     }
+    if (!auth.userId) return response({ success: false,
+      error: "LUNA_QUICK_PICK_ADMIN_REQUIRED" }, 403)
     if (body.action === "OWNER_REVIEW") {
       const ownerReview = await persistQuickPickOwnerReview({
         supabase: getSupabaseAdminClient(), accountKey,
