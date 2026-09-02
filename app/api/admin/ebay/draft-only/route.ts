@@ -49,6 +49,7 @@ import {
 } from "@/lib/ebay/ebay-draft-only-prewrite-retirement"
 import {
   classifyCorrectedPackageSafeRetryV1,
+  correctedPackageRetryLedgerExclusionApprovalIdV1,
   type CorrectedPackageRetryHistoricalV1,
 } from "@/lib/ebay/ebay-corrected-package-safe-retry-v1"
 import {
@@ -3432,6 +3433,13 @@ async function executeDraft(body: JsonRecord, actor: string) {
     target,
     accountFingerprint: fingerprint,
   })
+  const correctedRetryHistory = await loadCorrectedPackageRetryHistory({
+    supabase,
+    actorUserId: actor,
+    listingPackageId: text(approval.listing_package_id),
+    opportunityId: text(approval.opportunity_id),
+    sku,
+  })
   const executionSelfLineage = classifyExactDraftOnlyPublicationSelfLineageV1({
     approval: approval as JsonRecord,
     execution: existing as JsonRecord | null,
@@ -3445,6 +3453,48 @@ async function executeDraft(body: JsonRecord, actor: string) {
       sku,
     },
   })
+  const correctedRetryHistoricalSelfLineage = correctedRetryHistory
+    ? classifyExactDraftOnlyPublicationSelfLineageV1({
+      approval: correctedRetryHistory.approval,
+      execution: correctedRetryHistory.execution,
+      publication: correctedRetryHistory.publication,
+      expected: {
+        actorUserId: actor,
+        listingPackageId: text(approval.listing_package_id),
+        opportunityId: text(approval.opportunity_id),
+        candidateKey: text(approval.candidate_key),
+        target,
+        accountFingerprint: fingerprint,
+        sku,
+      },
+    })
+    : null
+  const currentControlledIntent = record(
+    approvedPayload.controlledPublicationIntent,
+  )
+  const currentOfferPayload = record(approvedPayload.offerPayload)
+  const correctedRetryLedgerExclusionApprovalId =
+    correctedPackageRetryLedgerExclusionApprovalIdV1({
+      current: {
+        listingPackageId: text(approval.listing_package_id),
+        packageDigest: text(currentControlledIntent.packageDigest),
+        target,
+        accountFingerprintPresent: Boolean(fingerprint),
+        sku,
+        categoryId: text(currentOfferPayload.categoryId),
+        upcs: exactUpcsFromPayload(approvedPayload),
+      },
+      historical: correctedRetryHistory?.historical ?? null,
+      historicalSelfLineageExact:
+        correctedRetryHistoricalSelfLineage?.exact === true,
+    })
+  const collisionSelfLineage = executionSelfLineage.exact
+    ? executionSelfLineage
+    : correctedRetryLedgerExclusionApprovalId
+      && correctedRetryHistoricalSelfLineage?.excludeApprovalId
+        === correctedRetryLedgerExclusionApprovalId
+      ? correctedRetryHistoricalSelfLineage
+      : executionSelfLineage
   let context = await loadPackageContext(
     supabase,
     approval.listing_package_id,
@@ -3452,7 +3502,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     sku,
     target,
     fingerprint,
-    executionSelfLineage,
+    collisionSelfLineage,
   )
   const v3Binding = record(record(approvedPayload.compliance).v3FinalSetAuthorization)
   let revalidatedExecutionEvidence:
@@ -3615,13 +3665,6 @@ async function executeDraft(body: JsonRecord, actor: string) {
     )
   }
 
-  const correctedRetryHistory = await loadCorrectedPackageRetryHistory({
-    supabase,
-    actorUserId: actor,
-    listingPackageId: text(approval.listing_package_id),
-    opportunityId: text(approval.opportunity_id),
-    sku,
-  })
   let correctedPackageSafeRetry: ReturnType<
     typeof classifyCorrectedPackageSafeRetryV1
   > | null = null

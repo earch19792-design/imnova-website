@@ -87,23 +87,17 @@ function exactSingleUpc(values: readonly string[]) {
   return values.length === 1 && /^\d{12}$/.test(values[0] ?? "")
 }
 
-export function classifyCorrectedPackageSafeRetryV1(input: Readonly<{
-  current: CorrectedPackageRetryCurrentV1
-  historical: CorrectedPackageRetryHistoricalV1 | null
-  official: CorrectedPackageRetryOfficialV1 | null
-}>): CorrectedPackageSafeRetryV1 {
-  const current = input.current
-  const historical = input.historical
-  const official = input.official
-  const currentPackageMatch = Boolean(
-    current.ownerReviewConfirmed
-    && validDigest(current.packageDigest)
-    && current.ownerReviewedPackageDigest === current.packageDigest,
-  )
-  const currentAuthorizationPackageMatch = Boolean(
-    currentPackageMatch && current.publishAuthorizationReady,
-  )
-  const eligibleHistoricalFailure = Boolean(historical
+function exactHistoricalUpcFailure(
+  current: Pick<CorrectedPackageRetryCurrentV1,
+    | "listingPackageId"
+    | "packageDigest"
+    | "target"
+    | "accountFingerprintPresent"
+    | "sku"
+    | "categoryId">,
+  historical: CorrectedPackageRetryHistoricalV1 | null,
+) {
+  return Boolean(historical
     && historical.listingPackageId === current.listingPackageId
     && historical.sku === current.sku
     && historical.categoryId === "94861"
@@ -126,6 +120,57 @@ export function classifyCorrectedPackageSafeRetryV1(input: Readonly<{
     && validDigest(historical.packageDigest)
     && historical.packageDigest !== current.packageDigest
     && /^[A-Za-z0-9_-]{1,80}$/.test(historical.offerId))
+}
+
+/**
+ * The generic SKU-collision guard must ignore the prior ledger only for the
+ * exact, already-certified UPC correction lineage. This merely permits the
+ * route to reach its full official readback and retry classifier; it does not
+ * authorize a claim or any marketplace write.
+ */
+export function correctedPackageRetryLedgerExclusionApprovalIdV1(input:
+  Readonly<{
+    current: Pick<CorrectedPackageRetryCurrentV1,
+      | "listingPackageId"
+      | "packageDigest"
+      | "target"
+      | "accountFingerprintPresent"
+      | "sku"
+      | "categoryId"
+      | "upcs">
+    historical: CorrectedPackageRetryHistoricalV1 | null
+    historicalSelfLineageExact: boolean
+  }>) {
+  if (
+    !input.historicalSelfLineageExact
+    || input.current.target !== "PRODUCTION"
+    || !validDigest(input.current.packageDigest)
+    || !exactSingleUpc(input.current.upcs)
+    || !exactHistoricalUpcFailure(input.current, input.historical)
+  ) return null
+  return input.historical?.approvalId ?? null
+}
+
+export function classifyCorrectedPackageSafeRetryV1(input: Readonly<{
+  current: CorrectedPackageRetryCurrentV1
+  historical: CorrectedPackageRetryHistoricalV1 | null
+  official: CorrectedPackageRetryOfficialV1 | null
+}>): CorrectedPackageSafeRetryV1 {
+  const current = input.current
+  const historical = input.historical
+  const official = input.official
+  const currentPackageMatch = Boolean(
+    current.ownerReviewConfirmed
+    && validDigest(current.packageDigest)
+    && current.ownerReviewedPackageDigest === current.packageDigest,
+  )
+  const currentAuthorizationPackageMatch = Boolean(
+    currentPackageMatch && current.publishAuthorizationReady,
+  )
+  const eligibleHistoricalFailure = exactHistoricalUpcFailure(
+    current,
+    historical,
+  )
   const currentUpcReady = exactSingleUpc(current.upcs)
     && current.categoryPolicySafe
     && current.missingRequiredIdentifiers.length === 0
