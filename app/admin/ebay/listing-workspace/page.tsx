@@ -190,6 +190,9 @@ type DraftState = {
     payloadHash?: string
     requiredSku?: string
     payload?: {
+      inventoryItemPayload?: {
+        product?: { upc?: string[] }
+      }
       offerPayload?: {
         marketplaceId?: string
         availableQuantity?: number
@@ -276,6 +279,35 @@ type DraftState = {
     NEW_OFFERS: 0
     PUBLISH_CALLS: 0
     WITHDRAW_CALLS: 0
+  } | null
+  historicalPublicationAttempt?: {
+    id: string
+    status: "FAILED_RESOLVED" | "FAILED_CURRENT" | "NOT_APPLICABLE"
+    reason: string | null
+    publishHttpStatus: number | null
+    offerId: string
+    blocksCurrentCorrectedPackage: boolean
+  } | null
+  correctedPackageSafeRetry?: {
+    version: "EBAY_CORRECTED_PACKAGE_SAFE_RETRY_V1"
+    eligibleHistoricalFailure: boolean
+    oldAttemptStatus: "FAILED_RESOLVED" | "FAILED_CURRENT" | "NOT_APPLICABLE"
+    oldAttemptReason: string | null
+    oldAttemptResolved: boolean
+    oldAttemptBlocksCurrentCorrectedPackage: boolean
+    currentFailureProjectedAsBlocker: boolean
+    currentPackageMatch: boolean
+    currentAuthorizationPackageMatch: boolean
+    correctedInventoryItemUpdateRequired: boolean
+    sameReservedSkuReused: boolean
+    sameOfferReused: boolean
+    upcWillBePresentBeforePublish: boolean
+    offerRemainsUnpublishedBeforePublish: boolean
+    publishClaimOneShot: true
+    unknownExternalResultAutoRetry: false
+    safeRetryReady: boolean
+    publishCtaEnabled: boolean
+    exactCurrentBlocker: string | null
   } | null
   approvalRequirements?: {
     exactPhrase: string
@@ -1753,7 +1785,7 @@ function ListingWorkspacePageContent() {
       ? "/api/admin/ebay/account-policies"
       : body
         ? "/api/admin/ebay/draft-only"
-        : `/api/admin/ebay/draft-only?packageId=${encodeURIComponent(packageId ?? "")}&opportunityId=${encodeURIComponent(opportunityId ?? "")}&candidateKey=${encodeURIComponent(candidateKey ?? "")}`
+        : `/api/admin/ebay/draft-only?packageId=${encodeURIComponent(packageId ?? "")}&opportunityId=${encodeURIComponent(opportunityId ?? "")}&candidateKey=${encodeURIComponent(candidateKey ?? "")}&reconcileRejectedPublish=true`
     const response = await fetch(endpoint, {
       method: body ? "POST" : "GET",
       cache: "no-store",
@@ -2510,6 +2542,13 @@ function ListingWorkspacePageContent() {
   }, [finalReviewCompleted, form, opportunity, resolvedWorkspaceGates])
   const draftTarget = draftState.runtime?.target ?? "PENDIENTE"
   const canonicalOffer = object(draftState.readiness?.payload?.offerPayload)
+  const canonicalInventory = object(
+    draftState.readiness?.payload?.inventoryItemPayload,
+  )
+  const canonicalProductIdentifiers = object(canonicalInventory.product)
+  const canonicalUpc = Array.isArray(canonicalProductIdentifiers.upc)
+    ? String(canonicalProductIdentifiers.upc[0] ?? "")
+    : ""
   const canonicalOfferPrice = object(
     object(canonicalOffer.pricingSummary).price,
   )
@@ -2544,6 +2583,8 @@ function ListingWorkspacePageContent() {
     && !retiredPrewriteExecution
   const executionCompleted = unpublishedExecutionPhase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
+  const correctedPackageSafeRetryReady =
+    draftState.correctedPackageSafeRetry?.safeRetryReady === true
   const publicationLifecycleStarted = Boolean(draftState.approval?.id)
     || unpublishedExecutionExists
     || Boolean(draftState.publication?.id)
@@ -2554,13 +2595,15 @@ function ListingWorkspacePageContent() {
     || !draftState.runtime?.enabled
     || !draftState.runtime?.configured
     || !productionTarget
-    || publicationPhase === "terminal_failure"
+    || (publicationPhase === "terminal_failure"
+      && !correctedPackageSafeRetryReady)
   const publicationButtonBlockReason = !listingPackage
     ? "El paquete V3 aprobado todavía no terminó de cargarse."
     : !quickPickCanonicalMode &&
         (!referenceGuidedAttemptId || !finalReviewRecord.previewHash)
       ? "La firma visual final todavía no terminó de enlazarse."
       : publicationPhase === "terminal_failure"
+          && !correctedPackageSafeRetryReady
         ? "La publicación quedó detenida para evitar un duplicado; primero debe verificarse el resultado existente."
         : draftBusy && !publicationAutomationBusy
           ? "Hay otra comprobación segura en curso. El control se activará al terminar."
@@ -3774,6 +3817,18 @@ function ListingWorkspacePageContent() {
           : "eBay todavía no confirma ACTIVE; no se repitió la publicación.")
         return
       }
+      if (
+        nextPublication?.phase === "terminal_failure"
+        && draftState.correctedPackageSafeRetry?.safeRetryReady === true
+      ) {
+        // The failed publication remains immutable history. A corrected
+        // package must acquire fresh one-shot approval/execution/publication
+        // rows while reusing the exact Inventory SKU and Offer.
+        nextApproval = null
+        nextExecution = null
+        nextPublication = null
+        oneClickPublicationApprovalKey.current = ""
+      }
       if (nextPublication?.phase === "terminal_failure") {
         throw new Error(nextPublication.last_error_code
           ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE")
@@ -3833,7 +3888,9 @@ function ListingWorkspacePageContent() {
       if (!nextExecution?.id || nextExecution.phase !== "completed") {
         setPublicationAutomationPhase("draft")
         setPublicationAutomationStep(
-          "3/5 · Creando Inventory Item + Offer UNPUBLISHED una sola vez…",
+          correctedPackageSafeRetryReady
+            ? "3/5 · Actualizando UPC en el mismo Inventory Item y verificando el mismo Offer UNPUBLISHED…"
+            : "3/5 · Creando Inventory Item + Offer UNPUBLISHED una sola vez…",
         )
         const executed = await draftRequest({
           action: "execute",
@@ -5299,6 +5356,7 @@ function ListingWorkspacePageContent() {
             {singleHumanPublicationEligible && <div data-one-click-controlled-publication className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-4">
               <div><p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Una autorización humana · todas las puertas internas</p><h3 className="mt-1 text-lg font-black">Publicación controlada de {opportunity?.candidate_key}</h3><p className="mt-2 text-sm leading-6 text-rose-50/75">Este clic queda ligado al candidate, package, digest, cuenta, marketplace, precio, cantidad, policies e imágenes exactos. Cualquier diferencia invalida la continuación y detiene la publicación.</p></div>
               <dl className="grid gap-2 text-xs sm:grid-cols-2"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Package</dt><dd className="break-all font-black">{listingPackage.id}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Marketplace / cuenta</dt><dd className="font-black">{marketplaceAccountLabel}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Precio / cantidad</dt><dd className="font-black">USD {Number(form.pricing.targetPrice ?? 0).toFixed(2)} · {effectiveDraftQuantity}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Policies</dt><dd className="break-all font-black">{draftConfiguration.fulfillmentPolicyId || "pendiente"} · {draftConfiguration.paymentPolicyId || "pendiente"} · {draftConfiguration.returnPolicyId || "pendiente"}</dd></div></dl>
+              {correctedPackageSafeRetryReady && <div data-corrected-package-safe-retry className="rounded-xl border border-emerald-200/35 bg-emerald-200/[0.09] p-3 text-emerald-50"><strong>LISTO PARA REINTENTO SEGURO</strong><p className="mt-2 text-sm">Intento anterior: falló por UPC requerido · <strong>RESUELTO</strong></p><ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><li>UPC {canonicalUpc || "confirmado"} ✓</li><li>Category Policy ✓</li><li>Package confirmado ✓</li><li>Offer UNPUBLISHED ✓</li></ul><p className="mt-2 text-xs text-emerald-50/70">El próximo clic actualizará el mismo Inventory SKU, verificará el UPC por GET y reutilizará el mismo Offer. No creará otro Offer.</p></div>}
               <PublicationLaunchVisualizer phase={publicationVisualizerPhase} busy={publicationAutomationBusy} failed={publicationAutomationFailed} elapsedSeconds={publicationAutomationElapsed} productImageUrl={publicationProductImageUrl} status={publicationAutomationStep} />
               {publicationPhase === "monitor_registered" ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p></div> : <button type="button" disabled={singleHumanPublicationButtonDisabled} onClick={() => void publishSmartStockingWithSingleAuthorization()} className="min-h-16 w-full rounded-2xl bg-rose-200 px-4 text-lg font-black text-black disabled:opacity-40">{publicationAutomationBusy ? "SISTEMA EN OPERACIÓN" : ["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) ? "VERIFICAR PUBLICACIÓN EN EBAY" : "PUBLICAR EN EBAY"}</button>}
               <p className="text-xs leading-5 text-rose-50/65">No existe autorización desatendida: el primer clic es obligatorio. Después, Seller OS exige readback oficial exacto del Inventory Item y Offer UNPUBLISHED, publish one-shot y readback ACTIVE antes de persistir Item ID y activar monitoreo.</p>
@@ -5310,7 +5368,7 @@ function ListingWorkspacePageContent() {
             {canonicalReadinessAvailable && !singleHumanPublicationEligible && publicationPhase === "preview_ready" && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3"><div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Preview final persistido</p><h3 className="mt-1 font-black">{String(publicationProduct.title ?? "Título pendiente")}</h3><p className="mt-2 text-xs text-white/65">SKU: {String(publicationOffer.sku ?? draftState.publication?.sku ?? "")} · Category ID: {String(publicationOffer.categoryId ?? "")} · Cantidad: {String(publicationOffer.availableQuantity ?? "")}</p><p className="mt-1 text-sm font-black">Precio exacto: {String(publicationPrice.currency ?? "USD")} {String(publicationPrice.value ?? "")}</p><p className="mt-1 text-xs text-white/65">Imágenes aprobadas: {Array.isArray(publicationProduct.imageUrls) ? publicationProduct.imageUrls.length : 0} · Location: {String(publicationOffer.merchantLocationKey ?? "")}</p><p className="mt-1 break-all text-[10px] text-white/50">Policies: {String(publicationPolicies.fulfillmentPolicyId ?? "")} · {String(publicationPolicies.paymentPolicyId ?? "")} · {String(publicationPolicies.returnPolicyId ?? "")}</p><p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez.</p></div><label className="block"><span className="text-sm font-black">Escribe exactamente: {finalPublishPhrase}</span><input value={publishConfirmation} onChange={(event) => setPublishConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmFinalPublication} onChange={(event) => setConfirmFinalPublication(event.target.checked)} />Revisé este preview final, incluidas todas las imágenes canónicas aprobadas y el precio.</label><label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmPublishProductionAccount} onChange={(event) => setConfirmPublishProductionAccount(event.target.checked)} />Confirmo publicar en mi cuenta eBay PRODUCTION y registrar el listing ACTIVE en monitoreo.</label><button type="button" disabled={draftBusy || publishConfirmation !== finalPublishPhrase || !confirmFinalPublication || !confirmPublishProductionAccount} onClick={() => void publishFinalListing()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Publicar una sola vez en eBay</button></div>}
             {["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) && <div className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-3"><strong>{publicationPhase === "published_pending_verification" ? "Publicado; falta confirmar ACTIVE" : "Resultado de publicación en reconciliación"}</strong><p className="mt-2 text-sm text-white/65">Esta acción sólo consulta eBay y registra monitoreo. Nunca vuelve a llamar publishOffer.</p>{draftState.publication?.listing_id && <a href={`https://www.ebay.com/itm/${draftState.publication.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-black text-cyan-100 underline">Ver listing {draftState.publication.listing_id}</a>}<button type="button" disabled={draftBusy} onClick={() => void reconcileFinalListing()} className="mt-3 min-h-13 w-full rounded-2xl border border-amber-200/40 px-4 font-black disabled:opacity-40">Verificar ACTIVE y registrar monitoreo</button></div>}
             {publicationPhase === "monitor_registered" && <div className="rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y ciclo cerrado</strong><p className="mt-2 text-sm">Item ID {draftState.publication?.listing_id} · monitoreo comercial y disponibilidad Luna registrados.</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>}
-            {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing.</p></div>}
+            {publicationPhase === "terminal_failure" && !correctedPackageSafeRetryReady && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing.</p></div>}
           </section>}
 
           <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">

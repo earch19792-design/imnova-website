@@ -48,6 +48,10 @@ import {
   canRetireSupersededSkuPreflight,
 } from "@/lib/ebay/ebay-draft-only-prewrite-retirement"
 import {
+  classifyCorrectedPackageSafeRetryV1,
+  type CorrectedPackageRetryHistoricalV1,
+} from "@/lib/ebay/ebay-corrected-package-safe-retry-v1"
+import {
   classifyCompensatedOfferFreshReadV1,
   executeCompensatedOfferFreshReadGateV1,
   isCompensatedPublicationRecoveryErrorCodeV1,
@@ -574,6 +578,164 @@ async function readRejectedPublishOfficialReadback(input: {
         || published.blocker
         || skuState.blocker
         || "EBAY_REJECTED_PUBLISH_READBACK_INCOMPLETE",
+  }
+}
+
+function exactUpcsFromPayload(payload: JsonRecord) {
+  const value = record(payload.inventoryItemPayload)
+  const product = record(value.product)
+  return Array.isArray(product.upc)
+    ? product.upc.map((entry) => text(entry)).filter(Boolean)
+    : []
+}
+
+function firstSanitizedEbayError(publication: JsonRecord) {
+  const details = record(record(publication.sanitized_result).details)
+  const errors = Array.isArray(details.errors) ? details.errors : []
+  return record(errors[0])
+}
+
+async function loadCorrectedPackageRetryHistory(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  actorUserId: string
+  listingPackageId: string
+  opportunityId: string
+  sku: string
+}) {
+  const { data: publication, error: publicationError } = await input.supabase
+    .from("ebay_authorized_listing_publications")
+    .select("*")
+    .eq("listing_package_id", input.listingPackageId)
+    .eq("opportunity_id", input.opportunityId)
+    .eq("actor_user_id", input.actorUserId)
+    .eq("sku", input.sku)
+    .eq("phase", "terminal_failure")
+    .eq("last_error_code", "EBAY_PUBLISH_WRITE_REJECTED")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (publicationError) {
+    throw new Error("EBAY_CORRECTED_PACKAGE_HISTORY_READ_FAILED")
+  }
+  if (!publication) return null
+  const [{ data: execution, error: executionError },
+    { data: approval, error: approvalError }] = await Promise.all([
+    input.supabase.from("ebay_draft_only_execution_ledger")
+      .select("*")
+      .eq("id", publication.draft_execution_id)
+      .maybeSingle(),
+    input.supabase.from("ebay_draft_only_approvals")
+      .select("*")
+      .eq("id", publication.draft_approval_id)
+      .maybeSingle(),
+  ])
+  if (executionError || approvalError) {
+    throw new Error("EBAY_CORRECTED_PACKAGE_HISTORY_READ_FAILED")
+  }
+  if (!execution || !approval) return null
+  const approvedPayload = record(approval.approved_payload)
+  const error = firstSanitizedEbayError(publication as JsonRecord)
+  const historical: CorrectedPackageRetryHistoricalV1 = {
+    approvalId: text(approval.id),
+    approvedPayloadHash: text(approval.payload_hash),
+    listingPackageId: text(approval.listing_package_id),
+    packageDigest: text(record(
+      approvedPayload.controlledPublicationIntent,
+    ).packageDigest),
+    upcs: exactUpcsFromPayload(approvedPayload),
+    executionId: text(execution.id),
+    executionPhase: text(execution.phase),
+    executionMarkedResolved:
+      text(record(execution.sanitized_result).historicalAttemptStatus)
+        === "FAILED_RESOLVED",
+    offerId: text(publication.offer_id) || text(execution.offer_id),
+    sku: text(publication.sku) || text(execution.sku),
+    categoryId: text(record(approvedPayload.offerPayload).categoryId),
+    target: text(publication.target) || text(execution.target),
+    accountFingerprintPresent: Boolean(
+      text(publication.account_fingerprint)
+      && text(execution.account_fingerprint),
+    ),
+    publicationId: text(publication.id),
+    publicationPhase: text(publication.phase),
+    publishHttpStatus: Number.isInteger(publication.publish_http_status)
+      ? Number(publication.publish_http_status) : null,
+    publishAttemptCount: Number(publication.publish_attempt_count ?? 0),
+    lastErrorCode: text(publication.last_error_code),
+    listingId: text(publication.listing_id) || null,
+    ebayErrorId: text(error.errorId),
+    ebayErrorDomain: text(error.domain),
+    ebayErrorCategory: text(error.category),
+  }
+  return {
+    approval: approval as JsonRecord,
+    execution: execution as JsonRecord,
+    publication: publication as JsonRecord,
+    approvedPayload,
+    historical,
+  }
+}
+
+async function readCorrectedPackageRetryOfficialSafety(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  accountKey: string
+  currentPayload: JsonRecord
+  history: NonNullable<Awaited<ReturnType<
+    typeof loadCorrectedPackageRetryHistory
+  >>>
+  opportunity: JsonRecord
+}) {
+  const sku = input.history.historical.sku
+  const offerId = input.history.historical.offerId
+  const currentInventoryPayload = record(
+    input.currentPayload.inventoryItemPayload,
+  )
+  const currentOfferPayload = record(input.currentPayload.offerPayload)
+  const [inventory, unpublished, published, skuState, active] =
+    await Promise.all([
+      verifyEbayDraftInventoryItem(sku, currentInventoryPayload),
+      verifyEbayUnpublishedOffer(
+        offerId,
+        sku,
+        "EBAY_US",
+        currentOfferPayload,
+      ),
+      verifyEbayPublishedOffer(offerId, sku, currentOfferPayload),
+      inspectEbayDraftSkuState(sku),
+      readExactActiveQuickPickListingIds({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        sku,
+        opportunity: input.opportunity,
+      }),
+    ])
+  const offerExists = unpublished.httpStatus === 200
+    || published.httpStatus === 200
+  const listingId = published.listingId ?? null
+  const listingActive = published.safe && published.active === true
+  const readbackComplete = skuState.inventoryExists
+    && offerExists
+    && unpublished.safe
+    && skuState.offerCount === 1
+    && active.lookupComplete
+  return {
+    readbackComplete,
+    inventoryItemExists: skuState.inventoryExists,
+    currentInventoryMatches: inventory.safe,
+    offerExists,
+    offerStatus: unpublished.status || published.status || "UNPROVEN",
+    offerUnpublished: unpublished.safe,
+    offerCount: skuState.offerCount,
+    listingIdPresent: Boolean(listingId),
+    listingActive,
+    exactActiveDuplicateCount: active.exactActiveDuplicateCount,
+    exactActiveLookupComplete: active.lookupComplete,
+    officialReadOnly: true,
+    currentInventoryBlocker: inventory.safe ? null : inventory.blocker,
+    blocker: readbackComplete
+      ? null
+      : unpublished.blocker || published.blocker || skuState.blocker
+        || "EBAY_CORRECTED_PACKAGE_OFFICIAL_READBACK_INCOMPLETE",
   }
 }
 
@@ -1712,6 +1874,66 @@ export async function GET(req: Request) {
     const quickPickAuthorization = record(
       context.quickPickPublicationAuthorization,
     )
+    const correctedPackageRetryHistory =
+      await loadCorrectedPackageRetryHistory({
+        supabase,
+        actorUserId: auth.actor,
+        listingPackageId: packageId,
+        opportunityId: expectedOpportunityId,
+        sku: expectedEbayDraftOnlySku(context.listingPackage),
+      })
+    const correctedPackageIdentifierPreflight =
+      correctedPackageRetryHistory
+        ? await readCategoryProductIdentifierPreflight(readiness.payload)
+        : null
+    const correctedPackageOfficialReadback =
+      includeRejectedPublishReadback && correctedPackageRetryHistory
+        ? await readCorrectedPackageRetryOfficialSafety({
+          supabase,
+          accountKey: text(context.listingPackage.account_key),
+          currentPayload: readiness.payload,
+          history: correctedPackageRetryHistory,
+          opportunity: context.opportunity,
+        })
+        : null
+    const currentOfferPayload = record(readiness.payload.offerPayload)
+    const currentPrice = Number(
+      record(record(currentOfferPayload.pricingSummary).price).value,
+    )
+    const correctedPackageSafeRetry =
+      classifyCorrectedPackageSafeRetryV1({
+        current: {
+          listingPackageId: packageId,
+          packageDigest: text(quickPickAuthorization.packageDigest),
+          ownerReviewConfirmed:
+            quickPickAuthorization.validated === true,
+          ownerReviewedPackageDigest: text(
+            quickPickAuthorization.ownerReviewedPackageDigest,
+          ),
+          publishAuthorizationReady:
+            quickPickAuthorization.validated === true,
+          target,
+          accountFingerprintPresent: Boolean(fingerprint),
+          sku: text(readiness.requiredSku)
+            || expectedEbayDraftOnlySku(context.listingPackage),
+          categoryId: text(currentOfferPayload.categoryId),
+          upcs: exactUpcsFromPayload(readiness.payload),
+          price: Number.isFinite(currentPrice) ? currentPrice : null,
+          quantity: Number.isInteger(currentOfferPayload.availableQuantity)
+            ? Number(currentOfferPayload.availableQuantity) : null,
+          categoryPolicySafe:
+            correctedPackageIdentifierPreflight?.safe === true,
+          missingRequiredIdentifiers: Array.isArray(
+            correctedPackageIdentifierPreflight?.missingRequiredIdentifiers,
+          )
+            ? correctedPackageIdentifierPreflight
+              .missingRequiredIdentifiers.map((value) => text(value))
+              .filter(Boolean)
+            : [],
+        },
+        historical: correctedPackageRetryHistory?.historical ?? null,
+        official: correctedPackageOfficialReadback,
+      })
     const authenticatedPublicationRecovery =
       classifyAuthenticatedPublicationRecoveryV1({
         readiness,
@@ -1731,6 +1953,7 @@ export async function GET(req: Request) {
         },
       })
     const rejectedPublishOfficialReadback = includeRejectedPublishReadback
+      && !correctedPackageRetryHistory
       ? await readRejectedPublishOfficialReadback({
         supabase,
         accountKey: text(context.listingPackage.account_key),
@@ -1742,6 +1965,7 @@ export async function GET(req: Request) {
       : null
     const rejectedPublishCategoryProductIdentifierPreflight =
       includeRejectedPublishReadback && latestApproval
+        && !correctedPackageRetryHistory
         ? await readCategoryProductIdentifierPreflight(approvedPayload)
         : null
     return NextResponse.json({
@@ -1756,6 +1980,19 @@ export async function GET(req: Request) {
       authenticatedPublicationRecovery,
       rejectedPublishOfficialReadback,
       rejectedPublishCategoryProductIdentifierPreflight,
+      historicalPublicationAttempt: correctedPackageRetryHistory ? {
+        id: correctedPackageRetryHistory.historical.publicationId,
+        status: correctedPackageSafeRetry.oldAttemptStatus,
+        reason: correctedPackageSafeRetry.oldAttemptReason,
+        publishHttpStatus:
+          correctedPackageRetryHistory.historical.publishHttpStatus,
+        offerId: correctedPackageRetryHistory.historical.offerId,
+        blocksCurrentCorrectedPackage:
+          correctedPackageSafeRetry.oldAttemptBlocksCurrentCorrectedPackage,
+      } : null,
+      correctedPackageOfficialReadback,
+      correctedPackageIdentifierPreflight,
+      correctedPackageSafeRetry,
       preflight: canonicalFreshPreflight,
       runtime,
       controlledPublication: {
@@ -3337,7 +3574,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
       listingPackage: context.listingPackage,
     })
     : currentBasePayload
-  const currentHash = hashEbayDraftOnlyPayload(currentPayload)
+  const currentPayloadRecord = record(currentPayload)
+  const currentHash = hashEbayDraftOnlyPayload(currentPayloadRecord)
   if (!readiness.ready || currentHash !== approval.payload_hash) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED"), 409, [
       ...readiness.blockers,
@@ -3377,9 +3615,90 @@ async function executeDraft(body: JsonRecord, actor: string) {
     )
   }
 
+  const correctedRetryHistory = await loadCorrectedPackageRetryHistory({
+    supabase,
+    actorUserId: actor,
+    listingPackageId: text(approval.listing_package_id),
+    opportunityId: text(approval.opportunity_id),
+    sku,
+  })
+  let correctedPackageSafeRetry: ReturnType<
+    typeof classifyCorrectedPackageSafeRetryV1
+  > | null = null
+  if (correctedRetryHistory) {
+    const correctedOfficialReadback =
+      await readCorrectedPackageRetryOfficialSafety({
+        supabase,
+        accountKey: text(context.listingPackage.account_key),
+        currentPayload: currentPayloadRecord,
+        history: correctedRetryHistory,
+        opportunity: context.opportunity,
+      })
+    const quickPickAuthorization = record(
+      context.quickPickPublicationAuthorization,
+    )
+    const offerPayload = record(currentPayloadRecord.offerPayload)
+    const price = Number(
+      record(record(offerPayload.pricingSummary).price).value,
+    )
+    correctedPackageSafeRetry = classifyCorrectedPackageSafeRetryV1({
+      current: {
+        listingPackageId: text(approval.listing_package_id),
+        packageDigest: text(quickPickAuthorization.packageDigest),
+        ownerReviewConfirmed: quickPickAuthorization.validated === true,
+        ownerReviewedPackageDigest: text(
+          quickPickAuthorization.ownerReviewedPackageDigest,
+        ),
+        publishAuthorizationReady: quickPickAuthorization.validated === true,
+        target,
+        accountFingerprintPresent: Boolean(fingerprint),
+        sku,
+        categoryId: text(offerPayload.categoryId),
+        upcs: exactUpcsFromPayload(currentPayloadRecord),
+        price: Number.isFinite(price) ? price : null,
+        quantity: Number.isInteger(offerPayload.availableQuantity)
+          ? Number(offerPayload.availableQuantity) : null,
+        categoryPolicySafe: categoryProductIdentifierPreflight.safe,
+        missingRequiredIdentifiers: Array.isArray(
+          categoryProductIdentifierPreflight.missingRequiredIdentifiers,
+        )
+          ? categoryProductIdentifierPreflight.missingRequiredIdentifiers
+            .map((value) => text(value)).filter(Boolean)
+          : [],
+      },
+      historical: correctedRetryHistory.historical,
+      official: correctedOfficialReadback,
+    })
+    if (!correctedPackageSafeRetry.safeRetryReady) {
+      const blocker = correctedPackageSafeRetry.exactCurrentBlocker
+        ?? "EBAY_CORRECTED_PACKAGE_SAFE_RETRY_NOT_READY"
+      return jsonError(new Error(blocker), 409, [blocker])
+    }
+  }
+
   const claimToken = randomUUID()
-  const { data: claimedLedger, error: claimError } = await supabase
-    .rpc("claim_ebay_draft_only_execution", {
+  const correctedUpc = correctedPackageSafeRetry
+    ? exactUpcsFromPayload(currentPayloadRecord)[0] ?? ""
+    : ""
+  const claimResult = correctedPackageSafeRetry && correctedRetryHistory
+    ? await supabase.rpc(
+      "claim_ebay_corrected_package_retry_execution_v1",
+      {
+        p_approval_id: approvalId,
+        p_actor_user_id: actor,
+        p_idempotency_key: executionKey,
+        p_request_hash: currentHash,
+        p_sku: sku,
+        p_claim_token: claimToken,
+        p_target: target,
+        p_account_fingerprint: fingerprint,
+        p_prior_publication_id:
+          correctedRetryHistory.historical.publicationId,
+        p_offer_id: correctedRetryHistory.historical.offerId,
+        p_expected_upc: correctedUpc,
+      },
+    ).single()
+    : await supabase.rpc("claim_ebay_draft_only_execution", {
       p_approval_id: approvalId,
       p_actor_user_id: actor,
       p_idempotency_key: executionKey,
@@ -3388,9 +3707,16 @@ async function executeDraft(body: JsonRecord, actor: string) {
       p_claim_token: claimToken,
       p_target: target,
       p_account_fingerprint: fingerprint,
-    })
-    .single()
-  if (claimError || !claimedLedger) return jsonError(new Error("EBAY_DRAFT_ONLY_SKU_OR_EXECUTION_COLLISION"), 409)
+    }).single()
+  const { data: claimedLedger, error: claimError } = claimResult
+  if (claimError || !claimedLedger) {
+    return jsonError(new Error(databaseExceptionCode(
+      claimError,
+      correctedPackageSafeRetry
+        ? "EBAY_CORRECTED_PACKAGE_RETRY_CLAIM_FAILED"
+        : "EBAY_DRAFT_ONLY_SKU_OR_EXECUTION_COLLISION",
+    )), 409)
+  }
   let ledger = claimedLedger as JsonRecord
   const ledgerId = uuid(ledger.id)
   if (!ledgerId) throw new Error("EBAY_DRAFT_ONLY_LEDGER_ID_INVALID")
@@ -3417,7 +3743,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_EXECUTION_LEASE_LOST"), 409)
   }
 
-  if (ledger.phase === "claimed") {
+  if (ledger.phase === "claimed" && !correctedPackageSafeRetry) {
     const preflight = await preflightEbayDraftSkuCollision(sku)
     if (!preflight.safe) {
       const ownedInventory = preflight.inventoryExists
@@ -3553,11 +3879,116 @@ async function executeDraft(body: JsonRecord, actor: string) {
       inventory_http_status: inventoryResult.status,
       inventory_confirmed_at: new Date().toISOString(),
       last_error_code: null,
-      sanitized_result: {},
+      sanitized_result: correctedPackageSafeRetry
+        ? {
+          ...record(ledger.sanitized_result),
+          correctedInventoryWriteAccepted: true,
+          correctedUpc,
+          createOfferCalled: false,
+        }
+        : {},
       updated_at: new Date().toISOString(),
     }).eq("id", ledgerId).eq("lease_token", claimToken).in("phase", ["claimed", "retryable_inventory_failure"]).select("*").single()
     if (error || !data) throw new Error("EBAY_DRAFT_ONLY_INVENTORY_LEDGER_UPDATE_FAILED")
     ledger = data
+  }
+
+  if (correctedPackageSafeRetry && correctedRetryHistory) {
+    const [inventoryVerification, offerVerification, skuState] =
+      await Promise.all([
+        verifyEbayDraftInventoryItem(
+          sku,
+          record(currentPayloadRecord.inventoryItemPayload),
+        ),
+        verifyEbayUnpublishedOffer(
+          correctedRetryHistory.historical.offerId,
+          sku,
+          "EBAY_US",
+          record(currentPayloadRecord.offerPayload),
+        ),
+        inspectEbayDraftSkuState(sku),
+      ])
+    if (
+      !inventoryVerification.safe
+      || !offerVerification.safe
+      || !skuState.inventoryExists
+      || skuState.offerCount !== 1
+    ) {
+      const retryBlocker = !inventoryVerification.safe
+        ? "EBAY_CORRECTED_INVENTORY_UPC_READBACK_MISMATCH"
+        : !offerVerification.safe
+          ? offerVerification.blocker
+          : "EBAY_CORRECTED_PACKAGE_OFFER_IDEMPOTENCY_MISMATCH"
+      await supabase.from("ebay_draft_only_execution_ledger").update({
+        phase: "inventory_outcome_unknown",
+        last_error_code: retryBlocker,
+        sanitized_result: {
+          ...record(ledger.sanitized_result),
+          correctedInventoryReadbackMatch: inventoryVerification.safe,
+          existingOfferReadbackMatch: offerVerification.safe,
+          offerCount: skuState.offerCount,
+          createOfferCalled: false,
+        },
+        lease_token: null,
+        lease_expires_at: null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", ledgerId).eq("lease_token", claimToken)
+        .eq("phase", "inventory_confirmed")
+      return jsonError(new Error(retryBlocker), 503, [retryBlocker])
+    }
+    const { data: completed, error: completionError } = await supabase.rpc(
+      "complete_ebay_corrected_package_retry_execution_v1",
+      {
+        p_ledger_id: ledgerId,
+        p_actor_user_id: actor,
+        p_offer_id: correctedRetryHistory.historical.offerId,
+        p_offer_http_status: offerVerification.httpStatus,
+        p_verified_status: offerVerification.status,
+        p_listing_present: offerVerification.listingPresent,
+        p_verified_sku: offerVerification.sku,
+        p_verified_marketplace_id: offerVerification.marketplaceId,
+        p_target: target,
+        p_account_fingerprint: fingerprint,
+        p_claim_token: claimToken,
+        p_expected_upc: correctedUpc,
+      },
+    ).single()
+    if (completionError || !completed) {
+      throw new Error(databaseExceptionCode(
+        completionError,
+        "EBAY_CORRECTED_PACKAGE_RETRY_COMPLETION_PERSIST_FAILED",
+      ))
+    }
+    return NextResponse.json({
+      success: true,
+      draft: {
+        offerId: correctedRetryHistory.historical.offerId,
+        sku,
+        verification: "CORRECTED_INVENTORY_AND_EXISTING_OFFER_VERIFIED",
+        verifiedAt: record(completed).completed_at
+          ?? new Date().toISOString(),
+        target,
+      },
+      execution: completed,
+      correctedPackageSafeRetry: {
+        ...correctedPackageSafeRetry,
+        correctedInventoryReadbackMatch: true,
+        existingOfferReadbackMatch: true,
+      },
+      safety: {
+        inventoryItemCreated: false,
+        inventoryItemUpdated: true,
+        unpublishedOfferCreated: false,
+        sameReservedSkuReused: true,
+        sameOfferReused: true,
+        createOfferCalled: false,
+        publishOfferCalled: false,
+        postUpdateStatusVerified: true,
+        pointInTimeStatusOnly: true,
+        canPublish: false,
+        target,
+      },
+    })
   }
 
   const inFlightAt = new Date().toISOString()
