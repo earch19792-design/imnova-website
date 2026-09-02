@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ChartNoAxesCombined,
   CircleHelp,
@@ -702,7 +702,14 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
         "/api/admin/ebay/live-optimization-operator")
       const next = payload.dashboard as
         RemoteLiveOptimizationOperatorDashboardV1 | undefined
-      if (!next?.contractVersion) throw new Error("DASHBOARD_UNAVAILABLE")
+      if (!next?.contractVersion || !Array.isArray(next.taskListings) ||
+          !Array.isArray(next.suggestedTaskListings) ||
+          next.deliveryTrace.apiResponseCount !== next.taskListings.length ||
+          next.deliveryTrace.serverGeneratedCount !==
+            next.taskListings.length ||
+          next.deliveryTrace.serverToClientCountParity !== true) {
+        throw new Error("REMOTE_FEED_RESPONSE_PARITY_REQUIRED")
+      }
       setDashboard(next)
       setReadState("STABLE")
       setMessage("")
@@ -722,11 +729,7 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
     return () => { active = false }
   }, [])
 
-  const taskItemIds = useMemo(() => new Set(
-    dashboard?.taskFeed.map((task) => task.ebayItemId) ?? [],
-  ), [dashboard])
-  const taskListings = useMemo(() => dashboard?.listings.filter((listing) =>
-    taskItemIds.has(listing.ebayItemId)) ?? [], [dashboard, taskItemIds])
+  const taskListings = dashboard?.taskListings ?? []
 
   const grouped = useMemo(() => ({
     NEEDS_ATTENTION: taskListings.filter((listing) =>
@@ -745,10 +748,43 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
     ...grouped.CAN_IMPROVE,
     ...grouped.ENRICH,
   ], [grouped])
-  const suggestedListings = useMemo(() => [
-    ...grouped.CAN_IMPROVE, ...grouped.ENRICH,
-  ].filter((listing) =>
-    listing.canonicalTask?.actionBlockedByEvidence !== true), [grouped])
+  const suggestedListings = dashboard?.suggestedTaskListings ?? []
+  const reportedRenderReceipts = useRef(new Set<string>())
+  const renderedFeedRoot = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (!dashboard) return
+    const clientPostFilterCount = view === "TASKS"
+      ? taskListings.length
+      : view === "SUGGESTIONS"
+        ? suggestedListings.length
+        : view === "HOME"
+          ? attentionListings.length
+          : null
+    if (clientPostFilterCount === null) return
+    const frame = window.requestAnimationFrame(() => {
+      const visibleRenderCount = renderedFeedRoot.current
+        ?.querySelectorAll("[data-remote-live-listing]").length ?? 0
+      const receiptKey = [dashboard.generatedAt, view,
+        taskListings.length, clientPostFilterCount, visibleRenderCount].join(":")
+      if (reportedRenderReceipts.current.has(receiptKey)) return
+      reportedRenderReceipts.current.add(receiptKey)
+      void operatorRequest("/api/admin/ebay/live-optimization-operator", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "REPORT_FEED_RENDER",
+          contractVersion: dashboard.contractVersion,
+          serverGeneratedCount: dashboard.deliveryTrace.serverGeneratedCount,
+          apiResponseCount: dashboard.deliveryTrace.apiResponseCount,
+          clientReceivedCount: taskListings.length,
+          clientPostFilterCount,
+          visibleRenderCount,
+        }),
+      }).catch(() => null)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [attentionListings.length, dashboard, suggestedListings.length,
+    taskListings.length, view])
 
   async function logout() {
     await fetch("/api/admin/session", { method: "DELETE" }).catch(() => null)
@@ -757,14 +793,19 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
   }
 
   const canAct = !embeddedForOwner
-  return <section className={embeddedForOwner
+  return <section ref={renderedFeedRoot} className={embeddedForOwner
     ? "mt-5 overflow-x-hidden rounded-[32px] bg-[#f4efe7] text-[#242724]"
     : "min-h-screen overflow-x-hidden bg-[#f4efe7] text-[#242724]"}
     data-remote-live-optimization-operator
     data-ai-policy="deterministic-first"
     data-continuous-ai-polling="false"
     data-postsale-access="false"
-    data-new-listing-publish-access="false">
+    data-new-listing-publish-access="false"
+    data-client-received-count={taskListings.length}
+    data-server-generated-count={dashboard?.deliveryTrace
+      .serverGeneratedCount ?? 0}
+    data-server-client-count-parity={dashboard?.deliveryTrace
+      .serverToClientCountParity === true}>
     <div className={embeddedForOwner ? "p-4 sm:p-6" :
       "mx-auto grid min-h-screen max-w-[1500px] lg:grid-cols-[230px_minmax(0,1fr)]"}>
       {!embeddedForOwner && <aside className="hidden border-r border-[#d9d1c4] px-4 py-7 lg:block">
@@ -826,7 +867,7 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
 
           {view === "TASKS" && <section aria-labelledby="tasks-heading">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#b75d43]">Trabajo pendiente</p>
-            <h2 id="tasks-heading" className="mt-2 font-serif text-3xl font-semibold">Mis tareas</h2>
+            <h2 id="tasks-heading" className="mt-2 font-serif text-3xl font-semibold">Mis tareas · {taskListings.length}</h2>
             <div className="mt-6 space-y-8">{sections.map((section) => <section key={section.key}>
               <div className="mb-4"><h3 className="font-serif text-2xl font-semibold">{section.label} · {grouped[section.key].length}</h3><p className="mt-1 text-sm text-[#6b6e67]">{section.explanation}</p></div>
               <ListingCollection listings={grouped[section.key]}
@@ -844,7 +885,7 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
 
           {view === "SUGGESTIONS" && <section aria-labelledby="suggestions-heading">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1d5961]">Presentación y claridad</p>
-            <h2 id="suggestions-heading" className="mt-2 font-serif text-3xl font-semibold">Mejoras sugeridas</h2>
+            <h2 id="suggestions-heading" className="mt-2 font-serif text-3xl font-semibold">Mejoras sugeridas · {suggestedListings.length}</h2>
             <p className="mt-2 text-sm leading-6 text-[#64675f]">Sólo mostramos propuestas que tienen evidencia suficiente para ser revisadas.</p>
             <div className="mt-6"><ListingCollection listings={suggestedListings}
               canAct={canAct} onRefresh={load} /></div>

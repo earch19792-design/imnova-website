@@ -19,7 +19,7 @@ import type { RemoteOperatorSafeMutationCanaryV1 } from
   "./ebay-remote-operator-safe-mutation-canary-v1"
 
 export const REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION =
-  "REMOTE_LIVE_OPTIMIZATION_OPERATOR_V1_2026_09_02_CANONICAL_TASK_FEED" as const
+  "REMOTE_LIVE_OPTIMIZATION_OPERATOR_V1_2026_09_02_REAL_SESSION_FEED_PARITY" as const
 
 export const REMOTE_OPERATOR_AI_ASSISTANCE_POLICY_V1 = Object.freeze({
   deterministicFirst: true as const,
@@ -211,6 +211,16 @@ function text(value: unknown, maximum = 500) {
   return typeof value === "string" && value.trim()
     ? value.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, maximum)
     : null
+}
+
+export function remoteFeedHasUnprovenFalseZeroV1(input: {
+  currentLiveCount: number
+  persistedActiveCount: number
+  decisionCount: number
+}) {
+  return input.persistedActiveCount > 0 && (
+    input.currentLiveCount === 0 || input.decisionCount === 0
+  )
 }
 
 function number(value: unknown) {
@@ -918,7 +928,8 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       title: listing.identity.title ?? `Listing ${listing.identity.itemId}`,
       sku: listing.identity.sku,
       imageUrl: visual?.heroImageUrl ?? listing.identity.primaryImageUrl,
-      attentionClass: narrative.attentionClass,
+      attentionClass: canonicalTask?.attentionClass ??
+        narrative.attentionClass,
       humanSummary: narrative.humanSummary,
       whyNow: narrative.whyNow,
       recommendation: narrative.recommendation,
@@ -1014,6 +1025,12 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
   ])
   const taskListingCards = listingCards.filter((row) =>
     row.canonicalTask !== null)
+  if (taskListingCards.length !== canonicalFeed.tasks.length) {
+    throw new Error("REMOTE_TASK_RESPONSE_PARITY_FAILED")
+  }
+  const suggestedTaskListingCards = taskListingCards.filter((row) =>
+    ["CAN_IMPROVE", "ENRICH"].includes(row.attentionClass) &&
+    row.canonicalTask?.actionBlockedByEvidence !== true)
   return Object.freeze({
     contractVersion: REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION,
     generatedAt: new Date().toISOString(),
@@ -1025,7 +1042,21 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
     ]),
     aiAssistancePolicy: REMOTE_OPERATOR_AI_ASSISTANCE_POLICY_V1,
     taskFeed: canonicalFeed.tasks,
+    taskListings: Object.freeze(taskListingCards),
+    suggestedTaskListings: Object.freeze(suggestedTaskListingCards),
     feedTrace: canonicalFeed.trace,
+    deliveryTrace: Object.freeze({
+      responseSchema:
+        "REMOTE_LIVE_OPERATOR_TASK_LISTINGS_V1" as const,
+      serverGeneratedCount: canonicalFeed.tasks.length,
+      apiResponseCount: taskListingCards.length,
+      suggestedApiResponseCount: suggestedTaskListingCards.length,
+      serverToClientCountParity:
+        canonicalFeed.tasks.length === taskListingCards.length,
+      clientJoinRequired: false as const,
+      clientRoleFilterRequired: false as const,
+      clientStatusFilterRequired: false as const,
+    }),
     listings: Object.freeze(listingCards),
     queueCounts: Object.freeze({
       needsAttention: taskListingCards.filter((row) =>

@@ -19,11 +19,16 @@ import { getEbayProRuntimeBoundary } from
 import {
   buildRemoteLiveOptimizationOperatorV1,
   readRemoteLiveOperatorSalesResultsV1,
+  remoteFeedHasUnprovenFalseZeroV1,
   remoteLiveOptimizationTasksV1,
+  REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION,
 } from "@/lib/ebay/ebay-remote-live-optimization-operator-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
-import { loadSellerOsAssistantMonitorSnapshotV1 } from
+import {
+  loadSellerOsAssistantMonitorSnapshotV1,
+  loadSellerOsAssistantMonitorV1,
+} from
   "@/lib/ebay/ebay-seller-os-assistant-runtime"
 import { buildSellerOsCurrentLiveVisualQualityV1 } from
   "@/lib/ebay/ebay-seller-os-visual-quality-v1"
@@ -101,6 +106,23 @@ function titleCanaryEnabled() {
     .toLowerCase() === "true"
 }
 
+function telemetryCount(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) &&
+    value >= 0 && value <= 10_000 ? value : null
+}
+
+async function persistedActiveListingCount(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  accountKey: string,
+) {
+  const { count, error } = await supabase.from("ebay_active_listings")
+    .select("id", { count: "exact", head: true })
+    .eq("account_key", accountKey)
+    .eq("listing_status", "active")
+  if (error) throw new Error("REMOTE_ACTIVE_LISTING_COUNT_READ_FAILED")
+  return count ?? 0
+}
+
 async function visualQuality(
   monitor: Awaited<ReturnType<typeof loadSellerOsAssistantMonitorSnapshotV1>>,
 ) {
@@ -151,8 +173,8 @@ export async function GET(request: Request) {
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
     const supabase = getSupabaseAdminClient()
     const monitorPromise = loadSellerOsAssistantMonitorSnapshotV1()
-    const [monitor, commercialDashboard, salesResults, executions,
-      imageProposals, listingQualitySignals] =
+    const [initialMonitor, commercialDashboard, salesResults, executions,
+      imageProposals, listingQualitySignals, persistedActiveCount] =
       await Promise.all([
         monitorPromise,
         getEbayCommercialMonitorDashboard(supabase),
@@ -167,9 +189,30 @@ export async function GET(request: Request) {
           operatorUserId: auth.validation.userId }),
         readRemoteListingQualitySignalsV1({ supabase,
           accountKey: account.accountKey }),
+        persistedActiveListingCount(supabase, account.accountKey),
       ])
+    let monitor = initialMonitor
     if (executions.error) {
       throw new Error("COMMERCIAL_IMPROVEMENT_LEDGER_READ_FAILED")
+    }
+    const initialCurrentLiveCount =
+      currentLiveListingsForMonitorV1(monitor).length
+    let falseZeroRetry = false
+    if (remoteFeedHasUnprovenFalseZeroV1({
+      currentLiveCount: initialCurrentLiveCount,
+      persistedActiveCount,
+      decisionCount: monitor.backend.decisions.length,
+    })) {
+      falseZeroRetry = true
+      monitor = await loadSellerOsAssistantMonitorV1()
+    }
+    const currentLiveCount = currentLiveListingsForMonitorV1(monitor).length
+    if (remoteFeedHasUnprovenFalseZeroV1({
+      currentLiveCount,
+      persistedActiveCount,
+      decisionCount: monitor.backend.decisions.length,
+    })) {
+      throw new Error("REMOTE_FEED_FALSE_ZERO_REJECTED")
     }
     const commercialExceptions = buildProactiveExceptionQueueV1({
       monitor,
@@ -204,11 +247,46 @@ export async function GET(request: Request) {
         .includes(auth.validation.accessRole),
       liveMutationEnabled: liveMutationEnabled(),
     })
+    console.info("REMOTE_OPERATOR_SESSION_FEED_RESPONSE_V1", {
+      requestPath: new URL(request.url).pathname,
+      authUserPresent: true,
+      remoteRoleResolved: auth.validation.accessRole,
+      roleSource: "SUPABASE_AUTH_GET_USER_APP_METADATA",
+      sessionValid: true,
+      currentLiveCount,
+      persistedActiveCount,
+      canonicalExceptionCount:
+        dashboard.feedTrace.commercialExceptionCount,
+      taskCountBeforeAcl:
+        dashboard.feedTrace.remoteTaskCandidateCountBeforeAcl,
+      taskCountAfterAcl: dashboard.feedTrace.remoteTaskCountAfterAcl,
+      taskCountInResponse: dashboard.taskListings.length,
+      falseZeroRetry,
+      responseSchema: dashboard.deliveryTrace.responseSchema,
+      serverToClientCountParity:
+        dashboard.deliveryTrace.serverToClientCountParity,
+      piiIncluded: false,
+      marketplaceWrites: 0,
+    })
     const response = NextResponse.json({ success: true,
       accessRole: auth.validation.accessRole, dashboard })
     response.headers.set("Cache-Control", "private, no-store")
+    response.headers.set("X-Seller-OS-Remote-Feed-Contract",
+      dashboard.contractVersion)
+    response.headers.set("X-Seller-OS-Remote-Task-Count",
+      String(dashboard.taskListings.length))
     return response
   } catch (error) {
+    console.warn("REMOTE_OPERATOR_SESSION_FEED_FAILURE_V1", {
+      requestPath: new URL(request.url).pathname,
+      authUserPresent: true,
+      remoteRoleResolved: auth.validation.accessRole,
+      roleSource: "SUPABASE_AUTH_GET_USER_APP_METADATA",
+      sessionValid: true,
+      errorCode: safeCode(error),
+      piiIncluded: false,
+      marketplaceWrites: 0,
+    })
     return NextResponse.json({ success: false, error: safeCode(error),
       operatorMessage:
         "Esta vista no está disponible ahora. No necesitas hacer nada." },
@@ -226,6 +304,46 @@ export async function POST(request: Request) {
   { status: 403 })
   const body = await jsonBody(request)
   const action = typeof body?.action === "string" ? body.action : ""
+  if (action === "REPORT_FEED_RENDER") {
+    const view = ["HOME", "TASKS", "SUGGESTIONS"].includes(
+      String(body?.view ?? "")) ? String(body?.view) : null
+    const clientReceivedCount = telemetryCount(body?.clientReceivedCount)
+    const clientPostFilterCount = telemetryCount(body?.clientPostFilterCount)
+    const visibleRenderCount = telemetryCount(body?.visibleRenderCount)
+    const serverGeneratedCount = telemetryCount(body?.serverGeneratedCount)
+    const apiResponseCount = telemetryCount(body?.apiResponseCount)
+    const contractVersion = body?.contractVersion ===
+      REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION
+      ? REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION : null
+    if (!view || serverGeneratedCount === null ||
+        apiResponseCount === null || clientReceivedCount === null ||
+        clientPostFilterCount === null || visibleRenderCount === null ||
+        !contractVersion || serverGeneratedCount !== apiResponseCount ||
+        apiResponseCount !== clientReceivedCount) {
+      return NextResponse.json({ success: false,
+        error: "REMOTE_FEED_RENDER_TELEMETRY_INVALID" }, { status: 400 })
+    }
+    console.info("REMOTE_OPERATOR_CLIENT_RENDER_V1", {
+      requestPath: new URL(request.url).pathname,
+      authUserPresent: true,
+      remoteRoleResolved: auth.validation.accessRole,
+      roleSource: "SUPABASE_AUTH_GET_USER_APP_METADATA",
+      sessionValid: true,
+      contractVersion,
+      view,
+      serverGeneratedCount,
+      apiResponseCount,
+      clientReceivedCount,
+      clientPostFilterCount,
+      visibleRenderCount,
+      piiIncluded: false,
+      marketplaceWrites: 0,
+    })
+    return NextResponse.json({ success: true, recorded: true,
+      safety: { marketplaceWrites: 0, listingMutations: 0,
+        buyerMessages: 0, postsaleActions: 0 } },
+    { headers: { "Cache-Control": "private, no-store" } })
+  }
   if (action === "AUTHORIZE_SAFE_MUTATION_CANARY") {
     const expectedItemId = typeof body?.ebayItemId === "string" &&
       /^\d{9,20}$/.test(body.ebayItemId.trim()) ? body.ebayItemId.trim() : ""
