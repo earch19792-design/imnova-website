@@ -49,6 +49,12 @@ export type OwnerQualityReportUploadAttemptV1 = Readonly<{
   recognizedSheetNames: readonly string[]
   recognizedSheetCount: number
   headerMatchStatus: string
+  failedStage: string
+  requestTransportClass: string
+  requestContentTypeClass: string
+  fileSizeClass: string
+  mimeTypeClass: string
+  deploymentId: string
   rowsParsed: number
   currentLiveRowsMatched: number
   nonliveRowsExcluded: number
@@ -89,6 +95,10 @@ const HEADER_FAILURES = new Set<QualityReportValidationReason>([
 
 function technicalReasonCode(error: unknown) {
   if (error instanceof QualityReportValidationError) {
+    const diagnosed = text(error.diagnosis.technicalReasonCode, 180)
+    if (diagnosed && /^QUALITY_REPORT_[A-Z0-9_]{3,160}$/.test(diagnosed)) {
+      return diagnosed
+    }
     return `QUALITY_REPORT_${error.reason}`
   }
   const candidate = error instanceof Error ? error.message : ""
@@ -125,6 +135,47 @@ function reportFileSize(format: "CSV" | "XLSX" | "JSON", content: string) {
     : Buffer.byteLength(content, "utf8")
 }
 
+const FAILED_STAGES = new Set([
+  "REQUEST_BODY", "FILE_BUFFER", "WORKBOOK_OPEN",
+  "WORKBOOK_SHEET_ENUMERATION", "SCHEMA_DISCOVERY", "ROW_PARSE",
+  "IMPORT_VALIDATION", "IMPORT_RPC", "ATTEMPT_PERSIST",
+])
+
+function sanitizedFailedStage(error: unknown, fallback: string) {
+  const diagnosed = text(diagnosticValue(error, "failedStage"), 80)
+  if (diagnosed && FAILED_STAGES.has(diagnosed)) return diagnosed
+  return FAILED_STAGES.has(fallback) ? fallback : "IMPORT_VALIDATION"
+}
+
+function fileSizeClass(bytes: number) {
+  if (bytes <= 256 * 1024) return "UNDER_256_KIB" as const
+  if (bytes <= 1024 * 1024) return "UNDER_1_MIB" as const
+  if (bytes <= 3 * 1024 * 1024) return "UNDER_3_MIB" as const
+  return "OVER_LIMIT" as const
+}
+
+function mimeTypeClass(value: unknown) {
+  const candidate = normalized(value).split(";")[0].trim()
+  if (!candidate) return "UNSPECIFIED" as const
+  if (["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel"].includes(candidate)) return "XLSX_STANDARD" as const
+  if (candidate === "application/octet-stream") return "OCTET_STREAM" as const
+  return "OTHER" as const
+}
+
+function requestContentTypeClass(value: unknown) {
+  const candidate = normalized(value).split(";")[0].trim()
+  if (!candidate) return "UNSPECIFIED" as const
+  return candidate === "application/json" ? "APPLICATION_JSON" as const
+    : "OTHER" as const
+}
+
+function deploymentId(value: unknown) {
+  const candidate = text(value, 100)
+  return candidate && /^dpl_[A-Za-z0-9]{20,80}$/.test(candidate)
+    ? candidate : "UNAVAILABLE_RUNTIME"
+}
+
 function attemptCorrelationReference(seed?: string) {
   return `qlr_attempt_${sha(seed ?? randomUUID()).slice(0, 32)}`
 }
@@ -136,6 +187,10 @@ export function prepareFailedOwnerQualityReportUploadAttemptV1(input: {
   content: string
   error: unknown
   snapshot?: OwnerQualityReportSnapshotV1 | null
+  mimeType?: string | null
+  requestContentType?: string | null
+  deploymentId?: string | null
+  failedStage?: string
   attemptedAt?: string
   correlationSeed?: string
 }) {
@@ -150,13 +205,14 @@ export function prepareFailedOwnerQualityReportUploadAttemptV1(input: {
   const recognizedSheetNames = boundedStringList(
     workbook?.recognizedWorksheets ?? diagnosticValue(input.error,
       "recognizedWorksheets"), 20)
+  const sizeBytes = Math.max(1, reportFileSize(input.format, input.content))
   return Object.freeze({
     marketplace_account_key: input.accountKey,
     attempted_by: input.attemptedBy,
     attempted_at: attemptedAt.toISOString(),
     file_type: input.format,
     source_file_fingerprint: `qlr_file_${sha(input.content).slice(0, 32)}`,
-    source_file_size_bytes: Math.max(1, reportFileSize(input.format, input.content)),
+    source_file_size_bytes: sizeBytes,
     attempt_status: "FAILED_VALIDATION" as const,
     safe_failure_code: humanSafeFailureCode(input.error),
     technical_reason_code: technicalReasonCode(input.error),
@@ -173,6 +229,14 @@ export function prepareFailedOwnerQualityReportUploadAttemptV1(input: {
     recognized_sheet_names: recognizedSheetNames,
     recognized_sheet_count: recognizedSheetNames.length,
     header_match_status: headerMatchStatus(input.error),
+    failed_stage: sanitizedFailedStage(input.error,
+      input.failedStage ?? "IMPORT_VALIDATION"),
+    request_transport_class: "JSON_BASE64" as const,
+    request_content_type_class: requestContentTypeClass(
+      input.requestContentType),
+    file_size_class: fileSizeClass(sizeBytes),
+    mime_type_class: mimeTypeClass(input.mimeType),
+    deployment_id: deploymentId(input.deploymentId),
     rows_parsed: Math.max(0, Number(
       diagnosticValue(input.error, "detectedRows")) || 0),
     current_live_rows_matched: 0,
@@ -191,6 +255,9 @@ export function prepareSuccessfulOwnerQualityReportUploadAttemptV1(input: {
   snapshot: OwnerQualityReportSnapshotV1
   prepared: ReturnType<typeof prepareOwnerListingQualityReportImportV1>
   validImportId: string
+  mimeType?: string | null
+  requestContentType?: string | null
+  deploymentId?: string | null
   attemptedAt?: string
   correlationSeed?: string
 }) {
@@ -204,6 +271,7 @@ export function prepareSuccessfulOwnerQualityReportUploadAttemptV1(input: {
     ? workbook.diagnosis as Record<string, unknown> : {}
   const recognizedSheetNames = boundedStringList(
     workbook.recognizedWorksheets, 20)
+  const sizeBytes = Math.max(1, reportFileSize(input.format, input.content))
   return Object.freeze({
     marketplace_account_key: input.accountKey,
     attempted_by: input.attemptedBy,
@@ -211,7 +279,7 @@ export function prepareSuccessfulOwnerQualityReportUploadAttemptV1(input: {
     file_type: input.format,
     source_file_fingerprint: input.snapshot.sourceFileFingerprint as
       `qlr_file_${string}`,
-    source_file_size_bytes: Math.max(1, reportFileSize(input.format, input.content)),
+    source_file_size_bytes: sizeBytes,
     attempt_status: "IMPORTED" as const,
     safe_failure_code: null,
     technical_reason_code: null,
@@ -223,6 +291,13 @@ export function prepareSuccessfulOwnerQualityReportUploadAttemptV1(input: {
     recognized_sheet_names: recognizedSheetNames,
     recognized_sheet_count: recognizedSheetNames.length,
     header_match_status: "MATCHED" as const,
+    failed_stage: "NONE" as const,
+    request_transport_class: "JSON_BASE64" as const,
+    request_content_type_class: requestContentTypeClass(
+      input.requestContentType),
+    file_size_class: fileSizeClass(sizeBytes),
+    mime_type_class: mimeTypeClass(input.mimeType),
+    deployment_id: deploymentId(input.deploymentId),
     rows_parsed: input.snapshot.rowCount,
     current_live_rows_matched: input.prepared.import.report_row_count -
       input.prepared.import.nonlive_rows_excluded,
@@ -695,7 +770,7 @@ export async function readOwnerQualityReportLatestUploadAttemptV1(input: {
 }) {
   const result = await input.supabase
     .from("ebay_listing_quality_report_upload_attempts")
-    .select("id,attempted_at,file_type,attempt_status,safe_failure_code,technical_reason_code,diagnostics_capture_status,workbook_sheet_names,observed_header_names,recognized_sheet,recognized_sheet_names,recognized_sheet_count,header_match_status,rows_parsed,current_live_rows_matched,nonlive_rows_excluded,valid_import_id")
+    .select("id,attempted_at,file_type,attempt_status,safe_failure_code,technical_reason_code,diagnostics_capture_status,workbook_sheet_names,observed_header_names,recognized_sheet,recognized_sheet_names,recognized_sheet_count,header_match_status,failed_stage,request_transport_class,request_content_type_class,file_size_class,mime_type_class,deployment_id,rows_parsed,current_live_rows_matched,nonlive_rows_excluded,valid_import_id")
     .eq("marketplace_account_key", input.accountKey)
     .order("attempted_at", { ascending: false })
     .order("id", { ascending: false }).limit(1).maybeSingle()
@@ -720,6 +795,12 @@ export async function readOwnerQualityReportLatestUploadAttemptV1(input: {
       boundedStringList(result.data.recognized_sheet_names, 20)),
     recognizedSheetCount: result.data.recognized_sheet_count,
     headerMatchStatus: result.data.header_match_status,
+    failedStage: result.data.failed_stage,
+    requestTransportClass: result.data.request_transport_class,
+    requestContentTypeClass: result.data.request_content_type_class,
+    fileSizeClass: result.data.file_size_class,
+    mimeTypeClass: result.data.mime_type_class,
+    deploymentId: result.data.deployment_id,
     rowsParsed: result.data.rows_parsed,
     currentLiveRowsMatched: result.data.current_live_rows_matched,
     nonliveRowsExcluded: result.data.nonlive_rows_excluded,

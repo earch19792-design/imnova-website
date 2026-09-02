@@ -31,6 +31,12 @@ type UploadAttempt = Readonly<{
   recognizedSheetNames: readonly string[]
   recognizedSheetCount: number
   headerMatchStatus: string
+  failedStage: string
+  requestTransportClass: string
+  requestContentTypeClass: string
+  fileSizeClass: string
+  mimeTypeClass: string
+  deploymentId: string
   rowsParsed: number
   currentLiveRowsMatched: number
   nonliveRowsExcluded: number
@@ -113,7 +119,8 @@ export function OwnerListingQualityReportControl() {
       const response = await fetch("/api/admin/ebay/listing-quality-report", {
         method: "POST", headers: { Authorization: `Bearer ${token}`,
           "Content-Type": "application/json" },
-        body: JSON.stringify({ format, fileName: selected.name, content }) })
+        body: JSON.stringify({ format, fileName: selected.name,
+          mimeType: selected.type, content }) })
       const payload = await response.json() as { success?: boolean;
         status?: ReportStatus; latestUploadAttempt?: UploadAttempt | null;
         error?: string }
@@ -184,6 +191,9 @@ export function OwnerListingQualityReportControl() {
               <div><dt className="inline">Hojas reconocidas: </dt><dd className="inline">{latestAttempt.recognizedSheetCount}{latestAttempt.recognizedSheetNames.length
                 ? ` · ${latestAttempt.recognizedSheetNames.join(", ")}` : ""}</dd></div>
               <div><dt className="inline">Headers: </dt><dd className="inline">{latestAttempt.headerMatchStatus}</dd></div>
+              <div><dt className="inline">Etapa: </dt><dd className="inline">{latestAttempt.failedStage}</dd></div>
+              <div><dt className="inline">Archivo: </dt><dd className="inline">{latestAttempt.fileSizeClass} · {latestAttempt.mimeTypeClass}</dd></div>
+              <div><dt className="inline">Deployment: </dt><dd className="inline font-mono">{latestAttempt.deploymentId}</dd></div>
             </dl>
           </details>}
         </div>

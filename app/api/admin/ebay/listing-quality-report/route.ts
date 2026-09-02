@@ -109,6 +109,9 @@ export async function POST(request: Request) {
     body?.format === "XLSX" ? body.format : null
   const fileName = typeof body?.fileName === "string" ? body.fileName : ""
   const content = typeof body?.content === "string" ? body.content : ""
+  const mimeType = typeof body?.mimeType === "string" ? body.mimeType : null
+  const requestContentType = request.headers.get("content-type")
+  const runtimeDeploymentId = process.env.VERCEL_DEPLOYMENT_ID ?? null
   if (!format || !fileName || !content) return noStore({ success: false,
     error: "QUALITY_REPORT_INPUT_INVALID" }, 400)
   const attemptedAt = new Date().toISOString()
@@ -144,7 +147,9 @@ export async function POST(request: Request) {
     try {
       const attempt = prepareFailedOwnerQualityReportUploadAttemptV1({
         accountKey: account.accountKey, attemptedBy: validation.userId,
-        format, content, error, snapshot, attemptedAt, correlationSeed })
+        format, content, error, snapshot, mimeType, requestContentType,
+        deploymentId: runtimeDeploymentId, failedStage: "IMPORT_VALIDATION",
+        attemptedAt, correlationSeed })
       await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
     } catch {
       // Preserve the original fail-closed parser result. Audit failures are
@@ -170,7 +175,9 @@ export async function POST(request: Request) {
     try {
       const attempt = prepareFailedOwnerQualityReportUploadAttemptV1({
         accountKey: account.accountKey, attemptedBy: validation.userId,
-        format, content, error, snapshot, attemptedAt, correlationSeed })
+        format, content, error, snapshot, mimeType, requestContentType,
+        deploymentId: runtimeDeploymentId, failedStage: "IMPORT_RPC",
+        attemptedAt, correlationSeed })
       await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
     } catch { /* The valid-import table remains authoritative. */ }
     return noStore({ success: false, error: safeError(error) }, 422)
@@ -179,6 +186,7 @@ export async function POST(request: Request) {
   const successfulAttempt = prepareSuccessfulOwnerQualityReportUploadAttemptV1({
     accountKey: account.accountKey, attemptedBy: validation.userId,
     format, content, snapshot, prepared, validImportId: persisted.importId,
+    mimeType, requestContentType, deploymentId: runtimeDeploymentId,
     attemptedAt, correlationSeed })
   await persistOwnerQualityReportUploadAttemptV1({ supabase,
     attempt: successfulAttempt })

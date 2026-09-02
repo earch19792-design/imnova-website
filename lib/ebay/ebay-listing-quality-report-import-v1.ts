@@ -325,7 +325,85 @@ function candidateSheetEvidence(input: {
     duplicateHeaderNoiseRows, reportMetadataConsistency, recognizedKeyColumns, reasonCodes }
 }
 
+type XlsxPipelineStage = "FILE_BUFFER" | "WORKBOOK_OPEN" |
+  "WORKBOOK_SHEET_ENUMERATION" | "SCHEMA_DISCOVERY" | "ROW_PARSE" |
+  "COMPLETE"
+
+type XlsxPipelineTrace = {
+  failedStage: XlsxPipelineStage
+  fileBufferCreated: boolean
+  xlsxLibraryInvoked: boolean
+  workbookOpenPass: boolean
+  workbookSheetEnumerationReached: boolean
+  schemaDiscoveryReached: boolean
+  rowParseReached: boolean
+  worksheetNames: string[]
+  observedHeaderNames: string[]
+  recognizedWorksheetNames: string[]
+}
+
+function xlsxPipelineDiagnosis(trace: XlsxPipelineTrace) {
+  return {
+    failedStage: trace.failedStage,
+    fileBufferCreated: trace.fileBufferCreated,
+    xlsxLibraryInvoked: trace.xlsxLibraryInvoked,
+    workbookOpenPass: trace.workbookOpenPass,
+    workbookSheetEnumerationReached: trace.workbookSheetEnumerationReached,
+    schemaDiscoveryReached: trace.schemaDiscoveryReached,
+    rowParseReached: trace.rowParseReached,
+    worksheetNames: trace.worksheetNames.slice(0, MAX_WORKSHEETS),
+    observedHeaderNames: trace.observedHeaderNames.slice(0, MAX_COLUMNS),
+    recognizedWorksheets: trace.recognizedWorksheetNames.slice(0, MAX_WORKSHEETS),
+  }
+}
+
+function unexpectedPipelineCode(error: unknown, stage: XlsxPipelineStage) {
+  const message = error instanceof Error ? error.message : ""
+  if (/^QUALITY_REPORT_[A-Z0-9_]{3,160}$/.test(message)) return message
+  if (stage === "ROW_PARSE") return "QUALITY_REPORT_XLSX_ROW_PARSE_FAILED"
+  if (stage === "SCHEMA_DISCOVERY") return "QUALITY_REPORT_XLSX_SCHEMA_DISCOVERY_FAILED"
+  if (stage === "WORKBOOK_SHEET_ENUMERATION") {
+    return "QUALITY_REPORT_XLSX_SHEET_ENUMERATION_FAILED"
+  }
+  if (stage === "WORKBOOK_OPEN") return "QUALITY_REPORT_XLSX_OPEN_FAILED"
+  return "QUALITY_REPORT_XLSX_BUFFER_FAILED"
+}
+
 function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
+  const trace: XlsxPipelineTrace = {
+    failedStage: "FILE_BUFFER", fileBufferCreated: false,
+    xlsxLibraryInvoked: false, workbookOpenPass: false,
+    workbookSheetEnumerationReached: false, schemaDiscoveryReached: false,
+    rowParseReached: false, worksheetNames: [], observedHeaderNames: [],
+    recognizedWorksheetNames: [],
+  }
+  try {
+    return parseXlsxWithTrace(contentBase64, requestedWorksheet, trace)
+  } catch (error) {
+    const pipeline = xlsxPipelineDiagnosis(trace)
+    if (error instanceof QualityReportValidationError) {
+      throw new QualityReportValidationError(error.reason, {
+        ...pipeline, ...error.diagnosis,
+        failedStage: error.diagnosis.failedStage ?? trace.failedStage,
+      })
+    }
+    const technicalReasonCode = unexpectedPipelineCode(error, trace.failedStage)
+    const wrapped = new QualityReportValidationError("OTHER", {
+      ...pipeline,
+      technicalReasonCode,
+      unexpectedFailureClass: error instanceof TypeError ? "TYPE_ERROR"
+        : error instanceof RangeError ? "RANGE_ERROR" : "UNEXPECTED_ERROR",
+    })
+    if (/^QUALITY_REPORT_[A-Z0-9_]{3,160}$/.test(
+      error instanceof Error ? error.message : "")) {
+      wrapped.message = technicalReasonCode
+    }
+    throw wrapped
+  }
+}
+
+function parseXlsxWithTrace(contentBase64: string,
+  requestedWorksheet: string | null | undefined, trace: XlsxPipelineTrace) {
   if (contentBase64.length > Math.ceil(MAX_FILE_BYTES * 4 / 3) + 8) {
     throw new QualityReportValidationError("FILE_TOO_LARGE")
   }
@@ -336,9 +414,12 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
   if (!bytes.length || bytes.length > MAX_FILE_BYTES || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
     throw new QualityReportValidationError(bytes.length > MAX_FILE_BYTES ? "FILE_TOO_LARGE" : "WORKBOOK_UNREADABLE")
   }
+  trace.fileBufferCreated = true
+  trace.failedStage = "WORKBOOK_OPEN"
   let archive: Record<string, Uint8Array>
   try {
     let declaredUncompressedBytes = 0
+    trace.xlsxLibraryInvoked = true
     archive = unzipSync(bytes, { filter: (file) => {
       if (FORBIDDEN_XLSX_PATH.test(file.name)) {
         throw new QualityReportValidationError("MALFORMED_WORKBOOK", { forbiddenPart: true })
@@ -359,9 +440,14 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
   const workbook = archive["xl/workbook.xml"]
   const relationships = archive["xl/_rels/workbook.xml.rels"]
   if (!workbook || !relationships) throw new QualityReportValidationError("MALFORMED_WORKBOOK")
+  trace.workbookOpenPass = true
+  trace.failedStage = "WORKBOOK_SHEET_ENUMERATION"
   const sheetDefinitions = workbookSheets(XML_DECODER.decode(workbook))
   if (!sheetDefinitions.length) throw new QualityReportValidationError("NO_DATA_SHEET_FOUND")
   if (sheetDefinitions.length > MAX_WORKSHEETS) throw new QualityReportValidationError("FILE_TOO_LARGE")
+  trace.workbookSheetEnumerationReached = true
+  trace.worksheetNames = sheetDefinitions.map((row) => row.name)
+  trace.failedStage = "SCHEMA_DISCOVERY"
   const relationshipMap = workbookRelationships(XML_DECODER.decode(relationships))
   const strings = sharedStrings(archive["xl/sharedStrings.xml"]
     ? XML_DECODER.decode(archive["xl/sharedStrings.xml"]) : null)
@@ -392,6 +478,7 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
       const header = safeText(cell, 160)
       if (header) observedHeaderNames.add(header)
     }
+    trace.observedHeaderNames = [...observedHeaderNames]
     return headers[0] ? [{ ...candidateSheetEvidence({ definition, grid,
       header: headers[0] }), workbookMetadata: discoveredMetadata }] : []
   })
@@ -445,9 +532,13 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
     candidateSheetCount: diagnosticCandidates.length,
     candidateSheets: publicCandidates,
     observedHeaderNames: [...observedHeaderNames].slice(0, MAX_COLUMNS) }
+  trace.schemaDiscoveryReached = true
+  trace.recognizedWorksheetNames = realCandidates.map((candidate) =>
+    candidate.definition.name)
   const rowsForCandidate = (candidate: typeof evidence[number]) => {
-    const headers = candidate.header.cells.map((cell, index) =>
-      safeText(cell, 160) ?? `Column ${index + 1}`)
+    const headers = Array.from({ length: candidate.header.cells.length },
+      (_, index) => safeText(candidate.header.cells[index], 160) ??
+        `Column ${index + 1}`)
     return candidate.grid.rows.filter((row) => row.rowNumber > candidate.header.rowNumber)
       .map((row) => ({ ...Object.fromEntries(headers.map((header, index) =>
         [header, row.cells[index] ?? ""])),
@@ -457,6 +548,8 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
         !key.startsWith("__") && safeText(value) !== null))
   }
   if (realCandidates.length) {
+    trace.failedStage = "ROW_PARSE"
+    trace.rowParseReached = true
     const rows = realCandidates.flatMap(rowsForCandidate)
     if (!rows.length) throw new QualityReportValidationError("NO_DATA_SHEET_FOUND", {
       ...baseDiagnosis, sheetResolutionState: "SCHEMA_DISCOVERED" })
@@ -484,6 +577,7 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
       selectionMethod: "SCHEMA_MULTI_SHEET" as const,
       candidateSheets: publicCandidates,
       ...metadataSnapshot,
+      pipeline: { ...xlsxPipelineDiagnosis(trace), failedStage: "COMPLETE" },
       diagnosis } }
   }
   const candidates = legacyCandidates
@@ -521,6 +615,8 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
   if (!score.recommendation && !score.benchmark) {
     throw new QualityReportValidationError("RECOMMENDATION_COLUMNS_NOT_FOUND", diagnosis)
   }
+  trace.failedStage = "ROW_PARSE"
+  trace.rowParseReached = true
   const rows = rowsForCandidate(candidate).slice(0, MAX_ROWS)
   if (!rows.length) throw new QualityReportValidationError("NO_DATA_SHEET_FOUND", diagnosis)
   return { rows, metadata: { format: "XLSX" as const,
@@ -529,7 +625,9 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
     externalLinksRejected: true, sheetResolutionState: diagnosis.sheetResolutionState,
     selectionMethod: diagnosis.selectionMethod, candidateSheets: publicCandidates,
     recognizedWorksheets: [candidate.definition.name], recognizedSheetCount: 1,
-    ...metadataSnapshot, diagnosis } }
+    ...metadataSnapshot,
+    pipeline: { ...xlsxPipelineDiagnosis(trace), failedStage: "COMPLETE" },
+    diagnosis } }
 }
 
 function field(row: Row, aliases: readonly string[]) {
