@@ -1236,6 +1236,42 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
   if (frontierRead.error) {
     throw new Error("LUNA_QUICK_PICK_FRONTIER_READ_FAILED")
   }
+  const liveGuard = input.accountKey
+    ? await readAlreadyLiveExactLunaIdentitiesV1({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      identities: queueRows.flatMap((row) => {
+        const lunaProductId = text(row.supplier_product_id, 80)
+        const lunaVariantId = text(row.supplier_variant_id, 80)
+        const supplierSku = text(row.supplier_sku, 120)
+        return lunaProductId && lunaVariantId && supplierSku
+          ? [{
+              identityKey: identityKey(
+                lunaProductId,
+                lunaVariantId,
+                supplierSku,
+              ),
+              lunaProductId,
+              lunaVariantId,
+              supplierSku,
+            }]
+          : []
+      }),
+    })
+    : Object.freeze({
+      status: "AVAILABLE" as const,
+      matches: new Map<string, Readonly<{
+        ebayItemIds: readonly string[]
+        linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1"
+      }>>(),
+      reasonCode: null,
+    })
+  if (liveGuard.status !== "AVAILABLE") {
+    throw new Error(
+      liveGuard.reasonCode ??
+        "LUNA_QUICK_PICK_ALREADY_LIVE_GUARD_READ_FAILED",
+    )
+  }
   const packages = new Map<string, JsonRecord>()
   for (const row of rows(packageRead.data)) {
     const opportunityId = String(row.opportunity_id)
@@ -1294,6 +1330,31 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const sourceUrl = text(operation.sourceUrl, 2_000) ?? (canonicalUrl
       ? sourceUrlWithVariant(canonicalUrl,
         String(row.supplier_variant_id)) : `quick-pick:${row.candidate_key}`)
+    const live = liveGuard.matches.get(identity)
+    if (live) {
+      const listingPackage = packages.get(String(row.id))
+      return card({
+        sourceUrl,
+        canonicalUrl,
+        candidateKey: String(row.candidate_key),
+        candidateId: String(row.candidate_key),
+        opportunityId: String(row.id),
+        listingPackageId: listingPackage ? String(listingPackage.id) : null,
+        sourceSku: text(row.supplier_sku, 120),
+        lunaProductId: text(row.supplier_product_id, 80),
+        lunaVariantId: text(row.supplier_variant_id, 80),
+        title: text(row.product_title, 350),
+        state: "BLOCKED",
+        lastStage: "DUPLICATE",
+        disposition: "EXCLUDED_ALREADY_LIVE",
+        exactBlocker: "ALREADY_LIVE_EXACT_PRODUCT",
+        alreadyLive: true,
+        linkedLiveItemIds: live.ebayItemIds,
+        rehydrated: input.includeRecent === true,
+        updatedAt: text(row.updated_at, 80),
+        stages: emptyStages({ IDENTITY: "PASS", DUPLICATE: "BLOCKED" }),
+      })
+    }
     const frontier = frontiers.get(identity)
     const listingPackage = packages.get(String(row.id))
     const listingReview = reviewReady && listingPackage
