@@ -53,6 +53,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/luna-product-import",
   "/api/admin/ebay/luna-protected-session",
   "/api/admin/ebay/listing-optimization",
+  "/api/admin/ebay/live-optimization-operator",
   "/api/admin/ebay/publication-oauth",
 ] as const
 

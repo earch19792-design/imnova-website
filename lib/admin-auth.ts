@@ -1,6 +1,15 @@
 import {
   supabase,
 } from "./supabase"
+import {
+  SELLER_OS_ACCESS_ROLES,
+  sellerOsAccessRoleFromUser,
+  type SellerOsAccessRole,
+} from "./seller-os-access-control"
+import {
+  remoteLiveOperatorUsernameFromUser,
+  sellerOsPasswordLoginIdentity,
+} from "./remote-live-operator-identity"
 
 const ADMIN_AUTH_TIMEOUT_MS =
   30000
@@ -49,36 +58,25 @@ function withTimeout<T>(
   ])
 }
 
-function hasAdminMetadata(
-  user: unknown
-) {
-  const metadata =
-    user &&
-    typeof user === "object" &&
-    "app_metadata" in user &&
-    user.app_metadata &&
-    typeof user.app_metadata === "object"
-      ? user.app_metadata as Record<string, unknown>
-      : null
-
-  return (
-    metadata?.is_admin === true ||
-    metadata?.role === "admin"
-  )
-}
-
-export async function signInAdmin(
-  email: string,
+export async function signInSellerOs(
+  identifier: string,
   password: string
 ) {
   try {
+    const loginIdentity = sellerOsPasswordLoginIdentity(identifier)
+    if (!loginIdentity) return {
+      authorized: false,
+      role: null,
+      session: null,
+      error: "Escribe un email o usuario válido.",
+    }
     const {
       data,
       error,
     } =
       await withTimeout(
         supabase.auth.signInWithPassword({
-          email,
+          email: loginIdentity.email,
           password,
         }),
         "admin_sign_in"
@@ -86,7 +84,8 @@ export async function signInAdmin(
 
     if (error || !data.session) {
       return {
-        isAdmin: false,
+        authorized: false,
+        role: null,
         session: null,
         error:
           error?.message ||
@@ -94,9 +93,24 @@ export async function signInAdmin(
       }
     }
 
-    if (hasAdminMetadata(data.user)) {
+    const metadataRole = sellerOsAccessRoleFromUser(data.user)
+    if (metadataRole) {
+      if (metadataRole ===
+          SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator &&
+          (!loginIdentity.remoteUsername ||
+            remoteLiveOperatorUsernameFromUser(data.user) !==
+              loginIdentity.remoteUsername)) {
+        await supabase.auth.signOut()
+        return {
+          authorized: false,
+          role: null,
+          session: null,
+          error: "Usuario o contraseña incorrectos.",
+        }
+      }
       return {
-        isAdmin: true,
+        authorized: true,
+        role: metadataRole,
         session: data.session,
         error: null,
       }
@@ -115,22 +129,25 @@ export async function signInAdmin(
       await supabase.auth.signOut()
 
       return {
-        isAdmin: false,
+        authorized: false,
+        role: null,
         session: null,
         error:
           adminError?.message ||
-          "Este usuario no tiene permisos de administrador.",
+          "Este usuario no tiene acceso a Seller OS.",
       }
     }
 
     return {
-      isAdmin: true,
+      authorized: true,
+      role: SELLER_OS_ACCESS_ROLES.owner,
       session: data.session,
       error: null,
     }
   } catch (error) {
     return {
-      isAdmin: false,
+      authorized: false,
+      role: null,
       session: null,
       error:
         getAdminAuthErrorMessage(error) ||
@@ -139,7 +156,12 @@ export async function signInAdmin(
   }
 }
 
-export async function validateAdminSession() {
+export async function validateSellerOsSession(): Promise<{
+  authorized: boolean
+  role: SellerOsAccessRole | null
+  session: Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]
+  error: string | null
+}> {
   try {
     const {
       data,
@@ -152,20 +174,19 @@ export async function validateAdminSession() {
 
     if (error || !data.session) {
       return {
-        isAdmin: false,
+        authorized: false,
+        role: null,
         session: null,
         error:
           error?.message || "NO_SESSION",
       }
     }
 
-    if (
-      hasAdminMetadata(
-        data.session.user
-      )
-    ) {
+    const metadataRole = sellerOsAccessRoleFromUser(data.session.user)
+    if (metadataRole) {
       return {
-        isAdmin: true,
+        authorized: true,
+        role: metadataRole,
         session:
           data.session,
         error: null,
@@ -185,7 +206,8 @@ export async function validateAdminSession() {
       await supabase.auth.signOut()
 
       return {
-        isAdmin: false,
+        authorized: false,
+        role: null,
         session: null,
         error:
           adminError?.message ||
@@ -194,19 +216,45 @@ export async function validateAdminSession() {
     }
 
     return {
-      isAdmin: true,
+      authorized: true,
+      role: SELLER_OS_ACCESS_ROLES.owner,
       session:
         data.session,
       error: null,
     }
   } catch (error) {
     return {
-      isAdmin: false,
+      authorized: false,
+      role: null,
       session: null,
       error:
         getAdminAuthErrorMessage(error) ||
         "No se pudo validar la sesion admin.",
     }
+  }
+}
+
+export async function signInAdmin(email: string, password: string) {
+  const result = await signInSellerOs(email, password)
+  return {
+    isAdmin: result.authorized &&
+      result.role === SELLER_OS_ACCESS_ROLES.owner,
+    session: result.role === SELLER_OS_ACCESS_ROLES.owner
+      ? result.session : null,
+    error: result.role === SELLER_OS_ACCESS_ROLES.owner
+      ? result.error : result.error ?? "Este usuario no tiene permisos de administrador.",
+  }
+}
+
+export async function validateAdminSession() {
+  const result = await validateSellerOsSession()
+  return {
+    isAdmin: result.authorized &&
+      result.role === SELLER_OS_ACCESS_ROLES.owner,
+    session: result.role === SELLER_OS_ACCESS_ROLES.owner
+      ? result.session : null,
+    error: result.role === SELLER_OS_ACCESS_ROLES.owner
+      ? result.error : result.error ?? "NOT_ADMIN",
   }
 }
 

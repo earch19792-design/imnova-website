@@ -364,6 +364,61 @@ function publicExecution(row: JsonRecord) {
   }
 }
 
+async function resolveEbayCommercialImprovementProposal(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  eventId: string
+}) {
+  const eventId = uuid(input.eventId)
+  if (!eventId) throw new Error("COMMERCIAL_IMPROVEMENT_EVENT_INVALID")
+  const { event, listing } = await loadEventAndListing({ ...input, eventId })
+  const proposal = await lunaChangeProposal({
+    supabase: input.supabase,
+    event: record(event),
+    listing: record(listing),
+  }) ?? proposalFromEvent(event)
+  if (proposal.actionType === "PROMOTED_LISTINGS_GENERAL" &&
+      await promotionBlocked({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        listingId: String(event.listing_id),
+      })) {
+    throw new Error(
+      "COMMERCIAL_IMPROVEMENT_PROMOTION_BLOCKED_TEN_PERCENT_MARGIN",
+    )
+  }
+  return { event, listing, proposal }
+}
+
+/**
+ * Read-only proposal inspection used by role-specific surfaces before an
+ * execution ledger row is created.  This prevents an operator from claiming
+ * an owner-only promotion or listing-end event merely by opening its review.
+ */
+export async function inspectEbayCommercialImprovement(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  eventId: string
+}) {
+  const { event, listing, proposal } =
+    await resolveEbayCommercialImprovementProposal(input)
+  return Object.freeze({
+    eventId: String(event.id),
+    listingId: String(event.listing_id),
+    sku: text(event.sku, 100) || null,
+    actionType: proposal.actionType,
+    targetValue: Object.freeze({ ...proposal.targetValue }),
+    currentLiveReadbackRequired: true as const,
+    exactListingIdentityRequired: true as const,
+    exactSupplierIdentityAvailable: Boolean(
+      text(listing.market_radar_product_id, 80) &&
+      text(listing.supplier_variant_id, 80) &&
+      text(listing.supplier_sku, 100),
+    ),
+    marketplaceWrites: 0 as const,
+  })
+}
+
 export async function prepareEbayCommercialImprovement(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -377,17 +432,8 @@ export async function prepareEbayCommercialImprovement(input: {
   if (!actorId || !eventId || !/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey)) {
     throw new Error("COMMERCIAL_IMPROVEMENT_PREPARE_INVALID")
   }
-  const { event, listing } = await loadEventAndListing({ ...input, eventId })
-  const proposal = await lunaChangeProposal({
-    supabase: input.supabase,
-    event: record(event),
-    listing: record(listing),
-  }) ?? proposalFromEvent(event)
-  if (proposal.actionType === "PROMOTED_LISTINGS_GENERAL" && await promotionBlocked({
-    supabase: input.supabase,
-    accountKey: input.accountKey,
-    listingId: String(event.listing_id),
-  })) throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_BLOCKED_TEN_PERCENT_MARGIN")
+  const { event, listing, proposal } =
+    await resolveEbayCommercialImprovementProposal({ ...input, eventId })
   const requestHash = sha256(JSON.stringify({
     version: RULE_VERSION,
     accountKey: input.accountKey,

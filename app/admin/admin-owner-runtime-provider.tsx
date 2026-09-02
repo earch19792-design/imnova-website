@@ -4,7 +4,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef,
   useState, type ReactNode } from "react"
 import { usePathname } from "next/navigation"
 
+import { validateSellerOsSession } from "@/lib/admin-auth"
 import { supabase } from "@/lib/supabase"
+import {
+  SELLER_OS_ACCESS_ROLES,
+} from "@/lib/seller-os-access-control"
 import { mergeSellerOsQuickPickPresentationV1 } from
   "@/lib/ebay/seller-os-quick-pick-presentation-v1"
 import { LunaShippingCaptureControlPlane, type LunaShippingOwnerWorkerSnapshot }
@@ -323,8 +327,9 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
       setAdminSessionReady(false)
       return () => { active = false }
     }
-    void supabase.auth.getSession().then(({ data, error }) => {
-      if (active) setAdminSessionReady(!error && Boolean(data.session))
+    void validateSellerOsSession().then((result) => {
+      if (active) setAdminSessionReady(result.authorized &&
+        result.role === SELLER_OS_ACCESS_ROLES.owner)
     }).catch(() => { if (active) setAdminSessionReady(false) })
     return () => { active = false }
   }, [runtimeRouteEligible])

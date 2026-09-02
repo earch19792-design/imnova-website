@@ -4,6 +4,7 @@ import {
   getEbayProRuntimeBoundary,
   isEbayOAuthNodeGuardedCeremonyPath,
 } from "@/lib/ebay/environment-boundaries"
+import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 
 const ADMIN_COOKIE = "seller_os_admin_session"
 const ADMIN_TOKEN_VERIFY_TIMEOUT_MS = 15_000
@@ -25,7 +26,8 @@ function startsAtRoute(pathname: string, route: string) {
 }
 
 type AdminTokenVerification =
-  | "VERIFIED"
+  | "OWNER"
+  | "REMOTE_OPERATOR"
   | "INVALID"
   | "UNAVAILABLE"
 
@@ -49,7 +51,7 @@ async function fetchWithAdminTimeout(
   }
 }
 
-async function isVerifiedAdminToken(
+async function isVerifiedSellerOsToken(
   token: string
 ): Promise<AdminTokenVerification> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()
@@ -60,13 +62,22 @@ async function isVerifiedAdminToken(
     const userResponse = await fetchWithAdminTimeout(`${url}/auth/v1/user`, { headers: { apikey: anonKey, Authorization: `Bearer ${token}` }, cache: "no-store" })
     if (userResponse.status === 401 || userResponse.status === 403) return "INVALID"
     if (!userResponse.ok) return "UNAVAILABLE"
-    const user = await userResponse.json() as { app_metadata?: { is_admin?: boolean; role?: string } }
-    if (user.app_metadata?.is_admin === true || user.app_metadata?.role === "admin") return "VERIFIED"
+    const user = await userResponse.json() as {
+      app_metadata?: { is_admin?: boolean; role?: string }
+    }
+    if (user.app_metadata?.is_admin === true ||
+        user.app_metadata?.role === "admin") {
+      return "OWNER"
+    }
+    if (user.app_metadata?.role ===
+        SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator) {
+      return "REMOTE_OPERATOR"
+    }
     const permissionResponse = await fetchWithAdminTimeout(`${url}/rest/v1/rpc/is_admin`, { method: "POST", headers: { apikey: anonKey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}", cache: "no-store" })
     if (permissionResponse.status === 401 || permissionResponse.status === 403) return "INVALID"
     if (!permissionResponse.ok) return "UNAVAILABLE"
     return await permissionResponse.json() === true
-      ? "VERIFIED"
+      ? "OWNER"
       : "INVALID"
   } catch {
     return "UNAVAILABLE"
@@ -95,8 +106,8 @@ export async function middleware(request: NextRequest) {
   if (startsAtRoute(pathname, "/admin") && pathname !== "/admin/login") {
     const token = request.cookies.get(ADMIN_COOKIE)?.value ?? ""
     const verification =
-      await isVerifiedAdminToken(token)
-    if (verification !== "VERIFIED") {
+      await isVerifiedSellerOsToken(token)
+    if (!["OWNER", "REMOTE_OPERATOR"].includes(verification)) {
       const login = new URL("/admin/login", request.url)
       login.searchParams.set("returnTo", `${pathname}${request.nextUrl.search}`)
       if (verification === "UNAVAILABLE") {
@@ -108,6 +119,9 @@ export async function middleware(request: NextRequest) {
       const response = NextResponse.redirect(login, 307)
       if (token && verification === "INVALID") response.cookies.set(ADMIN_COOKIE, "", { path: "/admin", maxAge: 0 })
       return response
+    }
+    if (verification === "REMOTE_OPERATOR" && pathname !== "/admin") {
+      return NextResponse.redirect(new URL("/admin", request.url), 307)
     }
   }
 

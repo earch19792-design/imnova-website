@@ -74,13 +74,17 @@ test("admin login has no public signup and creates protected server session", ()
   assert.match(cookieContract, /httpOnly:\s*true/)
   assert.match(cookieContract, /sameSite:\s*"strict"/)
   assert.match(session, /cross_site_request_rejected/)
-  assert.match(session, /authenticationMode !== "admin_user"/)
+  assert.match(session, /authenticationMode !== "seller_os_user"/)
+  assert.match(session,
+    /validation\.accessRole === SELLER_OS_ACCESS_ROLES\.owner/)
 })
 
 test("unauthorized admin pages redirect server-side with a safe internal return path", () => {
   const middleware = read("middleware.ts")
   const returnPath = read("lib/admin-auth-return.ts")
-  assert.match(middleware, /isVerifiedAdminToken/)
+  assert.match(middleware, /isVerifiedSellerOsToken/)
+  assert.match(middleware,
+    /verification === "REMOTE_OPERATOR" && pathname !== "\/admin"/)
   assert.match(middleware, /seller_os_admin_session/)
   assert.match(middleware, /new URL\("\/admin\/login"/)
   assert.match(returnPath, /!candidate\.startsWith\("\/admin"\)/)
@@ -226,10 +230,12 @@ test("route and bundle surface regress downward", () => {
   // Experiments, and Learning -> one Preview-only authenticated cloud read
   // relay for the loopback Secure MCP Tunnel runtime -> one authenticated,
   // quota-zero Daily Dollar Radar cron boundary that remains unregistered
-  // until its durable scheduler/timezone policy is approved.
+  // until its durable scheduler/timezone policy is approved -> one bounded
+  // Remote LIVE operator route over the existing authorities -> one owner-
+  // invited, singleton remote-operator enrollment route (no public signup).
   // The old product/community domain remains at zero.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 90 + Number(temporarySellerOauthApi) +
+    countNamed("app/api", "route.ts") <= 92 + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
       Number(lunaQuickPickApi),

@@ -20,6 +20,7 @@ const registeredRuntimeGraphAdditions = Object.freeze([
   "lib/ebay/ebay-sales-order-readonly-audit-repository-v1.ts",
   "lib/ebay/ebay-seller-os-workflow-foundation-v1.ts",
   "lib/marketplace/commercial-monitor-domain.ts",
+  "lib/seller-os-access-control.ts",
 ])
 
 function read(path) {

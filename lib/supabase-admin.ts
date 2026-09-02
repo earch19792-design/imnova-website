@@ -1,6 +1,31 @@
 import {
   createClient,
 } from "@supabase/supabase-js"
+import {
+  SELLER_OS_ACCESS_ROLES,
+  sellerOsAccessRoleFromUser,
+  type SellerOsAccessRole,
+// @ts-expect-error Node's direct TypeScript audit runner requires the suffix.
+} from "./seller-os-access-control.ts"
+
+type SellerOsApiValidation =
+  | Readonly<{ ok: true; status: 200; error: null; userId: null;
+      authenticationMode: "service_role"; accessRole: null }>
+  | Readonly<{ ok: true; status: 200; error: null; userId: string;
+      authenticationMode: "seller_os_user";
+      accessRole: SellerOsAccessRole }>
+  | Readonly<{ ok: false; status: number; error: string;
+      userId: string | null; authenticationMode: null;
+      accessRole: SellerOsAccessRole | null }>
+
+type AdminApiValidation =
+  | Readonly<{ ok: true; status: 200; error: null; userId: null;
+      authenticationMode: "service_role"; accessRole: null }>
+  | Readonly<{ ok: true; status: 200; error: null; userId: string;
+      authenticationMode: "admin_user"; accessRole: "OWNER_ADMIN" }>
+  | Readonly<{ ok: false; status: number; error: string;
+      userId: string | null; authenticationMode: null;
+      accessRole: SellerOsAccessRole | null }>
 
 class ServerOnlyRealtimeTransport {
   constructor() {
@@ -118,27 +143,9 @@ function getSupabaseAuthenticatedClient(
   )
 }
 
-function hasAdminMetadata(
-  user: unknown
-) {
-  const metadata =
-    user &&
-    typeof user === "object" &&
-    "app_metadata" in user &&
-    user.app_metadata &&
-    typeof user.app_metadata === "object"
-      ? user.app_metadata as Record<string, unknown>
-      : null
-
-  return (
-    metadata?.is_admin === true ||
-    metadata?.role === "admin"
-  )
-}
-
-export async function validateAdminApiRequest(
+export async function validateSellerOsApiRequest(
   req: Request
-) {
+): Promise<SellerOsApiValidation> {
   const token =
     getBearerToken(req)
 
@@ -147,8 +154,10 @@ export async function validateAdminApiRequest(
       ok: false,
       status: 401,
       error:
-        "admin_token_required",
+        "seller_os_token_required",
       userId: null,
+      authenticationMode: null,
+      accessRole: null,
     }
   }
 
@@ -165,6 +174,7 @@ export async function validateAdminApiRequest(
       error: null,
       userId: null,
       authenticationMode: "service_role" as const,
+      accessRole: null,
     }
   }
 
@@ -189,22 +199,22 @@ export async function validateAdminApiRequest(
       ok: false,
       status: 401,
       error:
-        "admin_unauthorized",
+        "seller_os_unauthorized",
       userId: null,
+      authenticationMode: null,
+      accessRole: null,
     }
   }
 
-  if (
-    hasAdminMetadata(
-      userData.user
-    )
-  ) {
+  const metadataRole = sellerOsAccessRoleFromUser(userData.user)
+  if (metadataRole) {
     return {
       ok: true,
       status: 200,
       error: null,
       userId: userData.user.id,
-      authenticationMode: "admin_user" as const,
+      authenticationMode: "seller_os_user" as const,
+      accessRole: metadataRole,
     }
   }
 
@@ -224,8 +234,10 @@ export async function validateAdminApiRequest(
       ok: false,
       status: 403,
       error:
-        "admin_forbidden",
+        "seller_os_forbidden",
       userId: userData.user.id,
+      authenticationMode: null,
+      accessRole: null,
     }
   }
 
@@ -234,6 +246,31 @@ export async function validateAdminApiRequest(
     status: 200,
     error: null,
     userId: userData.user.id,
+    authenticationMode: "seller_os_user" as const,
+    accessRole: SELLER_OS_ACCESS_ROLES.owner,
+  }
+}
+
+export async function validateAdminApiRequest(
+  req: Request,
+): Promise<AdminApiValidation> {
+  const validation = await validateSellerOsApiRequest(req)
+  if (!validation.ok) return validation
+  if (validation.authenticationMode === "service_role") return {
+    ...validation,
+    authenticationMode: "service_role" as const,
+  }
+  if (validation.accessRole !== SELLER_OS_ACCESS_ROLES.owner) return {
+    ok: false,
+    status: 403,
+    error: "admin_forbidden",
+    userId: validation.userId,
+    authenticationMode: null,
+    accessRole: validation.accessRole,
+  }
+  return {
+    ...validation,
     authenticationMode: "admin_user" as const,
+    accessRole: SELLER_OS_ACCESS_ROLES.owner,
   }
 }
