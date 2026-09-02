@@ -11,9 +11,13 @@ import { parseEbayListingQualityReportV1 } from
 import {
   OWNER_QUALITY_REPORT_SAFETY_V1,
   persistOwnerListingQualityReportV1,
+  persistOwnerQualityReportUploadAttemptV1,
+  prepareFailedOwnerQualityReportUploadAttemptV1,
   prepareOwnerListingQualityReportImportV1,
+  prepareSuccessfulOwnerQualityReportUploadAttemptV1,
   readExactProductTruthForLiveListingsV1,
   readOwnerListingQualityReportStatusV1,
+  readOwnerQualityReportLatestUploadAttemptV1,
 } from "@/lib/ebay/ebay-listing-quality-report-owner-import-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
@@ -74,9 +78,14 @@ export async function GET(request: Request) {
     error: "QUALITY_REPORT_OWNER_AUTH_REQUIRED" }, 403)
   try {
     const account = canonicalAccount()
-    const status = await readOwnerListingQualityReportStatusV1({
-      supabase: getSupabaseAdminClient(), accountKey: account.accountKey })
-    return noStore({ success: true, status,
+    const supabase = getSupabaseAdminClient()
+    const [status, latestUploadAttempt] = await Promise.all([
+      readOwnerListingQualityReportStatusV1({ supabase,
+        accountKey: account.accountKey }),
+      readOwnerQualityReportLatestUploadAttemptV1({ supabase,
+        accountKey: account.accountKey }),
+    ])
+    return noStore({ success: true, status, latestUploadAttempt,
       permissions: { remoteOperatorUploadAccess: false,
         remoteOperatorRawReportAccess: false } })
   } catch (error) {
@@ -102,9 +111,21 @@ export async function POST(request: Request) {
   const content = typeof body?.content === "string" ? body.content : ""
   if (!format || !fileName || !content) return noStore({ success: false,
     error: "QUALITY_REPORT_INPUT_INVALID" }, 400)
+  const attemptedAt = new Date().toISOString()
+  const correlationSeed = [attemptedAt, validation.userId,
+    request.headers.get("x-vercel-id") ?? "no-vercel-request-id"].join(":")
+  let account: ReturnType<typeof canonicalAccount>
+  let supabase: ReturnType<typeof getSupabaseAdminClient>
   try {
-    const account = canonicalAccount()
-    const snapshot = parseEbayListingQualityReportV1({ format, fileName,
+    account = canonicalAccount()
+    supabase = getSupabaseAdminClient()
+  } catch (error) {
+    return noStore({ success: false, error: safeError(error) }, 503)
+  }
+  let snapshot: ReturnType<typeof parseEbayListingQualityReportV1>
+  let prepared: ReturnType<typeof prepareOwnerListingQualityReportImportV1>
+  try {
+    snapshot = parseEbayListingQualityReportV1({ format, fileName,
       content, selectedWorksheet: typeof body?.selectedWorksheet === "string"
         ? body.selectedWorksheet : null })
     const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
@@ -112,22 +133,59 @@ export async function POST(request: Request) {
     const live = currentLiveListingsForMonitorV1(monitor).map((listing) => ({
       listingKey: listing.key, itemId: listing.identity.itemId,
       sku: listing.identity.sku }))
-    const supabase = getSupabaseAdminClient()
     const truth = await readExactProductTruthForLiveListingsV1({ supabase,
       accountKey: account.accountKey, itemIds: live.map((row) => row.itemId) })
-    const prepared = prepareOwnerListingQualityReportImportV1({ snapshot,
+    prepared = prepareOwnerListingQualityReportImportV1({ snapshot,
       accountKey: account.accountKey, accountAlias: account.accountAlias,
       importedBy: validation.userId,
       liveScope: integrity.canonicalCohort, liveListings: live,
       productTruthByItemId: truth })
-    const persisted = await persistOwnerListingQualityReportV1({ supabase,
-      prepared })
-    const status = await readOwnerListingQualityReportStatusV1({ supabase,
-      accountKey: account.accountKey })
-    return noStore({ success: true, importId: persisted.importId,
-      idempotent: persisted.idempotent, status,
-      guards: prepared.guards, safety: OWNER_QUALITY_REPORT_SAFETY_V1 })
   } catch (error) {
+    try {
+      const attempt = prepareFailedOwnerQualityReportUploadAttemptV1({
+        accountKey: account.accountKey, attemptedBy: validation.userId,
+        format, content, error, attemptedAt, correlationSeed })
+      await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
+    } catch {
+      // Preserve the original fail-closed parser result. Audit failures are
+      // intentionally not misreported as successful imports.
+    }
+    const [status, latestUploadAttempt] = await Promise.all([
+      readOwnerListingQualityReportStatusV1({ supabase,
+        accountKey: account.accountKey }).catch(() => null),
+      readOwnerQualityReportLatestUploadAttemptV1({ supabase,
+        accountKey: account.accountKey }).catch(() => null),
+    ])
+    return noStore({ success: false, error: safeError(error), status,
+      latestUploadAttempt }, 422)
+  }
+
+  let persisted: Awaited<ReturnType<typeof persistOwnerListingQualityReportV1>>
+  try {
+    persisted = await persistOwnerListingQualityReportV1({ supabase, prepared })
+  } catch (error) {
+    try {
+      const attempt = prepareFailedOwnerQualityReportUploadAttemptV1({
+        accountKey: account.accountKey, attemptedBy: validation.userId,
+        format, content, error, attemptedAt, correlationSeed })
+      await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
+    } catch { /* The valid-import table remains authoritative. */ }
     return noStore({ success: false, error: safeError(error) }, 422)
   }
+
+  const successfulAttempt = prepareSuccessfulOwnerQualityReportUploadAttemptV1({
+    accountKey: account.accountKey, attemptedBy: validation.userId,
+    format, content, snapshot, prepared, validImportId: persisted.importId,
+    attemptedAt, correlationSeed })
+  await persistOwnerQualityReportUploadAttemptV1({ supabase,
+    attempt: successfulAttempt })
+  const [status, latestUploadAttempt] = await Promise.all([
+    readOwnerListingQualityReportStatusV1({ supabase,
+      accountKey: account.accountKey }),
+    readOwnerQualityReportLatestUploadAttemptV1({ supabase,
+      accountKey: account.accountKey }),
+  ])
+  return noStore({ success: true, importId: persisted.importId,
+    idempotent: persisted.idempotent, status, latestUploadAttempt,
+    guards: prepared.guards, safety: OWNER_QUALITY_REPORT_SAFETY_V1 })
 }

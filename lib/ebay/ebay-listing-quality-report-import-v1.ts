@@ -2,12 +2,12 @@ import { createHash } from "node:crypto"
 import { unzipSync } from "fflate"
 
 export const EBAY_LISTING_QUALITY_REPORT_IMPORT_VERSION =
-  "EBAY_LISTING_QUALITY_REPORT_IMPORT_V1_2026_08_12_SMART_SHEET_V2"
+  "EBAY_LISTING_QUALITY_REPORT_IMPORT_V1_2026_09_02_STATUS_PARITY_V3"
 export const EBAY_LISTING_QUALITY_REPORT_SOURCE = "EBAY_LISTING_QUALITY_REPORT" as const
 
 type Row = Record<string, unknown>
 type QualityFormat = "CSV" | "JSON" | "XLSX"
-type ValidationReason = "UNSUPPORTED_FILE_TYPE" | "WORKBOOK_UNREADABLE" |
+export type QualityReportValidationReason = "UNSUPPORTED_FILE_TYPE" | "WORKBOOK_UNREADABLE" |
   "NO_DATA_SHEET_FOUND" | "HEADER_ROW_NOT_FOUND" | "ITEM_ID_COLUMN_NOT_FOUND" |
   "LISTING_IDENTITY_UNPROVEN" | "RECOMMENDATION_COLUMNS_NOT_FOUND" |
   "BENCHMARK_COLUMNS_NOT_FOUND" | "MULTIPLE_CANDIDATE_SHEETS" |
@@ -51,9 +51,10 @@ const FORBIDDEN_XLSX_PATH = /(^|\/)(vbaProject\.bin|externalLinks\/|embeddings\/
 const XML_DECODER = new TextDecoder("utf-8", { fatal: false })
 
 export class QualityReportValidationError extends Error {
-  reason: ValidationReason
+  reason: QualityReportValidationReason
   diagnosis: Record<string, unknown>
-  constructor(reason: ValidationReason, diagnosis: Record<string, unknown> = {}) {
+  constructor(reason: QualityReportValidationReason,
+    diagnosis: Record<string, unknown> = {}) {
     super(reason)
     this.name = "QualityReportValidationError"
     this.reason = reason
@@ -291,6 +292,7 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
   const relationshipMap = workbookRelationships(XML_DECODER.decode(relationships))
   const strings = sharedStrings(archive["xl/sharedStrings.xml"]
     ? XML_DECODER.decode(archive["xl/sharedStrings.xml"]) : null)
+  const observedHeaderNames = new Set<string>()
   const candidates = sheetDefinitions.flatMap((definition) => {
     const target = relationshipMap.get(definition.relationshipId)
     if (!target) return []
@@ -307,6 +309,10 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
     const headers = grid.rows.slice(0, MAX_HEADER_SCAN_ROWS).map((row) =>
       ({ ...row, ...headerScore(row.cells) })).filter((row) => row.score > 0)
       .sort((left, right) => right.score - left.score || left.rowNumber - right.rowNumber)
+    for (const cell of headers[0]?.cells ?? []) {
+      const header = safeText(cell, 160)
+      if (header) observedHeaderNames.add(header)
+    }
     return headers[0] ? [candidateSheetEvidence({ definition, grid, header: headers[0] })] : []
   }).filter((candidate) => candidate.recognizedRowCount > 0 && candidate.header.identity &&
     (candidate.header.recommendation || candidate.header.benchmark))
@@ -326,7 +332,8 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
   }))
   const baseDiagnosis = { recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX",
     worksheetNames: sheetDefinitions.map((row) => row.name), candidateSheetCount: candidates.length,
-    candidateSheets: publicCandidates }
+    candidateSheets: publicCandidates,
+    observedHeaderNames: [...observedHeaderNames].slice(0, MAX_COLUMNS) }
   if (!candidates.length) throw new QualityReportValidationError("NO_VALID_SHEET", {
     ...baseDiagnosis, sheetResolutionState: "NO_VALID_SHEET" })
   const requested = safeText(requestedWorksheet, 120)

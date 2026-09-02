@@ -1,9 +1,11 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
   EBAY_LISTING_QUALITY_REPORT_SOURCE,
   parseEbayListingQualityReportV1,
+  QualityReportValidationError,
+  type QualityReportValidationReason,
 // @ts-expect-error Node's direct TypeScript audit runner requires the suffix.
 } from "./ebay-listing-quality-report-import-v1.ts"
 
@@ -33,6 +35,24 @@ export class OwnerQualityReportImportError extends Error {
   }
 }
 
+export type OwnerQualityReportUploadAttemptV1 = Readonly<{
+  id: string
+  attemptedAt: string
+  fileType: "CSV" | "XLSX" | "JSON"
+  status: "FAILED_VALIDATION" | "IMPORTED"
+  safeFailureCode: string | null
+  technicalReasonCode: string | null
+  diagnosticsCaptureStatus: "CAPTURED" | "NOT_CAPTURED_LEGACY"
+  workbookSheetNames: readonly string[]
+  observedHeaderNames: readonly string[]
+  recognizedSheet: string | null
+  headerMatchStatus: string
+  rowsParsed: number
+  currentLiveRowsMatched: number
+  nonliveRowsExcluded: number
+  validImportId: string | null
+}>
+
 function text(value: unknown, maximum = 500) {
   return typeof value === "string" && value.trim()
     ? value.normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g, " ")
@@ -50,6 +70,164 @@ function normalizedSku(value: unknown) {
 
 function sha(value: string) {
   return createHash("sha256").update(value).digest("hex")
+}
+
+function boundedStringList(value: unknown, maximumItems: number) {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.flatMap((entry) => {
+    const candidate = text(entry, 160)
+    return candidate ? [candidate] : []
+  }))].slice(0, maximumItems)
+}
+
+const HEADER_FAILURES = new Set<QualityReportValidationReason>([
+  "NO_VALID_SHEET", "HEADER_ROW_NOT_FOUND", "ITEM_ID_COLUMN_NOT_FOUND",
+  "RECOMMENDATION_COLUMNS_NOT_FOUND", "HUMAN_SELECTION_REQUIRED",
+])
+
+function technicalReasonCode(error: unknown) {
+  if (error instanceof QualityReportValidationError) {
+    return `QUALITY_REPORT_${error.reason}`
+  }
+  const candidate = error instanceof Error ? error.message : ""
+  return /^QUALITY_REPORT_[A-Z0-9_]{3,160}$/.test(candidate)
+    ? candidate : "QUALITY_REPORT_IMPORT_FAILED"
+}
+
+function humanSafeFailureCode(error: unknown) {
+  const reason = error instanceof QualityReportValidationError
+    ? error.reason : null
+  if (reason === "UNSUPPORTED_FILE_TYPE") return "REPORT_FILE_TYPE_NOT_SUPPORTED"
+  if (reason === "FILE_TOO_LARGE") return "REPORT_FILE_TOO_LARGE"
+  if (reason === "WORKBOOK_UNREADABLE" || reason === "MALFORMED_WORKBOOK") {
+    return "REPORT_FILE_COULD_NOT_BE_READ"
+  }
+  if (reason && HEADER_FAILURES.has(reason)) {
+    return "REPORT_STRUCTURE_NOT_RECOGNIZED"
+  }
+  return "REPORT_VALIDATION_NOT_PASSED"
+}
+
+function headerMatchStatus(error: unknown) {
+  if (!(error instanceof QualityReportValidationError)) return "NOT_REACHED"
+  return HEADER_FAILURES.has(error.reason) ? error.reason : "OTHER"
+}
+
+function diagnosticValue(error: unknown, key: string) {
+  return error instanceof QualityReportValidationError
+    ? error.diagnosis[key] : null
+}
+
+function reportFileSize(format: "CSV" | "XLSX" | "JSON", content: string) {
+  return format === "XLSX" ? Buffer.from(content, "base64").length
+    : Buffer.byteLength(content, "utf8")
+}
+
+function attemptCorrelationReference(seed?: string) {
+  return `qlr_attempt_${sha(seed ?? randomUUID()).slice(0, 32)}`
+}
+
+export function prepareFailedOwnerQualityReportUploadAttemptV1(input: {
+  accountKey: string
+  attemptedBy: string
+  format: "CSV" | "XLSX" | "JSON"
+  content: string
+  error: unknown
+  attemptedAt?: string
+  correlationSeed?: string
+}) {
+  const attemptedAt = new Date(input.attemptedAt ?? new Date().toISOString())
+  if (!Number.isFinite(attemptedAt.getTime())) {
+    throw new OwnerQualityReportImportError("QUALITY_REPORT_ATTEMPT_TIME_INVALID")
+  }
+  return Object.freeze({
+    marketplace_account_key: input.accountKey,
+    attempted_by: input.attemptedBy,
+    attempted_at: attemptedAt.toISOString(),
+    file_type: input.format,
+    source_file_fingerprint: `qlr_file_${sha(input.content).slice(0, 32)}`,
+    source_file_size_bytes: Math.max(1, reportFileSize(input.format, input.content)),
+    attempt_status: "FAILED_VALIDATION" as const,
+    safe_failure_code: humanSafeFailureCode(input.error),
+    technical_reason_code: technicalReasonCode(input.error),
+    diagnostics_capture_status: "CAPTURED" as const,
+    workbook_sheet_names: boundedStringList(
+      diagnosticValue(input.error, "worksheetNames"), 20),
+    observed_header_names: boundedStringList(
+      diagnosticValue(input.error, "observedHeaderNames"), 250),
+    recognized_sheet: text(
+      diagnosticValue(input.error, "selectedWorksheet"), 120),
+    header_match_status: headerMatchStatus(input.error),
+    rows_parsed: Math.max(0, Number(
+      diagnosticValue(input.error, "detectedRows")) || 0),
+    current_live_rows_matched: 0,
+    nonlive_rows_excluded: 0,
+    valid_import_id: null,
+    request_correlation_reference: attemptCorrelationReference(
+      input.correlationSeed),
+  })
+}
+
+export function prepareSuccessfulOwnerQualityReportUploadAttemptV1(input: {
+  accountKey: string
+  attemptedBy: string
+  format: "CSV" | "XLSX" | "JSON"
+  content: string
+  snapshot: OwnerQualityReportSnapshotV1
+  prepared: ReturnType<typeof prepareOwnerListingQualityReportImportV1>
+  validImportId: string
+  attemptedAt?: string
+  correlationSeed?: string
+}) {
+  const attemptedAt = new Date(input.attemptedAt ?? new Date().toISOString())
+  if (!Number.isFinite(attemptedAt.getTime())) {
+    throw new OwnerQualityReportImportError("QUALITY_REPORT_ATTEMPT_TIME_INVALID")
+  }
+  const workbook = input.snapshot.workbook as Record<string, unknown>
+  const diagnosis = workbook.diagnosis && typeof workbook.diagnosis === "object"
+    && !Array.isArray(workbook.diagnosis)
+    ? workbook.diagnosis as Record<string, unknown> : {}
+  return Object.freeze({
+    marketplace_account_key: input.accountKey,
+    attempted_by: input.attemptedBy,
+    attempted_at: attemptedAt.toISOString(),
+    file_type: input.format,
+    source_file_fingerprint: input.snapshot.sourceFileFingerprint as
+      `qlr_file_${string}`,
+    source_file_size_bytes: Math.max(1, reportFileSize(input.format, input.content)),
+    attempt_status: "IMPORTED" as const,
+    safe_failure_code: null,
+    technical_reason_code: null,
+    diagnostics_capture_status: "CAPTURED" as const,
+    workbook_sheet_names: boundedStringList(workbook.worksheetNames, 20),
+    observed_header_names: boundedStringList(
+      diagnosis.observedHeaderNames, 250),
+    recognized_sheet: text(workbook.selectedWorksheet, 120),
+    header_match_status: "MATCHED" as const,
+    rows_parsed: input.snapshot.rowCount,
+    current_live_rows_matched: input.prepared.import.report_row_count -
+      input.prepared.import.nonlive_rows_excluded,
+    nonlive_rows_excluded: input.prepared.import.nonlive_rows_excluded,
+    valid_import_id: input.validImportId,
+    request_correlation_reference: attemptCorrelationReference(
+      input.correlationSeed),
+  })
+}
+
+export async function persistOwnerQualityReportUploadAttemptV1(input: {
+  supabase: SupabaseClient
+  attempt: ReturnType<typeof prepareFailedOwnerQualityReportUploadAttemptV1> |
+    ReturnType<typeof prepareSuccessfulOwnerQualityReportUploadAttemptV1>
+}) {
+  const table = input.supabase
+    .from("ebay_listing_quality_report_upload_attempts")
+  const result = input.attempt.attempt_status === "IMPORTED"
+    ? await table.insert(input.attempt).select("id").single()
+    : await table.insert(input.attempt).select("id").single()
+  if (result.error || !text(result.data?.id, 40)) {
+    throw new OwnerQualityReportImportError("QUALITY_REPORT_ATTEMPT_AUDIT_FAILED")
+  }
+  return Object.freeze({ attemptId: String(result.data.id) })
 }
 
 function reportDate(value: unknown) {
@@ -334,6 +512,41 @@ export async function readOwnerListingQualityReportStatusV1(input: {
     signalsNeedEvidence: result.data.signals_need_evidence,
     nonliveRowsExcluded: result.data.nonlive_rows_excluded,
     reminderVisible: !current })
+}
+
+export async function readOwnerQualityReportLatestUploadAttemptV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+}) {
+  const result = await input.supabase
+    .from("ebay_listing_quality_report_upload_attempts")
+    .select("id,attempted_at,file_type,attempt_status,safe_failure_code,technical_reason_code,diagnostics_capture_status,workbook_sheet_names,observed_header_names,recognized_sheet,header_match_status,rows_parsed,current_live_rows_matched,nonlive_rows_excluded,valid_import_id")
+    .eq("marketplace_account_key", input.accountKey)
+    .order("attempted_at", { ascending: false })
+    .order("id", { ascending: false }).limit(1).maybeSingle()
+  if (result.error) {
+    throw new OwnerQualityReportImportError("QUALITY_REPORT_ATTEMPT_STATUS_READ_FAILED")
+  }
+  if (!result.data) return null
+  return Object.freeze({
+    id: result.data.id,
+    attemptedAt: result.data.attempted_at,
+    fileType: result.data.file_type,
+    status: result.data.attempt_status,
+    safeFailureCode: result.data.safe_failure_code,
+    technicalReasonCode: result.data.technical_reason_code,
+    diagnosticsCaptureStatus: result.data.diagnostics_capture_status,
+    workbookSheetNames: Object.freeze(
+      boundedStringList(result.data.workbook_sheet_names, 20)),
+    observedHeaderNames: Object.freeze(
+      boundedStringList(result.data.observed_header_names, 250)),
+    recognizedSheet: result.data.recognized_sheet,
+    headerMatchStatus: result.data.header_match_status,
+    rowsParsed: result.data.rows_parsed,
+    currentLiveRowsMatched: result.data.current_live_rows_matched,
+    nonliveRowsExcluded: result.data.nonlive_rows_excluded,
+    validImportId: result.data.valid_import_id,
+  }) as OwnerQualityReportUploadAttemptV1
 }
 
 export type RemoteListingQualitySignalV1 = Readonly<{

@@ -17,6 +17,24 @@ type ReportStatus = Readonly<{
   reminderVisible: boolean
 }>
 
+type UploadAttempt = Readonly<{
+  id: string
+  attemptedAt: string
+  fileType: "CSV" | "XLSX" | "JSON"
+  status: "FAILED_VALIDATION" | "IMPORTED"
+  safeFailureCode: string | null
+  technicalReasonCode: string | null
+  diagnosticsCaptureStatus: "CAPTURED" | "NOT_CAPTURED_LEGACY"
+  workbookSheetNames: readonly string[]
+  observedHeaderNames: readonly string[]
+  recognizedSheet: string | null
+  headerMatchStatus: string
+  rowsParsed: number
+  currentLiveRowsMatched: number
+  nonliveRowsExcluded: number
+  validImportId: string | null
+}>
+
 function localDate(value: string | null) {
   if (!value) return "—"
   const parsed = new Date(value)
@@ -30,9 +48,30 @@ async function bearer() {
   return session.authorized ? session.session?.access_token ?? null : null
 }
 
+function humanUploadFailure(code: unknown) {
+  if (code === "REPORT_STRUCTURE_NOT_RECOGNIZED" ||
+      code === "QUALITY_REPORT_NO_VALID_SHEET") {
+    return "No pudimos encontrar la tabla de recomendaciones en este archivo de eBay. El último reporte válido sigue disponible; no se reemplazó nada."
+  }
+  if (code === "REPORT_FILE_TYPE_NOT_SUPPORTED" ||
+      code === "QUALITY_REPORT_UNSUPPORTED_FILE_TYPE") {
+    return "Este tipo de archivo no es compatible. Descarga el reporte de eBay en CSV, XLSX o JSON."
+  }
+  if (code === "REPORT_FILE_TOO_LARGE" ||
+      code === "QUALITY_REPORT_FILE_TOO_LARGE") {
+    return "El archivo es demasiado grande para validarlo de forma segura. El último reporte válido no cambió."
+  }
+  if (code === "REPORT_FILE_COULD_NOT_BE_READ") {
+    return "No pudimos leer este archivo. Vuelve a descargarlo desde eBay; el último reporte válido no cambió."
+  }
+  return "Este archivo no pasó la validación. El último reporte válido sigue disponible y no se reemplazó."
+}
+
 export function OwnerListingQualityReportControl() {
   const file = useRef<HTMLInputElement>(null)
   const [status, setStatus] = useState<ReportStatus | null>(null)
+  const [latestAttempt, setLatestAttempt] =
+    useState<UploadAttempt | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -42,8 +81,11 @@ export function OwnerListingQualityReportControl() {
     const response = await fetch("/api/admin/ebay/listing-quality-report", {
       headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
     const payload = await response.json() as { success?: boolean;
-      status?: ReportStatus }
-    if (response.ok && payload.success && payload.status) setStatus(payload.status)
+      status?: ReportStatus; latestUploadAttempt?: UploadAttempt | null }
+    if (response.ok && payload.success && payload.status) {
+      setStatus(payload.status)
+      setLatestAttempt(payload.latestUploadAttempt ?? null)
+    }
   }, [])
 
   useEffect(() => { void load() }, [load])
@@ -71,11 +113,18 @@ export function OwnerListingQualityReportControl() {
           "Content-Type": "application/json" },
         body: JSON.stringify({ format, fileName: selected.name, content }) })
       const payload = await response.json() as { success?: boolean;
-        status?: ReportStatus; error?: string }
+        status?: ReportStatus; latestUploadAttempt?: UploadAttempt | null;
+        error?: string }
       if (!response.ok || !payload.success || !payload.status) {
-        throw new Error(payload.error ?? "El reporte no pasó la validación.")
+        if (payload.status) setStatus(payload.status)
+        if (payload.latestUploadAttempt) {
+          setLatestAttempt(payload.latestUploadAttempt)
+        }
+        throw new Error(humanUploadFailure(
+          payload.latestUploadAttempt?.safeFailureCode ?? payload.error))
       }
       setStatus(payload.status)
+      setLatestAttempt(payload.latestUploadAttempt ?? null)
       setMessage("Listing Quality Report actualizado hoy ✓")
     } catch (error) {
       setMessage(error instanceof Error ? error.message
@@ -87,6 +136,7 @@ export function OwnerListingQualityReportControl() {
   }
 
   const current = status?.state === "CURRENT"
+  const latestAttemptFailed = latestAttempt?.status === "FAILED_VALIDATION"
   return <section aria-labelledby="quality-report-owner-heading"
     data-remote-operator-upload-access="false"
     data-remote-operator-raw-report-access="false"
@@ -97,17 +147,38 @@ export function OwnerListingQualityReportControl() {
         <h2 id="quality-report-owner-heading" className="mt-2 text-xl font-black tracking-tight text-[#f4efe5] sm:text-2xl">
           IMPORTAR LISTING QUALITY REPORT
         </h2>
-        <div className={`mt-4 rounded-2xl border p-4 ${current
-          ? "border-[#9db18a]/35 bg-[#9db18a]/10"
-          : "border-[#c98268]/35 bg-[#c98268]/10"}`}>
-          <p className="font-black text-[#f4efe5]">{current
-            ? "Listing Quality Report actualizado hoy ✓"
-            : status?.state === "STALE"
-              ? "Reporte desactualizado · sube uno nuevo."
-              : "📋 Listing Quality Report pendiente"}</p>
-          {!current && <p className="mt-2 text-sm leading-6 text-[#d8d0c3]">
+        <div className={`mt-4 rounded-2xl border p-4 ${latestAttemptFailed
+          ? "border-[#c98268]/40 bg-[#c98268]/10"
+          : current ? "border-[#9db18a]/35 bg-[#9db18a]/10"
+            : "border-[#c98268]/35 bg-[#c98268]/10"}`}>
+          <p className="font-black text-[#f4efe5]">{latestAttemptFailed
+            ? "El último archivo no se pudo importar"
+            : latestAttempt?.status === "IMPORTED"
+              ? "Último archivo importado correctamente ✓"
+              : current ? "Último reporte válido actualizado hoy ✓"
+                : status?.state === "STALE"
+                  ? "Reporte desactualizado · sube uno nuevo."
+                  : "📋 Listing Quality Report pendiente"}</p>
+          {latestAttemptFailed && <p className="mt-2 text-sm leading-6 text-[#d8d0c3]">
+            {humanUploadFailure(latestAttempt.safeFailureCode)}
+          </p>}
+          {!latestAttemptFailed && !current && <p className="mt-2 text-sm leading-6 text-[#d8d0c3]">
             Sube el reporte de eBay de hoy para que Seller OS pueda convertir sus señales en tareas para Mayel.
           </p>}
+          {latestAttempt && <p className="mt-2 text-xs leading-5 text-[#aaa294]">
+            Último intento · {localDate(latestAttempt.attemptedAt)} · {latestAttempt.fileType}
+          </p>}
+          {latestAttemptFailed && <details className="mt-3 text-xs text-[#aaa294]">
+            <summary className="cursor-pointer font-bold text-[#d8d0c3]">
+              Detalle técnico
+            </summary>
+            <dl className="mt-2 grid gap-1 break-words">
+              <div><dt className="inline">Código: </dt><dd className="inline font-mono">{latestAttempt.technicalReasonCode ?? "—"}</dd></div>
+              <div><dt className="inline">Hojas detectadas: </dt><dd className="inline">{latestAttempt.workbookSheetNames.join(", ") || "No capturadas en este intento"}</dd></div>
+              <div><dt className="inline">Hoja reconocida: </dt><dd className="inline">{latestAttempt.recognizedSheet ?? "—"}</dd></div>
+              <div><dt className="inline">Headers: </dt><dd className="inline">{latestAttempt.headerMatchStatus}</dd></div>
+            </dl>
+          </details>}
         </div>
         <input ref={file} type="file" className="sr-only"
           accept=".csv,.xlsx,.json,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -118,7 +189,14 @@ export function OwnerListingQualityReportControl() {
         </button>
         {message && <p role="status" className="mt-3 break-words text-sm leading-6 text-[#d8d0c3]">{message}</p>}
       </div>
-      <dl className="grid min-w-0 grid-cols-2 gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm">
+      <div className="min-w-0 rounded-2xl border border-white/10 bg-black/20 p-4">
+        <p className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-[#b7c4a8]">
+          Último reporte válido
+        </p>
+        <p className="mb-3 text-sm font-bold text-[#f4efe5]">{current
+          ? "Actualizado hoy ✓"
+          : status?.state === "STALE" ? "Desactualizado" : "Todavía no hay un reporte válido"}</p>
+      <dl className="grid min-w-0 grid-cols-2 gap-3 text-sm">
         {[
           ["Última importación", localDate(status?.lastReportImportedAt ?? null)],
           ["Fecha del reporte", status?.reportDate ?? "—"],
@@ -133,6 +211,7 @@ export function OwnerListingQualityReportControl() {
           <dd className="mt-1 break-words font-black text-[#f4efe5]">{value}</dd>
         </div>)}
       </dl>
+      </div>
     </div>
   </section>
 }
