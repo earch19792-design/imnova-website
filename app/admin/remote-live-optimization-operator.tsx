@@ -273,6 +273,151 @@ function ImageProposalReview({ listing, canReview, onRefresh }: {
   </section>
 }
 
+function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
+  onRefresh }: {
+  listing: RemoteLiveOperatorListingV1
+  canApply: boolean
+  canAuthorize: boolean
+  onRefresh: () => Promise<void>
+}) {
+  const canary = listing.safeMutationCanary
+  const [busy, setBusy] = useState(false)
+  const [stage, setStage] = useState<ActionStage>("IDLE")
+  const [message, setMessage] = useState("")
+  if (!canary) return null
+  const activeCanary: NonNullable<
+    RemoteLiveOperatorListingV1["safeMutationCanary"]> = canary
+
+  function stableApplyKey() {
+    if (!activeCanary.authorizationId) return ""
+    const storageKey = `remote-title-canary:${activeCanary.authorizationId}`
+    const prior = window.localStorage.getItem(storageKey)
+    if (prior) return prior
+    const created = `remote-title-${crypto.randomUUID()}`
+    window.localStorage.setItem(storageKey, created)
+    return created
+  }
+
+  async function authorize() {
+    if (!canAuthorize || busy || activeCanary.ownerApprovalStatus !==
+        "PENDING_OWNER_APPROVAL") return
+    setBusy(true)
+    setMessage("")
+    try {
+      const payload = await operatorRequest(
+        "/api/admin/ebay/live-optimization-operator", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "AUTHORIZE_SAFE_MUTATION_CANARY",
+            ebayItemId: activeCanary.ebayItemId,
+            sourceSignalId: activeCanary.sourceSignalId }),
+        })
+      setMessage(String(payload.message ??
+        "Canary autorizado. Todavía no se aplicó ningún cambio."))
+      await onRefresh()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No se pudo autorizar. No se aplicó ningún cambio.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function apply() {
+    if (!canApply || !activeCanary.authorizationId ||
+        !activeCanary.applyAvailable || busy ||
+        activeCanary.ownerApprovalStatus !== "AUTHORIZED") return
+    setBusy(true)
+    setMessage("")
+    setStage("APPLYING")
+    const verifyingTimer = window.setTimeout(() => setStage("VERIFYING"), 700)
+    try {
+      const payload = await operatorRequest(
+        "/api/admin/ebay/live-optimization-operator", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "APPLY_SAFE_MUTATION_CANARY",
+            authorizationId: activeCanary.authorizationId,
+            idempotencyKey: stableApplyKey() }),
+        })
+      window.clearTimeout(verifyingTimer)
+      if (payload.postActionReadbackPass !== true) {
+        setStage("UNKNOWN")
+        setMessage("Estamos verificando el cambio. No vuelvas a pulsar.")
+        return
+      }
+      setStage("CONFIRMED")
+      setMessage("Cambio confirmado ✓")
+      await onRefresh()
+    } catch (error) {
+      window.clearTimeout(verifyingTimer)
+      const code = error && typeof error === "object" && "code" in error
+        ? String(error.code) : ""
+      if (code.includes("OUTCOME_UNKNOWN") ||
+          code.includes("WRITE_IN_PROGRESS")) {
+        setStage("UNKNOWN")
+        setMessage("Estamos verificando el cambio. No vuelvas a pulsar.")
+      } else {
+        setStage("IDLE")
+        setMessage(error instanceof Error ? error.message :
+          "Esta acción no está disponible ahora. No necesitas hacer nada.")
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <section className="mt-5 rounded-2xl border border-[#b8ccc6] bg-[#edf3f1] p-4 sm:p-5"
+    data-safe-live-mutation-canary>
+    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#1d5961]">Canary LIVE seguro</p>
+    <h4 className="mt-1 font-serif text-xl font-semibold text-[#292d29]">Actual vs Propuesta</h4>
+    <p className="mt-2 text-sm leading-6 text-[#535852]">Seller OS preparó un enriquecimiento reversible del título. No cambia precio, cantidad, promoción ni condiciones comerciales.</p>
+    <dl className="mt-4 grid gap-3 md:grid-cols-2">
+      <div className="min-w-0 rounded-xl bg-white p-4">
+        <dt className="text-sm font-semibold text-[#73766f]">Actual</dt>
+        <dd className="mt-2 break-words text-sm leading-6 text-[#292d29]">{activeCanary.currentValue}</dd>
+      </div>
+      <div className="min-w-0 rounded-xl bg-white p-4">
+        <dt className="text-sm font-semibold text-[#1d5961]">Propuesto</dt>
+        <dd className="mt-2 break-words text-sm font-semibold leading-6 text-[#1d5961]">{activeCanary.proposedValue}</dd>
+      </div>
+    </dl>
+    <p className="mt-3 rounded-xl bg-white/80 p-3 text-sm leading-6 text-[#535852]">{activeCanary.productTruthSupport}. La propuesta usa únicamente este dato confirmado.</p>
+    {stage !== "IDLE" && <ol className="mt-4 grid gap-2 text-sm sm:grid-cols-3"
+      aria-live="polite">
+      {[["APPLYING", "Aplicando cambio…"],
+        ["VERIFYING", "Verificando con eBay…"],
+        ["CONFIRMED", "Cambio confirmado ✓"]].map(([key, label], index) => {
+        const activeIndex = stage === "APPLYING" ? 0 :
+          stage === "VERIFYING" || stage === "UNKNOWN" ? 1 : 2
+        return <li key={key}
+          className={`rounded-xl px-3 py-3 font-medium ${index <= activeIndex
+            ? "bg-[#1d5961] text-white" : "bg-white text-[#85877f]"}`}>
+          {label}
+        </li>
+      })}
+    </ol>}
+    {activeCanary.ownerApprovalStatus === "PENDING_OWNER_APPROVAL" &&
+      !canAuthorize && <p className="mt-4 text-sm font-semibold leading-6 text-[#704d3c]">Necesita aprobación del owner.</p>}
+    {activeCanary.ownerApprovalStatus === "AUTHORIZED" && !canApply &&
+      <p className="mt-4 text-sm font-semibold leading-6 text-[#3f574f]">Autorizado para una única acción de Mayel.</p>}
+    <div className="mt-4 flex justify-end">
+      {canAuthorize && activeCanary.ownerApprovalStatus ===
+        "PENDING_OWNER_APPROVAL" && <button type="button"
+        onClick={() => void authorize()} disabled={busy}
+        className="min-h-12 rounded-xl bg-[#1d5961] px-5 text-sm font-semibold text-white disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">
+        {busy ? "Autorizando…" : "Autorizar este canary"}
+      </button>}
+      {canApply && activeCanary.ownerApprovalStatus === "AUTHORIZED" &&
+        <button type="button" onClick={() => void apply()}
+          disabled={busy || !activeCanary.applyAvailable || stage === "UNKNOWN"}
+          className="min-h-12 rounded-xl bg-[#1d5961] px-5 text-sm font-semibold text-white disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">
+          {busy ? "Aplicando…" : "Aplicar cambio"}
+        </button>}
+    </div>
+    {message && <p aria-live="polite"
+      className="mt-3 text-sm font-medium leading-6 text-[#4f554f]">{message}</p>}
+  </section>
+}
+
 function ActionPanel({ listing, canAct, onRefresh }: {
   listing: RemoteLiveOperatorListingV1
   canAct: boolean
@@ -431,6 +576,10 @@ function ListingCard({ listing, canAct, onRefresh }: {
         <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#1d5961]">Listing activo en eBay</p>
         <h3 className="mt-2 break-words font-serif text-2xl font-semibold leading-tight text-[#242724]">{listing.title}</h3>
         <p className="mt-2 break-words text-xs text-[#7a7d76]">{listing.sku ?? "Identificador no visible"}</p>
+        {listing.canonicalTask?.actionBlockedByEvidence && <p
+          className="mt-4 rounded-xl bg-[#f2e7dd] p-3 text-sm font-semibold leading-6 text-[#704d3c]">
+          No tenemos suficiente información todavía. No necesitas hacer nada.
+        </p>}
         <dl className="mt-6 space-y-4 text-sm leading-6 text-[#454a45]">
           <div><dt className="font-semibold text-[#242724]">Qué está pasando</dt><dd className="mt-1">{listing.humanSummary}</dd></div>
           <div><dt className="font-semibold text-[#242724]">Por qué importa</dt><dd className="mt-1">{listing.whyNow}</dd></div>
@@ -453,7 +602,7 @@ function ListingCard({ listing, canAct, onRefresh }: {
         aria-label="Mejoras oficiales de eBay">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Señal oficial de eBay</p>
         <div className="mt-3 space-y-3">{listing.officialQualitySignals.map((signal, index) =>
-          <div key={`${signal.signalType}-${index}`} className="rounded-xl bg-white p-3 text-sm leading-6 text-[#50564f]">
+          <div key={signal.signalId || `${signal.signalType}-${index}`} className="rounded-xl bg-white p-3 text-sm leading-6 text-[#50564f]">
             <p className="font-semibold text-[#292d29]">{signal.whatIsHappening}</p>
             <p className="mt-1">{signal.sellerOsRecommendation}</p>
             {signal.productTruthSupported && signal.proposedValue && <p className="mt-2 font-semibold text-[#1d5961]">
@@ -473,7 +622,10 @@ function ListingCard({ listing, canAct, onRefresh }: {
         <summary className="min-h-12 cursor-pointer py-3 text-sm font-semibold text-[#555a54]">Observaciones sobre la imagen actual</summary>
         <ul className="mt-2 space-y-2 text-sm leading-6 text-[#5f645e]">{listing.visualReview.findings.map((finding, index) => <li key={index} className="rounded-xl bg-[#f4efe7] p-3"><strong className="text-[#303430]">{finding.observation}</strong><span className="block">{finding.whatToReview}</span></li>)}</ul>
       </details>}
-      <ActionPanel listing={listing} canAct={canAct} onRefresh={onRefresh} />
+      <SafeMutationCanaryPanel listing={listing} canApply={canAct}
+        canAuthorize={!canAct} onRefresh={onRefresh} />
+      {!listing.safeMutationCanary && <ActionPanel listing={listing}
+        canAct={canAct} onRefresh={onRefresh} />}
     </div>
   </article>
 }
@@ -570,17 +722,23 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
     return () => { active = false }
   }, [])
 
+  const taskItemIds = useMemo(() => new Set(
+    dashboard?.taskFeed.map((task) => task.ebayItemId) ?? [],
+  ), [dashboard])
+  const taskListings = useMemo(() => dashboard?.listings.filter((listing) =>
+    taskItemIds.has(listing.ebayItemId)) ?? [], [dashboard, taskItemIds])
+
   const grouped = useMemo(() => ({
-    NEEDS_ATTENTION: dashboard?.listings.filter((listing) =>
+    NEEDS_ATTENTION: taskListings.filter((listing) =>
       listing.attentionClass === "NEEDS_ATTENTION") ?? [],
-    CAN_IMPROVE: dashboard?.listings.filter((listing) =>
+    CAN_IMPROVE: taskListings.filter((listing) =>
       listing.attentionClass === "CAN_IMPROVE") ?? [],
-    ENRICH: dashboard?.listings.filter((listing) =>
+    ENRICH: taskListings.filter((listing) =>
       listing.attentionClass === "ENRICH") ?? [],
-    WAIT: dashboard?.listings.filter((listing) =>
+    WAIT: taskListings.filter((listing) =>
       listing.attentionClass === "WAIT") ?? [],
   }) satisfies Record<RemoteLiveAttentionClass,
-    readonly RemoteLiveOperatorListingV1[]>, [dashboard])
+    readonly RemoteLiveOperatorListingV1[]>, [taskListings])
 
   const attentionListings = useMemo(() => [
     ...grouped.NEEDS_ATTENTION,
@@ -589,7 +747,8 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
   ], [grouped])
   const suggestedListings = useMemo(() => [
     ...grouped.CAN_IMPROVE, ...grouped.ENRICH,
-  ], [grouped])
+  ].filter((listing) =>
+    listing.canonicalTask?.actionBlockedByEvidence !== true), [grouped])
 
   async function logout() {
     await fetch("/api/admin/session", { method: "DELETE" }).catch(() => null)
@@ -642,7 +801,7 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
         {message && <p aria-live="polite" className="mt-4 rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium text-[#704d3c]">{message}</p>}
         {!dashboard && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7 text-sm text-[#6f736c]">{readState === "RETRYING" ? "Esta vista no está disponible ahora. No necesitas hacer nada." : "Preparando tu espacio…"}</div>}
         {dashboard && <div className="mt-7 space-y-7">
-          {!dashboard.capabilities.safeLivePriceMutation &&
+          {!dashboard.capabilities.safeLiveTitleCanary &&
             <p className="rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium leading-6 text-[#704d3c]">Vista preparada para certificación. Puedes revisar el recorrido, pero los cambios LIVE siguen cerrados hasta completar el canary físico.</p>}
 
           {view === "HOME" && <>
@@ -668,7 +827,7 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
           {view === "TASKS" && <section aria-labelledby="tasks-heading">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#b75d43]">Trabajo pendiente</p>
             <h2 id="tasks-heading" className="mt-2 font-serif text-3xl font-semibold">Mis tareas</h2>
-            <div className="mt-6 space-y-8">{sections.slice(0, 3).map((section) => <section key={section.key}>
+            <div className="mt-6 space-y-8">{sections.map((section) => <section key={section.key}>
               <div className="mb-4"><h3 className="font-serif text-2xl font-semibold">{section.label} · {grouped[section.key].length}</h3><p className="mt-1 text-sm text-[#6b6e67]">{section.explanation}</p></div>
               <ListingCollection listings={grouped[section.key]}
                 canAct={canAct} onRefresh={load} />

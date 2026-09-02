@@ -809,7 +809,10 @@ export async function readOwnerQualityReportLatestUploadAttemptV1(input: {
 }
 
 export type RemoteListingQualitySignalV1 = Readonly<{
+  signalId: string
   itemId: string
+  sourceAuthority: "EBAY_LISTING_QUALITY_REPORT"
+  observedAt: string
   signalType: string
   freshness: "CURRENT" | "STALE"
   whatIsHappening: string
@@ -834,13 +837,17 @@ export async function readRemoteListingQualitySignalsV1(input: {
   if (latest.error) throw new OwnerQualityReportImportError("QUALITY_REPORT_STATUS_READ_FAILED")
   if (!latest.data?.id) return Object.freeze([]) as readonly RemoteListingQualitySignalV1[]
   const rows = await input.supabase.from("ebay_listing_quality_report_signals")
-    .select("item_id,signal_type,freshness,what_is_happening,why_it_matters,seller_os_recommendation,what_to_do_now,priority_class,product_truth_supported,proposed_field,proposed_value,operator_action_required")
+    .select("id,report_observed_at,item_id,signal_type,freshness,what_is_happening,why_it_matters,seller_os_recommendation,what_to_do_now,priority_class,product_truth_supported,proposed_field,proposed_value,operator_action_required")
     .eq("report_import_id", latest.data.id).order("created_at", { ascending: true })
   if (rows.error) throw new OwnerQualityReportImportError("QUALITY_REPORT_SIGNAL_READ_FAILED")
   const today = new Date(input.now ?? new Date().toISOString()).toISOString().slice(0, 10)
   const dynamicallyStale = latest.data.report_date !== today
   return Object.freeze((rows.data ?? []).map((row) => Object.freeze({
-    itemId: row.item_id, signalType: row.signal_type,
+    signalId: row.id,
+    itemId: row.item_id,
+    sourceAuthority: "EBAY_LISTING_QUALITY_REPORT" as const,
+    observedAt: row.report_observed_at,
+    signalType: row.signal_type,
     freshness: dynamicallyStale ? "STALE" as const
       : row.freshness as "CURRENT" | "STALE",
     whatIsHappening: row.what_is_happening,

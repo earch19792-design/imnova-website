@@ -27,6 +27,8 @@ import { loadSellerOsAssistantMonitorSnapshotV1 } from
   "@/lib/ebay/ebay-seller-os-assistant-runtime"
 import { buildSellerOsCurrentLiveVisualQualityV1 } from
   "@/lib/ebay/ebay-seller-os-visual-quality-v1"
+import { buildProactiveExceptionQueueV1 } from
+  "@/lib/ebay/ebay-seller-os-portfolio-intelligence-v1"
 import { currentLiveListingsForMonitorV1 } from
   "@/lib/ebay/ebay-seller-os-live-portfolio-integrity-v1"
 import {
@@ -35,6 +37,12 @@ import {
 } from "@/lib/ebay/ebay-remote-operator-image-review-v1"
 import { readRemoteListingQualitySignalsV1 } from
   "@/lib/ebay/ebay-listing-quality-report-owner-import-v1"
+import {
+  applyRemoteOperatorSafeMutationCanaryV1,
+  authorizeRemoteOperatorSafeMutationCanaryV1,
+  readRemoteOperatorSafeMutationCanaryV1,
+  resolveRemoteOperatorUserIdV1,
+} from "@/lib/ebay/ebay-remote-operator-safe-mutation-canary-v1"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 import {
   getSupabaseAdminClient,
@@ -85,6 +93,11 @@ function boundaryBlocked(request: Request) {
 
 function liveMutationEnabled() {
   return process.env.SELLER_OS_REMOTE_LIVE_MUTATIONS_ENABLED?.trim()
+    .toLowerCase() === "true"
+}
+
+function titleCanaryEnabled() {
+  return process.env.SELLER_OS_REMOTE_TITLE_CANARY_ENABLED?.trim()
     .toLowerCase() === "true"
 }
 
@@ -158,16 +171,37 @@ export async function GET(request: Request) {
     if (executions.error) {
       throw new Error("COMMERCIAL_IMPROVEMENT_LEDGER_READ_FAILED")
     }
+    const commercialExceptions = buildProactiveExceptionQueueV1({
+      monitor,
+      maximumEntries: 250,
+    })
+    const operatorUserId = auth.validation.accessRole ===
+      SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator
+      ? auth.validation.userId
+      : await resolveRemoteOperatorUserIdV1(supabase)
+    const safeMutationCanary = await readRemoteOperatorSafeMutationCanaryV1({
+      supabase,
+      accountKey: account.accountKey,
+      listings: currentLiveListingsForMonitorV1(monitor),
+      commercialExceptions,
+      operatorUserId,
+      executionEnabled: titleCanaryEnabled(),
+    })
     const visual = await visualQuality(monitor)
     const dashboard = buildRemoteLiveOptimizationOperatorV1({
       monitor,
       commercialDashboard,
+      commercialExceptions,
       visualQuality: visual,
       salesResults,
       imageProposals,
       listingQualitySignals,
+      safeMutationCanary,
       improvementExecutions: executions.data ?? [],
       operatorUserId: auth.validation.userId,
+      remoteScopeAuthorized: [SELLER_OS_ACCESS_ROLES.owner,
+        SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator]
+        .includes(auth.validation.accessRole),
       liveMutationEnabled: liveMutationEnabled(),
     })
     const response = NextResponse.json({ success: true,
@@ -192,6 +226,115 @@ export async function POST(request: Request) {
   { status: 403 })
   const body = await jsonBody(request)
   const action = typeof body?.action === "string" ? body.action : ""
+  if (action === "AUTHORIZE_SAFE_MUTATION_CANARY") {
+    const expectedItemId = typeof body?.ebayItemId === "string" &&
+      /^\d{9,20}$/.test(body.ebayItemId.trim()) ? body.ebayItemId.trim() : ""
+    const expectedSourceSignalId = typeof body?.sourceSignalId === "string" &&
+      /^[A-Za-z0-9._:-]{3,160}$/.test(body.sourceSignalId.trim())
+      ? body.sourceSignalId.trim() : ""
+    if (auth.validation.accessRole !== SELLER_OS_ACCESS_ROLES.owner ||
+        !expectedItemId || !expectedSourceSignalId) {
+      return NextResponse.json({ success: false,
+        error: "REMOTE_OPERATOR_CANARY_OWNER_AUTHORITY_REQUIRED" },
+      { status: 403 })
+    }
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) {
+        throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      }
+      const supabase = getSupabaseAdminClient()
+      const operatorUserId = await resolveRemoteOperatorUserIdV1(supabase)
+      if (!operatorUserId) {
+        throw new Error("REMOTE_OPERATOR_ACCOUNT_REQUIRED")
+      }
+      const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
+      const commercialExceptions = buildProactiveExceptionQueueV1({
+        monitor, maximumEntries: 250,
+      })
+      const canary = await authorizeRemoteOperatorSafeMutationCanaryV1({
+        supabase,
+        accountKey: account.accountKey,
+        listings: currentLiveListingsForMonitorV1(monitor),
+        commercialExceptions,
+        ownerUserId: auth.validation.userId,
+        operatorUserId,
+        expectedItemId,
+        expectedSourceSignalId,
+        executionEnabled: titleCanaryEnabled(),
+      })
+      return NextResponse.json({ success: true,
+        outcome: "OWNER_AUTHORIZED_SAFE_TITLE_CANARY",
+        canary,
+        message:
+          "Canary autorizado. Mayel verá una sola acción preparada; todavía no se aplicó ningún cambio.",
+        safety: { marketplaceWrites: 0, listingMutations: 0,
+          promotionWrites: 0, listingEnds: 0 } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error),
+        operatorMessage:
+          "No se pudo autorizar este canary. No se aplicó ningún cambio." },
+      { status: 409 })
+    }
+  }
+  if (action === "APPLY_SAFE_MUTATION_CANARY") {
+    const authorizationId = uuid(body?.authorizationId)
+    const key = idempotencyKey(body?.idempotencyKey)
+    if (auth.validation.accessRole !==
+        SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator ||
+        !authorizationId || !key) {
+      return NextResponse.json({ success: false,
+        error: "REMOTE_OPERATOR_CANARY_APPLY_INVALID" }, { status: 400 })
+    }
+    if (!titleCanaryEnabled()) {
+      return NextResponse.json({ success: false,
+        error: "REMOTE_OPERATOR_CANARY_PHYSICAL_ENABLEMENT_REQUIRED",
+        operatorMessage:
+          "Esta acción todavía no está habilitada. No necesitas hacer nada." },
+      { status: 423 })
+    }
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) {
+        throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      }
+      const supabase = getSupabaseAdminClient()
+      const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
+      const commercialExceptions = buildProactiveExceptionQueueV1({
+        monitor, maximumEntries: 250,
+      })
+      const result = await applyRemoteOperatorSafeMutationCanaryV1({
+        supabase,
+        accountKey: account.accountKey,
+        listings: currentLiveListingsForMonitorV1(monitor),
+        commercialExceptions,
+        operatorUserId: auth.validation.userId,
+        authorizationId,
+        idempotencyKey: key,
+        executionEnabled: true,
+      })
+      const verified = result.titleVerified === true
+      return NextResponse.json({ success: verified,
+        outcome: verified ? "APPLIED_AND_OFFICIALLY_VERIFIED" :
+          result.phase === "outcome_unknown" ? "VERIFYING_DO_NOT_RETRY" :
+            result.phase === "write_in_flight" ?
+              "APPLYING_DO_NOT_DOUBLE_TAP" : "NOT_APPLIED",
+        result,
+        postActionReadbackPass: verified,
+        unknownResultAutoRetry: false,
+        safety: { listingEnds: 0, promotionWrites: 0,
+          ebayWriteAttemptCount: result.ebayWriteAttemptCount } },
+      { status: verified ? 200 : 409 })
+    } catch (error) {
+      const code = safeCode(error)
+      return NextResponse.json({ success: false, error: code,
+        operatorMessage: code.includes("OUTCOME_UNKNOWN") ||
+          code.includes("WRITE_IN_PROGRESS")
+          ? "Estamos verificando el cambio. No vuelvas a pulsar."
+          : "Esta acción no está disponible ahora. No necesitas hacer nada.",
+        unknownResultAutoRetry: false }, { status: 409 })
+    }
+  }
   if (action === "REVIEW_IMAGE_PROPOSAL") {
     const proposalId = uuid(body?.proposalId)
     const decision = body?.decision === "APPROVE" ||

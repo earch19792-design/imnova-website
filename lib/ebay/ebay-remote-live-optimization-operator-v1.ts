@@ -15,9 +15,11 @@ import type { RemoteOperatorPreparedImageProposalV1 } from
   "./ebay-remote-operator-image-review-v1"
 import type { RemoteListingQualitySignalV1 } from
   "./ebay-listing-quality-report-owner-import-v1"
+import type { RemoteOperatorSafeMutationCanaryV1 } from
+  "./ebay-remote-operator-safe-mutation-canary-v1"
 
 export const REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION =
-  "REMOTE_LIVE_OPTIMIZATION_OPERATOR_V1_2026_09_02" as const
+  "REMOTE_LIVE_OPTIMIZATION_OPERATOR_V1_2026_09_02_CANONICAL_TASK_FEED" as const
 
 export const REMOTE_OPERATOR_AI_ASSISTANCE_POLICY_V1 = Object.freeze({
   deterministicFirst: true as const,
@@ -46,6 +48,40 @@ export type RemoteLiveAttentionClass = "NEEDS_ATTENTION" | "CAN_IMPROVE" |
   "ENRICH" | "WAIT"
 
 type JsonRecord = Record<string, unknown>
+
+export type RemoteCommercialExceptionV1 = Readonly<{
+  entityKey: string
+  entityType?: string
+  classification: string
+  reasonCodes?: readonly string[]
+  recommendedAction?: string
+  humanApprovalRequired?: boolean
+  actionBlockedByEvidence?: boolean
+  experimentProtectionExists?: boolean
+  lastObservationTime?: string | null
+  dedupeIdentity: string
+  material?: boolean
+}>
+
+export type RemoteOperatorCanonicalTaskV1 = Readonly<{
+  taskId: string
+  ebayItemId: string
+  currentLive: true
+  sourceAuthority: "COMMERCIAL_EXCEPTION_QUEUE" |
+    "EBAY_LISTING_QUALITY_REPORT"
+  sourceSignalId: string
+  sourceAuthorities: readonly ("COMMERCIAL_EXCEPTION_QUEUE" |
+    "EBAY_LISTING_QUALITY_REPORT")[]
+  sourceSignalIds: readonly string[]
+  observedAt: string
+  recommendedAction: string
+  attentionClass: RemoteLiveAttentionClass
+  actionBlockedByEvidence: boolean
+  executable: boolean
+  productTruthSupported: boolean
+  stockEvidenceSupported: boolean
+  ownerApprovalRequired: boolean
+}>
 
 export function remoteLiveOptimizationTasksV1(value: unknown) {
   const dashboard = record(value)
@@ -144,6 +180,8 @@ export type RemoteLiveOperatorListingV1 = Readonly<{
       productNotMisrepresented: boolean
     }>
   }> | null
+  safeMutationCanary: RemoteOperatorSafeMutationCanaryV1 | null
+  canonicalTask: RemoteOperatorCanonicalTaskV1 | null
   action: Readonly<{
     kind: "SAFE_PRICE_CHANGE" | "OWNER_ESCALATION" |
       "REVIEW_GUIDANCE" | "REVIEW_VISUAL" | "NO_ACTION"
@@ -152,6 +190,8 @@ export type RemoteLiveOperatorListingV1 = Readonly<{
     label: string
     ownerApprovalRequired: boolean
     ownerReason: string | null
+    actionBlockedByEvidence: boolean
+    executable: boolean
     postActionReadbackRequired: true
     unknownResultAutoRetry: false
   }>
@@ -184,6 +224,215 @@ function metricValue(listing: CommercialListingReadModel, key: string) {
   const availability = String(metric.availability ?? metric.status ?? "")
   return ["AVAILABLE", "COMPLETE"].includes(availability)
     ? number(metric.value) : null
+}
+
+function canonicalTaskAttentionClass(classification: string) {
+  if (["CRITICAL_OPERATIONAL", "HUMAN_REVIEW"].includes(classification)) {
+    return "NEEDS_ATTENTION" as const
+  }
+  if (["ACTIONABLE_COMMERCIAL", "REPLACEMENT_CANDIDATE"].includes(
+    classification,
+  )) return "CAN_IMPROVE" as const
+  return "WAIT" as const
+}
+
+function humanRecommendedAction(value: string) {
+  const actions: Record<string, string> = {
+    IMPROVE_CTR: "Revisar primero la foto principal y el título.",
+    IMPROVE_VISIBILITY: "Revisar título, categoría e imágenes.",
+    IMPROVE_CONVERSION: "Revisar claridad, confianza y oferta del listing.",
+    HUMAN_REVIEW: "Revisar la evidencia y pedir al owner la decisión que corresponda.",
+    FIX_PROVEN_DATA_QUALITY_ISSUE:
+      "Revisar el dato señalado usando únicamente evidencia confirmada.",
+    REVIEW_EXPERIMENT_RESULT: "Revisar el resultado antes de cambiar otra variable.",
+    REFRESH_SUPPLIER_EVIDENCE:
+      "Esperar una lectura actual del producto exacto antes de cambiar el listing.",
+    COLLECT_REQUIRED_EVIDENCE:
+      "Esperar evidencia suficiente antes de cambiar el listing.",
+    RESTORE_REQUIRED_EVIDENCE_CAPABILITY:
+      "Esperar a que Seller OS recupere la evidencia necesaria.",
+  }
+  return actions[value] ??
+    "Revisar la evidencia actual sin inventar información del producto."
+}
+
+function timestamp(value: unknown, fallback: string) {
+  const candidate = text(value, 80)
+  return candidate && Number.isFinite(Date.parse(candidate))
+    ? new Date(candidate).toISOString() : fallback
+}
+
+function qualitySignalRank(signal: RemoteListingQualitySignalV1) {
+  const attention = { NEEDS_ATTENTION: 0, CAN_IMPROVE: 1, ENRICH: 2,
+    WAIT: 3 } as const
+  return attention[signal.priorityClass]
+}
+
+/**
+ * Adapter only: it does not diagnose listings or invent recommendations.
+ * It projects the canonical CURRENT LIVE exception queue and the latest valid
+ * normalized Listing Quality signals into one item-bound remote work feed.
+ */
+export function buildRemoteOperatorCanonicalTaskFeedV1(input: {
+  listings: readonly CommercialListingReadModel[]
+  commercialExceptions?: readonly RemoteCommercialExceptionV1[]
+  listingQualitySignals?: readonly RemoteListingQualitySignalV1[]
+  remoteScopeAuthorized?: boolean
+  generatedAt?: string
+}) {
+  const generatedAt = timestamp(input.generatedAt, new Date().toISOString())
+  const liveByItemId = new Map(input.listings.filter((listing) =>
+    listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
+    /^\d{9,20}$/.test(listing.identity.itemId)).map((listing) =>
+      [listing.identity.itemId, listing]))
+  type Candidate = RemoteOperatorCanonicalTaskV1 & Readonly<{
+    rank: number
+  }>
+  const candidates: Candidate[] = []
+  const commercialExceptions = (input.commercialExceptions ?? []).filter(
+    (entry) => entry.entityType === "EBAY_LIVE_LISTING" &&
+      entry.material !== false && /^\d{9,20}$/.test(entry.entityKey) &&
+      liveByItemId.has(entry.entityKey),
+  )
+  for (const entry of commercialExceptions) {
+    const listing = liveByItemId.get(entry.entityKey)!
+    const productTruthSupported = isProvenSupplierLinkageV1(listing.stock)
+    const stockEvidenceSupported = listing.stock.state === "IN_STOCK_SIGNAL" &&
+      listing.stock.freshness?.status === "FRESH"
+    const actionBlockedByEvidence = entry.actionBlockedByEvidence === true ||
+      !productTruthSupported || !stockEvidenceSupported
+    const sourceSignalId = text(entry.dedupeIdentity, 100)
+    if (!sourceSignalId) continue
+    const attentionClass = canonicalTaskAttentionClass(entry.classification)
+    candidates.push(Object.freeze({
+      taskId: `remote:${entry.entityKey}:${sourceSignalId}`,
+      ebayItemId: entry.entityKey,
+      currentLive: true as const,
+      sourceAuthority: "COMMERCIAL_EXCEPTION_QUEUE" as const,
+      sourceSignalId,
+      sourceAuthorities: Object.freeze([
+        "COMMERCIAL_EXCEPTION_QUEUE" as const,
+      ]),
+      sourceSignalIds: Object.freeze([sourceSignalId]),
+      observedAt: timestamp(entry.lastObservationTime, generatedAt),
+      recommendedAction: humanRecommendedAction(
+        entry.recommendedAction ?? "HUMAN_REVIEW"),
+      attentionClass,
+      actionBlockedByEvidence,
+      executable: !actionBlockedByEvidence &&
+        entry.experimentProtectionExists !== true,
+      productTruthSupported,
+      stockEvidenceSupported,
+      ownerApprovalRequired: entry.humanApprovalRequired === true,
+      rank: attentionClass === "NEEDS_ATTENTION" ? 0 :
+        attentionClass === "CAN_IMPROVE" ? 1 : 3,
+    }))
+  }
+  const validQualitySignals = input.listingQualitySignals ?? []
+  const currentLiveQualitySignals = validQualitySignals.filter((signal) =>
+    liveByItemId.has(signal.itemId))
+  for (const signal of currentLiveQualitySignals.filter((row) =>
+    row.freshness === "CURRENT")) {
+    const listing = liveByItemId.get(signal.itemId)!
+    const productTruthSupported = signal.productTruthSupported &&
+      isProvenSupplierLinkageV1(listing.stock)
+    const stockEvidenceSupported = listing.stock.state === "IN_STOCK_SIGNAL" &&
+      listing.stock.freshness?.status === "FRESH"
+    const actionBlockedByEvidence = !signal.operatorActionRequired ||
+      !productTruthSupported || !stockEvidenceSupported
+    const sourceSignalId = text(signal.signalId, 100)
+    if (!sourceSignalId) continue
+    const promotion = signal.signalType === "PROMOTION_VISIBILITY_OPPORTUNITY"
+    candidates.push(Object.freeze({
+      taskId: `remote:${signal.itemId}:${sourceSignalId}`,
+      ebayItemId: signal.itemId,
+      currentLive: true as const,
+      sourceAuthority: "EBAY_LISTING_QUALITY_REPORT" as const,
+      sourceSignalId,
+      sourceAuthorities: Object.freeze([
+        "EBAY_LISTING_QUALITY_REPORT" as const,
+      ]),
+      sourceSignalIds: Object.freeze([sourceSignalId]),
+      observedAt: timestamp(signal.observedAt, generatedAt),
+      recommendedAction: signal.sellerOsRecommendation,
+      attentionClass: signal.priorityClass,
+      actionBlockedByEvidence,
+      executable: !actionBlockedByEvidence && !promotion,
+      productTruthSupported,
+      stockEvidenceSupported,
+      ownerApprovalRequired: promotion,
+      rank: qualitySignalRank(signal),
+    }))
+  }
+
+  // The remote surface is item-oriented. Multiple authorities for the same
+  // exact listing become one work bundle so one underlying problem can never
+  // create duplicate taps or parallel decisions.
+  const byItemId = new Map<string, Candidate[]>()
+  for (const candidate of candidates) {
+    byItemId.set(candidate.ebayItemId,
+      [...(byItemId.get(candidate.ebayItemId) ?? []), candidate])
+  }
+  const beforeAcl = byItemId.size
+  const authorized = input.remoteScopeAuthorized !== false
+  const tasks = authorized ? [...byItemId.values()].map((rows) => {
+    const ordered = [...rows].sort((left, right) => left.rank - right.rank ||
+      left.observedAt.localeCompare(right.observedAt) * -1 ||
+      left.sourceSignalId.localeCompare(right.sourceSignalId))
+    const primary = ordered[0]
+    const sourceAuthorities = [...new Set(ordered.flatMap((row) =>
+      row.sourceAuthorities))]
+    const sourceSignalIds = [...new Set(ordered.flatMap((row) =>
+      row.sourceSignalIds))]
+    return Object.freeze({
+      taskId: primary.taskId,
+      ebayItemId: primary.ebayItemId,
+      currentLive: true as const,
+      sourceAuthority: primary.sourceAuthority,
+      sourceSignalId: primary.sourceSignalId,
+      sourceAuthorities: Object.freeze(sourceAuthorities),
+      sourceSignalIds: Object.freeze(sourceSignalIds),
+      observedAt: ordered.map((row) => row.observedAt).sort().at(-1) ??
+        primary.observedAt,
+      recommendedAction: primary.recommendedAction,
+      attentionClass: primary.attentionClass,
+      actionBlockedByEvidence: ordered.every((row) =>
+        row.actionBlockedByEvidence),
+      executable: ordered.some((row) => row.executable),
+      productTruthSupported: ordered.some((row) =>
+        row.productTruthSupported),
+      stockEvidenceSupported: ordered.some((row) =>
+        row.stockEvidenceSupported),
+      ownerApprovalRequired: ordered.some((row) =>
+        row.ownerApprovalRequired),
+    })
+  }).sort((left, right) => {
+    const priority = { NEEDS_ATTENTION: 0, CAN_IMPROVE: 1, ENRICH: 2,
+      WAIT: 3 } as const
+    return priority[left.attentionClass] - priority[right.attentionClass] ||
+      right.observedAt.localeCompare(left.observedAt) ||
+      left.ebayItemId.localeCompare(right.ebayItemId)
+  }) : []
+  return Object.freeze({
+    tasks: Object.freeze(tasks),
+    trace: Object.freeze({
+      remoteOperatorAuthPass: authorized,
+      currentLiveCohortVisibleToServer: liveByItemId.size,
+      commercialExceptionCount: commercialExceptions.length,
+      validQualitySignalCount: validQualitySignals.length,
+      qualitySignalCurrentLiveMatchCount: currentLiveQualitySignals.length,
+      remoteTaskCandidateCountBeforeAcl: beforeAcl,
+      remoteTaskCountAfterAcl: tasks.length,
+      remoteTaskCountAfterEvidenceGate: tasks.length,
+      remoteExecutableTaskCountAfterEvidenceGate: tasks.filter((row) =>
+        row.executable).length,
+      remoteBlockedTaskCountAfterEvidenceGate: tasks.filter((row) =>
+        row.actionBlockedByEvidence).length,
+      remoteTaskCountRendered: tasks.length,
+      blockedTasksRetainedInFeed: true as const,
+      duplicateTaskCount: 0 as const,
+    }),
+  })
 }
 
 function utcDay(value: Date) {
@@ -398,12 +647,16 @@ function actionPriority(input: {
 function dominantNarrative(input: {
   listing: CommercialListingReadModel
   decision: CommercialListingDecisionV1 | null
+  canonicalException: RemoteCommercialExceptionV1 | null
   quality: readonly EbayListingQualityRecommendation[]
   officialQualitySignal: RemoteListingQualitySignalV1 | null
   visual: SellerOsHeroVisualReviewV1 | null
   taskAction: ReturnType<typeof actionFromTask>
 }) {
-  const reasons = new Set(input.decision?.reasonCodes ?? [])
+  const reasons = new Set([
+    ...(input.canonicalException?.reasonCodes ?? []),
+    ...(input.decision?.reasonCodes ?? []),
+  ])
   const visualFinding = input.visual?.findings[0]
   if (input.listing.stock.state === "OUT_OF_STOCK_SIGNAL") return {
     attentionClass: "NEEDS_ATTENTION" as const,
@@ -463,6 +716,22 @@ function dominantNarrative(input: {
     expectedBenefit: "Mejorar visibilidad o decidir una prueba controlada.",
     helper: "Esta señal cuenta cada vez que eBay mostró el producto durante el período observado.",
   }
+  if (input.canonicalException?.material !== false) return {
+    attentionClass: canonicalTaskAttentionClass(
+      input.canonicalException?.classification ?? "WAIT"),
+    humanSummary:
+      "Seller OS encontró una señal que necesita una revisión humana.",
+    whyNow:
+      "La evidencia actual requiere una decisión cuidadosa antes de cambiar el listing.",
+    recommendation: humanRecommendedAction(
+      input.canonicalException?.recommendedAction ?? "HUMAN_REVIEW"),
+    whatOperatorShouldDo:
+      "Abre la evidencia y revisa la recomendación sin cambiar hechos del producto.",
+    expectedBenefit:
+      "Resolver la señal sin crear información ni hacer cambios innecesarios.",
+    helper:
+      "Seller OS conserva la evidencia técnica, pero aquí la presenta como una tarea sencilla.",
+  }
   if (visualFinding) return {
     attentionClass: "ENRICH" as const,
     humanSummary: "Seller OS encontró una mejora posible en la imagen principal.",
@@ -519,27 +788,50 @@ function fallbackAction(input: {
 export function buildRemoteLiveOptimizationOperatorV1(input: {
   monitor: CommercialMonitorGetDto
   commercialDashboard: unknown
+  commercialExceptions?: readonly RemoteCommercialExceptionV1[]
   visualQuality: RemoteLiveVisualBundle
   salesResults: RemoteLiveOperatorSalesResultsV1
   imageProposals?: readonly RemoteOperatorPreparedImageProposalV1[]
   listingQualitySignals?: readonly RemoteListingQualitySignalV1[]
+  safeMutationCanary?: RemoteOperatorSafeMutationCanaryV1 | null
   improvementExecutions?: readonly unknown[]
   operatorUserId?: string | null
+  remoteScopeAuthorized?: boolean
   liveMutationEnabled?: boolean
 }) {
   const listings = currentLiveListingsForMonitorV1(input.monitor)
+  const canonicalFeed = buildRemoteOperatorCanonicalTaskFeedV1({
+    listings,
+    commercialExceptions: input.commercialExceptions,
+    listingQualitySignals: input.listingQualitySignals,
+    remoteScopeAuthorized: input.remoteScopeAuthorized,
+    generatedAt: input.monitor.generatedAt,
+  })
+  const canonicalTaskByItemId = new Map(canonicalFeed.tasks.map((task) =>
+    [task.ebayItemId, task]))
+  const canonicalExceptionByItemId = new Map(
+    (input.commercialExceptions ?? []).filter((entry) =>
+      entry.entityType === "EBAY_LIVE_LISTING" &&
+      /^\d{9,20}$/.test(entry.entityKey)).map((entry) =>
+        [entry.entityKey, entry]),
+  )
   const tasks = remoteLiveOptimizationTasksV1(input.commercialDashboard)
   const executions = (input.improvementExecutions ?? []).map(record)
   const decisions = input.monitor.backend.decisions
   const qualityReport = input.monitor.backend.listingQualityReport
   const listingCards = listings.map((listing): RemoteLiveOperatorListingV1 => {
     const decision = decisions.find((row) => row.listingKey === listing.key) ?? null
+    const canonicalException = canonicalExceptionByItemId.get(
+      listing.identity.itemId) ?? null
+    const canonicalTask = canonicalTaskByItemId.get(listing.identity.itemId) ??
+      null
     const quality = qualityReport.recommendations.filter((row) =>
       row.listingKey === listing.key &&
       row.associationStatus !== "UNPROVEN").slice(0, 5)
     const officialQualitySignals = (input.listingQualitySignals ?? []).filter((row) =>
       row.itemId === listing.identity.itemId).slice(0, 5)
-    const officialQualitySignal = officialQualitySignals[0] ?? null
+    const officialQualitySignal = officialQualitySignals.find((row) =>
+      row.freshness === "CURRENT") ?? null
     const visual = input.visualQuality.listings.find((row) =>
       row.ebayItemId === listing.identity.itemId) ?? null
     const taskCandidate = tasks.filter((row) =>
@@ -552,8 +844,17 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       }).sort((left, right) => actionPriority(left) - actionPriority(right))[0]
       ?? null
     const taskAction = taskCandidate?.action ?? null
-    const narrative = dominantNarrative({ listing, decision, quality,
-      officialQualitySignal, visual, taskAction })
+    const baseNarrative = dominantNarrative({ listing, decision,
+      canonicalException, quality, officialQualitySignal, visual, taskAction })
+    const narrative = canonicalTask?.actionBlockedByEvidence === true
+      ? { ...baseNarrative,
+          recommendation:
+            "No tenemos suficiente información todavía. No necesitas hacer nada.",
+          whatOperatorShouldDo:
+            "No tenemos suficiente información todavía. No necesitas hacer nada.",
+          expectedBenefit:
+            "Evitar un cambio que no esté respaldado por evidencia actual." }
+      : baseNarrative
     const resolvedAction = taskAction ?? fallbackAction({ narrative, quality,
       officialQualitySignal, visual })
     const currentLiveReadback =
@@ -590,7 +891,15 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
           reviewedAt: preparedProposal.reviewedAt,
           guards: proposalGuards,
         }) : null
-    const action = !exactListingIdentity || !currentLiveReadback ||
+    const action = canonicalTask?.actionBlockedByEvidence === true
+      ? { kind: "NO_ACTION" as const,
+          status: "UNAVAILABLE" as const,
+          eventId: null,
+          label:
+            "No tenemos suficiente información todavía. No necesitas hacer nada.",
+          ownerApprovalRequired: false,
+          ownerReason: null }
+      : !exactListingIdentity || !currentLiveReadback ||
       (resolvedAction.kind === "SAFE_PRICE_CHANGE" && !productTruthSupported)
       ? { kind: resolvedAction.kind,
           status: "UNAVAILABLE" as const,
@@ -652,8 +961,16 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
           }))),
       }),
       imageProposal,
+      safeMutationCanary: input.safeMutationCanary?.ebayItemId ===
+        listing.identity.itemId ? input.safeMutationCanary : null,
+      canonicalTask,
       action: Object.freeze({
         ...action,
+        actionBlockedByEvidence:
+          canonicalTask?.actionBlockedByEvidence === true,
+        executable: canonicalTask?.actionBlockedByEvidence !== true &&
+          ["AVAILABLE", "AWAITING_CONFIRMATION", "OWNER_REQUIRED"]
+            .includes(action.status),
         postActionReadbackRequired: true as const,
         unknownResultAutoRetry: false as const,
       }),
@@ -693,8 +1010,10 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
     ...history.map((row) => row.listingId),
     ...(input.imageProposals ?? []).filter((proposal) =>
       proposal.reviewDecision !== null).map((proposal) =>
-        proposal.ebayItemId),
+      proposal.ebayItemId),
   ])
+  const taskListingCards = listingCards.filter((row) =>
+    row.canonicalTask !== null)
   return Object.freeze({
     contractVersion: REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION,
     generatedAt: new Date().toISOString(),
@@ -705,15 +1024,17 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       "Resultados", "Historial", "Ayuda",
     ]),
     aiAssistancePolicy: REMOTE_OPERATOR_AI_ASSISTANCE_POLICY_V1,
+    taskFeed: canonicalFeed.tasks,
+    feedTrace: canonicalFeed.trace,
     listings: Object.freeze(listingCards),
     queueCounts: Object.freeze({
-      needsAttention: listingCards.filter((row) =>
+      needsAttention: taskListingCards.filter((row) =>
         row.attentionClass === "NEEDS_ATTENTION").length,
-      canImprove: listingCards.filter((row) =>
+      canImprove: taskListingCards.filter((row) =>
         row.attentionClass === "CAN_IMPROVE").length,
-      enrich: listingCards.filter((row) =>
+      enrich: taskListingCards.filter((row) =>
         row.attentionClass === "ENRICH").length,
-      wait: listingCards.filter((row) =>
+      wait: taskListingCards.filter((row) =>
         row.attentionClass === "WAIT").length,
     }),
     results: input.salesResults,
@@ -736,6 +1057,10 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
         row.imageProposal !== null).length,
       promotionReview: true,
       safeLivePriceMutation: input.liveMutationEnabled === true,
+      safeLiveTitleCanary: input.safeMutationCanary !== null &&
+        input.safeMutationCanary !== undefined,
+      safeLiveTitleCanaryApplyEnabled:
+        input.safeMutationCanary?.applyAvailable === true,
       officialPostActionReadback: true,
     }),
     authority: Object.freeze({

@@ -440,22 +440,33 @@ async function markUnknown(input: {
   return record(data)
 }
 
-export async function applyVerifiedTitleToActiveListing(input: {
+export async function applyPreparedVerifiedActiveListingTitle(input: {
   supabase: SupabaseClient
   accountKey: string
   actorId: string
-  listingPackageId: string
+  executionId: string
   ebayItemId: string
-  idempotencyKey: string
   confirmation: string
+  expectedCurrentTitle?: string
   fetchImpl?: FetchLike
 }) {
   if (input.confirmation !== ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION) {
     throw new Error("EBAY_ACTIVE_TITLE_REVISION_CONFIRMATION_INVALID")
   }
-  const preview = await prepareVerifiedActiveListingTitle(input)
   const actorId = uuid(input.actorId)
-  let row = await ledgerRow(input.supabase, preview.executionId, actorId)
+  const executionId = uuid(input.executionId)
+  const ebayItemId = text(input.ebayItemId, 20)
+  const expectedCurrentTitle = input.expectedCurrentTitle === undefined
+    ? null : text(input.expectedCurrentTitle, 80)
+  if (!actorId || !executionId || !/^\d{9,20}$/.test(ebayItemId) ||
+    (input.expectedCurrentTitle !== undefined && !expectedCurrentTitle)) {
+    throw new Error("EBAY_ACTIVE_TITLE_REVISION_EXECUTION_INVALID")
+  }
+  let row = await ledgerRow(input.supabase, executionId, actorId)
+  if (text(row.marketplace_account_key, 160) !== input.accountKey ||
+      text(row.ebay_item_id, 20) !== ebayItemId) {
+    throw new Error("EBAY_ACTIVE_TITLE_REVISION_SCOPE_MISMATCH")
+  }
   if (row.phase === "applied_verified" || row.phase === "terminal_failure") {
     return publicResult(row, row.phase === "applied_verified"
       ? "EBAY_ACTIVE_TITLE_REVISION_ALREADY_VERIFIED"
@@ -465,13 +476,16 @@ export async function applyVerifiedTitleToActiveListing(input: {
   const expectedSku = text(row.ebay_sku, 50)
   const fetchImpl = input.fetchImpl ?? fetch
   const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
-  const before = await readOfficialSnapshot({ accessToken, itemId: input.ebayItemId,
+  const before = await readOfficialSnapshot({ accessToken, itemId: ebayItemId,
     expectedSku, accountKey: input.accountKey, fetchImpl })
   const beforeRecord = snapshotRecord(before, targetTitle, text(row.account_fingerprint, 64))
   if (before.title === targetTitle) {
     row = await completeVerified({ supabase: input.supabase, row, actorId,
       snapshot: beforeRecord, reconciled: row.phase !== "preview_ready" })
     return publicResult(row, "EBAY_ACTIVE_TITLE_REVISION_VERIFIED")
+  }
+  if (expectedCurrentTitle && before.title !== expectedCurrentTitle) {
+    throw new Error("EBAY_ACTIVE_TITLE_REVISION_AUTHORIZED_CURRENT_CHANGED")
   }
   if (row.phase !== "preview_ready") {
     if (row.phase === "write_in_flight") {
@@ -497,14 +511,14 @@ export async function applyVerifiedTitleToActiveListing(input: {
     .eq("ebay_write_attempt_count", 0).select("*").maybeSingle()
   if (claimError) throw new Error("EBAY_ACTIVE_TITLE_REVISION_CLAIM_FAILED")
   if (!claimed) {
-    row = await ledgerRow(input.supabase, preview.executionId, actorId)
+    row = await ledgerRow(input.supabase, executionId, actorId)
     return publicResult(row, "EBAY_ACTIVE_TITLE_REVISION_NOT_CLAIMED")
   }
   row = record(claimed)
   let writeStatus: number | null = null
   try {
     const write = await tradingCall({ callName: "ReviseFixedPriceItem", accessToken,
-      body: reviseVerifiedTitleRequestXml(input.ebayItemId, targetTitle),
+      body: reviseVerifiedTitleRequestXml(ebayItemId, targetTitle),
       fetchImpl, timeoutMs: WRITE_TIMEOUT_MS })
     writeStatus = write.response.status
     const ack = text(tradingXmlTagValue(write.xml, "Ack"), 20)
@@ -551,7 +565,7 @@ export async function applyVerifiedTitleToActiveListing(input: {
     }
   }
   try {
-    const after = await readOfficialSnapshot({ accessToken, itemId: input.ebayItemId,
+    const after = await readOfficialSnapshot({ accessToken, itemId: ebayItemId,
       expectedSku, accountKey: input.accountKey, fetchImpl })
     const afterRecord = snapshotRecord(after, targetTitle, text(row.account_fingerprint, 64))
     if (after.title === targetTitle) {
@@ -567,4 +581,29 @@ export async function applyVerifiedTitleToActiveListing(input: {
       code: "EBAY_ACTIVE_TITLE_REVISION_READBACK_UNAVAILABLE", httpStatus: writeStatus })
   }
   return publicResult(row, "EBAY_ACTIVE_TITLE_REVISION_OUTCOME_UNKNOWN")
+}
+
+export async function applyVerifiedTitleToActiveListing(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  listingPackageId: string
+  ebayItemId: string
+  idempotencyKey: string
+  confirmation: string
+  fetchImpl?: FetchLike
+}) {
+  if (input.confirmation !== ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION) {
+    throw new Error("EBAY_ACTIVE_TITLE_REVISION_CONFIRMATION_INVALID")
+  }
+  const preview = await prepareVerifiedActiveListingTitle(input)
+  return applyPreparedVerifiedActiveListingTitle({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    actorId: input.actorId,
+    executionId: preview.executionId,
+    ebayItemId: input.ebayItemId,
+    confirmation: input.confirmation,
+    fetchImpl: input.fetchImpl,
+  })
 }
