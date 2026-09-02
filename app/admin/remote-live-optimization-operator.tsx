@@ -514,7 +514,8 @@ function OperatorNavigation({ view, onChange, onLogout, side = false }: {
   side?: boolean
 }) {
   return <nav aria-label="Menú de operadora"
-    className={side ? "space-y-1" : "grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-7"}>
+    className={side ? "space-y-1" :
+      "grid grid-cols-2 gap-2 sm:grid-cols-4"}>
     {navigation.map((item) => {
       const Icon = item.icon
       const active = view === item.key
@@ -635,7 +636,8 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
             </button>}
           </div>
         </header>
-        <div className="mt-4 lg:hidden"><OperatorNavigation view={view}
+        <div className={embeddedForOwner ? "mt-4" : "mt-4 lg:hidden"}>
+          <OperatorNavigation view={view}
           onChange={setView} onLogout={logout} /></div>
         {message && <p aria-live="polite" className="mt-4 rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium text-[#704d3c]">{message}</p>}
         {!dashboard && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7 text-sm text-[#6f736c]">{readState === "RETRYING" ? "Esta vista no está disponible ahora. No necesitas hacer nada." : "Preparando tu espacio…"}</div>}
