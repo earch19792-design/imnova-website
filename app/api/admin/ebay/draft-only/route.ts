@@ -49,6 +49,7 @@ import {
 import {
   classifyCompensatedOfferFreshReadV1,
   executeCompensatedOfferFreshReadGateV1,
+  isCompensatedPublicationRecoveryErrorCodeV1,
 } from "@/lib/ebay/ebay-compensated-offer-fresh-read-v1"
 import {
   isCommandCenterCommercialFreshnessRecheck,
@@ -4079,14 +4080,15 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
     publication.last_error_code === "EBAY_PUBLISH_WRITE_REJECTED" &&
     !publication.listing_id
   const sanitized = record(publication.sanitized_result)
-  const compensatedMonitorFailure =
+  const compensatedAttachmentFailure =
     publication.phase === "terminal_failure" &&
-    publication.last_error_code ===
-      "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED" &&
+    isCompensatedPublicationRecoveryErrorCodeV1(
+      publication.last_error_code,
+    ) &&
     /^\d{9,20}$/.test(text(publication.listing_id)) &&
     sanitized.compensatingEndVerified === true &&
     sanitized.officialReadbackNotCurrentLive === true
-  if (!rejectedWithoutListing && !compensatedMonitorFailure) {
+  if (!rejectedWithoutListing && !compensatedAttachmentFailure) {
     return jsonError(
       new Error("EBAY_FINAL_PUBLISH_RECOVERY_NOT_ELIGIBLE"),
       409,
@@ -4106,7 +4108,7 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
     supabase,
     text(publication.draft_execution_id),
     actor,
-    { compensatedRearmLedgerOnly: compensatedMonitorFailure },
+    { compensatedRearmLedgerOnly: compensatedAttachmentFailure },
   )
   const built = buildFinalPublicationPreview(
     context.approval,
@@ -4122,7 +4124,7 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
   let compensatedFreshRead: Awaited<ReturnType<
     typeof readCompensatedPublicationFreshSafety
   >> | null = null
-  if (compensatedMonitorFailure) {
+  if (compensatedAttachmentFailure) {
     compensatedFreshRead = await readCompensatedPublicationFreshSafety({
       supabase,
       accountKey: context.accountKey,
@@ -4153,18 +4155,18 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       )
     }
   }
-  if (!compensatedMonitorFailure) {
+  if (!compensatedAttachmentFailure) {
     await revalidateFinalPublicationDependencies(
       supabase,
       context,
       record(context.approval.approved_payload),
     )
   }
-  const rearmRpc = compensatedMonitorFailure
+  const rearmRpc = compensatedAttachmentFailure
     ? "rearm_ebay_authorized_listing_after_compensated_monitor_failure"
     : "rearm_ebay_authorized_listing_publication_once"
-  const expectedErrorCode = compensatedMonitorFailure
-    ? "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED"
+  const expectedErrorCode = compensatedAttachmentFailure
+    ? text(publication.last_error_code)
     : "EBAY_PUBLISH_WRITE_REJECTED"
   const { data: rearmed, error: rearmError } = await supabase
     .rpc(rearmRpc, {
@@ -4188,7 +4190,7 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       offerStatus: "UNPUBLISHED",
       recoveryAttemptsRemaining: 0,
       exactPreviewRevalidated: true,
-      priorCompensatedListingInactive: compensatedMonitorFailure,
+      priorCompensatedListingInactive: compensatedAttachmentFailure,
       activeDuplicateCount: 0,
       compensatedOfferFreshRead: compensatedFreshRead,
     },

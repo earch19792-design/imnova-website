@@ -3,6 +3,20 @@ import type { JsonRecord } from "./ebay-draft-only-readiness"
 export const EBAY_COMPENSATED_OFFER_FRESH_READ_VERSION =
   "ITEM3525_COMPENSATED_OFFER_FRESH_READ_GATE_V1" as const
 
+export const EBAY_COMPENSATED_PUBLICATION_RECOVERY_ERROR_CODES =
+  Object.freeze([
+    "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED",
+    "EBAY_FINAL_PUBLICATION_LUNA_LINEAGE_HANDOFF_FAILED",
+  ] as const)
+
+export function isCompensatedPublicationRecoveryErrorCodeV1(
+  value: unknown,
+) {
+  return EBAY_COMPENSATED_PUBLICATION_RECOVERY_ERROR_CODES.includes(
+    text(value) as typeof EBAY_COMPENSATED_PUBLICATION_RECOVERY_ERROR_CODES[number],
+  )
+}
+
 export type CompensatedOfferFreshReadEligibilityV1 = Readonly<{
   eligible: boolean
   reasonCode: string
@@ -91,10 +105,9 @@ export function classifyCompensatedOfferFreshReadEligibilityV1(input: {
     reasonCode = "COMPENSATED_OFFER_FRESH_READ_OFFER_ID_REQUIRED"
   } else if (text(publication.phase).toLowerCase() !== "terminal_failure") {
     reasonCode = "COMPENSATED_OFFER_FRESH_READ_NOT_TERMINAL_FAILURE"
-  } else if (
-    text(publication.last_error_code) !==
-      "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED"
-  ) {
+  } else if (!isCompensatedPublicationRecoveryErrorCodeV1(
+    publication.last_error_code,
+  )) {
     reasonCode = "COMPENSATED_OFFER_FRESH_READ_ERROR_CODE_NOT_ELIGIBLE"
   } else if (!listingId(publication.listing_id)) {
     reasonCode = "COMPENSATED_OFFER_FRESH_READ_HISTORICAL_ITEM_ID_REQUIRED"
