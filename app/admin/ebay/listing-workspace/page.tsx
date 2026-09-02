@@ -22,6 +22,12 @@ import { canonicalListingReadyUi } from
   "@/lib/ebay/ebay-listing-ready-ui-v1"
 import { taxonomySnapshotMatchesContextV1 } from
   "@/lib/ebay/ebay-listing-context-isolation-v1"
+import {
+  draftOnlyPrewriteFailureResolvedV1,
+  parseDraftOnlyPrewriteAuthorizationCorrelationV1,
+  parseDraftOnlyPrewriteFailureV1,
+  type DraftOnlyPrewriteFailureV1,
+} from "@/lib/ebay/ebay-draft-only-prewrite-correlation-v1"
 
 type Opportunity = {
   id: string
@@ -587,12 +593,6 @@ function supersededListingReadyMessage(value: string) {
     || /(?:completa|confirma)[^.]*categor/i.test(normalized)
     || /completa[^.]*im.gen/i.test(normalized)
     || /(?:vuelve|volver) a Oportunidades/i.test(normalized)
-}
-
-function historicalResolvedDraftOnlyPrewrite409(value: string) {
-  const normalized = value.trim()
-  return normalized.includes("EBAY_DRAFT_ONLY_BLOCKED")
-    && /\bHTTP 409\b/.test(normalized)
 }
 
 function safeSku(value: unknown) {
@@ -1363,6 +1363,10 @@ function ListingWorkspacePageContent() {
   const [form, setForm] = useState<FormState>(emptyForm)
   const [message, setMessage] = useState("Cargando datos reales del producto…")
   const [error, setError] = useState("")
+  const [currentPrewriteFailure, setCurrentPrewriteFailure] =
+    useState<DraftOnlyPrewriteFailureV1 | null>(null)
+  const [historicalPrewriteFailures, setHistoricalPrewriteFailures] =
+    useState<DraftOnlyPrewriteFailureV1[]>([])
   const [busy, setBusy] = useState(false)
   const [aspectName, setAspectName] = useState("")
   const [aspectValue, setAspectValue] = useState("")
@@ -1809,15 +1813,53 @@ function ListingWorkspacePageContent() {
         )
         : undefined,
     })
-    const payload = await readMobileReviewJson<Record<string, any>>(
-      response,
-      body?.action === "account_preflight"
-        ? "No se pudo consultar la configuración de cuenta eBay"
-        : "No se pudo validar el draft no publicado",
-    )
+    const failureResponse = response.clone()
+    let payload: Record<string, any>
+    try {
+      payload = await readMobileReviewJson<Record<string, any>>(
+        response,
+        body?.action === "account_preflight"
+          ? "No se pudo consultar la configuración de cuenta eBay"
+          : "No se pudo validar el draft no publicado",
+      )
+    } catch (requestFailure) {
+      const requestError = new Error(getMobileReviewRequestError(
+        requestFailure,
+        "No se pudo validar el draft no publicado.",
+      )) as Error & {
+        blockers?: string[]
+        code?: string
+        payload?: Record<string, unknown>
+        prewriteFailure?: DraftOnlyPrewriteFailureV1
+      }
+      try {
+        const failurePayload = await failureResponse.json() as
+          Record<string, unknown>
+        requestError.blockers = Array.isArray(failurePayload.blockers)
+          ? failurePayload.blockers.filter(
+            (item): item is string => typeof item === "string",
+          )
+          : []
+        requestError.code = String(failurePayload.error ?? "")
+        requestError.payload = failurePayload
+        requestError.prewriteFailure =
+          parseDraftOnlyPrewriteFailureV1(
+            failurePayload.prewriteFailure,
+          ) ?? undefined
+      } catch {
+        requestError.blockers = []
+      }
+      throw requestError
+    }
     if (!payload.success) {
-      const requestError = new Error(getMobileReviewPayloadError(payload, "No se pudo validar el draft.")) as Error & { blockers?: string[] }
+      const requestError = new Error(getMobileReviewPayloadError(payload, "No se pudo validar el draft.")) as Error & {
+        blockers?: string[]
+        prewriteFailure?: DraftOnlyPrewriteFailureV1
+      }
       requestError.blockers = Array.isArray(payload.blockers) ? payload.blockers : []
+      requestError.prewriteFailure = parseDraftOnlyPrewriteFailureV1(
+        payload.prewriteFailure,
+      ) ?? undefined
       throw requestError
     }
     return payload
@@ -2595,12 +2637,16 @@ function ListingWorkspacePageContent() {
     correctedPackageSafeRetryCertified
     && draftState.readiness?.ready === true
     && canonicalUiBlockers.length === 0
-  const historicalHeaderPrewrite409 = correctedPackageSafeRetryReady
-    && historicalResolvedDraftOnlyPrewrite409(error)
-  const currentHeaderError = historicalHeaderPrewrite409 ? "" : error
+  const historicalHeaderPrewrite409 =
+    historicalPrewriteFailures.at(-1) ?? null
+  const currentHeaderError = currentPrewriteFailure ? "" : error
+  const currentWorkspaceHeaderBlocked = Boolean(
+    currentPrewriteFailure || currentHeaderError,
+  )
+  const currentWorkspaceHeaderSafeRetry =
+    correctedPackageSafeRetryReady && !currentWorkspaceHeaderBlocked
   const workspaceContradictoryStateCount =
-    correctedPackageSafeRetryCertified && !correctedPackageSafeRetryReady
-      ? 1 : 0
+    currentWorkspaceHeaderSafeRetry && currentWorkspaceHeaderBlocked ? 1 : 0
   const publicationLifecycleStarted = Boolean(draftState.approval?.id)
     || unpublishedExecutionExists
     || Boolean(draftState.publication?.id)
@@ -3880,6 +3926,21 @@ function ListingWorkspacePageContent() {
         if (authorized.controlledPublication?.authorized !== true) {
           throw new Error("EBAY_ONE_CLICK_PUBLICATION_INTENT_NOT_PERSISTED")
         }
+        const authorizationCorrelation =
+          parseDraftOnlyPrewriteAuthorizationCorrelationV1(
+            authorized.prewriteAuthorizationCorrelation,
+          )
+        if (authorizationCorrelation) {
+          setCurrentPrewriteFailure((current) => {
+            if (!current || !draftOnlyPrewriteFailureResolvedV1({
+              failure: current,
+              success: authorizationCorrelation,
+            })) return current
+            setHistoricalPrewriteFailures((history) =>
+              [...history, current].slice(-5))
+            return null
+          })
+        }
         if (
           !["AUTO_REFRESHED", "DURABLE_REVALIDATED"].includes(String(
             authorized.oneClickFreshness?.lunaSnapshot ?? ""))
@@ -3982,6 +4043,12 @@ function ListingWorkspacePageContent() {
       const prewriteBlockers = (requestError as Error & {
         blockers?: string[]
       }).blockers ?? []
+      const correlatedPrewriteFailure = (requestError as Error & {
+        prewriteFailure?: DraftOnlyPrewriteFailureV1
+      }).prewriteFailure
+      if (correlatedPrewriteFailure) {
+        setCurrentPrewriteFailure(correlatedPrewriteFailure)
+      }
       if (prewriteBlockers.length) {
         setDraftState((current) => ({
           ...current,
@@ -5052,7 +5119,7 @@ function ListingWorkspacePageContent() {
           <a href="/admin/ebay/mobile-review" className="inline-flex min-h-11 items-center rounded-full border border-white/20 px-4 text-sm font-bold">← Command Center</a>
           <p className="mt-3 text-xs font-black uppercase tracking-widest text-emerald-100/70">{finalReviewCompleted ? "Publicación automatizada · eBay" : v3ReviewAccessible ? "Revisión humana · Visual Strategy V3" : "Paso 4 · Autorizar y publicar"}</p>
           <h1 className="mt-1 text-2xl font-black">{finalReviewCompleted ? "Publicar producto" : "Workspace del producto"}</h1>
-          {correctedPackageSafeRetryReady && <p
+          {currentWorkspaceHeaderSafeRetry && <p
             data-current-workspace-header-status="SAFE_RETRY_READY"
             data-header-status-source="CANONICAL_DRAFT_ONLY_GET_READINESS"
             data-current-header-blocked="false"
@@ -5061,14 +5128,32 @@ function ListingWorkspacePageContent() {
         </header>
 
         {currentHeaderError && <p role="alert" data-current-workspace-header-error className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50">{currentHeaderError}</p>}
+        {currentPrewriteFailure && <div
+          role="alert"
+          data-current-workspace-header-error
+          data-current-header-blocked="true"
+          data-prewrite-request-id={currentPrewriteFailure.requestId}
+          data-prewrite-attempt-id={currentPrewriteFailure.attemptId ?? "NONE_PREWRITE"}
+          data-prewrite-package-digest={currentPrewriteFailure.packageDigest ?? "UNPROVEN"}
+          data-prewrite-authorization-id={currentPrewriteFailure.authorizationId ?? "NONE"}
+          className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm text-rose-50"
+        >
+          <strong>{currentPrewriteFailure.errorCode} · HTTP 409</strong>
+          {currentPrewriteFailure.blockers.length > 0 && <ul className="mt-2 space-y-1 text-xs">
+            {currentPrewriteFailure.blockers.map((blocker) => <li key={blocker}><code>{blocker}</code></li>)}
+          </ul>}
+        </div>}
         {historicalHeaderPrewrite409 && <details
           data-historical-header-http-409
-          data-header-http-409-attempt-id="NONE_PREWRITE"
+          data-header-http-409-request-id={historicalHeaderPrewrite409.requestId}
+          data-header-http-409-attempt-id={historicalHeaderPrewrite409.attemptId ?? "NONE_PREWRITE"}
+          data-header-http-409-package-digest={historicalHeaderPrewrite409.packageDigest ?? "UNPROVEN"}
+          data-header-http-409-authorization-id={historicalHeaderPrewrite409.authorizationId ?? "NONE"}
           className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/55"
         >
           <summary className="cursor-pointer font-black text-white/65">Historial técnico del intento anterior</summary>
-          <p className="mt-2">El POST anterior fue rechazado antes de crear un attempt durable. Se conserva como diagnóstico histórico y no reemplaza la readiness canónica actual.</p>
-          <code className="mt-2 block break-all">{error}</code>
+          <p className="mt-2">El POST anterior quedó resuelto por una autorización posterior correlacionada al mismo package digest. Se conserva en historial y no sustituye el estado actual.</p>
+          <code className="mt-2 block break-all">{historicalHeaderPrewrite409.errorCode} · HTTP {historicalHeaderPrewrite409.httpStatus} · {historicalHeaderPrewrite409.observedAt}</code>
         </details>}
         {message && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">{message}</p>}
         {visualReviewPanel}
@@ -5390,7 +5475,7 @@ function ListingWorkspacePageContent() {
             {singleHumanPublicationEligible && <div data-one-click-controlled-publication className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-4">
               <div><p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Una autorización humana · todas las puertas internas</p><h3 className="mt-1 text-lg font-black">Publicación controlada de {opportunity?.candidate_key}</h3><p className="mt-2 text-sm leading-6 text-rose-50/75">Este clic queda ligado al candidate, package, digest, cuenta, marketplace, precio, cantidad, policies e imágenes exactos. Cualquier diferencia invalida la continuación y detiene la publicación.</p></div>
               <dl className="grid gap-2 text-xs sm:grid-cols-2"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Package</dt><dd className="break-all font-black">{listingPackage.id}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Marketplace / cuenta</dt><dd className="font-black">{marketplaceAccountLabel}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Precio / cantidad</dt><dd className="font-black">USD {Number(form.pricing.targetPrice ?? 0).toFixed(2)} · {effectiveDraftQuantity}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Policies</dt><dd className="break-all font-black">{draftConfiguration.fulfillmentPolicyId || "pendiente"} · {draftConfiguration.paymentPolicyId || "pendiente"} · {draftConfiguration.returnPolicyId || "pendiente"}</dd></div></dl>
-              {correctedPackageSafeRetryReady && <div data-corrected-package-safe-retry className="rounded-xl border border-emerald-200/35 bg-emerald-200/[0.09] p-3 text-emerald-50"><strong>LISTO PARA REINTENTO SEGURO</strong><p className="mt-2 text-sm">Intento anterior: falló por UPC requerido · <strong>RESUELTO</strong></p><ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><li>UPC {canonicalUpc || "confirmado"} ✓</li><li>Category Policy ✓</li><li>Package confirmado ✓</li><li>Offer UNPUBLISHED ✓</li></ul><p className="mt-2 text-xs text-emerald-50/70">El próximo clic actualizará el mismo Inventory SKU, verificará el UPC por GET y reutilizará el mismo Offer. No creará otro Offer.</p></div>}
+              {currentWorkspaceHeaderSafeRetry && <div data-corrected-package-safe-retry className="rounded-xl border border-emerald-200/35 bg-emerald-200/[0.09] p-3 text-emerald-50"><strong>LISTO PARA REINTENTO SEGURO</strong><p className="mt-2 text-sm">Intento anterior: falló por UPC requerido · <strong>RESUELTO</strong></p><ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><li>UPC {canonicalUpc || "confirmado"} ✓</li><li>Category Policy ✓</li><li>Package confirmado ✓</li><li>Offer UNPUBLISHED ✓</li></ul><p className="mt-2 text-xs text-emerald-50/70">El próximo clic actualizará el mismo Inventory SKU, verificará el UPC por GET y reutilizará el mismo Offer. No creará otro Offer.</p></div>}
               <PublicationLaunchVisualizer phase={publicationVisualizerPhase} busy={publicationAutomationBusy} failed={publicationAutomationFailed} elapsedSeconds={publicationAutomationElapsed} productImageUrl={publicationProductImageUrl} status={publicationAutomationStep} />
               {publicationPhase === "monitor_registered" ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p></div> : <button type="button" disabled={singleHumanPublicationButtonDisabled} onClick={() => void publishSmartStockingWithSingleAuthorization()} className="min-h-16 w-full rounded-2xl bg-rose-200 px-4 text-lg font-black text-black disabled:opacity-40">{publicationAutomationBusy ? "SISTEMA EN OPERACIÓN" : ["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) ? "VERIFICAR PUBLICACIÓN EN EBAY" : "PUBLICAR EN EBAY"}</button>}
               <p className="text-xs leading-5 text-rose-50/65">No existe autorización desatendida: el primer clic es obligatorio. Después, Seller OS exige readback oficial exacto del Inventory Item y Offer UNPUBLISHED, publish one-shot y readback ACTIVE antes de persistir Item ID y activar monitoreo.</p>

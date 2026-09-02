@@ -1151,6 +1151,78 @@ async function loadExactDraftOnlyPublicationSelfLineage(
   }
 }
 
+type ExactDraftOnlyPublicationExpectedV1 = Parameters<
+  typeof classifyExactDraftOnlyPublicationSelfLineageV1
+>[0]["expected"]
+
+/**
+ * Canonical collision authority shared by GET readiness, POST approve and
+ * executeDraft. A corrected retry may exclude only the exact historical UPC
+ * failure that belongs to the same product/package/SKU lineage. Everything
+ * else continues into the generic collision guard unchanged.
+ */
+async function loadCorrectedPackageRetryCollisionAuthorityV1(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  expected: ExactDraftOnlyPublicationExpectedV1
+  currentApproval: JsonRecord | null
+  currentExecution?: JsonRecord | null
+  currentPublication?: JsonRecord | null
+  currentSelfLineage?: ExactDraftOnlyPublicationSelfLineageV1
+}) {
+  const currentSelfLineage = input.currentSelfLineage
+    ?? classifyExactDraftOnlyPublicationSelfLineageV1({
+      approval: input.currentApproval,
+      execution: input.currentExecution,
+      publication: input.currentPublication,
+      expected: input.expected,
+    })
+  const history = await loadCorrectedPackageRetryHistory({
+    supabase: input.supabase,
+    actorUserId: input.expected.actorUserId,
+    listingPackageId: input.expected.listingPackageId,
+    opportunityId: input.expected.opportunityId,
+    sku: input.expected.sku,
+  })
+  const historicalSelfLineage = history
+    ? classifyExactDraftOnlyPublicationSelfLineageV1({
+      approval: history.approval,
+      execution: history.execution,
+      publication: history.publication,
+      expected: input.expected,
+    })
+    : null
+  const currentApprovedPayload = record(
+    input.currentApproval?.approved_payload,
+  )
+  const currentControlledIntent = record(
+    currentApprovedPayload.controlledPublicationIntent,
+  )
+  const currentOfferPayload = record(currentApprovedPayload.offerPayload)
+  const collisionSelfLineage =
+    resolveCorrectedPackageRetryCollisionSelfLineageV1({
+      current: {
+        listingPackageId: input.expected.listingPackageId,
+        packageDigest: text(currentControlledIntent.packageDigest),
+        target: input.expected.target,
+        accountFingerprintPresent: Boolean(
+          input.expected.accountFingerprint,
+        ),
+        sku: input.expected.sku,
+        categoryId: text(currentOfferPayload.categoryId),
+        upcs: exactUpcsFromPayload(currentApprovedPayload),
+      },
+      historical: history?.historical ?? null,
+      currentSelfLineage,
+      historicalSelfLineage,
+    })
+  return {
+    history,
+    currentSelfLineage,
+    historicalSelfLineage,
+    collisionSelfLineage,
+  }
+}
+
 async function revalidateFinalPublicationDuplicateGuard(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   context: Awaited<ReturnType<typeof loadFinalPublicationContext>>,
@@ -1613,11 +1685,20 @@ function oneClickPrewriteError(
   error: unknown,
   blockers: string[],
   target: EbayDraftOnlyTarget,
+  correlation?: JsonRecord,
 ) {
   return NextResponse.json({
     success: false,
     error: errorCode(error),
     blockers,
+    ...(correlation ? {
+      prewriteFailure: {
+        ...correlation,
+        httpStatus: 409,
+        errorCode: errorCode(error),
+        blockers,
+      },
+    } : {}),
     safety: {
       target,
       canPublish: false,
@@ -1718,40 +1799,19 @@ export async function GET(req: Request) {
     const ledger = lifecycle.execution
     const publication = lifecycle.publication
     const approvedPayload = record(latestApproval?.approved_payload)
-    const correctedPackageRetryHistory =
-      await loadCorrectedPackageRetryHistory({
+    const correctedRetryCollisionAuthority =
+      await loadCorrectedPackageRetryCollisionAuthorityV1({
         supabase,
-        actorUserId: auth.actor,
-        listingPackageId: packageId,
-        opportunityId: expectedOpportunityId,
-        sku: expectedSku,
-      })
-    const correctedRetryHistoricalSelfLineage =
-      correctedPackageRetryHistory
-        ? classifyExactDraftOnlyPublicationSelfLineageV1({
-          approval: correctedPackageRetryHistory.approval,
-          execution: correctedPackageRetryHistory.execution,
-          publication: correctedPackageRetryHistory.publication,
-          expected: expectedSelfLineage,
-        })
-        : null
-    const collisionSelfLineage =
-      resolveCorrectedPackageRetryCollisionSelfLineageV1({
-        current: {
-          listingPackageId: packageId,
-          packageDigest: text(record(
-            approvedPayload.controlledPublicationIntent,
-          ).packageDigest),
-          target,
-          accountFingerprintPresent: Boolean(fingerprint),
-          sku: expectedSku,
-          categoryId: text(record(approvedPayload.offerPayload).categoryId),
-          upcs: exactUpcsFromPayload(approvedPayload),
-        },
-        historical: correctedPackageRetryHistory?.historical ?? null,
+        expected: expectedSelfLineage,
+        currentApproval: latestApproval as JsonRecord | null,
+        currentExecution: ledger as JsonRecord | null,
+        currentPublication: publication as JsonRecord | null,
         currentSelfLineage: lifecycle.classification,
-        historicalSelfLineage: correctedRetryHistoricalSelfLineage,
       })
+    const correctedPackageRetryHistory =
+      correctedRetryCollisionAuthority.history
+    const collisionSelfLineage =
+      correctedRetryCollisionAuthority.collisionSelfLineage
     const initialContext = await loadPackageContext(
       supabase,
       packageId,
@@ -2817,6 +2877,38 @@ async function approveDraft(body: JsonRecord, actor: string) {
     typeof loadExactDraftOnlyPublicationSelfLineage
   >> | null = null
   let oneClickFreshness: JsonRecord | null = null
+  const oneClickCorrelation = (
+    payload?: JsonRecord,
+    authorizationId?: string | null,
+  ) => {
+    const effectivePayload = payload ?? record(
+      exactSelfLineage?.approval?.approved_payload,
+    )
+    return {
+      version: "EBAY_DRAFT_ONLY_PREWRITE_CORRELATION_V1",
+      requestId: approvalKey,
+      observedAt: new Date().toISOString(),
+      listingPackageId: packageId,
+      packageDigest: text(record(
+        effectivePayload.controlledPublicationIntent,
+      ).packageDigest) || null,
+      authorizationId: authorizationId === undefined
+        ? text(exactSelfLineage?.approval?.id) || null
+        : authorizationId,
+      priorAuthorizationId:
+        text(exactSelfLineage?.approval?.id) || null,
+      attemptId: text(exactSelfLineage?.execution?.id) || null,
+    }
+  }
+  const oneClickApprovePrewriteError = (
+    error: unknown,
+    blockers: string[],
+  ) => oneClickPrewriteError(
+    error,
+    blockers,
+    target,
+    oneClickCorrelation(),
+  )
   if (oneClickRequested) {
     try {
       const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
@@ -2858,18 +2950,28 @@ async function approveDraft(body: JsonRecord, actor: string) {
         exactPackage as JsonRecord,
         exactOpportunity as JsonRecord,
       )
+      const exactExpectedSelfLineage = {
+        actorUserId: actor,
+        listingPackageId: packageId,
+        opportunityId: exactOpportunityId,
+        candidateKey: exactCandidateKey,
+        target,
+        accountFingerprint: fingerprint,
+        sku: expectedEbayDraftOnlySku(exactPackage as JsonRecord),
+      } as const
       exactSelfLineage = await loadExactDraftOnlyPublicationSelfLineage(
         supabase,
-        {
-          actorUserId: actor,
-          listingPackageId: packageId,
-          opportunityId: exactOpportunityId,
-          candidateKey: exactCandidateKey,
-          target,
-          accountFingerprint: fingerprint,
-          sku: expectedEbayDraftOnlySku(exactPackage as JsonRecord),
-        },
+        exactExpectedSelfLineage,
       )
+      const correctedRetryCollisionAuthority =
+        await loadCorrectedPackageRetryCollisionAuthorityV1({
+          supabase,
+          expected: exactExpectedSelfLineage,
+          currentApproval: exactSelfLineage.approval,
+          currentExecution: exactSelfLineage.execution,
+          currentPublication: exactSelfLineage.publication,
+          currentSelfLineage: exactSelfLineage.classification,
+        })
       context = await loadPackageContext(
         supabase,
         packageId,
@@ -2877,7 +2979,7 @@ async function approveDraft(body: JsonRecord, actor: string) {
         text(requestedConfiguration.sku),
         target,
         fingerprint,
-        exactSelfLineage.classification,
+        correctedRetryCollisionAuthority.collisionSelfLineage,
       )
       if (refreshedSource.sourceClassification ===
           "QUICK_PICK_DURABLE_REVALIDATED") {
@@ -2950,10 +3052,9 @@ async function approveDraft(body: JsonRecord, actor: string) {
         marketplaceWritesBeforeRefreshPass: 0,
       }
     } catch (refreshError) {
-      return oneClickPrewriteError(
+      return oneClickApprovePrewriteError(
         refreshError,
         [errorCode(refreshError)],
-        target,
       )
     }
   } else {
@@ -2997,10 +3098,9 @@ async function approveDraft(body: JsonRecord, actor: string) {
   })
   if (!readiness.ready) {
     if (oneClickRequested) {
-      return oneClickPrewriteError(
+      return oneClickApprovePrewriteError(
         new Error("EBAY_DRAFT_ONLY_BLOCKED"),
         readiness.blockers,
-        target,
       )
     }
     return jsonError(
@@ -3015,10 +3115,9 @@ async function approveDraft(body: JsonRecord, actor: string) {
     const blocker = categoryProductIdentifierPreflight.blocker ??
       "EBAY_CATEGORY_PRODUCT_IDENTIFIER_POLICY_UNAVAILABLE"
     if (oneClickRequested) {
-      return oneClickPrewriteError(
+      return oneClickApprovePrewriteError(
         new Error(blocker),
         [blocker],
-        target,
       )
     }
     return jsonError(
@@ -3042,10 +3141,9 @@ async function approveDraft(body: JsonRecord, actor: string) {
       currentPayload: readiness.payload,
     })
     if (!material.exact) {
-      return oneClickPrewriteError(
+      return oneClickApprovePrewriteError(
         new Error(material.reasonCode),
         [material.reasonCode],
-        target,
       )
     }
     return NextResponse.json({
@@ -3080,6 +3178,10 @@ async function approveDraft(body: JsonRecord, actor: string) {
         materialClassification: material.reasonCode,
         publishWithExistingFinalAuthorizationContract: true,
       },
+      prewriteAuthorizationCorrelation: oneClickCorrelation(
+        undefined,
+        text(exactSelfLineage.approval.id) || null,
+      ),
       oneClickFreshness,
       safety: {
         canPublish: false,
@@ -3131,6 +3233,12 @@ async function approveDraft(body: JsonRecord, actor: string) {
             : null,
           ...oneClickPublicationRequirements(oneClickRequested),
         },
+        ...(oneClickRequested ? {
+          prewriteAuthorizationCorrelation: oneClickCorrelation(
+            approvedPayload,
+            text(existing.id) || null,
+          ),
+        } : {}),
         oneClickFreshness,
         safety: {
           canPublish: false,
@@ -3161,6 +3269,12 @@ async function approveDraft(body: JsonRecord, actor: string) {
         : null,
       ...oneClickPublicationRequirements(oneClickRequested),
     },
+    ...(oneClickRequested ? {
+      prewriteAuthorizationCorrelation: oneClickCorrelation(
+        approvedPayload,
+        text(record(approval).id) || null,
+      ),
+    } : {}),
     oneClickFreshness,
     safety: {
       approvedForOneUnpublishedDraft: true,
@@ -3461,31 +3575,9 @@ async function executeDraft(body: JsonRecord, actor: string) {
     target,
     accountFingerprint: fingerprint,
   })
-  const correctedRetryHistory = await loadCorrectedPackageRetryHistory({
-    supabase,
-    actorUserId: actor,
-    listingPackageId: text(approval.listing_package_id),
-    opportunityId: text(approval.opportunity_id),
-    sku,
-  })
-  const executionSelfLineage = classifyExactDraftOnlyPublicationSelfLineageV1({
-    approval: approval as JsonRecord,
-    execution: existing as JsonRecord | null,
-    expected: {
-      actorUserId: actor,
-      listingPackageId: text(approval.listing_package_id),
-      opportunityId: text(approval.opportunity_id),
-      candidateKey: text(approval.candidate_key),
-      target,
-      accountFingerprint: fingerprint,
-      sku,
-    },
-  })
-  const correctedRetryHistoricalSelfLineage = correctedRetryHistory
-    ? classifyExactDraftOnlyPublicationSelfLineageV1({
-      approval: correctedRetryHistory.approval,
-      execution: correctedRetryHistory.execution,
-      publication: correctedRetryHistory.publication,
+  const correctedRetryCollisionAuthority =
+    await loadCorrectedPackageRetryCollisionAuthorityV1({
+      supabase,
       expected: {
         actorUserId: actor,
         listingPackageId: text(approval.listing_package_id),
@@ -3495,27 +3587,12 @@ async function executeDraft(body: JsonRecord, actor: string) {
         accountFingerprint: fingerprint,
         sku,
       },
+      currentApproval: approval as JsonRecord,
+      currentExecution: existing as JsonRecord | null,
     })
-    : null
-  const currentControlledIntent = record(
-    approvedPayload.controlledPublicationIntent,
-  )
-  const currentOfferPayload = record(approvedPayload.offerPayload)
+  const correctedRetryHistory = correctedRetryCollisionAuthority.history
   const collisionSelfLineage =
-    resolveCorrectedPackageRetryCollisionSelfLineageV1({
-      current: {
-        listingPackageId: text(approval.listing_package_id),
-        packageDigest: text(currentControlledIntent.packageDigest),
-        target,
-        accountFingerprintPresent: Boolean(fingerprint),
-        sku,
-        categoryId: text(currentOfferPayload.categoryId),
-        upcs: exactUpcsFromPayload(approvedPayload),
-      },
-      historical: correctedRetryHistory?.historical ?? null,
-      currentSelfLineage: executionSelfLineage,
-      historicalSelfLineage: correctedRetryHistoricalSelfLineage,
-    })
+    correctedRetryCollisionAuthority.collisionSelfLineage
   let context = await loadPackageContext(
     supabase,
     approval.listing_package_id,
