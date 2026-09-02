@@ -589,6 +589,12 @@ function supersededListingReadyMessage(value: string) {
     || /(?:vuelve|volver) a Oportunidades/i.test(normalized)
 }
 
+function historicalResolvedDraftOnlyPrewrite409(value: string) {
+  const normalized = value.trim()
+  return normalized.includes("EBAY_DRAFT_ONLY_BLOCKED")
+    && /\bHTTP 409\b/.test(normalized)
+}
+
 function safeSku(value: unknown) {
   return String(value ?? "")
     .trim()
@@ -2589,6 +2595,9 @@ function ListingWorkspacePageContent() {
     correctedPackageSafeRetryCertified
     && draftState.readiness?.ready === true
     && canonicalUiBlockers.length === 0
+  const historicalHeaderPrewrite409 = correctedPackageSafeRetryReady
+    && historicalResolvedDraftOnlyPrewrite409(error)
+  const currentHeaderError = historicalHeaderPrewrite409 ? "" : error
   const workspaceContradictoryStateCount =
     correctedPackageSafeRetryCertified && !correctedPackageSafeRetryReady
       ? 1 : 0
@@ -5043,9 +5052,24 @@ function ListingWorkspacePageContent() {
           <a href="/admin/ebay/mobile-review" className="inline-flex min-h-11 items-center rounded-full border border-white/20 px-4 text-sm font-bold">← Command Center</a>
           <p className="mt-3 text-xs font-black uppercase tracking-widest text-emerald-100/70">{finalReviewCompleted ? "Publicación automatizada · eBay" : v3ReviewAccessible ? "Revisión humana · Visual Strategy V3" : "Paso 4 · Autorizar y publicar"}</p>
           <h1 className="mt-1 text-2xl font-black">{finalReviewCompleted ? "Publicar producto" : "Workspace del producto"}</h1>
+          {correctedPackageSafeRetryReady && <p
+            data-current-workspace-header-status="SAFE_RETRY_READY"
+            data-header-status-source="CANONICAL_DRAFT_ONLY_GET_READINESS"
+            data-current-header-blocked="false"
+            className="mt-2 inline-flex min-h-9 items-center rounded-full border border-emerald-200/35 bg-emerald-200/[0.09] px-3 text-xs font-black text-emerald-100"
+          >LISTO PARA REINTENTO SEGURO</p>}
         </header>
 
-        {error && <p role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50">{error}</p>}
+        {currentHeaderError && <p role="alert" data-current-workspace-header-error className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50">{currentHeaderError}</p>}
+        {historicalHeaderPrewrite409 && <details
+          data-historical-header-http-409
+          data-header-http-409-attempt-id="NONE_PREWRITE"
+          className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/55"
+        >
+          <summary className="cursor-pointer font-black text-white/65">Historial técnico del intento anterior</summary>
+          <p className="mt-2">El POST anterior fue rechazado antes de crear un attempt durable. Se conserva como diagnóstico histórico y no reemplaza la readiness canónica actual.</p>
+          <code className="mt-2 block break-all">{error}</code>
+        </details>}
         {message && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">{message}</p>}
         {visualReviewPanel}
         {maintenanceMode && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4"><p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Mantenimiento ACTIVE</p><h2 className="mt-1 text-xl font-black">Item {String(maintenance?.ebayItemId ?? "")}</h2><p className="mt-2 text-sm leading-6 text-white/65">Cuenta, SKU y estado ACTIVE ya fueron verificados. Aquí sólo se revisan título e imágenes; no se repiten policies ni guardas de creación.</p><div className="mt-4 rounded-2xl border border-white/15 bg-black/20 p-3"><p className="text-xs text-white/50">Título actual observado</p><p className="mt-1 text-sm font-bold">{String(maintenance?.title ?? "Pendiente de lectura")}</p><button type="button" disabled={!listingPackage || activeTitleBusy} onClick={() => void previewActiveTitleRevision()} className="mt-3 min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black disabled:opacity-40">{activeTitleBusy ? "Procesando…" : activeTitleRevision ? "Revalidar título propuesto" : "Preparar título verificado"}</button>{activeTitleRevision && <div className="mt-3 space-y-3"><div className="rounded-xl bg-emerald-200/10 p-3"><p className="text-xs text-emerald-100/60">Título calculado por el servidor</p><p className="mt-1 font-black">{String(activeTitleRevision.targetTitle ?? "")}</p></div><label className="block"><span className="text-xs font-black">Escribe exactamente: <code>{activeTitleExactPhrase}</code></span><input value={activeTitleConfirmation} onChange={(event) => setActiveTitleConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><button type="button" onClick={() => setActiveTitleConfirmation(activeTitleExactPhrase)} className="min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black">Usar frase exacta</button><button type="button" disabled={activeTitleBusy || !activeTitleConfirmationReady || activeTitlePhase === "applied_verified"} onClick={() => void applyActiveTitleRevision()} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">{activeTitlePhase === "applied_verified" ? "Título aplicado y verificado" : /outcome_unknown|write_in_flight/i.test(activeTitlePhase) ? "Reconciliar sin repetir write" : "Aplicar sólo Title"}</button><p className="text-xs leading-5 text-white/50">Máximo una llamada ReviseFixedPriceItem. El XML contiene únicamente ItemID + Title; no modifica imágenes, precio, cantidad ni policies.</p></div>}</div></section>}
