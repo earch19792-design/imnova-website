@@ -9,6 +9,8 @@ import {
 import { isCanonicalEbayPackageSku } from "./ebay-sku"
 import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
 import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"
+import { evaluateEbayCategoryProductIdentifierPreflightV1 } from
+  "./ebay-category-product-identifier-preflight-v1"
 
 const DRAFT_ONLY_SCOPE = [
   "https://api.ebay.com/oauth/api_scope",
@@ -117,6 +119,17 @@ function safeBody(value: JsonRecord) {
       domain: String(item.domain ?? "").slice(0, 80),
       category: String(item.category ?? "").slice(0, 80),
       message: String(item.message ?? "").replace(/[\r\n]+/g, " ").slice(0, 240),
+      parameters: Array.isArray(item.parameters)
+        ? item.parameters.slice(0, 8).map((rawParameter) => {
+          const parameter = record(rawParameter)
+          return {
+            name: String(parameter.name ?? "")
+              .replace(/[\r\n\t]+/g, " ").slice(0, 80),
+            value: String(parameter.value ?? "")
+              .replace(/[\r\n\t]+/g, " ").slice(0, 160),
+          }
+        })
+        : [],
     }
   }) : []
   return { errors }
@@ -444,6 +457,13 @@ function assertAllowedPreflightRead(config: GatewayConfig, url: URL, method: str
   const merchantLocationList = method === "GET"
     && url.pathname === "/sell/inventory/v1/location"
     && [...url.searchParams.keys()].every((key) => ["limit", "offset"].includes(key))
+  const categoryPolicies = method === "GET"
+    && url.pathname ===
+      "/sell/metadata/v1/marketplace/EBAY_US/get_category_policies"
+    && /^categoryIds:\{\d{1,12}\}$/.test(
+      url.searchParams.get("filter") ?? "",
+    )
+    && [...url.searchParams.keys()].every((key) => key === "filter")
   const originAllowed = sellerIdentity
     ? url.origin === config.identityOrigin
     : url.origin === config.apiOrigin
@@ -457,8 +477,71 @@ function assertAllowedPreflightRead(config: GatewayConfig, url: URL, method: str
     && !sellerPrivilege
     && !merchantLocation
     && !merchantLocationList
+    && !categoryPolicies
   )) {
     throw new Error("EBAY_DRAFT_ONLY_PREFLIGHT_ENDPOINT_BLOCKED")
+  }
+}
+
+async function categoryProductIdentifierPreflightWithToken(
+  config: GatewayConfig,
+  token: string,
+  input: {
+    categoryId: string
+    marketplaceId: string
+    inventoryItemPayload: JsonRecord
+  },
+  fetchImpl: typeof fetch,
+) {
+  const categoryId = input.categoryId.trim()
+  const marketplaceId = input.marketplaceId.trim().toUpperCase()
+  if (marketplaceId !== "EBAY_US" || !/^\d{1,12}$/.test(categoryId)) {
+    return {
+      ...evaluateEbayCategoryProductIdentifierPreflightV1({
+        marketplaceId,
+        categoryId,
+        policyResponse: {},
+        inventoryItemPayload: input.inventoryItemPayload,
+      }),
+      httpStatus: 0,
+      readAttempts: 0,
+      errorIds: [] as string[],
+    }
+  }
+  const url = new URL(
+    `/sell/metadata/v1/marketplace/${marketplaceId}/get_category_policies`,
+    config.apiOrigin,
+  )
+  url.searchParams.set("filter", `categoryIds:{${categoryId}}`)
+  const result = await preflightReadWithRetry(
+    config,
+    token,
+    url,
+    fetchImpl,
+  )
+  if (!result.ok) {
+    return {
+      ...evaluateEbayCategoryProductIdentifierPreflightV1({
+        marketplaceId,
+        categoryId,
+        policyResponse: {},
+        inventoryItemPayload: input.inventoryItemPayload,
+      }),
+      httpStatus: result.status,
+      readAttempts: result.attempts ?? 1,
+      errorIds: readErrorIds(result),
+    }
+  }
+  return {
+    ...evaluateEbayCategoryProductIdentifierPreflightV1({
+      marketplaceId,
+      categoryId,
+      policyResponse: result.body,
+      inventoryItemPayload: input.inventoryItemPayload,
+    }),
+    httpStatus: result.status,
+    readAttempts: result.attempts ?? 1,
+    errorIds: [] as string[],
   }
 }
 
@@ -960,6 +1043,25 @@ export async function preflightEbayDraftDependencies(
   const config = getEbayDraftOnlyGatewayConfig()
   const token = await accessToken(config, fetchImpl)
   return preflightDependenciesWithToken(config, token, input, fetchImpl)
+}
+
+export async function preflightEbayCategoryProductIdentifiers(input: {
+  categoryId: string
+  marketplaceId?: string
+  inventoryItemPayload: JsonRecord
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const token = await accessToken(config, fetchImpl, false)
+  return categoryProductIdentifierPreflightWithToken(
+    config,
+    token,
+    {
+      categoryId: input.categoryId,
+      marketplaceId: input.marketplaceId ?? "EBAY_US",
+      inventoryItemPayload: input.inventoryItemPayload,
+    },
+    fetchImpl,
+  )
 }
 
 export async function preflightEbayDraftOnlyMobile(
@@ -1580,12 +1682,60 @@ export async function publishEbayOfferOnce(input: {
   ) throw new Error("EBAY_FINAL_PUBLISH_AUTHORIZATION_INVALID")
 
   const token = await accessToken(config, fetchImpl)
+  const expectedInventoryItemPayload = input.expectedInventoryItemPayload
+    ? record(input.expectedInventoryItemPayload)
+    : null
+  const expectedOfferPayload = input.expectedOfferPayload
+    ? record(input.expectedOfferPayload)
+    : null
+  const categoryId = expectedOfferPayload
+    ? String(expectedOfferPayload.categoryId ?? "").trim()
+    : ""
+  const marketplaceId = expectedOfferPayload
+    ? String(expectedOfferPayload.marketplaceId ?? "").trim()
+    : ""
+  if (!expectedInventoryItemPayload || !expectedOfferPayload) {
+    return {
+      ok: false,
+      status: 0,
+      listingId: null,
+      outcomeKnown: true,
+      reconciled: false,
+      publishRequestSent: false,
+      blocker: "EBAY_CATEGORY_PRODUCT_IDENTIFIER_PREFLIGHT_INPUT_REQUIRED",
+    }
+  }
+  const productIdentifierPreflight =
+    await categoryProductIdentifierPreflightWithToken(
+      config,
+      token,
+      {
+        categoryId,
+        marketplaceId,
+        inventoryItemPayload: expectedInventoryItemPayload,
+      },
+      fetchImpl,
+    )
+  if (!productIdentifierPreflight.safe) {
+    return {
+      ok: false,
+      status: productIdentifierPreflight.httpStatus ?? 0,
+      listingId: null,
+      outcomeKnown: true,
+      reconciled: false,
+      publishRequestSent: false,
+      blocker: productIdentifierPreflight.blocker,
+      body: {
+        categoryProductIdentifierPreflight: productIdentifierPreflight,
+      },
+    }
+  }
   const inventory = input.expectedInventoryItemPayload
     ? await verifyInventoryItemWithToken(
       config,
       token,
       expectedSku,
-      input.expectedInventoryItemPayload,
+      expectedInventoryItemPayload,
       fetchImpl,
     )
     : null
@@ -1606,7 +1756,7 @@ export async function publishEbayOfferOnce(input: {
     offerId,
     expectedSku,
     "EBAY_US",
-    input.expectedOfferPayload ?? null,
+    expectedOfferPayload,
     fetchImpl,
   )
   if (!unpublished.safe) {
@@ -1615,7 +1765,7 @@ export async function publishEbayOfferOnce(input: {
       token,
       offerId,
       expectedSku,
-      input.expectedOfferPayload ?? null,
+      expectedOfferPayload,
       fetchImpl,
     )
     if (alreadyPublished.safe) {
@@ -1696,7 +1846,7 @@ export async function publishEbayOfferOnce(input: {
     token,
     offerId,
     expectedSku,
-    input.expectedOfferPayload ?? null,
+    expectedOfferPayload,
     fetchImpl,
   )
   for (let attempt = 1; attempt < 3 && !verification.safe; attempt += 1) {
@@ -1706,7 +1856,7 @@ export async function publishEbayOfferOnce(input: {
       token,
       offerId,
       expectedSku,
-      input.expectedOfferPayload ?? null,
+      expectedOfferPayload,
       fetchImpl,
     )
   }

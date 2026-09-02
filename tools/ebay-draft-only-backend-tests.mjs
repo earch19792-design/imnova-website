@@ -23,8 +23,15 @@ const skuSource = readFileSync(
   new URL("../lib/ebay/ebay-sku.ts", import.meta.url),
   "utf8",
 )
+const categoryProductIdentifierSource = readFileSync(
+  new URL(
+    "../lib/ebay/ebay-category-product-identifier-preflight-v1.ts",
+    import.meta.url,
+  ),
+  "utf8",
+)
 
-function embedSnapshotModule(source) {
+function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) {
   const withoutImport = source
     .replace(/import \{[^}\n]*\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
     .replace(/import \{\n(?:\s+[A-Za-z0-9_]+,?\n)+\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
@@ -33,7 +40,11 @@ function embedSnapshotModule(source) {
     .replace('import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"\n', "")
     .replace(/import \{\n  canonicalEbayPackageSku,\n  isCanonicalEbayPackageSku,\n\} from "\.\/ebay-sku"\n/, "")
     .replace('import { isCanonicalEbayPackageSku } from "./ebay-sku"\n', "")
-  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${withoutImport}`
+    .replace(/import \{ evaluateEbayCategoryProductIdentifierPreflightV1 \} from\n  "\.\/ebay-category-product-identifier-preflight-v1"\n/, "")
+  const categorySource = includeCategoryProductIdentifiers
+    ? `${categoryProductIdentifierSource}\n`
+    : ""
+  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${categorySource}${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(
@@ -43,7 +54,7 @@ const readinessSource = embedSnapshotModule(readFileSync(
 const gatewaySource = embedSnapshotModule(readFileSync(
   new URL("../lib/ebay/ebay-draft-only-gateway.ts", import.meta.url),
   "utf8",
-))
+), true)
 const routeSource = readFileSync(
   new URL("../app/api/admin/ebay/draft-only/route.ts", import.meta.url),
   "utf8",
@@ -132,6 +143,37 @@ const SNAPSHOT_SECRET = "test-only-preflight-snapshot-secret-0123456789"
 const SANDBOX_FINGERPRINT = "a".repeat(64)
 const PRODUCTION_FINGERPRINT = "b".repeat(64)
 const RESERVED_SKU = "IMNOVA11111111111141118111111111111111"
+const PUBLISH_INVENTORY_PAYLOAD = {
+  condition: "NEW",
+  availability: { shipToLocationAvailability: { quantity: 1 } },
+  product: {
+    title: "Exact product",
+    aspects: { Brand: ["Unbranded"], Type: ["Window Film"] },
+    imageUrls: ["https://assets.example.test/product.jpg"],
+  },
+}
+const PUBLISH_OFFER_PAYLOAD = {
+  sku: RESERVED_SKU,
+  marketplaceId: "EBAY_US",
+  format: "FIXED_PRICE",
+  availableQuantity: 1,
+  categoryId: "175757",
+  merchantLocationKey: "WAREHOUSE_1",
+  listingPolicies: {
+    fulfillmentPolicyId: "f1",
+    paymentPolicyId: "p1",
+    returnPolicyId: "r1",
+  },
+  pricingSummary: { price: { value: "24.99", currency: "USD" } },
+}
+const OPTIONAL_GTIN_CATEGORY_POLICY = {
+  categoryPolicies: [{
+    categoryId: "175757",
+    upcSupport: "DISABLED",
+    eanSupport: "DISABLED",
+    isbnSupport: "DISABLED",
+  }],
+}
 const snapshotModule = await importTypeScript(snapshotSource)
 const prewriteRetirementModule = await importTypeScript(
   prewriteRetirementSource,
@@ -2325,8 +2367,15 @@ test("authorized publication sends publishOffer exactly once and returns the lis
     if (parsed.pathname === "/commerce/identity/v1/user/") {
       return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
     }
+    if (parsed.pathname.endsWith("/get_category_policies")) {
+      return new Response(JSON.stringify(OPTIONAL_GTIN_CATEGORY_POLICY), { status: 200 })
+    }
+    if (parsed.pathname.includes("/inventory_item/") && method === "GET") {
+      return new Response(JSON.stringify(PUBLISH_INVENTORY_PAYLOAD), { status: 200 })
+    }
     if (parsed.pathname === "/sell/inventory/v1/offer/offer-123" && method === "GET") {
       return new Response(JSON.stringify({
+        ...PUBLISH_OFFER_PAYLOAD,
         offerId: "offer-123",
         sku: RESERVED_SKU,
         marketplaceId: "EBAY_US",
@@ -2342,6 +2391,8 @@ test("authorized publication sends publishOffer exactly once and returns the lis
     const result = await module.publishEbayOfferOnce({
       offerId: "offer-123",
       expectedSku: RESERVED_SKU,
+      expectedInventoryItemPayload: PUBLISH_INVENTORY_PAYLOAD,
+      expectedOfferPayload: PUBLISH_OFFER_PAYLOAD,
       previewHash: "a".repeat(64),
       publicationControlId: "55555555-5555-4555-8555-555555555555",
       confirmPublish: "PUBLICAR LISTING EN EBAY",
@@ -2359,6 +2410,71 @@ test("authorized publication sends publishOffer exactly once and returns the lis
       ["Authorization", "Accept-Language"],
     )
     assert.equal(publishCall.headers["Accept-Language"], "en-US")
+  } finally {
+    process.env = original
+  }
+})
+
+test("official category-required UPC blocks before any publishOffer request", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "production-client-upc-guard",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "production-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "production-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "production-user-1",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH: "feature/draft-production",
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "feature/draft-production",
+    EBAY_PRO_RUNTIME: "staging",
+  })
+  const calls = []
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url)
+    const method = init.method ?? "GET"
+    calls.push({ pathname: parsed.pathname, method })
+    if (parsed.pathname.endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+    }
+    if (parsed.pathname === "/commerce/identity/v1/user/") {
+      return new Response(JSON.stringify({
+        userId: "production-user-1", status: "CONFIRMED",
+      }), { status: 200 })
+    }
+    if (parsed.pathname.endsWith("/get_category_policies")) {
+      return new Response(JSON.stringify({ categoryPolicies: [{
+        categoryId: "94861",
+        upcSupport: "REQUIRED",
+        eanSupport: "DISABLED",
+        isbnSupport: "DISABLED",
+      }] }), { status: 200 })
+    }
+    throw new Error(`unexpected ${method} ${parsed.pathname}`)
+  }
+  try {
+    const result = await module.publishEbayOfferOnce({
+      offerId: "offer-upc-missing",
+      expectedSku: RESERVED_SKU,
+      expectedInventoryItemPayload: PUBLISH_INVENTORY_PAYLOAD,
+      expectedOfferPayload: {
+        ...PUBLISH_OFFER_PAYLOAD,
+        categoryId: "94861",
+      },
+      previewHash: "e".repeat(64),
+      publicationControlId: "88888888-8888-4888-8888-888888888888",
+      confirmPublish: "PUBLICAR LISTING EN EBAY",
+    }, fetchImpl)
+    assert.equal(result.ok, false)
+    assert.equal(result.blocker, "EBAY_CATEGORY_REQUIRED_UPC_MISSING")
+    assert.equal(result.publishRequestSent, false)
+    assert.equal(calls.some((call) =>
+      call.method === "POST" && call.pathname.endsWith("/publish")), false)
+    assert.equal(calls.some((call) =>
+      call.pathname.includes("/inventory_item/")), false)
   } finally {
     process.env = original
   }
@@ -2415,6 +2531,9 @@ test("exact Inventory or Offer mismatch stops before publishOffer", async () => 
       }
       if (parsed.pathname === "/commerce/identity/v1/user/") {
         return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
+      }
+      if (parsed.pathname.endsWith("/get_category_policies")) {
+        return new Response(JSON.stringify(OPTIONAL_GTIN_CATEGORY_POLICY), { status: 200 })
       }
       if (parsed.pathname.includes("/inventory_item/") && method === "GET") {
         return new Response(JSON.stringify(inventoryBody), { status: 200 })
@@ -2538,9 +2657,16 @@ test("an uncertain publish response is reconciled with GET and never repeats POS
     if (parsed.pathname === "/commerce/identity/v1/user/") {
       return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
     }
+    if (parsed.pathname.endsWith("/get_category_policies")) {
+      return new Response(JSON.stringify(OPTIONAL_GTIN_CATEGORY_POLICY), { status: 200 })
+    }
+    if (parsed.pathname.includes("/inventory_item/") && method === "GET") {
+      return new Response(JSON.stringify(PUBLISH_INVENTORY_PAYLOAD), { status: 200 })
+    }
     if (parsed.pathname === "/sell/inventory/v1/offer/offer-456" && method === "GET") {
       offerReads += 1
       return new Response(JSON.stringify({
+        ...PUBLISH_OFFER_PAYLOAD,
         offerId: "offer-456",
         sku: RESERVED_SKU,
         marketplaceId: "EBAY_US",
@@ -2557,6 +2683,8 @@ test("an uncertain publish response is reconciled with GET and never repeats POS
     const result = await module.publishEbayOfferOnce({
       offerId: "offer-456",
       expectedSku: RESERVED_SKU,
+      expectedInventoryItemPayload: PUBLISH_INVENTORY_PAYLOAD,
+      expectedOfferPayload: PUBLISH_OFFER_PAYLOAD,
       previewHash: "b".repeat(64),
       publicationControlId: "66666666-6666-4666-8666-666666666666",
       confirmPublish: "PUBLICAR LISTING EN EBAY",

@@ -12,6 +12,7 @@ import {
   EBAY_FINAL_PUBLISH_CONFIRMATION,
   ebayDraftOnlyRuntimeStatus,
   inspectEbayDraftSkuState,
+  preflightEbayCategoryProductIdentifiers,
   preflightEbayDraftDependencies,
   preflightEbayDraftOnlyMobile,
   preflightEbayDraftSkuCollision,
@@ -392,6 +393,187 @@ async function verifyExactUnpublishedPublicationState(input: {
       duplicateInventoryItemCount: 0,
       duplicateOfferCount: skuState.offerCount - 1,
     },
+  }
+}
+
+async function readCategoryProductIdentifierPreflight(
+  approvedPayload: JsonRecord,
+) {
+  const offerPayload = record(approvedPayload.offerPayload)
+  return preflightEbayCategoryProductIdentifiers({
+    categoryId: text(offerPayload.categoryId),
+    marketplaceId: text(offerPayload.marketplaceId),
+    inventoryItemPayload: record(approvedPayload.inventoryItemPayload),
+  })
+}
+
+function categoryProductIdentifierPreflightStatus(input: {
+  blocker?: string | null
+  httpStatus?: number
+}) {
+  return input.blocker ===
+    "EBAY_CATEGORY_PRODUCT_IDENTIFIER_POLICY_UNAVAILABLE"
+    || input.httpStatus === 0
+    || input.httpStatus === 429
+    || Number(input.httpStatus) >= 500
+    ? 503
+    : 409
+}
+
+async function readExactActiveQuickPickListingIds(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  accountKey: string
+  sku: string
+  opportunity: JsonRecord
+}) {
+  const supplierSku = text(input.opportunity.supplier_sku)
+  const supplierVariantId = text(input.opportunity.supplier_variant_id)
+  const lunaProductId = text(input.opportunity.supplier_product_id)
+  const marketRadarProductId = uuid(input.opportunity.market_radar_product_id)
+  const empty = () => Promise.resolve({
+    data: [] as Array<{ id: string; ebay_item_id: string }>,
+    error: null,
+  })
+  const base = () => input.supabase.from("ebay_active_listings")
+    .select("id,ebay_item_id")
+    .eq("account_key", input.accountKey)
+    .eq("listing_status", "active")
+  const [skuResult, supplierSkuResult, variantResult, radarResult,
+    lineageResult] = await Promise.all([
+    input.sku ? base().eq("ebay_sku", input.sku) : empty(),
+    supplierSku ? base().eq("supplier_sku", supplierSku) : empty(),
+    supplierVariantId
+      ? base().eq("supplier_variant_id", supplierVariantId)
+      : empty(),
+    marketRadarProductId
+      ? base().eq("market_radar_product_id", marketRadarProductId)
+      : empty(),
+    lunaProductId && supplierVariantId && supplierSku
+      ? input.supabase.from("seller_os_luna_linkage_decisions")
+        .select("ebay_item_id")
+        .eq("account_key", input.accountKey)
+        .eq("marketplace_id", "EBAY_US")
+        .eq("decision", "APPROVE_EXACT_LINKAGE")
+        .eq("luna_product_id", lunaProductId)
+        .eq("luna_variant_id", supplierVariantId)
+        .eq("luna_sku", supplierSku)
+      : Promise.resolve({
+        data: [] as Array<{ ebay_item_id: string }>, error: null,
+      }),
+  ])
+  const directResults = [
+    skuResult,
+    supplierSkuResult,
+    variantResult,
+    radarResult,
+  ]
+  if (directResults.some((result) => result.error) || lineageResult.error) {
+    return {
+      lookupComplete: false,
+      exactActiveDuplicateCount: null as number | null,
+      itemIds: [] as string[],
+    }
+  }
+  const lineageItemIds = (lineageResult.data ?? [])
+    .map((row) => text(row.ebay_item_id))
+    .filter(Boolean)
+  const lineageActiveResult = lineageItemIds.length
+    ? await base().in("ebay_item_id", lineageItemIds)
+    : { data: [] as Array<{ id: string; ebay_item_id: string }>, error: null }
+  if (lineageActiveResult.error) {
+    return {
+      lookupComplete: false,
+      exactActiveDuplicateCount: null as number | null,
+      itemIds: [] as string[],
+    }
+  }
+  const itemIds = [...new Set([
+    ...directResults.flatMap((result) => result.data ?? []),
+    ...(lineageActiveResult.data ?? []),
+  ].map((row) => text(row.ebay_item_id)).filter(Boolean))]
+  return {
+    lookupComplete: true,
+    exactActiveDuplicateCount: itemIds.length,
+    itemIds,
+  }
+}
+
+async function readRejectedPublishOfficialReadback(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  accountKey: string
+  approvedPayload: JsonRecord
+  execution: JsonRecord | null
+  publication: JsonRecord | null
+  opportunity: JsonRecord
+}) {
+  const publication = record(input.publication)
+  const execution = record(input.execution)
+  if (
+    text(publication.phase) !== "terminal_failure"
+    || text(publication.last_error_code) !== "EBAY_PUBLISH_WRITE_REJECTED"
+  ) return null
+  const sku = text(publication.sku) || text(execution.sku)
+  const offerId = sanitizeEbayOfferId(publication.offer_id)
+    ?? sanitizeEbayOfferId(execution.offer_id)
+  if (!offerId || !sku) return {
+    readbackComplete: false,
+    blocker: "EBAY_REJECTED_PUBLISH_READBACK_IDENTITY_INVALID",
+  }
+  const inventoryItemPayload = record(
+    input.approvedPayload.inventoryItemPayload,
+  )
+  const offerPayload = record(input.approvedPayload.offerPayload)
+  const [inventory, unpublished, published, skuState, active] =
+    await Promise.all([
+      verifyEbayDraftInventoryItem(sku, inventoryItemPayload),
+      verifyEbayUnpublishedOffer(
+        offerId,
+        sku,
+        "EBAY_US",
+        offerPayload,
+      ),
+      verifyEbayPublishedOffer(offerId, sku, offerPayload),
+      inspectEbayDraftSkuState(sku),
+      readExactActiveQuickPickListingIds({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        sku,
+        opportunity: input.opportunity,
+      }),
+    ])
+  const offerExists = unpublished.httpStatus === 200
+    || published.httpStatus === 200
+  const listingId = published.listingId ?? null
+  const listingActive = published.safe && published.active === true
+  const readbackComplete = inventory.safe
+    && offerExists
+    && unpublished.safe
+    && skuState.inventoryExists
+    && skuState.offerCount === 1
+    && active.lookupComplete
+  return {
+    readbackComplete,
+    inventoryItemExists: inventory.safe,
+    offerExists,
+    offerStatus: unpublished.status || published.status || "UNPROVEN",
+    listingIdPresent: Boolean(listingId),
+    ebayItemId: listingId,
+    listingActive,
+    exactProductLiveMatch: listingActive
+      && active.itemIds.includes(text(listingId)),
+    inventoryItemCountForReservedSku: skuState.inventoryExists ? 1 : 0,
+    offerCountForCanonicalPackage: skuState.offerCount,
+    duplicateInventoryItemCount: skuState.inventoryExists ? 0 : null,
+    duplicateOfferCount: Math.max(0, skuState.offerCount - 1),
+    exactActiveDuplicateCount: active.exactActiveDuplicateCount,
+    exactActiveLookupComplete: active.lookupComplete,
+    officialReadOnly: true,
+    blocker: readbackComplete
+      ? null
+      : unpublished.blocker
+        || published.blocker
+        || skuState.blocker
+        || "EBAY_REJECTED_PUBLISH_READBACK_INCOMPLETE",
   }
 }
 
@@ -1326,6 +1508,8 @@ export async function GET(req: Request) {
   const expectedOpportunityId = uuid(url.searchParams.get("opportunityId"))
   const expectedCandidateKey = text(url.searchParams.get("candidateKey"))
     .slice(0, 300)
+  const includeRejectedPublishReadback =
+    url.searchParams.get("reconcileRejectedPublish") === "true"
   if (!packageId || !expectedOpportunityId || !expectedCandidateKey) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_CONTEXT_REQUIRED"), 400)
   }
@@ -1546,6 +1730,20 @@ export async function GET(req: Request) {
           accountFingerprint: fingerprint,
         },
       })
+    const rejectedPublishOfficialReadback = includeRejectedPublishReadback
+      ? await readRejectedPublishOfficialReadback({
+        supabase,
+        accountKey: text(context.listingPackage.account_key),
+        approvedPayload,
+        execution: ledger as JsonRecord | null,
+        publication: publication as JsonRecord | null,
+        opportunity: context.opportunity,
+      })
+      : null
+    const rejectedPublishCategoryProductIdentifierPreflight =
+      includeRejectedPublishReadback && latestApproval
+        ? await readCategoryProductIdentifierPreflight(approvedPayload)
+        : null
     return NextResponse.json({
       success: true,
       visualPublicationGate,
@@ -1556,6 +1754,8 @@ export async function GET(req: Request) {
       compensatedOfferFreshReadEligibility,
       compensatedOfferFreshRead,
       authenticatedPublicationRecovery,
+      rejectedPublishOfficialReadback,
+      rejectedPublishCategoryProductIdentifierPreflight,
       preflight: canonicalFreshPreflight,
       runtime,
       controlledPublication: {
@@ -2543,6 +2743,26 @@ async function approveDraft(body: JsonRecord, actor: string) {
       readiness.blockers,
     )
   }
+  const categoryProductIdentifierPreflight =
+    await readCategoryProductIdentifierPreflight(readiness.payload)
+  if (!categoryProductIdentifierPreflight.safe) {
+    const blocker = categoryProductIdentifierPreflight.blocker ??
+      "EBAY_CATEGORY_PRODUCT_IDENTIFIER_POLICY_UNAVAILABLE"
+    if (oneClickRequested) {
+      return oneClickPrewriteError(
+        new Error(blocker),
+        [blocker],
+        target,
+      )
+    }
+    return jsonError(
+      new Error(blocker),
+      categoryProductIdentifierPreflightStatus(
+        categoryProductIdentifierPreflight,
+      ),
+      [blocker],
+    )
+  }
   if (
     oneClickRequested
     && exactSelfLineage?.classification
@@ -3124,6 +3344,19 @@ async function executeDraft(body: JsonRecord, actor: string) {
       ...(currentHash !== approval.payload_hash ? ["APPROVED_PAYLOAD_CHANGED"] : []),
     ])
   }
+  const categoryProductIdentifierPreflight =
+    await readCategoryProductIdentifierPreflight(currentPayload)
+  if (!categoryProductIdentifierPreflight.safe) {
+    const blocker = categoryProductIdentifierPreflight.blocker ??
+      "EBAY_CATEGORY_PRODUCT_IDENTIFIER_POLICY_UNAVAILABLE"
+    return jsonError(
+      new Error(blocker),
+      categoryProductIdentifierPreflightStatus(
+        categoryProductIdentifierPreflight,
+      ),
+      [blocker],
+    )
+  }
   if (!runtime.enabled || !runtime.configured) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_RUNTIME_DISABLED"), 409)
   }
@@ -3478,6 +3711,19 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   const oneClickAuthorized = hasOneClickControlledPublicationIntent(
     approvedPayload,
   )
+  const categoryProductIdentifierPreflight =
+    await readCategoryProductIdentifierPreflight(approvedPayload)
+  if (!categoryProductIdentifierPreflight.safe) {
+    const blocker = categoryProductIdentifierPreflight.blocker ??
+      "EBAY_CATEGORY_PRODUCT_IDENTIFIER_POLICY_UNAVAILABLE"
+    return jsonError(
+      new Error(blocker),
+      categoryProductIdentifierPreflightStatus(
+        categoryProductIdentifierPreflight,
+      ),
+      [blocker],
+    )
+  }
   const officialReadback = await verifyExactUnpublishedPublicationState({
     approvedPayload,
     offerId: built.offerId,
@@ -3936,6 +4182,19 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   )
   if (built.previewHash !== current.preview_hash) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED"), 409)
+  }
+  const categoryProductIdentifierPreflight =
+    await readCategoryProductIdentifierPreflight(approvedPayload)
+  if (!categoryProductIdentifierPreflight.safe) {
+    const blocker = categoryProductIdentifierPreflight.blocker ??
+      "EBAY_CATEGORY_PRODUCT_IDENTIFIER_POLICY_UNAVAILABLE"
+    return jsonError(
+      new Error(blocker),
+      categoryProductIdentifierPreflightStatus(
+        categoryProductIdentifierPreflight,
+      ),
+      [blocker],
+    )
   }
   await verifyExactUnpublishedPublicationState({
     approvedPayload,
