@@ -28,6 +28,8 @@ type UploadAttempt = Readonly<{
   workbookSheetNames: readonly string[]
   observedHeaderNames: readonly string[]
   recognizedSheet: string | null
+  recognizedSheetNames: readonly string[]
+  recognizedSheetCount: number
   headerMatchStatus: string
   rowsParsed: number
   currentLiveRowsMatched: number
@@ -168,6 +170,9 @@ export function OwnerListingQualityReportControl() {
           {latestAttempt && <p className="mt-2 text-xs leading-5 text-[#aaa294]">
             Último intento · {localDate(latestAttempt.attemptedAt)} · {latestAttempt.fileType}
           </p>}
+          {latestAttempt?.status === "IMPORTED" && <p className="mt-2 text-xs leading-5 text-[#aaa294]">
+            {latestAttempt.recognizedSheetCount} hojas reconocidas · {latestAttempt.rowsParsed} filas procesadas · {latestAttempt.currentLiveRowsMatched} filas LIVE vinculadas
+          </p>}
           {latestAttemptFailed && <details className="mt-3 text-xs text-[#aaa294]">
             <summary className="cursor-pointer font-bold text-[#d8d0c3]">
               Detalle técnico
@@ -176,6 +181,8 @@ export function OwnerListingQualityReportControl() {
               <div><dt className="inline">Código: </dt><dd className="inline font-mono">{latestAttempt.technicalReasonCode ?? "—"}</dd></div>
               <div><dt className="inline">Hojas detectadas: </dt><dd className="inline">{latestAttempt.workbookSheetNames.join(", ") || "No capturadas en este intento"}</dd></div>
               <div><dt className="inline">Hoja reconocida: </dt><dd className="inline">{latestAttempt.recognizedSheet ?? "—"}</dd></div>
+              <div><dt className="inline">Hojas reconocidas: </dt><dd className="inline">{latestAttempt.recognizedSheetCount}{latestAttempt.recognizedSheetNames.length
+                ? ` · ${latestAttempt.recognizedSheetNames.join(", ")}` : ""}</dd></div>
               <div><dt className="inline">Headers: </dt><dd className="inline">{latestAttempt.headerMatchStatus}</dd></div>
             </dl>
           </details>}

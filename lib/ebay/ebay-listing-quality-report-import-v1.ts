@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { unzipSync } from "fflate"
 
 export const EBAY_LISTING_QUALITY_REPORT_IMPORT_VERSION =
-  "EBAY_LISTING_QUALITY_REPORT_IMPORT_V1_2026_09_02_STATUS_PARITY_V3"
+  "EBAY_LISTING_QUALITY_REPORT_IMPORT_V1_2026_09_02_REAL_WORKBOOK_V4"
 export const EBAY_LISTING_QUALITY_REPORT_SOURCE = "EBAY_LISTING_QUALITY_REPORT" as const
 
 type Row = Record<string, unknown>
@@ -24,6 +24,7 @@ const MAX_HEADER_SCAN_ROWS = 80
 
 const ALIASES = {
   itemId: ["item id", "itemid", "listing id", "listingid", "ebay item id", "ebayitemid"],
+  itemTitle: ["item title", "listing title", "title"],
   sku: ["sku", "custom label", "customlabel", "custom sku"],
   reportAccount: ["seller account", "account", "seller username", "ebay username", "account name"],
   itemSpecificName: ["item specific", "item specific name", "aspect", "aspect name", "attribute", "attribute name", "field name"],
@@ -38,12 +39,29 @@ const ALIASES = {
   reportWindowStart: ["window start", "report start", "start date"],
   reportWindowEnd: ["window end", "report end", "end date"],
   marketplace: ["marketplace", "site"],
+  recommendedItemSpecificsToAdd: ["recommended item specifics to add"],
+  numberOfPhotos: ["number of photos", "photo count", "photos"],
+  googleShoppingRejections: ["google shopping rejections", "google shopping rejection"],
+  promotedListings: ["promoted listings", "promoted listing"],
+  promotedListingsAdRate: ["promoted listings ad rate", "promoted listing ad rate"],
+  dailyImpressionsPerListing: ["daily impressions per listing"],
+  clickThroughRate: ["click through rate", "click-through rate", "ctr"],
+  salesConversionRate: ["sales conversion rate", "conversion rate"],
+  upc: ["upc"],
+  ean: ["ean"],
 } as const
 
 const IDENTITY_ALIASES = [...ALIASES.itemId, ...ALIASES.sku]
 const RECOMMENDATION_ALIASES = [...ALIASES.recommendationCategory,
   ...ALIASES.recommendationType, ...ALIASES.recommendationText, ...ALIASES.qualityIssue]
 const BENCHMARK_ALIASES = [...ALIASES.reportedBenchmark, ...ALIASES.topCategoryBenchmark]
+const REAL_QUALITY_ALIASES = [
+  ...ALIASES.recommendedItemSpecificsToAdd, ...ALIASES.numberOfPhotos,
+  ...ALIASES.googleShoppingRejections, ...ALIASES.promotedListings,
+  ...ALIASES.promotedListingsAdRate, ...ALIASES.dailyImpressionsPerListing,
+  ...ALIASES.clickThroughRate, ...ALIASES.salesConversionRate,
+]
+const NON_LISTING_SHEET_NAMES = new Set(["summary", "guide"])
 const PII_HEADERS = /buyer|customer|email|phone|address|payment|recipient/i
 const SECRET_TEXT = /authorization|bearer\s+|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|service[_ -]?role|cookie/i
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
@@ -149,6 +167,47 @@ function sharedStrings(xml: string | null) {
       .map((text) => text[1]).join("")))
 }
 
+function workbookCreatedAt(xml: string | null) {
+  if (!xml) return null
+  const value = xml.match(/<dcterms:created\b[^>]*>([^<]+)<\/dcterms:created>/i)?.[1]
+  const candidate = safeText(value, 80)
+  if (!candidate) return null
+  const parsed = new Date(candidate)
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null
+}
+
+function labeledWorkbookMetadata(grid: ReturnType<typeof worksheetGrid>) {
+  const result: { reportAccounts: string[]; reportDates: string[];
+    marketplaces: string[] } = { reportAccounts: [], reportDates: [], marketplaces: [] }
+  const definitions = [
+    { target: result.reportAccounts,
+      labels: ["seller account", "seller username", "ebay username", "account name", "seller id"] },
+    { target: result.reportDates,
+      labels: ["report date", "report generated", "generated on", "generation date"] },
+    { target: result.marketplaces,
+      labels: ["marketplace", "ebay site", "site"] },
+  ]
+  for (const row of grid.rows.slice(0, MAX_HEADER_SCAN_ROWS)) {
+    for (const [index, raw] of row.cells.entries()) {
+      const cell = safeText(raw, 240)
+      if (!cell) continue
+      const normalizedCell = normalizedHeader(cell)
+      for (const definition of definitions) {
+        const exact = definition.labels.includes(normalizedCell)
+        const inline = definition.labels.find((label) =>
+          normalizedCell.startsWith(`${label} `))
+        const adjacent = exact ? row.cells.slice(index + 1)
+          .map((value) => safeText(value, 160)).find(Boolean) ?? null : null
+        const embedded = inline ? safeText(cell.slice(inline.length)
+          .replace(/^\s*[:=-]\s*/, ""), 160) : null
+        const value = adjacent ?? embedded
+        if (value && !definition.target.includes(value)) definition.target.push(value)
+      }
+    }
+  }
+  return result
+}
+
 function worksheetGrid(xml: string, strings: string[]) {
   let formulaCellCount = 0
   const rows: Array<{ rowNumber: number; cells: string[] }> = []
@@ -178,15 +237,19 @@ function worksheetGrid(xml: string, strings: string[]) {
 function headerScore(cells: string[]) {
   const normalized = new Set(cells.map(normalizedHeader).filter(Boolean))
   const identity = IDENTITY_ALIASES.some((alias) => normalized.has(alias))
+  const itemTitle = ALIASES.itemTitle.some((alias) => normalized.has(alias))
   const recommendation = RECOMMENDATION_ALIASES.some((alias) => normalized.has(alias))
   const benchmark = BENCHMARK_ALIASES.some((alias) => normalized.has(alias))
+  const schemaQuality = REAL_QUALITY_ALIASES.some((alias) => normalized.has(alias))
   const itemId = ALIASES.itemId.some((alias) => normalized.has(alias))
   const sku = ALIASES.sku.some((alias) => normalized.has(alias))
   const category = ALIASES.category.some((alias) => normalized.has(alias))
   const recognizableHeaders = Object.values(ALIASES).filter((aliases) =>
     aliases.some((alias) => normalized.has(alias))).length
-  return { score: Number(identity) * 5 + Number(recommendation) * 4 + Number(benchmark) * 2,
-    identity, itemId, sku, recommendation, benchmark, category, recognizableHeaders }
+  return { score: Number(identity) * 5 + Number(itemTitle) * 4 +
+    Number(schemaQuality) * 6 + Number(recommendation) * 4 + Number(benchmark) * 2,
+    identity, itemId, itemTitle, sku, recommendation, benchmark, schemaQuality,
+    category, recognizableHeaders }
 }
 
 function candidateSheetEvidence(input: {
@@ -203,6 +266,11 @@ function candidateSheetEvidence(input: {
     columnFor(ALIASES.recommendationCategory), columnFor(ALIASES.recommendationType),
     columnFor(ALIASES.recommendationText), columnFor(ALIASES.qualityIssue),
     columnFor(ALIASES.reportedBenchmark), columnFor(ALIASES.topCategoryBenchmark),
+    columnFor(ALIASES.recommendedItemSpecificsToAdd),
+    columnFor(ALIASES.numberOfPhotos), columnFor(ALIASES.googleShoppingRejections),
+    columnFor(ALIASES.promotedListings), columnFor(ALIASES.promotedListingsAdRate),
+    columnFor(ALIASES.dailyImpressionsPerListing), columnFor(ALIASES.clickThroughRate),
+    columnFor(ALIASES.salesConversionRate),
   ].filter((column) => column >= 0)
   const dataRows = input.grid.rows.filter((row) => row.rowNumber > input.header.rowNumber)
     .slice(0, MAX_ROWS)
@@ -223,7 +291,8 @@ function candidateSheetEvidence(input: {
     .filter((token) => metadataText.includes(token)).length
   const rowDensity = nonEmptyRows.length ? recognizedRows.length / nonEmptyRows.length : 0
   const confidence = Math.round(Math.max(0, Math.min(100,
-    Number(input.header.itemId) * 18 + Number(input.header.sku) * 7 +
+    Number(input.header.itemId) * 18 + Number(input.header.itemTitle) * 8 +
+    Number(input.header.schemaQuality) * 16 + Number(input.header.sku) * 7 +
     Number(input.header.recommendation) * 16 + Number(input.header.benchmark) * 10 +
     Number(input.header.category) * 5 + Math.min(12, input.header.recognizableHeaders * 2) +
     Math.min(12, recognizedRows.length * 2) + rowDensity * 14 +
@@ -231,16 +300,20 @@ function candidateSheetEvidence(input: {
     Math.min(20, duplicateHeaderNoiseRows * 5))))
   const recognizedKeyColumns = [
     ...(input.header.itemId ? ["ITEM_ID"] : []),
+    ...(input.header.itemTitle ? ["ITEM_TITLE"] : []),
     ...(input.header.sku ? ["UNIQUE_SKU"] : []),
     ...(input.header.recommendation ? ["RECOMMENDATION"] : []),
     ...(input.header.benchmark ? ["BENCHMARK"] : []),
+    ...(input.header.schemaQuality ? ["REAL_QUALITY_SCHEMA"] : []),
     ...(input.header.category ? ["CATEGORY"] : []),
   ]
   const reasonCodes = [
     ...(input.header.itemId ? ["ITEM_ID_COLUMN_PRESENT"] : []),
+    ...(input.header.itemTitle ? ["ITEM_TITLE_COLUMN_PRESENT"] : []),
     ...(input.header.sku ? ["UNIQUE_SKU_COLUMN_PRESENT"] : []),
     ...(input.header.recommendation ? ["RECOMMENDATION_FIELDS_PRESENT"] : []),
     ...(input.header.benchmark ? ["BENCHMARK_FIELDS_PRESENT"] : []),
+    ...(input.header.schemaQuality ? ["REAL_QUALITY_FIELDS_PRESENT"] : []),
     ...(input.header.category ? ["CATEGORY_FIELDS_PRESENT"] : []),
     ...(recognizedRows.length ? ["VALID_LISTING_ROWS_PRESENT"] : ["NO_VALID_LISTING_ROWS"]),
     ...(reportMetadataConsistency >= 2 ? ["EBAY_REPORT_METADATA_CONSISTENT"] : []),
@@ -275,7 +348,7 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
           declaredUncompressedBytes > MAX_UNCOMPRESSED_BYTES) {
         throw new QualityReportValidationError("FILE_TOO_LARGE")
       }
-      return /^(\[Content_Types\]\.xml|_rels\/\.rels|xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|worksheets\/[^/]+\.xml))$/i.test(file.name)
+      return /^(\[Content_Types\]\.xml|_rels\/\.rels|docProps\/core\.xml|xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|worksheets\/[^/]+\.xml))$/i.test(file.name)
     } })
   } catch (error) {
     if (error instanceof QualityReportValidationError) throw error
@@ -293,13 +366,19 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
   const strings = sharedStrings(archive["xl/sharedStrings.xml"]
     ? XML_DECODER.decode(archive["xl/sharedStrings.xml"]) : null)
   const observedHeaderNames = new Set<string>()
-  const candidates = sheetDefinitions.flatMap((definition) => {
+  const workbookMetadata = { reportAccounts: new Set<string>(),
+    reportDates: new Set<string>(), marketplaces: new Set<string>() }
+  const evidence = sheetDefinitions.flatMap((definition) => {
     const target = relationshipMap.get(definition.relationshipId)
     if (!target) return []
     const path = target.startsWith("xl/") ? target : `xl/${target.replace(/^\.\//, "")}`
     const file = archive[path]
     if (!file) return []
     const grid = worksheetGrid(XML_DECODER.decode(file), strings)
+    const discoveredMetadata = labeledWorkbookMetadata(grid)
+    for (const value of discoveredMetadata.reportAccounts) workbookMetadata.reportAccounts.add(value)
+    for (const value of discoveredMetadata.reportDates) workbookMetadata.reportDates.add(value)
+    for (const value of discoveredMetadata.marketplaces) workbookMetadata.marketplaces.add(value)
     for (const cell of grid.rows.flatMap((row) => row.cells)) {
       const candidate = safeText(cell, 1_000)
       if (candidate && (SECRET_TEXT.test(candidate) || EMAIL.test(candidate))) {
@@ -313,13 +392,34 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
       const header = safeText(cell, 160)
       if (header) observedHeaderNames.add(header)
     }
-    return headers[0] ? [candidateSheetEvidence({ definition, grid, header: headers[0] })] : []
-  }).filter((candidate) => candidate.recognizedRowCount > 0 && candidate.header.identity &&
+    return headers[0] ? [{ ...candidateSheetEvidence({ definition, grid,
+      header: headers[0] }), workbookMetadata: discoveredMetadata }] : []
+  })
+  const isExcludedListingSheet = (candidate: typeof evidence[number]) =>
+    NON_LISTING_SHEET_NAMES.has(normalizedHeader(candidate.definition.name))
+  const hasGoogleRejectionSchema = (candidate: typeof evidence[number]) => {
+    const normalized = candidate.header.cells.map(normalizedHeader)
+    return ALIASES.googleShoppingRejections.some((alias) => normalized.includes(alias))
+  }
+  const schemaCandidates = evidence.filter((candidate) =>
+    !isExcludedListingSheet(candidate) && candidate.recognizedRowCount > 0 &&
+    candidate.header.itemId && candidate.header.itemTitle && candidate.header.schemaQuality)
+  const googleCandidates = evidence.filter((candidate) =>
+    !isExcludedListingSheet(candidate) && candidate.recognizedRowCount > 0 &&
+    candidate.header.itemId && hasGoogleRejectionSchema(candidate))
+  const realCandidates = [...new Map([...schemaCandidates, ...googleCandidates]
+    .map((candidate) => [candidate.definition.relationshipId, candidate])).values()]
+    .sort((left, right) => right.confidence - left.confidence ||
+      right.recognizedRowCount - left.recognizedRowCount ||
+      left.definition.name.localeCompare(right.definition.name))
+  const legacyCandidates = evidence.filter((candidate) =>
+    candidate.recognizedRowCount > 0 && candidate.header.identity &&
     (candidate.header.recommendation || candidate.header.benchmark))
     .sort((left, right) => right.confidence - left.confidence ||
       right.recognizedRowCount - left.recognizedRowCount ||
       left.definition.name.localeCompare(right.definition.name))
-  const publicCandidates = candidates.slice(0, MAX_WORKSHEETS).map((candidate) => ({
+  const diagnosticCandidates = realCandidates.length ? realCandidates : legacyCandidates
+  const publicCandidates = diagnosticCandidates.slice(0, MAX_WORKSHEETS).map((candidate) => ({
     sheetName: candidate.definition.name, headerRowNumber: candidate.header.rowNumber,
     recognizedRowCount: candidate.recognizedRowCount,
     nonEmptyDataRowCount: candidate.nonEmptyDataRowCount,
@@ -330,10 +430,63 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
     reportMetadataConsistency: candidate.reportMetadataConsistency,
     duplicateHeaderNoiseRows: candidate.duplicateHeaderNoiseRows,
   }))
+  const metadataSnapshot = {
+    reportAccount: workbookMetadata.reportAccounts.size === 1
+      ? [...workbookMetadata.reportAccounts][0] : null,
+    reportDate: workbookMetadata.reportDates.size === 1
+      ? [...workbookMetadata.reportDates][0] : null,
+    marketplace: workbookMetadata.marketplaces.size === 1
+      ? [...workbookMetadata.marketplaces][0] : null,
+    workbookCreatedAt: workbookCreatedAt(archive["docProps/core.xml"]
+      ? XML_DECODER.decode(archive["docProps/core.xml"]) : null),
+  }
   const baseDiagnosis = { recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX",
-    worksheetNames: sheetDefinitions.map((row) => row.name), candidateSheetCount: candidates.length,
+    worksheetNames: sheetDefinitions.map((row) => row.name),
+    candidateSheetCount: diagnosticCandidates.length,
     candidateSheets: publicCandidates,
     observedHeaderNames: [...observedHeaderNames].slice(0, MAX_COLUMNS) }
+  const rowsForCandidate = (candidate: typeof evidence[number]) => {
+    const headers = candidate.header.cells.map((cell, index) =>
+      safeText(cell, 160) ?? `Column ${index + 1}`)
+    return candidate.grid.rows.filter((row) => row.rowNumber > candidate.header.rowNumber)
+      .map((row) => ({ ...Object.fromEntries(headers.map((header, index) =>
+        [header, row.cells[index] ?? ""])),
+      __sourceSheetName: candidate.definition.name,
+      __sourceRowNumber: row.rowNumber }))
+      .filter((row) => Object.entries(row).some(([key, value]) =>
+        !key.startsWith("__") && safeText(value) !== null))
+  }
+  if (realCandidates.length) {
+    const rows = realCandidates.flatMap(rowsForCandidate)
+    if (!rows.length) throw new QualityReportValidationError("NO_DATA_SHEET_FOUND", {
+      ...baseDiagnosis, sheetResolutionState: "SCHEMA_DISCOVERED" })
+    if (rows.length > MAX_ROWS) throw new QualityReportValidationError("FILE_TOO_LARGE")
+    const recognizedWorksheets = realCandidates.map((candidate) => candidate.definition.name)
+    const diagnosis = { ...baseDiagnosis,
+      sheetResolutionState: "SCHEMA_DISCOVERED",
+      selectionMethod: "SCHEMA_MULTI_SHEET",
+      recognizedWorksheets,
+      recognizedSheetCount: recognizedWorksheets.length,
+      selectedWorksheet: recognizedWorksheets.length === 1 ? recognizedWorksheets[0] : null,
+      categorySheetNameHardcoded: false,
+      summaryGuideRowsExcluded: true,
+      ...metadataSnapshot }
+    return { rows, metadata: { format: "XLSX" as const,
+      worksheetNames: sheetDefinitions.map((row) => row.name),
+      recognizedWorksheets,
+      recognizedSheetCount: recognizedWorksheets.length,
+      selectedWorksheet: recognizedWorksheets.length === 1 ? recognizedWorksheets[0] : null,
+      headerRowNumber: realCandidates[0].header.rowNumber,
+      formulaCellCount: realCandidates.reduce((total, candidate) =>
+        total + candidate.grid.formulaCellCount, 0),
+      externalLinksRejected: true,
+      sheetResolutionState: "SCHEMA_DISCOVERED" as const,
+      selectionMethod: "SCHEMA_MULTI_SHEET" as const,
+      candidateSheets: publicCandidates,
+      ...metadataSnapshot,
+      diagnosis } }
+  }
+  const candidates = legacyCandidates
   if (!candidates.length) throw new QualityReportValidationError("NO_VALID_SHEET", {
     ...baseDiagnosis, sheetResolutionState: "NO_VALID_SHEET" })
   const requested = safeText(requestedWorksheet, 120)
@@ -368,16 +521,15 @@ function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
   if (!score.recommendation && !score.benchmark) {
     throw new QualityReportValidationError("RECOMMENDATION_COLUMNS_NOT_FOUND", diagnosis)
   }
-  const headers = candidate.header.cells.map((cell, index) => safeText(cell, 160) ?? `Column ${index + 1}`)
-  const rows = candidate.grid.rows.filter((row) => row.rowNumber > candidate.header.rowNumber)
-    .slice(0, MAX_ROWS).map((row) => Object.fromEntries(headers.map((header, index) =>
-      [header, row.cells[index] ?? ""]))).filter((row) => Object.values(row).some((value) => safeText(value)))
+  const rows = rowsForCandidate(candidate).slice(0, MAX_ROWS)
   if (!rows.length) throw new QualityReportValidationError("NO_DATA_SHEET_FOUND", diagnosis)
   return { rows, metadata: { format: "XLSX" as const,
     worksheetNames: sheetDefinitions.map((row) => row.name), selectedWorksheet: candidate.definition.name,
     headerRowNumber: candidate.header.rowNumber, formulaCellCount: candidate.grid.formulaCellCount,
     externalLinksRejected: true, sheetResolutionState: diagnosis.sheetResolutionState,
-    selectionMethod: diagnosis.selectionMethod, candidateSheets: publicCandidates, diagnosis } }
+    selectionMethod: diagnosis.selectionMethod, candidateSheets: publicCandidates,
+    recognizedWorksheets: [candidate.definition.name], recognizedSheetCount: 1,
+    ...metadataSnapshot, diagnosis } }
 }
 
 function field(row: Row, aliases: readonly string[]) {
@@ -419,6 +571,7 @@ export function parseEbayListingQualityReportV1(input: {
   }
   const parsed = parseRows(input.format, input.content, input.selectedWorksheet)
   const rawRows = parsed.rows
+  const parsedMetadata = parsed.metadata as Record<string, unknown>
   for (const row of rawRows) {
     for (const value of Object.values(row)) {
       const candidate = safeText(value, 1_000)
@@ -427,7 +580,8 @@ export function parseEbayListingQualityReportV1(input: {
       }
     }
   }
-  const headers = [...new Set(rawRows.flatMap((row) => Object.keys(row)))].slice(0, MAX_COLUMNS)
+  const headers = [...new Set(rawRows.flatMap((row) => Object.keys(row)))]
+    .filter((header) => !header.startsWith("__")).slice(0, MAX_COLUMNS)
   if (headers.some((header) => PII_HEADERS.test(header))) {
     throw new Error("QUALITY_REPORT_BUYER_PII_HEADER_REJECTED")
   }
@@ -435,39 +589,71 @@ export function parseEbayListingQualityReportV1(input: {
   const unknownHeaders = headers.filter((header) => !knownAliases.has(normalizedHeader(header)))
   const warnings: string[] = []
   const rows = rawRows.flatMap((row, index) => {
+    const sourceRow = row as Row
     const itemId = safeText(field(row, ALIASES.itemId), 30)
     const sku = safeText(field(row, ALIASES.sku), 120)
     const recommendationText = safeText(field(row, ALIASES.recommendationText))
     const recommendationCategory = safeText(field(row, ALIASES.recommendationCategory), 120)
     const recommendationType = safeText(field(row, ALIASES.recommendationType), 120)
     const qualityIssue = safeText(field(row, ALIASES.qualityIssue), 240)
-    const reportAccount = safeText(field(row, ALIASES.reportAccount), 120)
+    const reportAccount = safeText(field(row, ALIASES.reportAccount), 120) ??
+      safeText(parsedMetadata.reportAccount, 120)
     const itemSpecificName = safeText(field(row, ALIASES.itemSpecificName), 120)
     const reportedBenchmark = numberValue(field(row, ALIASES.reportedBenchmark))
     const topCategoryBenchmark = numberValue(field(row, ALIASES.topCategoryBenchmark))
+    const recommendedItemSpecificsToAdd = safeText(
+      field(row, ALIASES.recommendedItemSpecificsToAdd), 500)
+    const numberOfPhotos = numberValue(field(row, ALIASES.numberOfPhotos))
+    const googleShoppingRejections = safeText(
+      field(row, ALIASES.googleShoppingRejections), 500)
+    const promotedListings = safeText(field(row, ALIASES.promotedListings), 120)
+    const promotedListingsAdRate = numberValue(
+      field(row, ALIASES.promotedListingsAdRate))
+    const dailyImpressionsPerListing = numberValue(
+      field(row, ALIASES.dailyImpressionsPerListing))
+    const clickThroughRate = numberValue(field(row, ALIASES.clickThroughRate))
+    const salesConversionRate = numberValue(field(row, ALIASES.salesConversionRate))
+    const upc = safeText(field(row, ALIASES.upc), 40)
+    const ean = safeText(field(row, ALIASES.ean), 40)
     if (!itemId && !sku) { warnings.push("ROW_WITHOUT_LISTING_IDENTITY_SKIPPED"); return [] }
     if (!recommendationText && !recommendationCategory && !recommendationType && !qualityIssue &&
-        reportedBenchmark === null && topCategoryBenchmark === null) {
+        reportedBenchmark === null && topCategoryBenchmark === null &&
+        !recommendedItemSpecificsToAdd && numberOfPhotos === null &&
+        !googleShoppingRejections && !promotedListings && promotedListingsAdRate === null &&
+        dailyImpressionsPerListing === null && clickThroughRate === null &&
+        salesConversionRate === null) {
       warnings.push("ROW_WITHOUT_GUIDANCE_SKIPPED"); return []
     }
     if (itemId && !/^\d{9,19}$/.test(itemId)) {
       warnings.push("ROW_WITH_INVALID_ITEM_ID_SKIPPED"); return []
     }
     const unknownFields = Object.fromEntries(unknownHeaders.map((header) =>
-      [header.slice(0, 120), safeText(row[header], 240)]).filter(([, value]) => value !== null))
+      [header.slice(0, 120), safeText(sourceRow[header], 240)]).filter(([, value]) => value !== null))
     return [{
-      sourceRowNumber: index + (parsed.metadata.headerRowNumber ?? 1) + 1,
+      sourceSheetName: safeText(row.__sourceSheetName, 120),
+      sourceRowNumber: Number(row.__sourceRowNumber) ||
+        index + (Number(parsedMetadata.headerRowNumber) || 1) + 1,
       sourceRowFingerprint: `qlr_row_${sha(JSON.stringify({ itemId, sku, recommendationText,
         recommendationCategory, recommendationType, qualityIssue, reportAccount,
-        itemSpecificName })).slice(0, 24)}`,
+        itemSpecificName, recommendedItemSpecificsToAdd, numberOfPhotos,
+        googleShoppingRejections, promotedListings, promotedListingsAdRate,
+        dailyImpressionsPerListing, clickThroughRate, salesConversionRate,
+        sourceSheetName: row.__sourceSheetName })).slice(0, 24)}`,
       itemId, sku, recommendationCategory, recommendationType, recommendationText,
       reportedBenchmark, topCategoryBenchmark, qualityIssue,
       reportAccount, itemSpecificName,
+      itemTitle: safeText(field(row, ALIASES.itemTitle), 300),
+      recommendedItemSpecificsToAdd, numberOfPhotos, googleShoppingRejections,
+      promotedListings, promotedListingsAdRate, dailyImpressionsPerListing,
+      clickThroughRate, salesConversionRate, upc, ean,
       category: safeText(field(row, ALIASES.category), 160),
-      reportDate: safeText(field(row, ALIASES.reportDate), 40),
+      reportDate: safeText(field(row, ALIASES.reportDate), 40) ??
+        safeText(parsedMetadata.reportDate, 40) ??
+        safeText(parsedMetadata.workbookCreatedAt, 40)?.slice(0, 10) ?? null,
       reportWindowStart: safeText(field(row, ALIASES.reportWindowStart), 40),
       reportWindowEnd: safeText(field(row, ALIASES.reportWindowEnd), 40),
-      marketplace: safeText(field(row, ALIASES.marketplace), 30), unknownFields,
+      marketplace: safeText(field(row, ALIASES.marketplace), 30) ??
+        safeText(parsedMetadata.marketplace, 30), unknownFields,
     }]
   })
   if (!rows.length) throw new QualityReportValidationError("LISTING_IDENTITY_UNPROVEN", {

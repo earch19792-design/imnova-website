@@ -122,7 +122,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return noStore({ success: false, error: safeError(error) }, 503)
   }
-  let snapshot: ReturnType<typeof parseEbayListingQualityReportV1>
+  let snapshot: ReturnType<typeof parseEbayListingQualityReportV1> | null = null
   let prepared: ReturnType<typeof prepareOwnerListingQualityReportImportV1>
   try {
     snapshot = parseEbayListingQualityReportV1({ format, fileName,
@@ -144,7 +144,7 @@ export async function POST(request: Request) {
     try {
       const attempt = prepareFailedOwnerQualityReportUploadAttemptV1({
         accountKey: account.accountKey, attemptedBy: validation.userId,
-        format, content, error, attemptedAt, correlationSeed })
+        format, content, error, snapshot, attemptedAt, correlationSeed })
       await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
     } catch {
       // Preserve the original fail-closed parser result. Audit failures are
@@ -160,6 +160,9 @@ export async function POST(request: Request) {
       latestUploadAttempt }, 422)
   }
 
+  if (!snapshot) return noStore({ success: false,
+    error: "QUALITY_REPORT_IMPORT_STATE_INVALID" }, 500)
+
   let persisted: Awaited<ReturnType<typeof persistOwnerListingQualityReportV1>>
   try {
     persisted = await persistOwnerListingQualityReportV1({ supabase, prepared })
@@ -167,7 +170,7 @@ export async function POST(request: Request) {
     try {
       const attempt = prepareFailedOwnerQualityReportUploadAttemptV1({
         accountKey: account.accountKey, attemptedBy: validation.userId,
-        format, content, error, attemptedAt, correlationSeed })
+        format, content, error, snapshot, attemptedAt, correlationSeed })
       await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
     } catch { /* The valid-import table remains authoritative. */ }
     return noStore({ success: false, error: safeError(error) }, 422)

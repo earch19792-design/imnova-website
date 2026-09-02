@@ -46,6 +46,8 @@ export type OwnerQualityReportUploadAttemptV1 = Readonly<{
   workbookSheetNames: readonly string[]
   observedHeaderNames: readonly string[]
   recognizedSheet: string | null
+  recognizedSheetNames: readonly string[]
+  recognizedSheetCount: number
   headerMatchStatus: string
   rowsParsed: number
   currentLiveRowsMatched: number
@@ -133,6 +135,7 @@ export function prepareFailedOwnerQualityReportUploadAttemptV1(input: {
   format: "CSV" | "XLSX" | "JSON"
   content: string
   error: unknown
+  snapshot?: OwnerQualityReportSnapshotV1 | null
   attemptedAt?: string
   correlationSeed?: string
 }) {
@@ -140,6 +143,13 @@ export function prepareFailedOwnerQualityReportUploadAttemptV1(input: {
   if (!Number.isFinite(attemptedAt.getTime())) {
     throw new OwnerQualityReportImportError("QUALITY_REPORT_ATTEMPT_TIME_INVALID")
   }
+  const workbook = input.snapshot?.workbook as Record<string, unknown> | undefined
+  const workbookDiagnosis = workbook?.diagnosis &&
+    typeof workbook.diagnosis === "object" && !Array.isArray(workbook.diagnosis)
+    ? workbook.diagnosis as Record<string, unknown> : {}
+  const recognizedSheetNames = boundedStringList(
+    workbook?.recognizedWorksheets ?? diagnosticValue(input.error,
+      "recognizedWorksheets"), 20)
   return Object.freeze({
     marketplace_account_key: input.accountKey,
     attempted_by: input.attemptedBy,
@@ -152,11 +162,16 @@ export function prepareFailedOwnerQualityReportUploadAttemptV1(input: {
     technical_reason_code: technicalReasonCode(input.error),
     diagnostics_capture_status: "CAPTURED" as const,
     workbook_sheet_names: boundedStringList(
-      diagnosticValue(input.error, "worksheetNames"), 20),
+      workbook?.worksheetNames ?? diagnosticValue(input.error,
+        "worksheetNames"), 20),
     observed_header_names: boundedStringList(
-      diagnosticValue(input.error, "observedHeaderNames"), 250),
+      workbookDiagnosis.observedHeaderNames ?? diagnosticValue(input.error,
+        "observedHeaderNames"), 250),
     recognized_sheet: text(
-      diagnosticValue(input.error, "selectedWorksheet"), 120),
+      workbook?.selectedWorksheet ?? diagnosticValue(input.error,
+        "selectedWorksheet"), 120),
+    recognized_sheet_names: recognizedSheetNames,
+    recognized_sheet_count: recognizedSheetNames.length,
     header_match_status: headerMatchStatus(input.error),
     rows_parsed: Math.max(0, Number(
       diagnosticValue(input.error, "detectedRows")) || 0),
@@ -187,6 +202,8 @@ export function prepareSuccessfulOwnerQualityReportUploadAttemptV1(input: {
   const diagnosis = workbook.diagnosis && typeof workbook.diagnosis === "object"
     && !Array.isArray(workbook.diagnosis)
     ? workbook.diagnosis as Record<string, unknown> : {}
+  const recognizedSheetNames = boundedStringList(
+    workbook.recognizedWorksheets, 20)
   return Object.freeze({
     marketplace_account_key: input.accountKey,
     attempted_by: input.attemptedBy,
@@ -203,6 +220,8 @@ export function prepareSuccessfulOwnerQualityReportUploadAttemptV1(input: {
     observed_header_names: boundedStringList(
       diagnosis.observedHeaderNames, 250),
     recognized_sheet: text(workbook.selectedWorksheet, 120),
+    recognized_sheet_names: recognizedSheetNames,
+    recognized_sheet_count: recognizedSheetNames.length,
     header_match_status: "MATCHED" as const,
     rows_parsed: input.snapshot.rowCount,
     current_live_rows_matched: input.prepared.import.report_row_count -
@@ -244,7 +263,7 @@ function reportDate(value: unknown) {
     ? result : null
 }
 
-function signalType(row: OwnerQualityReportSnapshotV1["rows"][number]) {
+function legacySignalType(row: OwnerQualityReportSnapshotV1["rows"][number]) {
   const value = normalized([row.recommendationCategory, row.recommendationType,
     row.recommendationText, row.qualityIssue, row.itemSpecificName]
     .filter(Boolean).join(" "))
@@ -256,6 +275,104 @@ function signalType(row: OwnerQualityReportSnapshotV1["rows"][number]) {
   if (/category/.test(value)) return "CATEGORY_REVIEW" as const
   if (/description/.test(value)) return "DESCRIPTION_REVIEW" as const
   return "GENERAL_LISTING_QUALITY" as const
+}
+
+type SupportedQualitySignalV1 = Readonly<{
+  type: "LISTING_QUALITY_SPECIFIC_RECOMMENDATION" |
+    "VISUAL_COVERAGE_REVIEW" | "GOOGLE_SHOPPING_REJECTION" |
+    "PROMOTION_VISIBILITY_OPPORTUNITY" |
+    ReturnType<typeof legacySignalType>
+  kind: "ITEM_SPECIFIC" | "VISUAL_COVERAGE" | "GOOGLE_REJECTION" |
+    "PROMOTION" | "LEGACY"
+  proposedField: string | null
+  normalizedPayload: string
+}>
+
+function reportValuePresent(value: unknown) {
+  const candidate = normalized(value)
+  return Boolean(candidate) &&
+    !/^(?:0|false|no|none|n a|n\/a|na|not applicable|-)$/.test(candidate) &&
+    !/no (?:google shopping )?rejections?/.test(candidate)
+}
+
+function recommendedSpecificFields(value: unknown) {
+  const candidate = text(value, 500)
+  if (!candidate || !reportValuePresent(candidate)) return []
+  return [...new Set(candidate.split(/[\n,;|]+/).flatMap((entry) => {
+    const field = text(entry.replace(/^[-•*\s]+/, "")
+      .replace(/\s*\([^)]*recommended[^)]*\)\s*$/i, ""), 120)
+    if (!field || /^\d+(?:\.\d+)?$/.test(field) || !/[a-z]/i.test(field)) return []
+    return [field]
+  }))].slice(0, 20)
+}
+
+function promotionOpportunity(value: unknown) {
+  const candidate = normalized(value)
+  return /^(?:0|false|no|none|inactive|eligible)$/.test(candidate) ||
+    /not promoted|not using|not active/.test(candidate)
+}
+
+function supportedSignals(row: OwnerQualityReportSnapshotV1["rows"][number]) {
+  const result: SupportedQualitySignalV1[] = []
+  for (const field of recommendedSpecificFields(
+    row.recommendedItemSpecificsToAdd)) {
+    result.push({ type: "LISTING_QUALITY_SPECIFIC_RECOMMENDATION",
+      kind: "ITEM_SPECIFIC", proposedField: field,
+      normalizedPayload: normalized(field) })
+  }
+  if (row.numberOfPhotos !== null && row.numberOfPhotos <= 1) {
+    result.push({ type: "VISUAL_COVERAGE_REVIEW", kind: "VISUAL_COVERAGE",
+      proposedField: null, normalizedPayload: `photo_count:${row.numberOfPhotos}` })
+  }
+  if (reportValuePresent(row.googleShoppingRejections)) {
+    result.push({ type: "GOOGLE_SHOPPING_REJECTION", kind: "GOOGLE_REJECTION",
+      proposedField: null, normalizedPayload: "rejection:present" })
+  }
+  if (promotionOpportunity(row.promotedListings)) {
+    result.push({ type: "PROMOTION_VISIBILITY_OPPORTUNITY", kind: "PROMOTION",
+      proposedField: null, normalizedPayload: "promotion:not_active" })
+  }
+  if (!result.length && (row.recommendationText || row.recommendationCategory ||
+      row.recommendationType || row.qualityIssue || row.itemSpecificName ||
+      row.reportedBenchmark !== null || row.topCategoryBenchmark !== null)) {
+    const type = legacySignalType(row)
+    result.push({ type, kind: type === "ITEM_SPECIFIC_MISSING"
+      ? "ITEM_SPECIFIC" : "LEGACY",
+      proposedField: text(row.itemSpecificName, 120),
+      normalizedPayload: normalized(row.recommendationText ?? row.qualityIssue ??
+        row.recommendationType ?? row.recommendationCategory ?? "legacy") })
+  }
+  return result
+}
+
+function sourceSignalSemantics(
+  row: OwnerQualityReportSnapshotV1["rows"][number],
+  signal: SupportedQualitySignalV1,
+) {
+  return Object.freeze({
+    source: EBAY_LISTING_QUALITY_REPORT_SOURCE,
+    schema: "OFFICIAL_LISTING_QUALITY_REPORT",
+    sourceSheetReference: row.sourceSheetName
+      ? `qlr_sheet_${sha(row.sourceSheetName).slice(0, 16)}` : null,
+    signalKind: signal.kind,
+    metrics: Object.freeze({
+      dailyImpressionsPerListing: row.dailyImpressionsPerListing,
+      clickThroughRatePercent: row.clickThroughRate,
+      salesConversionRatePercent: row.salesConversionRate,
+    }),
+    listingContext: Object.freeze({
+      numberOfPhotos: row.numberOfPhotos,
+      promotedListingActive: row.promotedListings
+        ? !promotionOpportunity(row.promotedListings) : null,
+      googleShoppingRejectionPresent:
+        reportValuePresent(row.googleShoppingRejections),
+    }),
+    identifierContext: Object.freeze({
+      upcPresent: Boolean(text(row.upc, 40)),
+      eanPresent: Boolean(text(row.ean, 40)),
+      identifierValuesPersisted: false as const,
+    }),
+  })
 }
 
 function exactFact(truth: ExactProductTruthV1 | undefined, field: string | null) {
@@ -289,13 +406,33 @@ export function prepareOwnerListingQualityReportImportV1(input: {
       !input.liveScope.observedAt || !input.liveScope.scopeId) {
     throw new OwnerQualityReportImportError("QUALITY_REPORT_CURRENT_LIVE_SCOPE_UNPROVEN")
   }
+  const workbook = input.snapshot.workbook as Record<string, unknown>
+  const schemaDiscovered = workbook.selectionMethod === "SCHEMA_MULTI_SHEET"
+  const liveByItem = new Map(input.liveListings.map((listing) =>
+    [listing.itemId, listing]))
+  if (liveByItem.size !== input.liveListings.length || input.liveListings.some((row) =>
+    !/^\d{9,20}$/.test(row.itemId))) {
+    throw new OwnerQualityReportImportError("QUALITY_REPORT_CURRENT_LIVE_SCOPE_AMBIGUOUS")
+  }
+  if (input.snapshot.rows.some((row) => !row.itemId || !/^\d{9,20}$/.test(row.itemId))) {
+    throw new OwnerQualityReportImportError("QUALITY_REPORT_EXACT_ITEM_ID_REQUIRED")
+  }
+  const exactLiveMatches = input.snapshot.rows.filter((row) =>
+    liveByItem.has(row.itemId!))
+  if (!exactLiveMatches.length) {
+    throw new OwnerQualityReportImportError("QUALITY_REPORT_CURRENT_LIVE_MATCH_REQUIRED")
+  }
   const accounts = [...new Set(input.snapshot.rows.map((row) =>
     text(row.reportAccount, 120)).filter((value): value is string => Boolean(value)))]
-  if (accounts.length !== 1 || normalized(accounts[0]) !==
-      normalized(input.accountAlias) || input.snapshot.rows.some((row) =>
-        !text(row.reportAccount, 120))) {
+  const explicitAccountMatch = accounts.length === 1 &&
+    normalized(accounts[0]) === normalized(input.accountAlias) &&
+    input.snapshot.rows.every((row) => Boolean(text(row.reportAccount, 120)))
+  const currentLiveAccountMatch = schemaDiscovered && accounts.length === 0 &&
+    exactLiveMatches.length > 0
+  if (!explicitAccountMatch && !currentLiveAccountMatch) {
     throw new OwnerQualityReportImportError("QUALITY_REPORT_ACCOUNT_MATCH_UNPROVEN")
   }
+  const reportAccount = explicitAccountMatch ? accounts[0] : input.accountAlias
   const dates = input.snapshot.rows.map((row) => reportDate(row.reportDate))
   if (dates.some((value) => !value) || new Set(dates).size !== 1) {
     throw new OwnerQualityReportImportError("QUALITY_REPORT_DATE_UNPROVEN")
@@ -310,14 +447,20 @@ export function prepareOwnerListingQualityReportImportV1(input: {
   if (marketplaces.some((value) => !["ebay_us", "us", "ebay.com"].includes(value))) {
     throw new OwnerQualityReportImportError("QUALITY_REPORT_MARKETPLACE_MISMATCH")
   }
-  const liveByItem = new Map(input.liveListings.map((listing) =>
-    [listing.itemId, listing]))
-  if (liveByItem.size !== input.liveListings.length || input.liveListings.some((row) =>
-    !/^\d{9,20}$/.test(row.itemId))) {
-    throw new OwnerQualityReportImportError("QUALITY_REPORT_CURRENT_LIVE_SCOPE_AMBIGUOUS")
+  const liveBySku = new Map<string, OwnerQualityLiveListingV1[]>()
+  for (const listing of input.liveListings) {
+    const sku = normalizedSku(listing.sku)
+    if (sku) liveBySku.set(sku, [...(liveBySku.get(sku) ?? []), listing])
   }
-  if (input.snapshot.rows.some((row) => !row.itemId || !/^\d{9,20}$/.test(row.itemId))) {
-    throw new OwnerQualityReportImportError("QUALITY_REPORT_EXACT_ITEM_ID_REQUIRED")
+  for (const row of input.snapshot.rows) {
+    const reportSku = normalizedSku(row.sku)
+    if (!reportSku) continue
+    const itemListing = liveByItem.get(row.itemId!)
+    const skuListings = liveBySku.get(reportSku) ?? []
+    if (itemListing && normalizedSku(itemListing.sku) !== reportSku ||
+        skuListings.some((listing) => listing.itemId !== row.itemId)) {
+      throw new OwnerQualityReportImportError("QUALITY_REPORT_SKU_MAPPING_MISMATCH")
+    }
   }
 
   let nonliveRowsExcluded = 0
@@ -332,72 +475,102 @@ export function prepareOwnerListingQualityReportImportV1(input: {
       throw new OwnerQualityReportImportError("QUALITY_REPORT_SKU_MAPPING_MISMATCH")
     }
     covered.add(row.itemId!)
-    const type = signalType(row)
-    const proposedField = text(row.itemSpecificName, 120)
-    const dedupeKey = `sha256:${sha([row.itemId, type, normalized(proposedField),
-      normalized(row.recommendationCategory), normalized(row.recommendationType),
-      normalized(row.recommendationText ?? row.qualityIssue)].join("|"))}`
-    if (seen.has(dedupeKey)) return []
-    seen.add(dedupeKey)
     const truth = input.productTruthByItemId?.get(row.itemId!)
-    const fact = exactFact(truth, proposedField)
-    const truthSupported = Boolean(fact || truth && type !== "ITEM_SPECIFIC_MISSING")
     const freshness = normalizedReportDate === now.toISOString().slice(0, 10)
       ? "CURRENT" as const : "STALE" as const
-    const actionable = truthSupported && freshness === "CURRENT"
-    const displayField = proposedField ?? "la información del producto"
-    const happening = proposedField
-      ? `eBay recomienda completar ${displayField} en este producto.`
-      : "eBay encontró una mejora posible en la información de este producto."
-    const why = proposedField
-      ? `Agregar ${displayField} puede ayudar a que eBay entienda mejor el listing.`
-      : "Una ficha clara puede ayudar a que eBay y los compradores entiendan mejor el producto."
-    const recommendation = fact
-      ? `Seller OS encontró un valor respaldado por el producto exacto: ${fact.value}.`
-      : truthSupported
+    return supportedSignals(row).flatMap((signal) => {
+      const dedupeKey = `sha256:${sha([normalizedReportDate, row.itemId,
+        signal.type, signal.normalizedPayload].join("|"))}`
+      if (seen.has(dedupeKey)) return []
+      seen.add(dedupeKey)
+      const fact = signal.kind === "ITEM_SPECIFIC"
+        ? exactFact(truth, signal.proposedField) : null
+      const truthSupported = signal.kind === "ITEM_SPECIFIC"
+        ? Boolean(fact) : signal.kind === "GOOGLE_REJECTION" ||
+          signal.kind === "PROMOTION" ? false : Boolean(truth)
+      const actionable = freshness === "CURRENT" && (signal.kind === "ITEM_SPECIFIC"
+        ? Boolean(fact) : signal.kind === "VISUAL_COVERAGE" || signal.kind === "LEGACY"
+          ? truthSupported : false)
+      let happening = "eBay encontró una mejora posible en la información de este producto."
+      let why = "Una ficha clara puede ayudar a que eBay y los compradores entiendan mejor el producto."
+      let recommendation = truthSupported
         ? "Seller OS confirmó la identidad del producto exacto. Revisa la mejora sin cambiar hechos del producto."
-      : NEED_EVIDENCE
-    const whatToDo = freshness === "STALE"
-      ? "Este reporte está desactualizado. No necesitas hacer nada con esta señal."
-      : fact ? `Revisa ${fact.field}: ${fact.value}.`
-        : truthSupported ? "Revisa la mejora propuesta y confirma que representa el producto exacto."
+        : NEED_EVIDENCE
+      let whatToDo = actionable
+        ? "Revisa la mejora propuesta y confirma que representa el producto exacto."
+        : NEED_EVIDENCE
+      let priority: "NEEDS_ATTENTION" | "CAN_IMPROVE" | "ENRICH" | "WAIT" =
+        actionable ? "CAN_IMPROVE" : "WAIT"
+      if (signal.kind === "ITEM_SPECIFIC") {
+        happening = `eBay recomienda completar ${signal.proposedField} en este producto.`
+        why = `Agregar ${signal.proposedField} puede ayudar a que eBay entienda mejor el listing.`
+        recommendation = fact
+          ? `Seller OS encontró un valor respaldado por el producto exacto: ${fact.value}.`
           : NEED_EVIDENCE
-    const priority = !actionable ? "WAIT" as const
-      : type === "IMAGE_REVIEW" ? "ENRICH" as const
-        : type === "ITEM_SPECIFIC_MISSING" ? "NEEDS_ATTENTION" as const
-          : "CAN_IMPROVE" as const
-    return [{
-      item_id: row.itemId!, sku: row.sku,
-      signal_type: type,
-      raw_signal_reference: row.sourceRowFingerprint,
-      normalized_recommendation: recommendation,
-      what_is_happening: happening,
-      why_it_matters: why,
-      seller_os_recommendation: recommendation,
-      what_to_do_now: whatToDo,
-      priority_class: priority,
-      product_truth_supported: truthSupported,
-      proposed_field: fact?.field ?? null,
-      proposed_value: fact?.value ?? null,
-      product_truth_reference: fact?.reference ??
-        (truthSupported ? truth?.reference ?? null : null),
-      operator_action_required: actionable,
-      sku_match_when_available: reportSku ? true : null,
-      dedupe_key: dedupeKey,
-    }]
+        whatToDo = fact ? `Revisa ${fact.field}: ${fact.value}.` : NEED_EVIDENCE
+        priority = fact ? "NEEDS_ATTENTION" : "WAIT"
+      } else if (signal.kind === "VISUAL_COVERAGE") {
+        happening = "Este producto tiene una cobertura visual muy limitada."
+        why = "Más vistas útiles pueden ayudar al comprador a entender mejor el producto."
+        recommendation = truthSupported
+          ? "Revisa si Seller OS tiene una propuesta visual del producto exacto."
+          : NEED_EVIDENCE
+        whatToDo = actionable
+          ? "Compara las imágenes actuales con la propuesta y confirma que representan el producto exacto."
+          : NEED_EVIDENCE
+        priority = actionable ? "ENRICH" : "WAIT"
+      } else if (signal.kind === "GOOGLE_REJECTION") {
+        happening = "Google Shopping detectó un problema en este producto."
+        why = "El problema puede limitar dónde aparece el listing fuera de eBay."
+        recommendation = "Seller OS recomienda revisar la ficha sin cambiar hechos del producto."
+        whatToDo = "Revisa la señal; si falta evidencia del producto exacto, no cambies nada."
+        priority = "CAN_IMPROVE"
+      } else if (signal.kind === "PROMOTION") {
+        happening = "Este producto podría recibir más visibilidad."
+        why = "Una promoción puede ampliar su exposición, pero implica una decisión de gasto."
+        recommendation = "Necesita aprobación del owner."
+        whatToDo = "No cambies el gasto. Déjalo para aprobación del owner."
+        priority = "CAN_IMPROVE"
+      }
+      if (freshness === "STALE") {
+        whatToDo = "Este reporte está desactualizado. No necesitas hacer nada con esta señal."
+        priority = "WAIT"
+      }
+      return [{
+        item_id: row.itemId!, sku: row.sku,
+        signal_type: signal.type,
+        raw_signal_reference: row.sourceRowFingerprint,
+        normalized_recommendation: recommendation,
+        what_is_happening: happening,
+        why_it_matters: why,
+        seller_os_recommendation: recommendation,
+        what_to_do_now: whatToDo,
+        priority_class: priority,
+        product_truth_supported: truthSupported,
+        proposed_field: fact?.field ?? null,
+        proposed_value: fact?.value ?? null,
+        product_truth_reference: fact?.reference ??
+          (truthSupported ? truth?.reference ?? null : null),
+        operator_action_required: actionable,
+        sku_match_when_available: reportSku ? true : null,
+        dedupe_key: dedupeKey,
+        source_signal_semantics: sourceSignalSemantics(row, signal),
+      }]
+    })
   })
   const freshness = normalizedReportDate === now.toISOString().slice(0, 10)
     ? "CURRENT" as const : "STALE" as const
   const actionable = signals.filter((row) => row.operator_action_required).length
   const needEvidence = signals.filter((row) =>
-    !row.product_truth_supported).length
+    !row.product_truth_supported && ["ITEM_SPECIFIC_MISSING",
+      "LISTING_QUALITY_SPECIFIC_RECOMMENDATION"].includes(row.signal_type)).length
   return Object.freeze({
     import: Object.freeze({
       marketplace_account_key: input.accountKey,
       parser_version: input.snapshot.parserVersion,
       source_file_fingerprint: input.snapshot.sourceFileFingerprint,
       file_name: input.snapshot.fileName,
-      report_account: accounts[0],
+      report_account: reportAccount,
       report_date: normalizedReportDate,
       report_observed_at: `${normalizedReportDate}T00:00:00.000Z`,
       freshness,
@@ -415,6 +588,8 @@ export function prepareOwnerListingQualityReportImportV1(input: {
     signals: Object.freeze(signals),
     guards: Object.freeze({ currentLive: true as const,
       exactItemIdMatch: true as const, nonliveRowsExcluded: true as const,
+      accountMatchAuthority: explicitAccountMatch
+        ? "REPORT_METADATA" as const : "CANONICAL_CURRENT_LIVE_ITEM_ID" as const,
       duplicateTaskCount: 0 as const, factInvented: false as const,
       rawFileStored: false as const, remoteRawAccess: false as const }),
   })
@@ -520,7 +695,7 @@ export async function readOwnerQualityReportLatestUploadAttemptV1(input: {
 }) {
   const result = await input.supabase
     .from("ebay_listing_quality_report_upload_attempts")
-    .select("id,attempted_at,file_type,attempt_status,safe_failure_code,technical_reason_code,diagnostics_capture_status,workbook_sheet_names,observed_header_names,recognized_sheet,header_match_status,rows_parsed,current_live_rows_matched,nonlive_rows_excluded,valid_import_id")
+    .select("id,attempted_at,file_type,attempt_status,safe_failure_code,technical_reason_code,diagnostics_capture_status,workbook_sheet_names,observed_header_names,recognized_sheet,recognized_sheet_names,recognized_sheet_count,header_match_status,rows_parsed,current_live_rows_matched,nonlive_rows_excluded,valid_import_id")
     .eq("marketplace_account_key", input.accountKey)
     .order("attempted_at", { ascending: false })
     .order("id", { ascending: false }).limit(1).maybeSingle()
@@ -541,6 +716,9 @@ export async function readOwnerQualityReportLatestUploadAttemptV1(input: {
     observedHeaderNames: Object.freeze(
       boundedStringList(result.data.observed_header_names, 250)),
     recognizedSheet: result.data.recognized_sheet,
+    recognizedSheetNames: Object.freeze(
+      boundedStringList(result.data.recognized_sheet_names, 20)),
+    recognizedSheetCount: result.data.recognized_sheet_count,
     headerMatchStatus: result.data.header_match_status,
     rowsParsed: result.data.rows_parsed,
     currentLiveRowsMatched: result.data.current_live_rows_matched,
