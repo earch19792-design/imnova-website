@@ -11,9 +11,36 @@ import type { SellerOsHeroVisualReviewV1 } from
   "./ebay-seller-os-visual-quality-v1"
 import { currentLiveListingsForMonitorV1 } from
   "./ebay-seller-os-live-portfolio-integrity-v1"
+import type { RemoteOperatorPreparedImageProposalV1 } from
+  "./ebay-remote-operator-image-review-v1"
+import type { RemoteListingQualitySignalV1 } from
+  "./ebay-listing-quality-report-owner-import-v1"
 
 export const REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION =
-  "REMOTE_LIVE_OPTIMIZATION_OPERATOR_V1_2026_09_01" as const
+  "REMOTE_LIVE_OPTIMIZATION_OPERATOR_V1_2026_09_02" as const
+
+export const REMOTE_OPERATOR_AI_ASSISTANCE_POLICY_V1 = Object.freeze({
+  deterministicFirst: true as const,
+  allowedUses: Object.freeze([
+    "TRANSLATE_EBAY_SIGNALS_TO_HUMAN_LANGUAGE",
+    "EXPLAIN_WHAT_WHY_AND_NEXT_ACTION",
+    "SUMMARIZE_EVIDENCE",
+    "PREPARE_TITLE_AND_DESCRIPTION",
+    "EXPRESS_EVIDENCE_BACKED_KEYWORDS",
+    "COMPARE_CURRENT_AND_PROPOSED",
+    "PREPARE_GUARDED_IMAGE_ENRICHMENT",
+  ]),
+  inventProductTruth: false as const,
+  inventDemandEvidence: false as const,
+  inventProductIdentifiers: false as const,
+  inventProductFeatures: false as const,
+  overrideMarginGuards: false as const,
+  overrideOwnerAuthority: false as const,
+  autoPublishNewListing: false as const,
+  continuousAiPolling: false as const,
+  aiCallOnlyWhenUseful: true as const,
+  newAgentArchitecture: 0 as const,
+})
 
 export type RemoteLiveAttentionClass = "NEEDS_ATTENTION" | "CAN_IMPROVE" |
   "ENRICH" | "WAIT"
@@ -90,6 +117,7 @@ export type RemoteLiveOperatorListingV1 = Readonly<{
     source: "EBAY_LISTING_QUALITY_REPORT"
     exactListingAssociation: boolean
   }>[]
+  officialQualitySignals: readonly RemoteListingQualitySignalV1[]
   visualReview: Readonly<{
     status: "AVAILABLE" | "PARTIAL" | "UNPROVEN"
     imageUrl: string | null
@@ -99,6 +127,23 @@ export type RemoteLiveOperatorListingV1 = Readonly<{
       whatToReview: string
     }>[]
   }>
+  imageProposal: Readonly<{
+    proposalId: string
+    preparedAt: string
+    currentImageUrl: string | null
+    proposedMainImageUrl: string
+    proposedLifestyleImageUrl: string | null
+    proposedImageUrls: readonly string[]
+    reviewAllowed: boolean
+    reviewDecision: "APPROVE" | "REJECT" | null
+    reviewedAt: string | null
+    guards: Readonly<{
+      exactProductIdentity: boolean
+      noFalseFeatures: boolean
+      noUnprovenAccessories: boolean
+      productNotMisrepresented: boolean
+    }>
+  }> | null
   action: Readonly<{
     kind: "SAFE_PRICE_CHANGE" | "OWNER_ESCALATION" |
       "REVIEW_GUIDANCE" | "REVIEW_VISUAL" | "NO_ACTION"
@@ -322,7 +367,7 @@ function actionFromTask(input: {
     eventId,
     label: "Pedir aprobación al owner",
     ownerApprovalRequired: true,
-    ownerReason: "Esta promoción aumenta el gasto y necesita aprobación del owner.",
+    ownerReason: "Este producto podría recibir más visibilidad. Necesita aprobación del owner porque implica gasto.",
   }
   if (eventType === "ACTIVE_LISTING_OUT_OF_STOCK") return {
     kind: "OWNER_ESCALATION" as const,
@@ -354,6 +399,7 @@ function dominantNarrative(input: {
   listing: CommercialListingReadModel
   decision: CommercialListingDecisionV1 | null
   quality: readonly EbayListingQualityRecommendation[]
+  officialQualitySignal: RemoteListingQualitySignalV1 | null
   visual: SellerOsHeroVisualReviewV1 | null
   taskAction: ReturnType<typeof actionFromTask>
 }) {
@@ -367,6 +413,19 @@ function dominantNarrative(input: {
     whatOperatorShouldDo: "Abre la evidencia y envía la decisión al owner.",
     expectedBenefit: "Evitar una venta sin inventario confirmado.",
     helper: "Stock confirmado por la identidad exacta del producto proveedor.",
+  }
+  if (input.officialQualitySignal) return {
+    attentionClass: input.officialQualitySignal.priorityClass,
+    humanSummary: input.officialQualitySignal.whatIsHappening,
+    whyNow: input.officialQualitySignal.whyItMatters,
+    recommendation: input.officialQualitySignal.sellerOsRecommendation,
+    whatOperatorShouldDo: input.officialQualitySignal.whatToDoNow,
+    expectedBenefit: input.officialQualitySignal.operatorActionRequired
+      ? "Completar el listing con evidencia del producto exacto."
+      : "Evitar completar datos sin evidencia suficiente.",
+    helper: input.officialQualitySignal.productTruthSupported
+      ? "Seller OS vinculó esta propuesta con el producto exacto."
+      : "La recomendación de eBay no prueba por sí sola qué valor corresponde.",
   }
   if (input.quality.length > 0) return {
     attentionClass: "NEEDS_ATTENTION" as const,
@@ -384,7 +443,7 @@ function dominantNarrative(input: {
     recommendation: "Revisar primero la imagen principal y después el título.",
     whatOperatorShouldDo: "Compara la evidencia actual con la propuesta y aprueba sólo si representa el producto exacto.",
     expectedBenefit: "Aumentar las visitas al listing; no se promete una venta.",
-    helper: "CTR es la proporción de veces que una impresión termina en una visita.",
+    helper: "Comparamos cuántas veces eBay mostró el producto con cuántas personas decidieron abrirlo.",
   }
   if (reasons.has("TRAFFIC_WITHOUT_CONVERSION")) return {
     attentionClass: "CAN_IMPROVE" as const,
@@ -393,16 +452,16 @@ function dominantNarrative(input: {
     recommendation: "Revisar la propuesta comercial sin cambiar hechos del producto.",
     whatOperatorShouldDo: "Comprueba el cambio recomendado y confirma únicamente si la evidencia coincide.",
     expectedBenefit: "Reducir fricción de compra; el resultado debe medirse después.",
-    helper: "Conversión significa visitas que terminaron en una compra oficial.",
+    helper: "Aquí sólo contamos compras confirmadas en los pedidos oficiales de eBay.",
   }
   if (reasons.has("AUTHORITATIVE_ZERO_IMPRESSIONS")) return {
     attentionClass: "CAN_IMPROVE" as const,
     humanSummary: "eBay no ha mostrado este producto durante la ventana observada.",
     whyNow: "Sin apariciones, el listing no puede recibir visitas orgánicas.",
-    recommendation: "Revisar título, categoría e imágenes; cualquier promoción con gasto necesita al owner.",
+    recommendation: "Revisar título, categoría e imágenes. Este producto podría recibir más visibilidad.",
     whatOperatorShouldDo: "Revisa la señal y escala cualquier propuesta pagada.",
     expectedBenefit: "Mejorar visibilidad o decidir una prueba controlada.",
-    helper: "Una impresión es cada vez que eBay muestra el producto.",
+    helper: "Esta señal cuenta cada vez que eBay mostró el producto durante el período observado.",
   }
   if (visualFinding) return {
     attentionClass: "ENRICH" as const,
@@ -427,9 +486,10 @@ function dominantNarrative(input: {
 function fallbackAction(input: {
   narrative: ReturnType<typeof dominantNarrative>
   quality: readonly EbayListingQualityRecommendation[]
+  officialQualitySignal: RemoteListingQualitySignalV1 | null
   visual: SellerOsHeroVisualReviewV1 | null
 }) {
-  if (input.quality.length) return {
+  if (input.officialQualitySignal?.operatorActionRequired || input.quality.length) return {
     kind: "REVIEW_GUIDANCE" as const,
     status: "READ_ONLY" as const,
     eventId: null,
@@ -461,7 +521,10 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
   commercialDashboard: unknown
   visualQuality: RemoteLiveVisualBundle
   salesResults: RemoteLiveOperatorSalesResultsV1
+  imageProposals?: readonly RemoteOperatorPreparedImageProposalV1[]
+  listingQualitySignals?: readonly RemoteListingQualitySignalV1[]
   improvementExecutions?: readonly unknown[]
+  operatorUserId?: string | null
   liveMutationEnabled?: boolean
 }) {
   const listings = currentLiveListingsForMonitorV1(input.monitor)
@@ -474,6 +537,9 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
     const quality = qualityReport.recommendations.filter((row) =>
       row.listingKey === listing.key &&
       row.associationStatus !== "UNPROVEN").slice(0, 5)
+    const officialQualitySignals = (input.listingQualitySignals ?? []).filter((row) =>
+      row.itemId === listing.identity.itemId).slice(0, 5)
+    const officialQualitySignal = officialQualitySignals[0] ?? null
     const visual = input.visualQuality.listings.find((row) =>
       row.ebayItemId === listing.identity.itemId) ?? null
     const taskCandidate = tasks.filter((row) =>
@@ -487,9 +553,9 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       ?? null
     const taskAction = taskCandidate?.action ?? null
     const narrative = dominantNarrative({ listing, decision, quality,
-      visual, taskAction })
+      officialQualitySignal, visual, taskAction })
     const resolvedAction = taskAction ?? fallbackAction({ narrative, quality,
-      visual })
+      officialQualitySignal, visual })
     const currentLiveReadback =
       listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
       listing.discovery.livePresence.source ===
@@ -498,6 +564,32 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       listing.identity.marketplaceCertification.status === "US_CERTIFIED" &&
       /^\d{9,20}$/.test(listing.identity.itemId)
     const productTruthSupported = isProvenSupplierLinkageV1(listing.stock)
+    const preparedProposal = input.imageProposals?.find((proposal) =>
+      proposal.ebayItemId === listing.identity.itemId) ?? null
+    const proposalGuards = preparedProposal ? Object.freeze({
+      exactProductIdentity: exactListingIdentity && productTruthSupported &&
+        preparedProposal.guards.pipelineExactProductIdentity,
+      noFalseFeatures: preparedProposal.guards.noFalseFeatures,
+      noUnprovenAccessories:
+        preparedProposal.guards.noUnprovenAccessories,
+      productNotMisrepresented:
+        preparedProposal.guards.productNotMisrepresented,
+    }) : null
+    const imageProposal = preparedProposal && proposalGuards
+      ? Object.freeze({
+          proposalId: preparedProposal.proposalId,
+          preparedAt: preparedProposal.preparedAt,
+          currentImageUrl: visual?.heroImageUrl ??
+            listing.identity.primaryImageUrl,
+          proposedMainImageUrl: preparedProposal.proposedMainImageUrl,
+          proposedLifestyleImageUrl:
+            preparedProposal.proposedLifestyleImageUrl,
+          proposedImageUrls: preparedProposal.proposedImageUrls,
+          reviewAllowed: Object.values(proposalGuards).every(Boolean),
+          reviewDecision: preparedProposal.reviewDecision,
+          reviewedAt: preparedProposal.reviewedAt,
+          guards: proposalGuards,
+        }) : null
     const action = !exactListingIdentity || !currentLiveReadback ||
       (resolvedAction.kind === "SAFE_PRICE_CHANGE" && !productTruthSupported)
       ? { kind: resolvedAction.kind,
@@ -548,6 +640,7 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
         source: row.source,
         exactListingAssociation: row.associationStatus !== "UNPROVEN",
       }))),
+      officialQualitySignals: Object.freeze(officialQualitySignals),
       visualReview: Object.freeze({
         status: visual?.status ?? "UNPROVEN",
         imageUrl: visual?.heroImageUrl ?? listing.identity.primaryImageUrl,
@@ -558,6 +651,7 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
             whatToReview: finding.whatToReview,
           }))),
       }),
+      imageProposal,
       action: Object.freeze({
         ...action,
         postActionReadbackRequired: true as const,
@@ -571,11 +665,46 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
     return priority[left.attentionClass] - priority[right.attentionClass] ||
       left.title.localeCompare(right.title)
   })
+  const operatorExecutions = executions.filter((row) =>
+    input.operatorUserId && text(row.actor_user_id, 40) ===
+      input.operatorUserId).filter((row) =>
+        /^\d{9,20}$/.test(text(row.listing_id, 30) ?? ""))
+  const history = Object.freeze(operatorExecutions.slice(0, 20).map((row) => {
+    const phase = text(row.phase, 80)
+    return Object.freeze({
+      listingId: text(row.listing_id, 30) ?? "",
+      title: listingCards.find((listing) =>
+        listing.ebayItemId === text(row.listing_id, 30))?.title ??
+          "Listing LIVE",
+      action: text(row.action_type, 80) === "PRICE"
+        ? "Revisión de precio" : "Revisión de visibilidad",
+      status: phase === "applied_verified" ? "Cambio confirmado" :
+        phase === "outcome_unknown" ? "Verificando con eBay" :
+          phase === "terminal_failure" ? "No se aplicó" :
+            "Revisión preparada",
+      occurredAt: text(row.applied_verified_at, 80) ??
+        text(row.created_at, 80),
+      saleCausalityClaimed: false as const,
+    })
+  }))
+  const imageReviewCount = (input.imageProposals ?? []).filter((proposal) =>
+    proposal.reviewDecision !== null).length
+  const auditedListingIds = new Set([
+    ...history.map((row) => row.listingId),
+    ...(input.imageProposals ?? []).filter((proposal) =>
+      proposal.reviewDecision !== null).map((proposal) =>
+        proposal.ebayItemId),
+  ])
   return Object.freeze({
     contractVersion: REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION,
     generatedAt: new Date().toISOString(),
     role: "REMOTE_LIVE_OPTIMIZATION_OPERATOR" as const,
     marketplace: "EBAY_US" as const,
+    menu: Object.freeze([
+      "Inicio", "Mis tareas", "Listings LIVE", "Mejoras sugeridas",
+      "Resultados", "Historial", "Ayuda",
+    ]),
+    aiAssistancePolicy: REMOTE_OPERATOR_AI_ASSISTANCE_POLICY_V1,
     listings: Object.freeze(listingCards),
     queueCounts: Object.freeze({
       needsAttention: listingCards.filter((row) =>
@@ -589,17 +718,22 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
     }),
     results: input.salesResults,
     impact: Object.freeze({
-      label: "Resultados de la tienda" as const,
+      label: "Tu impacto" as const,
+      visible: auditedListingIds.size > 0,
+      auditedActionCount: history.length + imageReviewCount,
+      auditedListingCount: auditedListingIds.size,
       causalAttributionClaimed: false as const,
       operatorAttributedSales: null,
       reason: "OPERATOR_ACTION_TO_SALE_CAUSAL_ATTRIBUTION_NOT_PROVEN",
     }),
     capabilities: Object.freeze({
-      listingQualitySignals: qualityReport.status === "AVAILABLE",
+      listingQualitySignals: qualityReport.status === "AVAILABLE" ||
+        (input.listingQualitySignals?.length ?? 0) > 0,
       commercialSignals: decisions.length > 0,
-      imageEnrichmentReview: listingCards.some((row) =>
-        row.visualReview.status !== "UNPROVEN"),
-      lifestylePreparedAssetReview: false,
+      imageEnrichmentReview: true as const,
+      lifestylePreparedAssetReview: true as const,
+      preparedImageProposalCount: listingCards.filter((row) =>
+        row.imageProposal !== null).length,
       promotionReview: true,
       safeLivePriceMutation: input.liveMutationEnabled === true,
       officialPostActionReadback: true,
@@ -619,8 +753,11 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       officialReadbackRequired: true as const,
       unknownResultAutoRetry: false as const,
       buyerPiiIncluded: false as const,
+      remoteOperatorReportUploadAccess: false as const,
+      remoteOperatorRawReportAccess: false as const,
       marketplaceWritesDuringRead: 0 as const,
     }),
+    history,
   })
 }
 

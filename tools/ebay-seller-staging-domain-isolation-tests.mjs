@@ -232,10 +232,12 @@ test("route and bundle surface regress downward", () => {
   // quota-zero Daily Dollar Radar cron boundary that remains unregistered
   // until its durable scheduler/timezone policy is approved -> one bounded
   // Remote LIVE operator route over the existing authorities -> one owner-
-  // invited, singleton remote-operator enrollment route (no public signup).
+  // invited, singleton remote-operator enrollment route (no public signup)
+  // -> one owner-only Listing Quality Report import route that persists only
+  // normalized CURRENT-LIVE signals and performs no marketplace writes.
   // The old product/community domain remains at zero.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 92 + Number(temporarySellerOauthApi) +
+    countNamed("app/api", "route.ts") <= 93 + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
       Number(lunaQuickPickApi),

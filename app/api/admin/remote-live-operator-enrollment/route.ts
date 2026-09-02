@@ -129,6 +129,7 @@ export async function PUT(request: Request) {
     const result = await enrollRemoteLiveOperator({
       supabase: getSupabaseAdminClient(),
       invitation: input.invitation,
+      displayName: input.displayName,
       username: input.username,
       password: input.password,
     })

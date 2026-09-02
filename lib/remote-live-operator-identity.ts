@@ -3,6 +3,7 @@ export const REMOTE_LIVE_OPERATOR_INTERNAL_EMAIL =
 
 export const REMOTE_LIVE_OPERATOR_USERNAME_MIN_LENGTH = 3
 export const REMOTE_LIVE_OPERATOR_USERNAME_MAX_LENGTH = 32
+export const REMOTE_LIVE_OPERATOR_DISPLAY_NAME_MAX_LENGTH = 50
 
 const REMOTE_OPERATOR_USERNAME_PATTERN =
   /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/
@@ -26,6 +27,22 @@ function appMetadata(user: unknown) {
 export function remoteLiveOperatorUsernameFromUser(user: unknown) {
   return normalizeRemoteLiveOperatorUsername(
     appMetadata(user)?.operator_username,
+  )
+}
+
+export function normalizeRemoteLiveOperatorDisplayName(value: unknown) {
+  if (typeof value !== "string") return null
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/g, " ")
+  if (!normalized || normalized.length >
+      REMOTE_LIVE_OPERATOR_DISPLAY_NAME_MAX_LENGTH ||
+      /[\p{Cc}\p{Cf}]/u.test(normalized) ||
+      !/[\p{L}\p{N}]/u.test(normalized)) return null
+  return normalized
+}
+
+export function remoteLiveOperatorDisplayNameFromUser(user: unknown) {
+  return normalizeRemoteLiveOperatorDisplayName(
+    appMetadata(user)?.operator_display_name,
   )
 }
 

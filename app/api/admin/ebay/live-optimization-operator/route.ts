@@ -10,6 +10,8 @@ import {
   inspectEbayCommercialImprovement,
   prepareEbayCommercialImprovement,
 } from "@/lib/ebay/ebay-commercial-improvement-action-service"
+import { isProvenSupplierLinkageV1 } from
+  "@/lib/ebay/commercial-monitor-readonly-contract"
 import { getEbayCommercialMonitorDashboard } from
   "@/lib/ebay/ebay-commercial-monitor-service"
 import { getEbayProRuntimeBoundary } from
@@ -25,6 +27,14 @@ import { loadSellerOsAssistantMonitorSnapshotV1 } from
   "@/lib/ebay/ebay-seller-os-assistant-runtime"
 import { buildSellerOsCurrentLiveVisualQualityV1 } from
   "@/lib/ebay/ebay-seller-os-visual-quality-v1"
+import { currentLiveListingsForMonitorV1 } from
+  "@/lib/ebay/ebay-seller-os-live-portfolio-integrity-v1"
+import {
+  readRemoteOperatorPreparedImageProposalsV1,
+  recordRemoteOperatorImageReviewV1,
+} from "@/lib/ebay/ebay-remote-operator-image-review-v1"
+import { readRemoteListingQualitySignalsV1 } from
+  "@/lib/ebay/ebay-listing-quality-report-owner-import-v1"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 import {
   getSupabaseAdminClient,
@@ -128,16 +138,22 @@ export async function GET(request: Request) {
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
     const supabase = getSupabaseAdminClient()
     const monitorPromise = loadSellerOsAssistantMonitorSnapshotV1()
-    const [monitor, commercialDashboard, salesResults, executions] =
+    const [monitor, commercialDashboard, salesResults, executions,
+      imageProposals, listingQualitySignals] =
       await Promise.all([
         monitorPromise,
         getEbayCommercialMonitorDashboard(supabase),
         readRemoteLiveOperatorSalesResultsV1({ supabase,
           accountKey: account.accountKey }),
         supabase.from("ebay_commercial_improvement_executions")
-          .select("commercial_event_id,phase,action_type,applied_verified_at,last_error_code")
+          .select("commercial_event_id,actor_user_id,listing_id,phase,action_type,created_at,applied_verified_at,last_error_code")
           .eq("marketplace_account_key", account.accountKey)
           .order("created_at", { ascending: false }).limit(50),
+        readRemoteOperatorPreparedImageProposalsV1({ supabase,
+          accountKey: account.accountKey,
+          operatorUserId: auth.validation.userId }),
+        readRemoteListingQualitySignalsV1({ supabase,
+          accountKey: account.accountKey }),
       ])
     if (executions.error) {
       throw new Error("COMMERCIAL_IMPROVEMENT_LEDGER_READ_FAILED")
@@ -148,7 +164,10 @@ export async function GET(request: Request) {
       commercialDashboard,
       visualQuality: visual,
       salesResults,
+      imageProposals,
+      listingQualitySignals,
       improvementExecutions: executions.data ?? [],
+      operatorUserId: auth.validation.userId,
       liveMutationEnabled: liveMutationEnabled(),
     })
     const response = NextResponse.json({ success: true,
@@ -173,6 +192,61 @@ export async function POST(request: Request) {
   { status: 403 })
   const body = await jsonBody(request)
   const action = typeof body?.action === "string" ? body.action : ""
+  if (action === "REVIEW_IMAGE_PROPOSAL") {
+    const proposalId = uuid(body?.proposalId)
+    const decision = body?.decision === "APPROVE" ||
+      body?.decision === "REJECT" ? body.decision : null
+    if (!proposalId || !decision || auth.validation.accessRole !==
+        SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator) {
+      return NextResponse.json({ success: false,
+        error: "REMOTE_OPERATOR_IMAGE_REVIEW_INVALID" }, { status: 400 })
+    }
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) {
+        throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      }
+      const supabase = getSupabaseAdminClient()
+      const proposals = await readRemoteOperatorPreparedImageProposalsV1({
+        supabase, accountKey: account.accountKey,
+        operatorUserId: auth.validation.userId,
+      })
+      const proposal = proposals.find((row) =>
+        row.proposalId === proposalId)
+      if (!proposal) {
+        throw new Error("REMOTE_OPERATOR_IMAGE_PROPOSAL_NOT_FOUND")
+      }
+      const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
+      const listing = currentLiveListingsForMonitorV1(monitor).find((row) =>
+        row.identity.itemId === proposal.ebayItemId)
+      const exactLiveIdentity = Boolean(listing &&
+        listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
+        listing.discovery.livePresence.source ===
+          "EBAY_TRADING_GET_MY_EBAY_SELLING" &&
+        listing.identity.marketplaceCertification.status === "US_CERTIFIED" &&
+        /^\d{9,20}$/.test(listing.identity.itemId) &&
+        isProvenSupplierLinkageV1(listing.stock))
+      if (!exactLiveIdentity) {
+        throw new Error("REMOTE_OPERATOR_IMAGE_REVIEW_GUARDS_REQUIRED")
+      }
+      const review = await recordRemoteOperatorImageReviewV1({
+        supabase, accountKey: account.accountKey,
+        operatorUserId: auth.validation.userId, proposal, decision,
+      })
+      return NextResponse.json({ success: true,
+        outcome: "IMAGE_PROPOSAL_REVIEW_RECORDED", review,
+        message: decision === "APPROVE"
+          ? "Propuesta aprobada para el siguiente paso. No se publicó ningún cambio."
+          : "Propuesta rechazada. No se publicó ningún cambio.",
+        safety: { marketplaceWrites: 0, newListingPublications: 0,
+          listingEnds: 0, promotionWrites: 0 } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error),
+        operatorMessage:
+          "No pude guardar esta revisión. No se publicó ningún cambio." },
+      { status: 409 })
+    }
+  }
   const eventId = uuid(body?.eventId)
   const key = idempotencyKey(body?.idempotencyKey)
   if (!body || !eventId || !["PREPARE_SAFE_LIVE_CHANGE",
@@ -203,7 +277,7 @@ export async function POST(request: Request) {
         ownerEscalationAlreadyVisibleInCanonicalDashboard: true,
         actionType: inspected.actionType,
         message: inspected.actionType === "PROMOTED_LISTINGS_GENERAL"
-          ? "Esta promoción necesita aprobación del owner porque aumenta el gasto."
+          ? "Este producto podría recibir más visibilidad. Necesita aprobación del owner."
           : "Esta decisión corresponde exclusivamente al owner.",
         safety: { marketplaceWrites: 0, listingEnds: 0,
           promotionWrites: 0, executionLedgerClaimed: false } })

@@ -6,6 +6,7 @@ import type { SupabaseClient, User } from "@supabase/supabase-js"
 
 import {
   REMOTE_LIVE_OPERATOR_INTERNAL_EMAIL,
+  normalizeRemoteLiveOperatorDisplayName,
   normalizeRemoteLiveOperatorUsername,
 } from "./remote-live-operator-identity"
 import { SELLER_OS_ACCESS_ROLES } from "./seller-os-access-control"
@@ -110,10 +111,15 @@ export async function verifyRemoteLiveOperatorInvitation(token: unknown) {
 export async function enrollRemoteLiveOperator(input: Readonly<{
   supabase: SupabaseClient
   invitation: unknown
+  displayName: unknown
   username: unknown
   password: unknown
 }>) {
   await verifyRemoteLiveOperatorInvitation(input.invitation)
+  const displayName = normalizeRemoteLiveOperatorDisplayName(
+    input.displayName,
+  )
+  if (!displayName) throw new Error("REMOTE_OPERATOR_DISPLAY_NAME_INVALID")
   const username = normalizeRemoteLiveOperatorUsername(input.username)
   if (!username) throw new Error("REMOTE_OPERATOR_USERNAME_INVALID")
   if (typeof input.password !== "string" ||
@@ -133,6 +139,7 @@ export async function enrollRemoteLiveOperator(input: Readonly<{
     email_confirm: true,
     app_metadata: {
       role: SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator,
+      operator_display_name: displayName,
       operator_username: username,
       enrollment_contract: REMOTE_LIVE_OPERATOR_ENROLLMENT_CONTRACT,
     },
@@ -147,7 +154,8 @@ export async function enrollRemoteLiveOperator(input: Readonly<{
     throw new Error("REMOTE_OPERATOR_ACCOUNT_CREATION_FAILED")
   }
   if (!isRemoteOperator(data.user) ||
-      data.user.app_metadata?.operator_username !== username) {
+      data.user.app_metadata?.operator_username !== username ||
+      data.user.app_metadata?.operator_display_name !== displayName) {
     throw new Error("REMOTE_OPERATOR_ACCOUNT_ROLE_READBACK_FAILED")
   }
   const after = await readRemoteLiveOperatorEnrollmentStatus(input.supabase)
@@ -157,6 +165,7 @@ export async function enrollRemoteLiveOperator(input: Readonly<{
   return Object.freeze({
     created: true as const,
     role: SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator,
+    displayName,
     username,
   })
 }

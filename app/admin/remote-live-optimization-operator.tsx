@@ -1,6 +1,17 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import {
+  ChartNoAxesCombined,
+  CircleHelp,
+  ClipboardList,
+  History,
+  Home,
+  LogOut,
+  Radio,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react"
 
 import type {
   RemoteLiveAttentionClass,
@@ -8,9 +19,16 @@ import type {
   RemoteLiveOperatorListingV1,
 } from "@/lib/ebay/ebay-remote-live-optimization-operator-v1"
 import { signOutAdmin } from "@/lib/admin-auth"
+import { remoteLiveOperatorDisplayNameFromUser } from
+  "@/lib/remote-live-operator-identity"
 import { supabase } from "@/lib/supabase"
 
 type ReadState = "LOADING" | "STABLE" | "RETRYING"
+type OperatorView = "HOME" | "TASKS" | "LIVE" | "SUGGESTIONS" |
+  "RESULTS" | "HISTORY" | "HELP"
+type ActionStage = "IDLE" | "APPLYING" | "VERIFYING" | "CONFIRMED" |
+  "UNKNOWN"
+
 type ActionPreview = Readonly<{
   eventId: string
   actionType: string
@@ -18,19 +36,32 @@ type ActionPreview = Readonly<{
   confirmationRequired: string
 }>
 
+const navigation = Object.freeze([
+  { key: "HOME" as const, label: "Inicio", icon: Home },
+  { key: "TASKS" as const, label: "Mis tareas", icon: ClipboardList },
+  { key: "LIVE" as const, label: "Listings LIVE", icon: Radio },
+  { key: "SUGGESTIONS" as const, label: "Mejoras sugeridas", icon: Sparkles },
+  { key: "RESULTS" as const, label: "Resultados", icon: ChartNoAxesCombined },
+  { key: "HISTORY" as const, label: "Historial", icon: History },
+  { key: "HELP" as const, label: "Ayuda", icon: CircleHelp },
+])
+
 const sections: readonly Readonly<{
   key: RemoteLiveAttentionClass
   label: string
   explanation: string
+  accent: string
 }>[] = Object.freeze([
-  { key: "NEEDS_ATTENTION", label: "🔴 Necesita atención",
-    explanation: "Requisito o riesgo real que merece revisión." },
-  { key: "CAN_IMPROVE", label: "🟠 Puede mejorar",
-    explanation: "Oportunidad comercial respaldada por evidencia." },
-  { key: "ENRICH", label: "✨ Enriquecer",
-    explanation: "Contenido o imágenes que pueden quedar más claros." },
-  { key: "WAIT", label: "🟢 No hacer nada todavía",
-    explanation: "La evidencia actual no justifica un cambio." },
+  { key: "NEEDS_ATTENTION", label: "Necesita atención",
+    explanation: "Hay algo que conviene revisar hoy.", accent: "#b75d43" },
+  { key: "CAN_IMPROVE", label: "Puede mejorar",
+    explanation: "Seller OS encontró una oportunidad respaldada.",
+    accent: "#b88958" },
+  { key: "ENRICH", label: "Enriquecer",
+    explanation: "La presentación puede quedar más clara.", accent: "#1d5961" },
+  { key: "WAIT", label: "No hacer nada todavía",
+    explanation: "Todavía no hay una razón suficiente para cambiar.",
+    accent: "#74866d" },
 ])
 
 function money(value: unknown, currency = "USD") {
@@ -50,16 +81,16 @@ function number(value: unknown) {
     : "—"
 }
 
-function percent(value: unknown) {
-  if (value === null || value === undefined || value === "") return "—"
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : "—"
-}
-
 function shortDate(value: string | null | undefined) {
   if (!value || !Number.isFinite(Date.parse(value))) return "—"
   return new Intl.DateTimeFormat("es", { month: "short", day: "numeric",
     hour: "2-digit", minute: "2-digit" }).format(new Date(value))
+}
+
+function dayLabel(value: string) {
+  if (!Number.isFinite(Date.parse(`${value}T00:00:00.000Z`))) return value
+  return new Intl.DateTimeFormat("es", { weekday: "short", timeZone: "UTC" })
+    .format(new Date(`${value}T00:00:00.000Z`)).replace(".", "")
 }
 
 async function operatorRequest(path: string, init?: RequestInit) {
@@ -82,77 +113,175 @@ async function operatorRequest(path: string, init?: RequestInit) {
 function SalesChart({ dashboard }: {
   dashboard: RemoteLiveOptimizationOperatorDashboardV1
 }) {
-  const [windowDays, setWindowDays] = useState<7 | 30>(7)
-  const points = dashboard.results.series.slice(-windowDays)
+  const points = dashboard.results.series.slice(-7)
   const maximum = Math.max(1, ...points.map((point) => point.sales))
-  return <section className="rounded-3xl border border-emerald-200/15 bg-emerald-200/[0.055] p-4 sm:p-5"
+  const coordinates = points.map((point, index) => {
+    const x = points.length > 1 ? index / (points.length - 1) * 100 : 50
+    const y = 84 - point.sales / maximum * 66
+    return { ...point, x, y }
+  })
+  const polyline = coordinates.map((point) => `${point.x},${point.y}`).join(" ")
+  return <section className="rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-5 shadow-[0_18px_50px_rgba(55,45,32,0.07)] sm:p-7"
     data-remote-sales-results>
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/65">📈 Resultados</p>
-        <h2 className="mt-1 text-xl font-black">Resultados de la tienda</h2>
-        <p className="mt-1 text-xs leading-5 text-white/50">Ventas oficiales de eBay · corte UTC. No atribuimos ventas a un cambio sin prueba.</p></div>
-      <div className="flex rounded-xl border border-white/10 p-1" role="group"
-        aria-label="Ventana del gráfico">
-        {[7, 30].map((days) => <button key={days} type="button"
-          onClick={() => setWindowDays(days as 7 | 30)}
-          className={`min-h-11 min-w-12 rounded-lg px-3 text-xs font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200 ${windowDays === days ? "bg-emerald-200 text-emerald-950" : "text-white/60"}`}>
-          {days}d
-        </button>)}
-      </div>
+    <div className="max-w-2xl">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1d5961]">Resultados oficiales</p>
+      <h2 className="mt-2 font-serif text-2xl font-semibold leading-tight text-[#242724] sm:text-3xl">Resultados de la tienda</h2>
+      <p className="mt-2 text-sm leading-6 text-[#64675f]">Pedidos confirmados por eBay. Las ventas no se atribuyen a una acción sin prueba.</p>
     </div>
-    <dl className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
+    <dl className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
       {([
         ["Ventas hoy", dashboard.results.salesToday],
-        ["Ventas · 7 días", dashboard.results.salesLast7Days],
-        ["Ingresos hoy", money(dashboard.results.revenueToday,
-          dashboard.results.currency ?? "USD")],
-        ["Ingresos · 7 días", money(dashboard.results.revenueLast7Days,
+        ["Ventas en 7 días", dashboard.results.salesLast7Days],
+        ["Ingresos en 7 días", money(dashboard.results.revenueLast7Days,
           dashboard.results.currency ?? "USD")],
         ["Listings con ventas", dashboard.results.listingsWithSales],
       ] as const).map(([label, value]) => <div key={label}
-        className="min-w-0 rounded-2xl bg-black/20 p-3">
-        <dt className="text-[11px] font-bold leading-4 text-white/45">{label}</dt>
-        <dd className="mt-1 break-words text-xl font-black tabular-nums">{value ?? "—"}</dd>
+        className="min-w-0 rounded-2xl bg-[#f4efe7] p-4">
+        <dt className="text-xs font-medium leading-5 text-[#6f716b]">{label}</dt>
+        <dd className="mt-2 break-words text-2xl font-semibold tabular-nums text-[#242724]">{value ?? "—"}</dd>
       </div>)}
     </dl>
-    <div className="mt-4 flex h-28 items-end gap-1 overflow-hidden rounded-2xl border border-white/[0.06] bg-black/20 px-3 pb-3 pt-4"
-      aria-label={`Ventas por día, últimos ${windowDays} días`}>
-      {points.map((point) => <div key={point.day}
-        className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
-        <span className="text-[9px] font-bold text-white/45">
-          {point.sales || ""}
-        </span>
-        <span className="w-full min-w-1 rounded-t bg-emerald-300/80"
-          style={{ height: `${Math.max(point.sales ? 8 : 2,
-            point.sales / maximum * 68)}px` }} />
-      </div>)}
+    <div className="mt-6 rounded-2xl border border-[#e5ded3] bg-[#faf7f1] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-[#343834]">Ventas por día</h3>
+        <span className="text-xs text-[#777a73]">Últimos 7 días</span>
+      </div>
+      {coordinates.length ? <>
+        <svg viewBox="0 0 100 92" role="img"
+          aria-label="Gráfico de ventas por día de los últimos siete días"
+          className="mt-3 h-40 w-full overflow-visible" preserveAspectRatio="none">
+          <path d="M0 84 H100" stroke="#d8d2c7" strokeWidth="0.7" />
+          <polyline points={polyline} fill="none" stroke="#1d5961"
+            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          {coordinates.map((point) => <g key={point.day}>
+            <circle cx={point.x} cy={point.y} r="2.6" fill="#f8f2e8"
+              stroke="#1d5961" strokeWidth="1.4" />
+            <text x={point.x} y={Math.max(8, point.y - 7)}
+              textAnchor="middle" fill="#4f554f" fontSize="5.5"
+              fontWeight="700">{point.sales}</text>
+          </g>)}
+        </svg>
+        <div className="grid grid-cols-7 gap-1" aria-hidden="true">
+          {points.map((point) => <span key={point.day}
+            className="text-center text-[10px] font-medium uppercase text-[#7a7d76]">{dayLabel(point.day)}</span>)}
+        </div>
+      </> : <p className="py-12 text-center text-sm text-[#777a73]">Los pedidos oficiales no están disponibles ahora.</p>}
     </div>
   </section>
 }
 
-function ListingMetrics({ listing }: { listing: RemoteLiveOperatorListingV1 }) {
-  return <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+function ImpactCard({ dashboard }: {
+  dashboard: RemoteLiveOptimizationOperatorDashboardV1
+}) {
+  if (!dashboard.impact.visible) return null
+  return <section className="rounded-[28px] bg-[#1d5961] p-6 text-white shadow-[0_18px_50px_rgba(29,89,97,0.18)] sm:p-7">
+    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/65">Tu impacto</p>
+    <h2 className="mt-2 font-serif text-2xl font-semibold">Tu trabajo queda registrado</h2>
+    <p className="mt-2 max-w-2xl text-sm leading-6 text-white/75">Revisaste {dashboard.impact.auditedActionCount} {dashboard.impact.auditedActionCount === 1 ? "acción" : "acciones"} en {dashboard.impact.auditedListingCount} {dashboard.impact.auditedListingCount === 1 ? "listing" : "listings"}. Esto muestra actividad comprobada; no afirma que una venta haya sido causada por un cambio.</p>
+  </section>
+}
+
+function SupportingNumbers({ listing }: { listing: RemoteLiveOperatorListingV1 }) {
+  return <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
     {([
-      ["Veces mostrado", number(listing.metrics.impressions)],
-      ["Visitas", number(listing.metrics.views)],
-      ["Entraron", percent(listing.metrics.ctrPercent)],
-      ["Órdenes", number(listing.metrics.orders)],
-      ["Unidades", number(listing.metrics.unitsSold)],
+      ["Apariciones en eBay", number(listing.metrics.impressions)],
+      ["Visitas al producto", number(listing.metrics.views)],
+      ["Compras oficiales", number(listing.metrics.orders)],
+      ["Unidades vendidas", number(listing.metrics.unitsSold)],
     ] as const).map(([label, value]) => <div key={label}
-      className="rounded-xl bg-black/20 p-2.5">
-      <dt className="text-[10px] font-bold text-white/40">{label}</dt>
-      <dd className="mt-1 font-black tabular-nums">{value}</dd>
+      className="rounded-xl bg-[#f4efe7] p-3">
+      <dt className="text-[11px] font-medium leading-4 text-[#73766f]">{label}</dt>
+      <dd className="mt-1 font-semibold tabular-nums text-[#292d29]">{value}</dd>
     </div>)}
   </dl>
 }
 
-function ActionPanel({ listing, onRefresh }: {
+function ImageProposalReview({ listing, canReview, onRefresh }: {
   listing: RemoteLiveOperatorListingV1
+  canReview: boolean
+  onRefresh: () => Promise<void>
+}) {
+  const proposal = listing.imageProposal
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState("")
+  if (!proposal) return null
+
+  async function review(decision: "APPROVE" | "REJECT") {
+    if (!proposal?.reviewAllowed || proposal.reviewDecision || busy ||
+        !canReview) return
+    setBusy(true)
+    setMessage("")
+    try {
+      const payload = await operatorRequest(
+        "/api/admin/ebay/live-optimization-operator", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "REVIEW_IMAGE_PROPOSAL",
+            proposalId: proposal.proposalId, decision }),
+        })
+      setMessage(String(payload.message ??
+        "Revisión guardada. No se publicó ningún cambio."))
+      await onRefresh()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No pude guardar esta revisión. No se publicó ningún cambio.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <section className="mt-5 rounded-2xl border border-[#d7cfc2] bg-[#f7f2ea] p-4 sm:p-5"
+    data-image-enrichment-review>
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#1d5961]">Revisión visual preparada</p>
+      <h4 className="mt-1 font-serif text-xl font-semibold text-[#292d29]">Actual vs Propuesta</h4>
+    </div>
+    <div className="mt-4 grid gap-4 md:grid-cols-2">
+      <figure className="min-w-0">
+        <figcaption className="mb-2 text-sm font-semibold text-[#5c605a]">Actual</figcaption>
+        <div className="aspect-square overflow-hidden rounded-2xl border border-[#ded7cc] bg-white">
+          {proposal.currentImageUrl ? <img src={proposal.currentImageUrl}
+            alt={`Imagen actual de ${listing.title}`}
+            className="h-full w-full object-contain" /> :
+            <div className="flex h-full items-center justify-center text-sm text-[#777a73]">Imagen no disponible</div>}
+        </div>
+      </figure>
+      <figure className="min-w-0">
+        <figcaption className="mb-2 text-sm font-semibold text-[#1d5961]">Propuesta</figcaption>
+        <div className="grid grid-cols-2 gap-2">
+          <img src={proposal.proposedMainImageUrl}
+            alt={`Imagen principal propuesta para ${listing.title}`}
+            className="aspect-square h-full w-full rounded-2xl border border-[#cad6d2] bg-white object-contain" />
+          {proposal.proposedLifestyleImageUrl && <img
+            src={proposal.proposedLifestyleImageUrl}
+            alt={`Imagen de contexto propuesta para ${listing.title}`}
+            className="aspect-square h-full w-full rounded-2xl border border-[#cad6d2] bg-white object-contain" />}
+        </div>
+      </figure>
+    </div>
+    <p className="mt-4 rounded-xl bg-white/75 p-3 text-sm leading-6 text-[#535852]">Comprueba que el producto se vea correcto y que no aparezcan accesorios o funciones que no vienen incluidos.</p>
+    {proposal.reviewDecision ? <p className="mt-3 rounded-xl bg-[#dfe8de] p-3 text-sm font-semibold text-[#354436]">
+      {proposal.reviewDecision === "APPROVE" ? "Propuesta aprobada" : "Propuesta rechazada"} · no se publicó ningún cambio.
+    </p> : proposal.reviewAllowed && canReview ? <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <button type="button" disabled={busy}
+        onClick={() => void review("REJECT")}
+        className="min-h-12 rounded-xl border border-[#b76e52]/50 px-5 text-sm font-semibold text-[#8b4e3a] transition hover:bg-[#f3e5df] disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#b76e52]">Rechazar propuesta</button>
+      <button type="button" disabled={busy}
+        onClick={() => void review("APPROVE")}
+        className="min-h-12 rounded-xl bg-[#1d5961] px-5 text-sm font-semibold text-white transition hover:bg-[#174a51] disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">{busy ? "Guardando revisión…" : "Aprobar propuesta"}</button>
+    </div> : <p className="mt-3 text-sm leading-6 text-[#74776f]">La propuesta permanecerá sin cambios hasta que la operadora complete su revisión.</p>}
+    {message && <p aria-live="polite" className="mt-3 text-sm font-medium leading-6 text-[#4f554f]">{message}</p>}
+  </section>
+}
+
+function ActionPanel({ listing, canAct, onRefresh }: {
+  listing: RemoteLiveOperatorListingV1
+  canAct: boolean
   onRefresh: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<ActionPreview | null>(null)
   const [message, setMessage] = useState("")
+  const [stage, setStage] = useState<ActionStage>("IDLE")
 
   const keyFor = useCallback(() => {
     if (!listing.action.eventId) return ""
@@ -165,7 +294,7 @@ function ActionPanel({ listing, onRefresh }: {
   }, [listing.action.eventId])
 
   async function prepare() {
-    if (!listing.action.eventId || busy ||
+    if (!listing.action.eventId || busy || !canAct ||
         !["AVAILABLE", "AWAITING_CONFIRMATION"].includes(
           listing.action.status)) return
     setBusy(true)
@@ -183,13 +312,13 @@ function ActionPanel({ listing, onRefresh }: {
         })
       if (payload.outcome === "OWNER_APPROVAL_REQUIRED") {
         setMessage(String(payload.message ??
-          "Necesita decisión del owner. Ya aparece en su Dashboard."))
+          "Necesita aprobación del owner."))
         return
       }
       const candidate = payload.preview as ActionPreview | undefined
       if (!candidate?.eventId) throw new Error("PREVIEW_UNAVAILABLE")
       setPreview(candidate)
-      setMessage("Revisa el cambio antes de confirmarlo.")
+      setMessage("Compara el valor actual con la propuesta antes de confirmar.")
     } catch (error) {
       setMessage(error instanceof Error ? error.message :
         "Esta acción no está disponible ahora. No necesitas hacer nada.")
@@ -199,9 +328,11 @@ function ActionPanel({ listing, onRefresh }: {
   }
 
   async function apply() {
-    if (!listing.action.eventId || !preview || busy) return
+    if (!listing.action.eventId || !preview || busy || !canAct) return
     setBusy(true)
-    setMessage("Aplicando una vez y verificando en eBay…")
+    setMessage("")
+    setStage("APPLYING")
+    const verifyingTimer = window.setTimeout(() => setStage("VERIFYING"), 700)
     try {
       const payload = await operatorRequest(
         "/api/admin/ebay/live-optimization-operator", {
@@ -210,20 +341,30 @@ function ActionPanel({ listing, onRefresh }: {
             eventId: listing.action.eventId, idempotencyKey: keyFor(),
             confirmed: true }),
         })
+      window.clearTimeout(verifyingTimer)
       if (payload.postActionReadbackPass !== true) {
+        setStage("UNKNOWN")
         setMessage("Estamos verificando el cambio. No vuelvas a pulsar.")
+        setPreview(null)
         return
       }
-      setMessage("Cambio confirmado por lectura oficial de eBay.")
+      setStage("CONFIRMED")
+      setMessage("Cambio confirmado ✓")
       setPreview(null)
       await onRefresh()
     } catch (error) {
+      window.clearTimeout(verifyingTimer)
       const code = error && typeof error === "object" && "code" in error
         ? String(error.code) : ""
-      setMessage(code.includes("OUTCOME_UNKNOWN")
-        ? "Estamos verificando el cambio. No vuelvas a pulsar."
-        : error instanceof Error ? error.message :
+      if (code.includes("OUTCOME_UNKNOWN")) {
+        setStage("UNKNOWN")
+        setMessage("Estamos verificando el cambio. No vuelvas a pulsar.")
+        setPreview(null)
+      } else {
+        setStage("IDLE")
+        setMessage(error instanceof Error ? error.message :
           "Esta acción no está disponible ahora. No necesitas hacer nada.")
+      }
     } finally {
       setBusy(false)
     }
@@ -231,77 +372,164 @@ function ActionPanel({ listing, onRefresh }: {
 
   if (["NO_ACTION", "REVIEW_GUIDANCE", "REVIEW_VISUAL"]
       .includes(listing.action.kind)) return null
-  return <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-cyan-200/[0.04] p-3">
-    {listing.action.ownerReason && <p className="text-sm font-bold leading-6 text-amber-50">{listing.action.ownerReason}</p>}
-    {preview && <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
-      <div className="rounded-xl bg-black/20 p-3"><dt className="text-white/45">Actual</dt><dd className="mt-1 text-xl font-black">{money(preview.targetValue.currentPrice)}</dd></div>
-      <div className="rounded-xl bg-black/20 p-3"><dt className="text-white/45">Propuesto</dt><dd className="mt-1 text-xl font-black text-cyan-100">{money(preview.targetValue.proposedPrice)}</dd></div>
-      <div className="rounded-xl bg-black/20 p-3"><dt className="text-white/45">Beneficio esperado</dt><dd className="mt-1 font-black">{money(preview.targetValue.expectedNetProfit)}</dd></div>
-      <div className="rounded-xl bg-black/20 p-3"><dt className="text-white/45">Margen esperado</dt><dd className="mt-1 font-black">{percent(preview.targetValue.expectedMarginPercent)}</dd></div>
+  return <div className="mt-5 rounded-2xl border border-[#c9d7d4] bg-[#edf3f1] p-4">
+    {listing.action.ownerReason && <p className="text-sm font-semibold leading-6 text-[#684d3e]">{listing.action.ownerReason}</p>}
+    {preview && <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+      <div className="rounded-xl bg-white p-4"><dt className="text-sm text-[#73766f]">Actual</dt><dd className="mt-1 text-2xl font-semibold">{money(preview.targetValue.currentPrice)}</dd></div>
+      <div className="rounded-xl bg-white p-4"><dt className="text-sm text-[#1d5961]">Propuesto</dt><dd className="mt-1 text-2xl font-semibold text-[#1d5961]">{money(preview.targetValue.proposedPrice)}</dd></div>
+      <div className="rounded-xl bg-white p-4"><dt className="text-sm text-[#73766f]">Beneficio estimado</dt><dd className="mt-1 font-semibold">{money(preview.targetValue.expectedNetProfit)}</dd></div>
+      <div className="rounded-xl bg-white p-4"><dt className="text-sm text-[#73766f]">Margen protegido</dt><dd className="mt-1 font-semibold">{number(preview.targetValue.expectedMarginPercent)}%</dd></div>
     </dl>}
-    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
-      {!preview && <button type="button" onClick={() => void prepare()}
-        disabled={busy || !["AVAILABLE", "AWAITING_CONFIRMATION"].includes(
-          listing.action.status)}
-        className="min-h-12 rounded-xl border border-cyan-200/35 px-5 text-sm font-black text-cyan-100 disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
-        {busy ? "REVISANDO…" : listing.action.label}
+    {stage !== "IDLE" && <ol className="mt-4 grid gap-2 text-sm sm:grid-cols-3" aria-live="polite">
+      {[
+        ["APPLYING", "Aplicando cambio…"],
+        ["VERIFYING", "Verificando con eBay…"],
+        ["CONFIRMED", "Cambio confirmado ✓"],
+      ].map(([key, label], index) => {
+        const activeIndex = stage === "APPLYING" ? 0 :
+          stage === "VERIFYING" || stage === "UNKNOWN" ? 1 : 2
+        return <li key={key} className={`rounded-xl px-3 py-3 font-medium ${index <= activeIndex ? "bg-[#1d5961] text-white" : "bg-white text-[#85877f]"}`}>{label}</li>
+      })}
+    </ol>}
+    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+      {!preview && stage !== "UNKNOWN" && <button type="button"
+        onClick={() => void prepare()} disabled={busy || !canAct ||
+          !["AVAILABLE", "AWAITING_CONFIRMATION"].includes(
+            listing.action.status)}
+        className="min-h-12 rounded-xl border border-[#1d5961]/40 px-5 text-sm font-semibold text-[#1d5961] disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">
+        {busy ? "Preparando…" : listing.action.label}
       </button>}
       {preview && <button type="button" onClick={() => setPreview(null)}
         disabled={busy}
-        className="min-h-12 rounded-xl border border-white/15 px-5 text-sm font-black text-white/65 disabled:opacity-45">CANCELAR</button>}
+        className="min-h-12 rounded-xl border border-[#b9b4ab] px-5 text-sm font-semibold text-[#666a63] disabled:opacity-45">Cancelar</button>}
       {preview && <button type="button" onClick={() => void apply()}
         disabled={busy}
-        className="min-h-12 rounded-xl bg-cyan-200 px-5 text-sm font-black text-cyan-950 disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
-        {busy ? "VERIFICANDO…" : "CONFIRMAR CAMBIO"}
+        className="min-h-12 rounded-xl bg-[#1d5961] px-5 text-sm font-semibold text-white disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">
+        Confirmar cambio
       </button>}
     </div>
-    {message && <p aria-live="polite" className="mt-3 text-sm font-bold leading-5 text-white/65">{message}</p>}
+    {!canAct && <p className="mt-3 text-sm leading-6 text-[#73766f]">La vista owner es sólo una previsualización. La operadora verá el control cuando su acceso esté habilitado.</p>}
+    {message && <p aria-live="polite" className="mt-3 text-sm font-medium leading-6 text-[#4f554f]">{message}</p>}
   </div>
 }
 
-function ListingCard({ listing, onRefresh }: {
+function ListingCard({ listing, canAct, onRefresh }: {
   listing: RemoteLiveOperatorListingV1
+  canAct: boolean
   onRefresh: () => Promise<void>
 }) {
-  return <article className="min-w-0 rounded-3xl border border-white/10 bg-white/[0.035] p-4 sm:p-5"
+  return <article className="min-w-0 overflow-hidden rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] shadow-[0_18px_50px_rgba(55,45,32,0.06)]"
     data-remote-live-listing={listing.ebayItemId}>
-    <div className="flex min-w-0 items-start gap-3">
-      {/* The URL is an official current-listing readback and may use several
-          eBay CDN hosts, so a fixed Next Image host allowlist is inappropriate. */}
-      {listing.imageUrl ? <img src={listing.imageUrl} alt=""
-        className="h-20 w-20 shrink-0 rounded-2xl bg-white object-contain" />
-        : <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-white/[0.05] text-2xl">📦</div>}
-      <div className="min-w-0 flex-1">
-        <h3 className="break-words text-base font-black leading-6">{listing.title}</h3>
-        <p className="mt-1 text-xs text-white/45">Listing LIVE · {listing.sku ?? "SKU no visible"}</p>
-        <p className="mt-3 text-sm font-black leading-6 text-white/90">{listing.humanSummary}</p>
+    <div className="grid min-w-0 gap-0 md:grid-cols-[minmax(230px,0.78fr)_minmax(0,1.22fr)]">
+      <div className="flex min-h-64 items-center justify-center bg-[#f1ece3] p-5">
+        {listing.imageUrl ? <img src={listing.imageUrl}
+          alt={`Producto ${listing.title}`}
+          className="aspect-square max-h-80 w-full rounded-2xl bg-white object-contain" />
+          : <div className="flex aspect-square w-full max-w-72 items-center justify-center rounded-2xl bg-white text-sm text-[#777a73]">Imagen no disponible</div>}
+      </div>
+      <div className="min-w-0 p-5 sm:p-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#1d5961]">Listing activo en eBay</p>
+        <h3 className="mt-2 break-words font-serif text-2xl font-semibold leading-tight text-[#242724]">{listing.title}</h3>
+        <p className="mt-2 break-words text-xs text-[#7a7d76]">{listing.sku ?? "Identificador no visible"}</p>
+        <dl className="mt-6 space-y-4 text-sm leading-6 text-[#454a45]">
+          <div><dt className="font-semibold text-[#242724]">Qué está pasando</dt><dd className="mt-1">{listing.humanSummary}</dd></div>
+          <div><dt className="font-semibold text-[#242724]">Por qué importa</dt><dd className="mt-1">{listing.whyNow}</dd></div>
+          <div><dt className="font-semibold text-[#242724]">Qué recomienda Seller OS</dt><dd className="mt-1">{listing.recommendation}</dd></div>
+          <div><dt className="font-semibold text-[#242724]">Qué hacer ahora</dt><dd className="mt-1">{listing.whatOperatorShouldDo}</dd></div>
+        </dl>
       </div>
     </div>
-    <div className="mt-4"><ListingMetrics listing={listing} /></div>
-    <dl className="mt-4 space-y-3 text-sm leading-6">
-      <div><dt className="font-black text-white/45">Por qué importa</dt><dd>{listing.whyNow}</dd></div>
-      <div><dt className="font-black text-white/45">Seller OS recomienda</dt><dd>{listing.recommendation}</dd></div>
-      <div><dt className="font-black text-white/45">Qué debes hacer</dt><dd>{listing.whatOperatorShouldDo}</dd></div>
-      <div><dt className="font-black text-white/45">Beneficio esperado</dt><dd>{listing.expectedBenefit}</dd></div>
-    </dl>
-    <details className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
-      <summary className="min-h-11 cursor-pointer py-2 text-sm font-black text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">ⓘ ¿Qué significa esto?</summary>
-      <p className="mt-1 text-sm leading-6 text-white/65">{listing.helper}</p>
-    </details>
-    {listing.ebayGuidance.length > 0 && <details className="mt-2 rounded-2xl border border-white/10 p-3">
-      <summary className="min-h-11 cursor-pointer py-2 text-sm font-black">Recomendaciones oficiales de eBay · {listing.ebayGuidance.length}</summary>
-      <ul className="space-y-2 text-sm leading-6 text-white/70">{listing.ebayGuidance.map((item, index) => <li key={`${item.category}-${index}`} className="rounded-xl bg-black/20 p-3"><strong>{item.category}</strong><span className="block">{item.recommendation}</span></li>)}</ul>
-    </details>}
-    {listing.visualReview.findings.length > 0 && <details className="mt-2 rounded-2xl border border-white/10 p-3">
-      <summary className="min-h-11 cursor-pointer py-2 text-sm font-black">Revisión de imagen · {listing.visualReview.findings.length}</summary>
-      <ul className="space-y-2 text-sm leading-6 text-white/70">{listing.visualReview.findings.map((finding, index) => <li key={index} className="rounded-xl bg-black/20 p-3"><strong>{finding.observation}</strong><span className="block">{finding.whatToReview}</span></li>)}</ul>
-    </details>}
-    <ActionPanel listing={listing} onRefresh={onRefresh} />
-    <details className="mt-2 text-xs text-white/40">
-      <summary className="min-h-11 cursor-pointer py-3 font-bold">Ver evidencia técnica</summary>
-      <p className="break-words leading-5">eBay Item ID {listing.ebayItemId} · identidad exacta {listing.evidence.exactListingIdentity ? "PASS" : "UNPROVEN"} · vínculo proveedor {listing.evidence.productTruthSupported ? "PASS" : "UNPROVEN"} · readback LIVE {listing.evidence.currentLiveReadback ? "PASS" : "UNPROVEN"}</p>
-    </details>
+    <div className="border-t border-[#e4ddd2] p-5 sm:p-6">
+      <details className="rounded-2xl border border-[#d9d1c4] bg-[#faf7f1] p-3">
+        <summary className="min-h-12 cursor-pointer py-3 text-sm font-semibold text-[#1d5961] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">ⓘ ¿Qué significa esto?</summary>
+        <p className="mt-1 text-sm leading-6 text-[#5f645e]">{listing.helper}</p>
+      </details>
+      <details className="mt-2 rounded-2xl border border-[#e0d9ce] p-3">
+        <summary className="min-h-12 cursor-pointer py-3 text-sm font-semibold text-[#555a54]">Ver datos de apoyo</summary>
+        <div className="mt-2"><SupportingNumbers listing={listing} /></div>
+      </details>
+      {listing.officialQualitySignals.length > 0 && <section
+        className="mt-2 rounded-2xl border border-[#cbd4c2] bg-[#f4f6ef] p-4"
+        aria-label="Mejoras oficiales de eBay">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Señal oficial de eBay</p>
+        <div className="mt-3 space-y-3">{listing.officialQualitySignals.map((signal, index) =>
+          <div key={`${signal.signalType}-${index}`} className="rounded-xl bg-white p-3 text-sm leading-6 text-[#50564f]">
+            <p className="font-semibold text-[#292d29]">{signal.whatIsHappening}</p>
+            <p className="mt-1">{signal.sellerOsRecommendation}</p>
+            {signal.productTruthSupported && signal.proposedValue && <p className="mt-2 font-semibold text-[#1d5961]">
+              {signal.proposedField}: {signal.proposedValue}
+              <span className="block text-xs font-medium text-[#617159]">Fuente: Producto exacto ✓</span>
+            </p>}
+            <p className="mt-2"><strong>Acción:</strong> {signal.operatorActionRequired ? "REVISAR" : "No necesitas hacer nada"}</p>
+          </div>)}</div>
+      </section>}
+      {listing.ebayGuidance.length > 0 && <details className="mt-2 rounded-2xl border border-[#e0d9ce] p-3">
+        <summary className="min-h-12 cursor-pointer py-3 text-sm font-semibold text-[#555a54]">Sugerencias recibidas de eBay</summary>
+        <ul className="mt-2 space-y-2 text-sm leading-6 text-[#5f645e]">{listing.ebayGuidance.map((item, index) => <li key={`${item.category}-${index}`} className="rounded-xl bg-[#f4efe7] p-3"><strong className="text-[#303430]">{item.category}</strong><span className="block">{item.recommendation}</span></li>)}</ul>
+      </details>}
+      <ImageProposalReview listing={listing} canReview={canAct}
+        onRefresh={onRefresh} />
+      {!listing.imageProposal && listing.visualReview.findings.length > 0 && <details className="mt-2 rounded-2xl border border-[#e0d9ce] p-3">
+        <summary className="min-h-12 cursor-pointer py-3 text-sm font-semibold text-[#555a54]">Observaciones sobre la imagen actual</summary>
+        <ul className="mt-2 space-y-2 text-sm leading-6 text-[#5f645e]">{listing.visualReview.findings.map((finding, index) => <li key={index} className="rounded-xl bg-[#f4efe7] p-3"><strong className="text-[#303430]">{finding.observation}</strong><span className="block">{finding.whatToReview}</span></li>)}</ul>
+      </details>}
+      <ActionPanel listing={listing} canAct={canAct} onRefresh={onRefresh} />
+    </div>
   </article>
+}
+
+function AttentionSummary({ grouped }: {
+  grouped: Record<RemoteLiveAttentionClass,
+    readonly RemoteLiveOperatorListingV1[]>
+}) {
+  return <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+    aria-label="Resumen de atención">
+    {sections.map((section) => <div key={section.key}
+      className="min-w-0 rounded-2xl border border-[#d9d1c4] bg-[#fffdf8] p-4">
+      <span className="block h-1.5 w-10 rounded-full"
+        style={{ backgroundColor: section.accent }} />
+      <p className="mt-3 break-words text-xs font-semibold leading-5 text-[#5c605a]">{section.label}</p>
+      <p className="mt-1 text-3xl font-semibold tabular-nums text-[#242724]">{grouped[section.key].length}</p>
+    </div>)}
+  </div>
+}
+
+function ListingCollection({ listings, canAct, onRefresh,
+  emptyMessage = "No hay productos aquí por ahora." }: {
+  listings: readonly RemoteLiveOperatorListingV1[]
+  canAct: boolean
+  onRefresh: () => Promise<void>
+  emptyMessage?: string
+}) {
+  if (!listings.length) return <p className="rounded-2xl border border-[#d9d1c4] bg-[#fffdf8] p-6 text-sm text-[#6f736c]">{emptyMessage}</p>
+  return <div className="space-y-5">{listings.map((listing) =>
+    <ListingCard key={listing.ebayItemId} listing={listing}
+      canAct={canAct} onRefresh={onRefresh} />)}</div>
+}
+
+function OperatorNavigation({ view, onChange, onLogout, side = false }: {
+  view: OperatorView
+  onChange: (view: OperatorView) => void
+  onLogout: () => Promise<void>
+  side?: boolean
+}) {
+  return <nav aria-label="Menú de operadora"
+    className={side ? "space-y-1" : "grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-7"}>
+    {navigation.map((item) => {
+      const Icon = item.icon
+      const active = view === item.key
+      return <button key={item.key} type="button" onClick={() => onChange(item.key)}
+        aria-current={active ? "page" : undefined}
+        className={`flex min-h-12 min-w-0 items-center gap-2 rounded-xl px-3 text-left text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961] ${active ? "bg-[#1d5961] text-white shadow-sm" : "text-[#535852] hover:bg-[#ece7de]"}`}>
+        <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
+        <span className="break-words leading-5">{item.label}</span>
+      </button>
+    })}
+    {side && <button type="button" onClick={() => void onLogout()}
+      className="mt-4 flex min-h-12 w-full items-center gap-2 rounded-xl border border-[#d4ccc0] px-3 text-sm font-semibold text-[#6a6e67] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">
+      <LogOut aria-hidden="true" className="h-4 w-4" />Cerrar sesión
+    </button>}
+  </nav>
 }
 
 export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
@@ -311,6 +539,8 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
     useState<RemoteLiveOptimizationOperatorDashboardV1 | null>(null)
   const [readState, setReadState] = useState<ReadState>("LOADING")
   const [message, setMessage] = useState("")
+  const [view, setView] = useState<OperatorView>("HOME")
+  const [operatorName, setOperatorName] = useState("")
 
   const load = useCallback(async () => {
     setReadState((state) => state === "STABLE" ? "STABLE" : "LOADING")
@@ -325,18 +555,19 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
       setMessage("")
     } catch {
       setReadState("RETRYING")
-      setMessage("No pude actualizar ahora · reintentando. No necesitas hacer nada.")
+      setMessage("No pude actualizar ahora. Puedes seguir viendo el último estado disponible.")
     }
   }, [])
 
+  useEffect(() => { void load() }, [load])
   useEffect(() => {
     let active = true
-    void load()
-    const interval = window.setInterval(() => {
-      if (active) void load()
-    }, 30_000)
-    return () => { active = false; window.clearInterval(interval) }
-  }, [load])
+    void supabase.auth.getUser().then(({ data }) => {
+      if (active) setOperatorName(
+        remoteLiveOperatorDisplayNameFromUser(data.user) ?? "")
+    })
+    return () => { active = false }
+  }, [])
 
   const grouped = useMemo(() => ({
     NEEDS_ATTENTION: dashboard?.listings.filter((listing) =>
@@ -350,60 +581,160 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
   }) satisfies Record<RemoteLiveAttentionClass,
     readonly RemoteLiveOperatorListingV1[]>, [dashboard])
 
+  const attentionListings = useMemo(() => [
+    ...grouped.NEEDS_ATTENTION,
+    ...grouped.CAN_IMPROVE,
+    ...grouped.ENRICH,
+  ], [grouped])
+  const suggestedListings = useMemo(() => [
+    ...grouped.CAN_IMPROVE, ...grouped.ENRICH,
+  ], [grouped])
+
   async function logout() {
     await fetch("/api/admin/session", { method: "DELETE" }).catch(() => null)
     await signOutAdmin()
     window.location.replace("/admin/login")
   }
 
+  const canAct = !embeddedForOwner
   return <section className={embeddedForOwner
-    ? "mt-5 rounded-[32px] border border-violet-200/15 bg-violet-200/[0.035] p-4 sm:p-5"
-    : "min-h-screen overflow-x-hidden bg-[#05070d] px-4 pb-12 pt-4 text-white sm:px-6"}
+    ? "mt-5 overflow-x-hidden rounded-[32px] bg-[#f4efe7] text-[#242724]"
+    : "min-h-screen overflow-x-hidden bg-[#f4efe7] text-[#242724]"}
     data-remote-live-optimization-operator
+    data-ai-policy="deterministic-first"
+    data-continuous-ai-polling="false"
     data-postsale-access="false"
     data-new-listing-publish-access="false">
-    <div className={embeddedForOwner ? "" : "mx-auto max-w-6xl"}>
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
-        <div className="min-w-0"><p className="text-xs font-black uppercase tracking-[0.2em] text-violet-100/65">Remote LIVE Optimization</p>
-          <h1 className="mt-1 text-2xl font-black leading-tight sm:text-3xl">Qué necesita atención</h1>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-white/55">Seller OS traduce las señales y protege cada cambio. No necesitas entrar a eBay ni usar herramientas técnicas.</p></div>
-        {!embeddedForOwner && <button type="button" onClick={() => void logout()}
-          className="min-h-11 rounded-xl border border-white/15 px-4 text-sm font-black text-white/65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-200">Cerrar sesión</button>}
-      </header>
-      {message && <p aria-live="polite" className="mt-3 rounded-2xl border border-amber-200/15 bg-amber-200/[0.05] p-3 text-sm font-bold text-amber-50">{message}</p>}
-      {!dashboard && <div className="mt-5 rounded-3xl border border-white/10 p-6 text-sm text-white/60">{readState === "RETRYING" ? "Esta vista no está disponible ahora. No necesitas hacer nada." : "Preparando tus tareas…"}</div>}
-      {dashboard && <>
-        {!dashboard.capabilities.safeLivePriceMutation &&
-          <p className="mt-3 rounded-2xl border border-amber-200/15 bg-amber-200/[0.05] p-3 text-sm font-bold leading-6 text-amber-50">
-            Vista en certificación · puedes revisar las señales, pero los cambios LIVE siguen cerrados hasta completar el canary físico.
-          </p>}
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Resumen de atención">
-          {sections.map((section) => <div key={section.key}
-            className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.035] p-3">
-            <p className="break-words text-[11px] font-black leading-4 text-white/55">{section.label}</p>
-            <p className="mt-1 text-2xl font-black tabular-nums">{grouped[section.key].length}</p>
-          </div>)}
+    <div className={embeddedForOwner ? "p-4 sm:p-6" :
+      "mx-auto grid min-h-screen max-w-[1500px] lg:grid-cols-[230px_minmax(0,1fr)]"}>
+      {!embeddedForOwner && <aside className="hidden border-r border-[#d9d1c4] px-4 py-7 lg:block">
+        <div className="sticky top-7">
+          <p className="px-3 text-xs font-semibold uppercase tracking-[0.2em] text-[#1d5961]">Seller OS</p>
+          <p className="mt-2 px-3 font-serif text-xl font-semibold">Espacio de operadora</p>
+          <div className="mt-7"><OperatorNavigation view={view}
+            onChange={setView} onLogout={logout} side /></div>
         </div>
-        <div className="mt-4"><SalesChart dashboard={dashboard} /></div>
-        <div className="mt-5 space-y-6">
-          {sections.map((section) => <section key={section.key}
-            aria-labelledby={`remote-${section.key}`}>
-            <div className="mb-3"><h2 id={`remote-${section.key}`}
-              className="text-lg font-black">{section.label} · {grouped[section.key].length}</h2>
-              <p className="mt-1 text-sm text-white/45">{section.explanation}</p></div>
-            <div className="grid min-w-0 gap-3 xl:grid-cols-2">
-              {grouped[section.key].map((listing) => <ListingCard
-                key={listing.ebayItemId} listing={listing} onRefresh={load} />)}
-              {!grouped[section.key].length && <p className="rounded-2xl border border-white/[0.06] p-4 text-sm text-white/40">No hay productos en esta sección.</p>}
+      </aside>}
+      <main className={embeddedForOwner ? "" : "min-w-0 px-4 pb-14 pt-5 sm:px-7 lg:px-10 lg:pt-7"}>
+        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-[#d9d1c4] pb-5">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1d5961]">Seller OS · eBay</p>
+            <h1 className="mt-2 break-words font-serif text-3xl font-semibold leading-tight sm:text-4xl">Hola{operatorName ? `, ${operatorName}` : ""} 👋</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#64675f]">Aquí verás primero lo que requiere atención y una recomendación clara para cada producto.</p>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => void load()}
+              disabled={readState === "LOADING"}
+              className="inline-flex min-h-12 items-center gap-2 rounded-xl border border-[#cfc7ba] bg-[#fffdf8] px-4 text-sm font-semibold text-[#555a54] disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">
+              <RefreshCw aria-hidden="true" className="h-4 w-4" />Actualizar
+            </button>
+            {!embeddedForOwner && <button type="button"
+              onClick={() => void logout()}
+              className="inline-flex min-h-12 items-center gap-2 rounded-xl border border-[#cfc7ba] bg-[#fffdf8] px-4 text-sm font-semibold text-[#555a54] lg:hidden">
+              <LogOut aria-hidden="true" className="h-4 w-4" />Salir
+            </button>}
+          </div>
+        </header>
+        <div className="mt-4 lg:hidden"><OperatorNavigation view={view}
+          onChange={setView} onLogout={logout} /></div>
+        {message && <p aria-live="polite" className="mt-4 rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium text-[#704d3c]">{message}</p>}
+        {!dashboard && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7 text-sm text-[#6f736c]">{readState === "RETRYING" ? "Esta vista no está disponible ahora. No necesitas hacer nada." : "Preparando tu espacio…"}</div>}
+        {dashboard && <div className="mt-7 space-y-7">
+          {!dashboard.capabilities.safeLivePriceMutation &&
+            <p className="rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium leading-6 text-[#704d3c]">Vista preparada para certificación. Puedes revisar el recorrido, pero los cambios LIVE siguen cerrados hasta completar el canary físico.</p>}
+
+          {view === "HOME" && <>
+            <section aria-labelledby="attention-heading">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#b75d43]">Prioridad de hoy</p>
+              <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+                <div><h2 id="attention-heading" className="font-serif text-3xl font-semibold leading-tight">Qué necesita tu atención hoy</h2>
+                  <p className="mt-2 text-sm leading-6 text-[#64675f]">Empieza por arriba. Seller OS ya ordenó las tareas por importancia.</p></div>
+                {attentionListings.length > 2 && <button type="button"
+                  onClick={() => setView("TASKS")}
+                  className="min-h-12 rounded-xl border border-[#1d5961]/35 px-4 text-sm font-semibold text-[#1d5961]">Ver todas mis tareas</button>}
+              </div>
+              <div className="mt-5"><AttentionSummary grouped={grouped} /></div>
+              <div className="mt-5"><ListingCollection
+                listings={attentionListings.slice(0, 2)} canAct={canAct}
+                onRefresh={load}
+                emptyMessage="Todo está en orden. No hay nada que requiera atención hoy." /></div>
+            </section>
+            <SalesChart dashboard={dashboard} />
+            <ImpactCard dashboard={dashboard} />
+          </>}
+
+          {view === "TASKS" && <section aria-labelledby="tasks-heading">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#b75d43]">Trabajo pendiente</p>
+            <h2 id="tasks-heading" className="mt-2 font-serif text-3xl font-semibold">Mis tareas</h2>
+            <div className="mt-6 space-y-8">{sections.slice(0, 3).map((section) => <section key={section.key}>
+              <div className="mb-4"><h3 className="font-serif text-2xl font-semibold">{section.label} · {grouped[section.key].length}</h3><p className="mt-1 text-sm text-[#6b6e67]">{section.explanation}</p></div>
+              <ListingCollection listings={grouped[section.key]}
+                canAct={canAct} onRefresh={load} />
+            </section>)}</div>
+          </section>}
+
+          {view === "LIVE" && <section aria-labelledby="live-heading">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#74866d]">Catálogo activo</p>
+            <h2 id="live-heading" className="mt-2 font-serif text-3xl font-semibold">Listings LIVE</h2>
+            <p className="mt-2 text-sm leading-6 text-[#64675f]">Todos los productos activos, con la lectura más reciente disponible.</p>
+            <div className="mt-6"><ListingCollection listings={dashboard.listings}
+              canAct={canAct} onRefresh={load} /></div>
+          </section>}
+
+          {view === "SUGGESTIONS" && <section aria-labelledby="suggestions-heading">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1d5961]">Presentación y claridad</p>
+            <h2 id="suggestions-heading" className="mt-2 font-serif text-3xl font-semibold">Mejoras sugeridas</h2>
+            <p className="mt-2 text-sm leading-6 text-[#64675f]">Sólo mostramos propuestas que tienen evidencia suficiente para ser revisadas.</p>
+            <div className="mt-6"><ListingCollection listings={suggestedListings}
+              canAct={canAct} onRefresh={load} /></div>
+          </section>}
+
+          {view === "RESULTS" && <>
+            <SalesChart dashboard={dashboard} />
+            <ImpactCard dashboard={dashboard} />
+          </>}
+
+          {view === "HISTORY" && <section aria-labelledby="history-heading">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#74866d]">Actividad comprobada</p>
+            <h2 id="history-heading" className="mt-2 font-serif text-3xl font-semibold">Historial</h2>
+            <div className="mt-6 space-y-3">{dashboard.history.length ? dashboard.history.map((entry, index) => <article key={`${entry.listingId}-${entry.occurredAt}-${index}`} className="rounded-2xl border border-[#d9d1c4] bg-[#fffdf8] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-[#292d29]">{entry.action}</h3><p className="mt-1 text-sm text-[#5f645e]">{entry.title}</p></div><span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{entry.status}</span></div>
+              <p className="mt-3 text-xs text-[#7a7d76]">{shortDate(entry.occurredAt)} · este registro no atribuye ventas a la acción.</p>
+            </article>) : <p className="rounded-2xl border border-[#d9d1c4] bg-[#fffdf8] p-6 text-sm text-[#6f736c]">Todavía no hay acciones tuyas registradas.</p>}</div>
+          </section>}
+
+          {view === "HELP" && <section aria-labelledby="help-heading">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1d5961]">Guía sencilla</p>
+            <h2 id="help-heading" className="mt-2 font-serif text-3xl font-semibold">Ayuda</h2>
+            <div className="mt-6 grid gap-5 lg:grid-cols-2">
+              <article className="rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-6">
+                <h3 className="font-serif text-2xl font-semibold">Cómo te ayuda Seller OS</h3>
+                <ul className="mt-4 space-y-3 text-sm leading-6 text-[#555a54]">
+                  <li>Traduce las señales de eBay a una explicación clara.</li>
+                  <li>Te muestra qué pasa, por qué importa y qué hacer ahora.</li>
+                  <li>Prepara comparaciones y propuestas sólo cuando existe evidencia.</li>
+                  <li>Usa asistencia inteligente únicamente cuando aporta algo útil.</li>
+                </ul>
+              </article>
+              <article className="rounded-[28px] bg-[#26312d] p-6 text-white">
+                <h3 className="font-serif text-2xl font-semibold">Lo que nunca hará</h3>
+                <ul className="mt-4 space-y-3 text-sm leading-6 text-white/75">
+                  <li>No inventa características, identificadores ni demanda.</li>
+                  <li>No cambia los límites de margen ni la autoridad del owner.</li>
+                  <li>No publica un listing nuevo ni ejecuta postventa.</li>
+                  <li>No aplica una propuesta visual desde esta revisión.</li>
+                </ul>
+              </article>
             </div>
-          </section>)}
-        </div>
-        <footer className="mt-6 rounded-2xl border border-white/10 p-4 text-xs leading-5 text-white/45">
-          Sesión browser-only · cambios de precio con confirmación y readback oficial · promociones con gasto, publicaciones nuevas, fin de listings, credenciales y postventa son owner-only.
-          {readState === "RETRYING" ? " · Mostrando el último estado válido mientras reintentamos." : ""}
-          <span className="block mt-1">Última lectura: {shortDate(dashboard.generatedAt)}</span>
-        </footer>
-      </>}
+          </section>}
+
+          <footer className="border-t border-[#d9d1c4] pt-5 text-xs leading-5 text-[#777a73]">
+            Publicaciones nuevas, postventa, credenciales, fin de listings y gasto no aprobado permanecen bajo autoridad del owner.
+            {readState === "RETRYING" ? " Mostrando el último estado válido." : ""}
+            <span className="mt-1 block">Última lectura: {shortDate(dashboard.generatedAt)}</span>
+          </footer>
+        </div>}
+      </main>
     </div>
   </section>
 }

@@ -25,6 +25,8 @@ const MAX_HEADER_SCAN_ROWS = 80
 const ALIASES = {
   itemId: ["item id", "itemid", "listing id", "listingid", "ebay item id", "ebayitemid"],
   sku: ["sku", "custom label", "customlabel", "custom sku"],
+  reportAccount: ["seller account", "account", "seller username", "ebay username", "account name"],
+  itemSpecificName: ["item specific", "item specific name", "aspect", "aspect name", "attribute", "attribute name", "field name"],
   recommendationCategory: ["recommendation category", "recommendation category name", "category", "recommendationcategory"],
   recommendationType: ["recommendation type", "type", "recommendationtype"],
   recommendationText: ["recommendation", "recommendation text", "guidance", "suggestion", "recommended action"],
@@ -432,6 +434,8 @@ export function parseEbayListingQualityReportV1(input: {
     const recommendationCategory = safeText(field(row, ALIASES.recommendationCategory), 120)
     const recommendationType = safeText(field(row, ALIASES.recommendationType), 120)
     const qualityIssue = safeText(field(row, ALIASES.qualityIssue), 240)
+    const reportAccount = safeText(field(row, ALIASES.reportAccount), 120)
+    const itemSpecificName = safeText(field(row, ALIASES.itemSpecificName), 120)
     const reportedBenchmark = numberValue(field(row, ALIASES.reportedBenchmark))
     const topCategoryBenchmark = numberValue(field(row, ALIASES.topCategoryBenchmark))
     if (!itemId && !sku) { warnings.push("ROW_WITHOUT_LISTING_IDENTITY_SKIPPED"); return [] }
@@ -447,9 +451,11 @@ export function parseEbayListingQualityReportV1(input: {
     return [{
       sourceRowNumber: index + (parsed.metadata.headerRowNumber ?? 1) + 1,
       sourceRowFingerprint: `qlr_row_${sha(JSON.stringify({ itemId, sku, recommendationText,
-        recommendationCategory, recommendationType, qualityIssue })).slice(0, 24)}`,
+        recommendationCategory, recommendationType, qualityIssue, reportAccount,
+        itemSpecificName })).slice(0, 24)}`,
       itemId, sku, recommendationCategory, recommendationType, recommendationText,
       reportedBenchmark, topCategoryBenchmark, qualityIssue,
+      reportAccount, itemSpecificName,
       category: safeText(field(row, ALIASES.category), 160),
       reportDate: safeText(field(row, ALIASES.reportDate), 40),
       reportWindowStart: safeText(field(row, ALIASES.reportWindowStart), 40),

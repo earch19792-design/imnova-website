@@ -14,6 +14,8 @@ import { RemoteLiveOptimizationOperator } from
 import { RemoteOperatorEnrollmentControl } from
   "./remote-operator-enrollment-control"
 import { SellerOsOperationalDashboard } from "./seller-os-operational-dashboard"
+import { OwnerListingQualityReportControl } from
+  "./owner-listing-quality-report-control"
 import { SELLER_OS_TECHNICAL_AND_LEGACY_ROUTES } from
   "@/lib/seller-os/user-facing-route-inventory"
 
@@ -91,6 +93,8 @@ export default function SellerOsAdminHome() {
             <h2 id="today-heading" className="sr-only">Operación de hoy</h2>
             <SellerOsOperationalDashboard />
           </section>
+
+          <OwnerListingQualityReportControl />
 
           <details className="mt-5 rounded-3xl border border-violet-200/15 bg-violet-200/[0.035] p-4 sm:p-5"
             onToggle={(event) => setRemoteLiveOpen(event.currentTarget.open)}>

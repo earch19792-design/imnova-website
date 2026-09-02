@@ -62,6 +62,9 @@ function enrollmentErrorMessage(code: unknown) {
   if (code === "REMOTE_OPERATOR_USERNAME_INVALID") {
     return "Usa entre 3 y 32 caracteres: letras, números, punto, guion o guion bajo."
   }
+  if (code === "REMOTE_OPERATOR_DISPLAY_NAME_INVALID") {
+    return "Escribe el nombre que quieres ver dentro de Seller OS."
+  }
   if (code === "REMOTE_OPERATOR_PASSWORD_POLICY_NOT_MET") {
     return `La contraseña debe tener al menos ${REMOTE_PASSWORD_MIN_LENGTH} caracteres.`
   }
@@ -73,6 +76,7 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("")
   const [setupInvitation, setSetupInvitation] = useState<string | null>(null)
   const [setupHydrated, setSetupHydrated] = useState(false)
+  const [setupDisplayName, setSetupDisplayName] = useState("")
   const [setupUsername, setSetupUsername] = useState("")
   const [setupPassword, setSetupPassword] = useState("")
   const [setupPasswordConfirmation, setSetupPasswordConfirmation] =
@@ -159,7 +163,8 @@ export default function AdminLoginPage() {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ invitation: setupInvitation,
-            username: setupUsername, password: setupPassword }),
+            displayName: setupDisplayName, username: setupUsername,
+            password: setupPassword }),
         },
       )
       const payload = await response.json().catch(() => null) as
@@ -210,6 +215,14 @@ export default function AdminLoginPage() {
 
       {firstEnrollment ? <form onSubmit={handleFirstEnrollment}
         className="space-y-4" data-remote-first-enrollment>
+        <label className="block text-sm font-bold text-white/70">
+          Tu nombre
+          <input type="text" autoComplete="name" required maxLength={50}
+            value={setupDisplayName}
+            onChange={(event) => setSetupDisplayName(event.target.value)}
+            placeholder="Como quieres que te saludemos"
+            className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black/40 px-5 py-4 text-white outline-none focus:border-cyan-200/50" />
+        </label>
         <label className="block text-sm font-bold text-white/70">
           Usuario
           <input type="text" autoComplete="username" required
