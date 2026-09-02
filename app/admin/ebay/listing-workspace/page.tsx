@@ -2583,8 +2583,15 @@ function ListingWorkspacePageContent() {
     && !retiredPrewriteExecution
   const executionCompleted = unpublishedExecutionPhase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
-  const correctedPackageSafeRetryReady =
+  const correctedPackageSafeRetryCertified =
     draftState.correctedPackageSafeRetry?.safeRetryReady === true
+  const correctedPackageSafeRetryReady =
+    correctedPackageSafeRetryCertified
+    && draftState.readiness?.ready === true
+    && canonicalUiBlockers.length === 0
+  const workspaceContradictoryStateCount =
+    correctedPackageSafeRetryCertified && !correctedPackageSafeRetryReady
+      ? 1 : 0
   const publicationLifecycleStarted = Boolean(draftState.approval?.id)
     || unpublishedExecutionExists
     || Boolean(draftState.publication?.id)
@@ -3819,7 +3826,7 @@ function ListingWorkspacePageContent() {
       }
       if (
         nextPublication?.phase === "terminal_failure"
-        && draftState.correctedPackageSafeRetry?.safeRetryReady === true
+        && correctedPackageSafeRetryReady
       ) {
         // The failed publication remains immutable history. A corrected
         // package must acquire fresh one-shot approval/execution/publication
@@ -4910,6 +4917,9 @@ function ListingWorkspacePageContent() {
       <div
         data-listing-ready-single-truth
         data-ui-blockers={canonicalUiBlockers.length}
+        data-workspace-contradictory-state-count={
+          workspaceContradictoryStateCount
+        }
         data-ui-blocker-section-hidden={listingReadyUi.blockerSectionHidden}
         className="space-y-2 rounded-2xl border border-emerald-200/30 bg-black/20 p-4"
       >

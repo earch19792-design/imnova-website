@@ -151,6 +151,46 @@ export function correctedPackageRetryLedgerExclusionApprovalIdV1(input:
   return input.historical?.approvalId ?? null
 }
 
+/**
+ * GET readiness and POST execution must evaluate the same collision lineage.
+ * The current approval wins when it already owns exact self-lineage. Otherwise
+ * the prior approval may be excluded only through the narrowly certified UPC
+ * correction contract above. Any unrelated or insufficiently proven lineage
+ * remains fail-closed and reaches the generic SKU-collision guard unchanged.
+ */
+export function resolveCorrectedPackageRetryCollisionSelfLineageV1<
+  TLineage extends Readonly<{
+    exact: boolean
+    excludeApprovalId: string | null
+  }>,
+>(input: Readonly<{
+  current: Pick<CorrectedPackageRetryCurrentV1,
+    | "listingPackageId"
+    | "packageDigest"
+    | "target"
+    | "accountFingerprintPresent"
+    | "sku"
+    | "categoryId"
+    | "upcs">
+  historical: CorrectedPackageRetryHistoricalV1 | null
+  currentSelfLineage: TLineage
+  historicalSelfLineage: TLineage | null
+}>) {
+  if (input.currentSelfLineage.exact) return input.currentSelfLineage
+  const approvedHistoricalExclusion =
+    correctedPackageRetryLedgerExclusionApprovalIdV1({
+      current: input.current,
+      historical: input.historical,
+      historicalSelfLineageExact:
+        input.historicalSelfLineage?.exact === true,
+    })
+  return approvedHistoricalExclusion
+    && input.historicalSelfLineage?.excludeApprovalId
+      === approvedHistoricalExclusion
+    ? input.historicalSelfLineage
+    : input.currentSelfLineage
+}
+
 export function classifyCorrectedPackageSafeRetryV1(input: Readonly<{
   current: CorrectedPackageRetryCurrentV1
   historical: CorrectedPackageRetryHistoricalV1 | null

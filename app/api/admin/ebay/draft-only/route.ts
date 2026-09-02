@@ -49,7 +49,7 @@ import {
 } from "@/lib/ebay/ebay-draft-only-prewrite-retirement"
 import {
   classifyCorrectedPackageSafeRetryV1,
-  correctedPackageRetryLedgerExclusionApprovalIdV1,
+  resolveCorrectedPackageRetryCollisionSelfLineageV1,
   type CorrectedPackageRetryHistoricalV1,
 } from "@/lib/ebay/ebay-corrected-package-safe-retry-v1"
 import {
@@ -1700,22 +1700,58 @@ export async function GET(req: Request) {
       expected: expectedContext,
       listingPackage: packageIdentity,
     })
+    const expectedSku = expectedEbayDraftOnlySku({ id: packageId })
+    const expectedSelfLineage = {
+      actorUserId: auth.actor,
+      listingPackageId: packageId,
+      opportunityId: expectedOpportunityId,
+      candidateKey: expectedCandidateKey,
+      target,
+      accountFingerprint: fingerprint,
+      sku: expectedSku,
+    } as const
     const lifecycle = await loadExactDraftOnlyPublicationSelfLineage(
       supabase,
-      {
-        actorUserId: auth.actor,
-        listingPackageId: packageId,
-        opportunityId: expectedOpportunityId,
-        candidateKey: expectedCandidateKey,
-        target,
-        accountFingerprint: fingerprint,
-        sku: expectedEbayDraftOnlySku({ id: packageId }),
-      },
+      expectedSelfLineage,
     )
     const latestApproval = lifecycle.approval
     const ledger = lifecycle.execution
     const publication = lifecycle.publication
     const approvedPayload = record(latestApproval?.approved_payload)
+    const correctedPackageRetryHistory =
+      await loadCorrectedPackageRetryHistory({
+        supabase,
+        actorUserId: auth.actor,
+        listingPackageId: packageId,
+        opportunityId: expectedOpportunityId,
+        sku: expectedSku,
+      })
+    const correctedRetryHistoricalSelfLineage =
+      correctedPackageRetryHistory
+        ? classifyExactDraftOnlyPublicationSelfLineageV1({
+          approval: correctedPackageRetryHistory.approval,
+          execution: correctedPackageRetryHistory.execution,
+          publication: correctedPackageRetryHistory.publication,
+          expected: expectedSelfLineage,
+        })
+        : null
+    const collisionSelfLineage =
+      resolveCorrectedPackageRetryCollisionSelfLineageV1({
+        current: {
+          listingPackageId: packageId,
+          packageDigest: text(record(
+            approvedPayload.controlledPublicationIntent,
+          ).packageDigest),
+          target,
+          accountFingerprintPresent: Boolean(fingerprint),
+          sku: expectedSku,
+          categoryId: text(record(approvedPayload.offerPayload).categoryId),
+          upcs: exactUpcsFromPayload(approvedPayload),
+        },
+        historical: correctedPackageRetryHistory?.historical ?? null,
+        currentSelfLineage: lifecycle.classification,
+        historicalSelfLineage: correctedRetryHistoricalSelfLineage,
+      })
     const initialContext = await loadPackageContext(
       supabase,
       packageId,
@@ -1723,7 +1759,7 @@ export async function GET(req: Request) {
       "",
       target,
       fingerprint,
-      lifecycle.classification,
+      collisionSelfLineage,
       true,
     )
     const packageConfig = record(initialContext.listingPackage.package_data).draftConfiguration
@@ -1804,7 +1840,7 @@ export async function GET(req: Request) {
         sku,
         target,
         fingerprint,
-        lifecycle.classification,
+        collisionSelfLineage,
         true,
       )
       : initialContext
@@ -1875,14 +1911,6 @@ export async function GET(req: Request) {
     const quickPickAuthorization = record(
       context.quickPickPublicationAuthorization,
     )
-    const correctedPackageRetryHistory =
-      await loadCorrectedPackageRetryHistory({
-        supabase,
-        actorUserId: auth.actor,
-        listingPackageId: packageId,
-        opportunityId: expectedOpportunityId,
-        sku: expectedEbayDraftOnlySku(context.listingPackage),
-      })
     const correctedPackageIdentifierPreflight =
       correctedPackageRetryHistory
         ? await readCategoryProductIdentifierPreflight(readiness.payload)
@@ -3473,8 +3501,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
     approvedPayload.controlledPublicationIntent,
   )
   const currentOfferPayload = record(approvedPayload.offerPayload)
-  const correctedRetryLedgerExclusionApprovalId =
-    correctedPackageRetryLedgerExclusionApprovalIdV1({
+  const collisionSelfLineage =
+    resolveCorrectedPackageRetryCollisionSelfLineageV1({
       current: {
         listingPackageId: text(approval.listing_package_id),
         packageDigest: text(currentControlledIntent.packageDigest),
@@ -3485,16 +3513,9 @@ async function executeDraft(body: JsonRecord, actor: string) {
         upcs: exactUpcsFromPayload(approvedPayload),
       },
       historical: correctedRetryHistory?.historical ?? null,
-      historicalSelfLineageExact:
-        correctedRetryHistoricalSelfLineage?.exact === true,
+      currentSelfLineage: executionSelfLineage,
+      historicalSelfLineage: correctedRetryHistoricalSelfLineage,
     })
-  const collisionSelfLineage = executionSelfLineage.exact
-    ? executionSelfLineage
-    : correctedRetryLedgerExclusionApprovalId
-      && correctedRetryHistoricalSelfLineage?.excludeApprovalId
-        === correctedRetryLedgerExclusionApprovalId
-      ? correctedRetryHistoricalSelfLineage
-      : executionSelfLineage
   let context = await loadPackageContext(
     supabase,
     approval.listing_package_id,
