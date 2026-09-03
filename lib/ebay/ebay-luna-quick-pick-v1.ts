@@ -419,8 +419,9 @@ export async function receiveLunaQuickPickBatchV1(input: Readonly<{
     cards: Object.freeze(inputs.map((entry) => card({
       sourceUrl: sourceUrlWithVariant(entry.canonicalUrl,
         entry.variantId ?? ""), canonicalUrl: entry.canonicalUrl,
-      state: "RUNNING", lastStage: "IDENTITY", disposition: "RUNNING",
-      stages: emptyStages({ IDENTITY: "RUNNING" }),
+      state: "WAITING", lastStage: "IDENTITY",
+      disposition: "WAITING_FOR_IDENTITY_CONTINUATION",
+      stages: emptyStages({ IDENTITY: "WAITING" }),
     }))) })
 }
 
@@ -534,7 +535,7 @@ export async function readLunaQuickPickBatchReceiptsV1(input: Readonly<{
         reconcileLunaQuickPickCardLivenessV1(card({
         ...entry, sourceUrl: String(entry.sourceUrl ?? "quick-pick:unknown"),
         rehydrated: true,
-      }))), ...waitingCards]),
+      }))), ...waitingCards.map(reconcileLunaQuickPickCardLivenessV1)]),
       receivedAt: text(row.started_at, 80),
       updatedAt: text(row.heartbeat_at, 80),
       safeFailureCode: text(row.last_error_code, 120),
@@ -1596,6 +1597,12 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       MARKETPLACE_READINESS: marketplaceReadinessReady ? "PASS" : "BLOCKED",
       LISTING_READY: listingReady ? "PASS" : marketTestReady
         ? "WAITING" : "BLOCKED" })
+    const waitingForContinuation = !reviewReady && !waitingForWorker &&
+      !firstBlocker
+    const visibleStages = waitingForContinuation
+      ? Object.freeze({ ...mapped,
+          [projectedLastStage]: "WAITING" as const })
+      : mapped
     return Object.freeze({ sourceUrl, canonicalUrl,
       candidateKey: String(row.candidate_key),
       candidateId: String(row.candidate_key), opportunityId: String(row.id),
@@ -1606,10 +1613,13 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       title: text(row.product_title, 350),
       state: reviewReady ? "READY" as const : waitingForWorker
         ? "WAITING" as const : firstBlocker
-          ? "BLOCKED" as const : "RUNNING" as const,
+          ? "BLOCKED" as const : "WAITING" as const,
       lastStage: projectedLastStage,
       disposition: waitingForWorker ? "WAITING_FOR_SHIPPING_WORKER" :
-        autonomousDisposition ?? String(row.decision ?? row.queue_status ?? "PARKED"),
+        waitingForContinuation
+          ? `WAITING_FOR_${projectedLastStage}_CONTINUATION`
+          : autonomousDisposition ??
+            String(row.decision ?? row.queue_status ?? "PARKED"),
       exactBlocker: reviewReady || waitingForWorker ? null : firstBlocker,
       exactBlockers: reviewReady
         ? Object.freeze([]) : Object.freeze(exactBlockers),
@@ -1656,7 +1666,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       conditionReady,
       shippingUsd,
       rehydrated: input.includeRecent === true,
-      stages: mapped,
+      stages: visibleStages,
       dollarCheck: reviewReady ? Object.freeze({
         title: row.product_title,
         targetPrice: marketTestReady ? marketTestReview.testPrice ?? null :
