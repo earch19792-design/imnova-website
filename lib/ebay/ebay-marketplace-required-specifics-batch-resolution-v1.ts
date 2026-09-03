@@ -567,6 +567,7 @@ Readonly<{
   let aiCallCount = 0
   let aiInputTokens = 0
   let aiOutputTokens = 0
+  const aiFailureCodes: string[] = []
   const batchSummaries: JsonRecord[] = []
   for (const products of grouped.values()) {
     const groupDeterministicStart = deterministicResolvedCount
@@ -617,10 +618,36 @@ Readonly<{
       const unresolvedForNext: RequiredSpecificsBatchProductV1[] = []
       for (const chunk of chunkProducts(candidates, maximumChars,
         maximumProducts)) {
-        const output = await input.aiResolver({ stage,
-          marketplaceId: chunk[0].marketplaceId,
-          categoryId: chunk[0].categoryId, products: chunk })
         aiCallCount += 1
+        let output: Awaited<ReturnType<RequiredSpecificsAiBatchV1>>
+        try {
+          output = await input.aiResolver({ stage,
+            marketplaceId: chunk[0].marketplaceId,
+            categoryId: chunk[0].categoryId, products: chunk })
+        } catch (error) {
+          const code = error instanceof Error
+            && /^[A-Z][A-Z0-9_]{2,119}$/.test(error.message)
+            ? error.message : "REQUIRED_SPECIFICS_AI_FAILED"
+          aiFailureCodes.push(code)
+          for (const product of chunk) {
+            const current = candidateResults.get(product.radarCandidateId)!
+            const residual = product.unresolvedRequiredAspects.map(
+              (aspectName) => humanReview(aspectName))
+            candidateResults.set(product.radarCandidateId, Object.freeze({
+              ...current,
+              resolutions: Object.freeze([
+                ...current.resolutions.filter((entry) => !residual.some(
+                  (replacement) => key(replacement.aspectName) ===
+                    key(entry.aspectName))),
+                ...residual,
+              ]),
+            }))
+            if (stage === "TEXT" && product.exactImageUrls.length) {
+              unresolvedForNext.push(product)
+            }
+          }
+          continue
+        }
         aiInputTokens += output.inputTokens ?? 0
         aiOutputTokens += output.outputTokens ?? 0
         for (const product of chunk) {
@@ -712,6 +739,7 @@ Readonly<{
     aiCallCount,
     aiInputTokens,
     aiOutputTokens,
+    aiFailureCodes: Object.freeze([...new Set(aiFailureCodes)]),
     batches: Object.freeze(batchSummaries),
     candidates: Object.freeze(candidates),
     marketplaceWrites: 0 as const,

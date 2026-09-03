@@ -587,6 +587,9 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
           }
         }
       }
+      const aiFailureCode = resolvedBatches.flatMap((batch) =>
+        batch.aiFailureCodes)[0]
+      if (aiFailureCode) resolverReasonCode = aiFailureCode
     } catch (error) {
       resolverReasonCode = error instanceof Error
         && /^[A-Z][A-Z0-9_]{2,119}$/.test(error.message)
