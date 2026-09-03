@@ -897,8 +897,11 @@ export async function continueLunaQuickPickVisualTopSellerEnrichmentV1(
     const { evidenceDigest: _priorEvidenceDigest, ...priorEvidence } =
       currentEvidence
     const completedAt = new Date().toISOString()
+    const previousSafeFailureCode = text(currentEvidence.safeFailureCode, 120)
     const safeFailureCode = conditionResolved
-      ? text(currentEvidence.safeFailureCode, 120)
+      ? previousSafeFailureCode ===
+          "OWNER_SUPPLIER_POLICY_CONDITION_MATERIALIZATION_FAILED"
+        ? null : previousSafeFailureCode
       : "OWNER_SUPPLIER_POLICY_CONDITION_MATERIALIZATION_FAILED"
     const durableEvidence = { ...priorEvidence,
       completedAt: text(currentEvidence.completedAt, 80) ?? completedAt,
@@ -908,6 +911,7 @@ export async function continueLunaQuickPickVisualTopSellerEnrichmentV1(
       conditionReconciliationCompletedAt: completedAt,
       conditionRepairSearchRepeated: false,
       conditionRepairVisionRepeated: false,
+      ...(previousSafeFailureCode ? { previousSafeFailureCode } : {}),
       safeFailureCode, residuals, factInvented: false, marketplaceWrites: 0 }
     const finalWrite = await input.supabase.from(
       "ebay_luna_opportunity_queue")

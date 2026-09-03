@@ -208,7 +208,11 @@ export function resolveTopSellerMarketplaceFieldMappingV1(input: Readonly<{
       right.candidate.candidateReference))
   const commercialReferences = rankedReferences.filter((entry) =>
     entry.candidate.soldVolume > 0 || entry.candidate.salesVelocity > 0)
-  const primary = commercialReferences[0] ?? null
+  // PRIMARY_REFERENCE has a reporting and audit contract that requires the
+  // official eBay item ID. A durable hashed reference can retain sold evidence
+  // in the top set, but must not be mislabeled as the primary listing.
+  const primary = commercialReferences.find((entry) =>
+    Boolean(entry.candidate.itemId)) ?? null
   const topReferenceSet = (commercialReferences.length
     ? commercialReferences : rankedReferences).slice(0, 5)
   const semanticMappings: Array<Readonly<{
