@@ -1208,9 +1208,10 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         supabase: input.supabase, accountKey: input.accountKey,
         batch: currentBatch, taxonomyReader: input.taxonomyReader,
         productIdentifierPolicyReader: input.productIdentifierPolicyReader,
-        // Quick Pick permits a single residual AI pass. Text receives every
-        // exact field and every unresolved aspect; residuals fail to review.
-        requiredSpecificsAiStages: ["TEXT"],
+        // Intake stays deterministic. The existing Required Specifics
+        // continuation owns the one bounded residual AI batch so a fresh
+        // Quick Pick cannot spend once in PROCESS and again during polling.
+        requiredSpecificsAiStages: [],
       }) : null
   const durableQuickPickOperations = resolved.flatMap((entry) => {
     if (!entry.selected) return []
