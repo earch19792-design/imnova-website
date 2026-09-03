@@ -54,6 +54,24 @@ export const QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1 =
 type JsonRecord = Record<string, unknown>
 type RadarBatch = ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1>
 
+export function classifyLunaQuickPickDemandDiscoveryV1(
+  result: SellerOsOnDemandFamilyDemandDiscoveryResultV1,
+) {
+  if (result.demandNegativeEvidencePresent) {
+    return "BLOCK_NEGATIVE_DEMAND" as const
+  }
+  if (result.marketTestRadarFamily &&
+      result.status === "FAMILY_DEMAND_UNPROVEN") {
+    return "CONTINUE_DEMAND_UNPROVEN" as const
+  }
+  if (result.familyBindingCreatedOrReused ||
+      ["FAMILY_DEMAND_PROVEN", "FAMILY_DEMAND_SUPPORTED"]
+        .includes(result.status)) {
+    return "CONTINUE_DEMAND_EVIDENCE" as const
+  }
+  return "BLOCK_DEMAND_UNRESOLVED" as const
+}
+
 export type LunaQuickPickVariantV1 = Readonly<{
   lunaProductId: string
   lunaVariantId: string
@@ -61,6 +79,12 @@ export type LunaQuickPickVariantV1 = Readonly<{
   title: string
   available: boolean
   supplierCostUsd: number
+}>
+
+export type LunaQuickPickSupplierIdentityV1 = Readonly<{
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
 }>
 
 export type LunaQuickPickCardV1 = Readonly<{
@@ -188,6 +212,16 @@ function sourceUrlWithVariant(canonicalUrl: string, variantId: string) {
   } catch {
     return canonicalUrl
   }
+}
+
+function supplierIdentityKeyV1(value: Readonly<{
+  lunaProductId?: string | null
+  lunaVariantId?: string | null
+  supplierSku?: string | null
+}>) {
+  return value.lunaProductId && value.lunaVariantId && value.supplierSku
+    ? identityKey(value.lunaProductId, value.lunaVariantId, value.supplierSku)
+    : null
 }
 
 export function isRehydratableQuickPickOperationV1(input: Readonly<{
@@ -496,15 +530,93 @@ export async function readLunaQuickPickBatchReceiptsV1(input: Readonly<{
       candidateKeys: Object.freeze(Array.isArray(metrics.candidateKeys)
         ? metrics.candidateKeys.flatMap((value) => text(value, 120)
           ? [String(value)] : []) : []),
-      cards: Object.freeze([...storedCards.map((entry) => card({
+      cards: Object.freeze([...storedCards.map((entry) =>
+        reconcileLunaQuickPickCardLivenessV1(card({
         ...entry, sourceUrl: String(entry.sourceUrl ?? "quick-pick:unknown"),
         rehydrated: true,
-      })), ...waitingCards]),
+      }))), ...waitingCards]),
       receivedAt: text(row.started_at, 80),
       updatedAt: text(row.heartbeat_at, 80),
       safeFailureCode: text(row.last_error_code, 120),
     })]
   }))
+}
+
+export async function readLunaQuickPickBatchRehydrationV1(input: Readonly<{
+  supabase: SupabaseClient
+  batchId: string
+}>) {
+  if (!/^[0-9a-f-]{36}$/.test(input.batchId)) {
+    throw new Error("LUNA_QUICK_PICK_BATCH_ID_INVALID")
+  }
+  const read = await input.supabase.from("ebay_seller_automation_runs")
+    .select("id,metrics,started_at,heartbeat_at").eq("id", input.batchId)
+    .eq("run_kind", "manual_acceleration").contains("lanes", ["quick_pick"])
+    .maybeSingle()
+  const row = record(read.data)
+  const metrics = record(row.metrics)
+  if (read.error || !read.data || metrics.contractVersion !==
+      QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1) {
+    throw new Error("LUNA_QUICK_PICK_BATCH_RECEIPT_NOT_FOUND")
+  }
+  const inputs = rows(metrics.inputs)
+  const urls = inputs.flatMap((entry) => {
+    const canonicalUrl = text(entry.canonicalUrl, 2_000)
+    if (!canonicalUrl) return []
+    return [sourceUrlWithVariant(canonicalUrl,
+      text(entry.variantId, 40) ?? "")]
+  })
+  if (urls.length !== inputs.length || urls.length < 1 ||
+      urls.length > LUNA_QUICK_PICK_MAX_INPUTS) {
+    throw new Error("LUNA_QUICK_PICK_BATCH_REHYDRATION_INPUT_UNPROVEN")
+  }
+  const capabilityGaps = new Map<string, Readonly<{
+    lunaProductId: string
+    lunaVariantId: string
+    supplierSku: string
+    reasonCode: "ON_DEMAND_MARKETPLACE_INSIGHTS_NOT_CONFIGURED" |
+      "ON_DEMAND_MARKETPLACE_INSIGHTS_UNAVAILABLE"
+    observedAt: string | null
+  }>>()
+  const rehydrateUrls: string[] = []
+  const storedCards = rows(metrics.cards).map((stored) =>
+    reconcileLunaQuickPickCardLivenessV1(card({
+      ...stored,
+      sourceUrl: String(stored.sourceUrl ?? "quick-pick:unknown"),
+      rehydrated: true,
+    })))
+  for (const stored of rows(metrics.cards)) {
+    const reasonCode = stored.exactBlocker
+    if (reasonCode !== "ON_DEMAND_MARKETPLACE_INSIGHTS_NOT_CONFIGURED" &&
+        reasonCode !== "ON_DEMAND_MARKETPLACE_INSIGHTS_UNAVAILABLE") continue
+    const lunaProductId = text(stored.lunaProductId, 80)
+    const lunaVariantId = text(stored.lunaVariantId, 80)
+    const supplierSku = text(stored.sourceSku, 120)
+    const key = supplierIdentityKeyV1({ lunaProductId, lunaVariantId,
+      supplierSku })
+    if (key) capabilityGaps.set(key, Object.freeze({
+      lunaProductId: lunaProductId as string,
+      lunaVariantId: lunaVariantId as string,
+      supplierSku: supplierSku as string,
+      reasonCode,
+      observedAt: text(stored.updatedAt, 80) ??
+        text(row.heartbeat_at, 80) ?? text(row.started_at, 80) }))
+    const sourceUrl = text(stored.sourceUrl, 2_000)
+    if (key && sourceUrl) rehydrateUrls.push(sourceUrl)
+  }
+  if (rehydrateUrls.length !== capabilityGaps.size) {
+    throw new Error("LUNA_QUICK_PICK_CAPABILITY_GAP_INPUTS_UNPROVEN")
+  }
+  return Object.freeze({
+    batchId: input.batchId,
+    originalBatchOperationCount: inputs.length,
+    urls: Object.freeze(urls),
+    rehydrateUrls: Object.freeze(rehydrateUrls),
+    storedCards: Object.freeze(storedCards),
+    capabilityGaps,
+    newOperationCount: 0 as const,
+    duplicateOperationCount: 0 as const,
+  })
 }
 
 function publicProductRows(product: DirectedLunaProduct, observedAt: string) {
@@ -707,6 +819,28 @@ function card(input: Partial<LunaQuickPickCardV1> &
     elapsedMs: input.elapsedMs ?? 0 })
 }
 
+export function reconcileLunaQuickPickCardLivenessV1(
+  input: LunaQuickPickCardV1,
+) {
+  if (input.state !== "RUNNING") return input
+  const waitingForShipping = input.lastStage === "SHIPPING" ||
+    input.exactBlocker === "ACTUAL_LUNA_SHIPPING" ||
+    input.exactBlocker === "WAITING_BROWSER_WORKER"
+  const lastStage = waitingForShipping ? "SHIPPING" : input.lastStage
+  return Object.freeze({
+    ...input,
+    state: "WAITING" as const,
+    lastStage,
+    disposition: waitingForShipping
+      ? "WAITING_FOR_SHIPPING_WORKER"
+      : `WAITING_FOR_${lastStage}_CONTINUATION`,
+    exactBlocker: null,
+    exactBlockers: Object.freeze([]),
+    stages: Object.freeze({ ...input.stages,
+      [lastStage]: "WAITING" as const }),
+  })
+}
+
 function outcomeStages(outcome: JsonRecord,
   candidate: RadarRevenueFactoryCandidateV1) {
   const stages = record(outcome.stages)
@@ -722,7 +856,7 @@ function outcomeStages(outcome: JsonRecord,
   return emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
     STOCK: candidate.stockReady ? "PASS" : "BLOCKED",
     DEMAND: demandReady ? "PASS" : pass("DEMAND_READY"),
-    SHIPPING: shippingWaiting ? "RUNNING" :
+    SHIPPING: shippingWaiting ? "WAITING" :
       shippingReady ? "PASS" : "BLOCKED",
     ECONOMICS: candidate.readyForEconomics ? "PASS" :
       pass("ECONOMICS_READY"),
@@ -920,9 +1054,12 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       entry.selected!.lunaVariantId, entry.selected!.supplierSku), result)
   }
   const marketTestRadarFamilies = discoveryResults.flatMap(({ result }) =>
-    result.marketTestRadarFamily ? [result.marketTestRadarFamily] : [])
+    classifyLunaQuickPickDemandDiscoveryV1(result) ===
+        "CONTINUE_DEMAND_UNPROVEN" && result.marketTestRadarFamily
+      ? [result.marketTestRadarFamily] : [])
   if (discoveryResults.some(({ result }) =>
-      result.familyBindingCreatedOrReused)) {
+      classifyLunaQuickPickDemandDiscoveryV1(result) ===
+        "CONTINUE_DEMAND_EVIDENCE" && result.familyBindingCreatedOrReused)) {
     const refreshedRadar = await input.supabase.rpc(
       "get_seller_os_family_market_radar_v1",
       { p_family_id: null, p_limit: 100 })
@@ -937,7 +1074,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       families: [...rows(activeRoot.families), ...marketTestRadarFamilies] }
   }
   if (discoveryResults.some(({ result }) =>
-      result.familyBindingCreatedOrReused || result.marketTestRadarFamily)) {
+      classifyLunaQuickPickDemandDiscoveryV1(result).startsWith("CONTINUE_"))) {
     currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
       radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
       lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
@@ -970,7 +1107,9 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         lunaVariantId: entry.selected.lunaVariantId,
         state: "BLOCKED", lastStage: "DEMAND",
         disposition: "BLOCKED",
-        exactBlocker: discovery?.reasonCode ??
+        exactBlocker: discovery?.demandNegativeEvidencePresent
+          ? "LUNA_QUICK_PICK_NEGATIVE_DEMAND_EVIDENCE"
+          : discovery?.reasonCode ??
           (single.ambiguousFamilyAssignments > 0
           ? "LUNA_QUICK_PICK_DEMAND_FAMILY_AMBIGUOUS"
           : "LUNA_QUICK_PICK_DEMAND_NOT_PROVEN"),
@@ -1064,7 +1203,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       listingPackageId: text(outcome.listingPackageId, 80),
       state: ready ? "READY" :
         outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
-          ? "RUNNING" : "BLOCKED",
+          ? "WAITING" : "BLOCKED",
       lastStage: marketTestReady ? "MARKET_TEST_READY" :
         ready ? "LISTING_READY" :
         outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
@@ -1072,7 +1211,9 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
             actionable(record(outcome.priceDistributionContinuation).finalReason) ??
             economicsBlocker ??
             actionable(outcome.reasonCode) ?? "ECONOMICS",
-      disposition: text(outcome.status, 80) ?? "PARKED",
+      disposition: outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
+        ? "WAITING_FOR_SHIPPING_WORKER"
+        : text(outcome.status, 80) ?? "PARKED",
       exactBlocker: ready ? null :
         actionable(outcome.economicsNextEvidence) ??
         actionable(record(outcome.priceDistributionContinuation).finalReason) ??
@@ -1157,22 +1298,52 @@ export function quickPickSafeTechnicalIdentityV1(candidate:
 export async function readLunaQuickPickProgressV1(input: Readonly<{
   supabase: SupabaseClient
   candidateKeys: readonly string[]
+  supplierIdentities?: readonly LunaQuickPickSupplierIdentityV1[]
   accountKey?: string | null
   includeRecent?: boolean
 }>) {
   const candidateKeys = [...new Set(input.candidateKeys.filter((value) =>
     /^sha256:[0-9a-f]{64}$/.test(value)))].slice(0, LUNA_QUICK_PICK_MAX_INPUTS)
-  if (!candidateKeys.length && !input.includeRecent) return Object.freeze([])
-  let queueQuery = input.supabase.from("ebay_luna_opportunity_queue")
-    .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,product_title,queue_status,decision,assessment,updated_at")
-  queueQuery = candidateKeys.length
-    ? queueQuery.in("candidate_key", candidateKeys)
-    : queueQuery.order("updated_at", { ascending: false })
-  const queueRead = await queueQuery.limit(input.includeRecent ? 100
-    : LUNA_QUICK_PICK_MAX_INPUTS)
-  if (queueRead.error) throw new Error("LUNA_QUICK_PICK_PROGRESS_READ_FAILED")
-  let queueRows = rows(queueRead.data)
-  if (input.includeRecent && !candidateKeys.length) {
+  const supplierIdentityKeys = new Set((input.supplierIdentities ?? [])
+    .flatMap((value) => supplierIdentityKeyV1(value)
+      ? [supplierIdentityKeyV1(value) as string] : []))
+  const requestedVariantIds = [...new Set((input.supplierIdentities ?? [])
+    .map((value) => value.lunaVariantId))]
+  if (!candidateKeys.length && !supplierIdentityKeys.size &&
+      !input.includeRecent) return Object.freeze([])
+  const columns = "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,product_title,queue_status,decision,assessment,updated_at"
+  const queueReads = await Promise.all([
+    candidateKeys.length
+      ? input.supabase.from("ebay_luna_opportunity_queue").select(columns)
+        .in("candidate_key", candidateKeys).limit(LUNA_QUICK_PICK_MAX_INPUTS)
+      : Promise.resolve({ data: [], error: null }),
+    requestedVariantIds.length
+      ? input.supabase.from("ebay_luna_opportunity_queue").select(columns)
+        .in("supplier_variant_id", requestedVariantIds)
+        .limit(LUNA_QUICK_PICK_MAX_INPUTS)
+      : Promise.resolve({ data: [], error: null }),
+    !candidateKeys.length && !requestedVariantIds.length && input.includeRecent
+      ? input.supabase.from("ebay_luna_opportunity_queue").select(columns)
+        .order("updated_at", { ascending: false }).limit(100)
+      : Promise.resolve({ data: [], error: null }),
+  ])
+  if (queueReads.some((read) => read.error)) {
+    throw new Error("LUNA_QUICK_PICK_PROGRESS_READ_FAILED")
+  }
+  const uniqueQueueRows = new Map<string, JsonRecord>()
+  for (const row of queueReads.flatMap((read) => rows(read.data))) {
+    const id = text(row.id, 80)
+    if (id) uniqueQueueRows.set(id, row)
+  }
+  let queueRows = [...uniqueQueueRows.values()]
+  if (supplierIdentityKeys.size) {
+    queueRows = queueRows.filter((row) => candidateKeys.includes(
+      String(row.candidate_key)) || supplierIdentityKeys.has(identityKey(
+      String(row.supplier_product_id), String(row.supplier_variant_id),
+      String(row.supplier_sku))))
+  }
+  if (input.includeRecent && !candidateKeys.length &&
+      !supplierIdentityKeys.size) {
     const radarRead = await input.supabase.rpc(
       "get_seller_os_family_market_radar_v1", {
         p_family_id: null, p_limit: 100,
@@ -1413,7 +1584,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const mapped = emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
       STOCK: "PASS", DEMAND: marketTestReady ? "WAITING" :
         stages.DEMAND_READY === "READY" ? "PASS" : "BLOCKED",
-      SHIPPING: waitingForWorker ? "RUNNING" :
+      SHIPPING: waitingForWorker ? "WAITING" :
         shipping.shippingJobStatus === "SHIPPING_EVIDENCE_DURABLE"
           ? "PASS" : "BLOCKED",
       ECONOMICS: stages.ECONOMICS_READY === "READY" ? "PASS" : "BLOCKED",
@@ -1434,11 +1605,11 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       lunaVariantId: text(row.supplier_variant_id, 80),
       title: text(row.product_title, 350),
       state: reviewReady ? "READY" as const : waitingForWorker
-        ? "RUNNING" as const : firstBlocker
+        ? "WAITING" as const : firstBlocker
           ? "BLOCKED" as const : "RUNNING" as const,
       lastStage: projectedLastStage,
-      disposition: autonomousDisposition
-        ?? String(row.decision ?? row.queue_status ?? "PARKED"),
+      disposition: waitingForWorker ? "WAITING_FOR_SHIPPING_WORKER" :
+        autonomousDisposition ?? String(row.decision ?? row.queue_status ?? "PARKED"),
       exactBlocker: reviewReady || waitingForWorker ? null : firstBlocker,
       exactBlockers: reviewReady
         ? Object.freeze([]) : Object.freeze(exactBlockers),

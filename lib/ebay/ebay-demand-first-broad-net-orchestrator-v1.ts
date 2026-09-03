@@ -1462,7 +1462,8 @@ export async function collectSellerOsDemandFirstBroadNetServerReplayV1() {
 
 export type SellerOsOnDemandFamilyDemandDiscoveryResultV1 = Readonly<{
   status: "FAMILY_DEMAND_PROVEN" | "FAMILY_DEMAND_SUPPORTED" |
-    "DEMAND_NOT_PROVEN" | "DEMAND_DISCOVERY_UNAVAILABLE"
+    "FAMILY_DEMAND_UNPROVEN" | "DEMAND_NOT_PROVEN" |
+    "DEMAND_DISCOVERY_UNAVAILABLE"
   soldComparableCount: number
   familyBindingCreatedOrReused: boolean
   familyId: string | null
@@ -1500,18 +1501,38 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
   const categorized = input.activeEvidence.filter((entry) =>
     entry.categoryId && /^\d{1,20}$/.test(entry.categoryId))
   const categories = new Set(categorized.map((entry) => entry.categoryId as string))
-  if (!categorized.length || categories.size !== 1 || !input.productType) return null
-  const categoryId = [...categories][0]
-  const references = unique(categorized.map((entry) => entry.evidenceId))
-  const evidenceObservedAt = instant(input.report.evidenceAsOf)
+  if (categories.size > 1 || !input.productType) return null
+  const categoryId = categories.size === 1 ? [...categories][0] : null
+  const lunaProductId = text(input.lunaCatalogRow.supplier_product_id ??
+    input.lunaCatalogRow.product_id, 80)
+  const lunaVariantId = text(input.lunaCatalogRow.supplier_variant_id, 80)
+  const supplierSku = text(input.lunaCatalogRow.sku, 120)
+  if (!categoryId && (!lunaProductId || !lunaVariantId || !supplierSku)) return null
+  const durableIdentityReference = digest({
+    source: "LUNA_DURABLE_CATALOG_EXACT_IDENTITY",
+    lunaProductId,
+    lunaVariantId,
+    supplierSku,
+  })
+  const references = categoryId
+    ? unique(categorized.map((entry) => entry.evidenceId))
+    : [`luna-durable-catalog:${durableIdentityReference}`]
+  const evidenceObservedAt = instant(input.report.evidenceAsOf) ??
+    instant(input.lunaCatalogRow.captured_at)
   if (!evidenceObservedAt || !references.length) return null
   const familyName = text(input.productTitle, 160)
   if (!familyName) return null
   const familyIdentity = normalizeSellerOsMarketFamilyIdentityV1({
     productFunction: familyName,
     buyerUseCase: input.productType,
-    category: `ebay-us-category:${categoryId}`,
-    structuredDefinition: { "category id": categoryId,
+    category: categoryId ? `ebay-us-category:${categoryId}` :
+      "ebay-us-category:unproven",
+    structuredDefinition: { ...(categoryId ? { "category id": categoryId } : {
+      "marketplace category status": "UNPROVEN",
+      "supplier product id": lunaProductId as string,
+      "supplier variant id": lunaVariantId as string,
+      "supplier sku": supplierSku as string,
+    }),
       "product family": familyName,
       "supplier product type": input.productType },
   })
@@ -1531,8 +1552,9 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
     familyDefinition, observationWindowStart: start.toISOString(),
     observationWindowEnd: end.toISOString(),
     familyDemandStatus: "FAMILY_DEMAND_UNPROVEN",
-    demandEvidenceClass: "DIRECT_MARKET_OBSERVATION",
-    sourceStatus: "AVAILABLE", aggregationSemantics: "CUMULATIVE_SNAPSHOT",
+    demandEvidenceClass: categoryId ? "DIRECT_MARKET_OBSERVATION" : "UNPROVEN",
+    sourceStatus: categoryId ? "AVAILABLE" : "UNAVAILABLE",
+    aggregationSemantics: "CUMULATIVE_SNAPSHOT",
     demandEvidenceReferences: references,
     demandEvidenceDigest: digest(references), soldComparableCount: null,
     soldQuantityEvidence: null, activeComparableCount: categorized.length,
@@ -1541,7 +1563,12 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
     priceBand: null, priceMedian: null, priceDistributionEvidence: [],
     competitionState: "UNPROVEN", buyerIntentTerms: [],
     keywordState: "UNPROVEN", demandKeywordDna: null,
-    attributeProfile: { "category id": categoryId,
+    attributeProfile: { ...(categoryId ? { "category id": categoryId } : {
+      "marketplace category status": "UNPROVEN",
+      "supplier product id": lunaProductId as string,
+      "supplier variant id": lunaVariantId as string,
+      "supplier sku": supplierSku as string,
+    }),
       "product family": familyName,
       "supplier product type": input.productType },
     opportunityTypes: ["QUICK_PICK_MARKET_TEST"], evidenceObservedAt,
@@ -1549,26 +1576,60 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
     sourceAdapter: "SELLER_OS_EBAY_MARKET_RESEARCH_GATEWAY_V1",
     sourceContractVersion: input.report.validationVersion,
     limitations: ["DEMAND_EVIDENCE_ABSENT_NOT_NEGATIVE",
-      "EXACT_PRODUCT_DEMAND_NOT_CLAIMED", "MARKET_PRICE_SUPPORT_UNPROVEN"],
+      "EXACT_PRODUCT_DEMAND_NOT_CLAIMED", "MARKET_PRICE_SUPPORT_UNPROVEN",
+      ...(!categoryId ? ["MARKETPLACE_CATEGORY_UNPROVEN"] : [])],
   })
   const radarFamily = Object.freeze({ familyId: observation.familyId,
     familyName, opportunityCaseId: observation.opportunityCaseId,
+    exactSupplierIdentity: Object.freeze({
+      lunaProductId: lunaProductId as string,
+      lunaVariantId: lunaVariantId as string,
+      supplierSku: supplierSku as string,
+    }),
     observationSeries: Object.freeze([Object.freeze({ ...observation,
       fresh: true as const, soldQuantity: 0, priceCurrency: null,
       priceBandMinimum: null, priceBandMaximum: null,
       demandKeywordDna: null, attributeProfile: observation.attributeProfile })]) })
-  const prospectiveMatch = buildRadarRevenueFactoryCandidateBatchV1({
-    radarPayload: { status: "AVAILABLE", families: [radarFamily] },
-    frontierPayload: { frontiers: [] },
-    lunaCatalogRows: [input.lunaCatalogRow], targetCandidates: 2,
-    allowUnprovenMarketTest: true,
+  return radarFamily
+}
+
+export function buildSellerOsOnDemandCapabilityGapFallbackV1(input: Readonly<{
+  lunaCatalogRow: unknown
+  reasonCode: "ON_DEMAND_MARKETPLACE_INSIGHTS_NOT_CONFIGURED" |
+    "ON_DEMAND_MARKETPLACE_INSIGHTS_UNAVAILABLE"
+  observedAt?: string | null
+}>) {
+  const row = record(input.lunaCatalogRow)
+  const observedAt = instant(input.observedAt) ?? instant(row.captured_at)
+  const productTitle = text(row.title, 350)
+  const productType = text(row.product_type, 160)
+  if (!observedAt || !productTitle || !productType) {
+    return onDemandDiscoveryResultV1({
+      status: "DEMAND_DISCOVERY_UNAVAILABLE",
+      reasonCode: "ON_DEMAND_EXACT_LUNA_IDENTITY_REQUIRED",
+    })
+  }
+  const report = {
+    evidenceAsOf: observedAt,
+    searchQuery: productTitle,
+    validationVersion: "SELLER_OS_ON_DEMAND_CAPABILITY_GAP_FALLBACK_V1",
+  } as Awaited<ReturnType<OnDemandKeywordDemandReaderV1>>
+  const marketTestRadarFamily = buildOnDemandUnprovenMarketTestFamilyV1({
+    productTitle,
+    productType,
+    report,
+    activeEvidence: [],
+    lunaCatalogRow: row,
   })
-  const exactMatches = prospectiveMatch.candidates.filter((candidate) =>
-    candidate.lunaProductId === text(input.lunaCatalogRow.supplier_product_id ??
-      input.lunaCatalogRow.product_id, 80) &&
-    candidate.lunaVariantId === text(input.lunaCatalogRow.supplier_variant_id, 80) &&
-    candidate.supplierSku === text(input.lunaCatalogRow.sku, 120))
-  return exactMatches.length === 1 ? radarFamily : null
+  return onDemandDiscoveryResultV1({
+    status: "FAMILY_DEMAND_UNPROVEN",
+    soldComparableCount: 0,
+    familyId: text(marketTestRadarFamily?.familyId, 120),
+    familyName: text(marketTestRadarFamily?.familyName, 160),
+    reasonCode: input.reasonCode,
+    demandNegativeEvidencePresent: false,
+    marketTestRadarFamily,
+  })
 }
 
 /**
@@ -1623,7 +1684,7 @@ export async function discoverAndPersistSellerOsOnDemandFamilyDemandV1(
       productTitle, productType, report, activeEvidence, lunaCatalogRow: row,
     })
     if (marketTestRadarFamily) return onDemandDiscoveryResultV1({
-      status: "DEMAND_DISCOVERY_UNAVAILABLE", soldComparableCount: 0,
+      status: "FAMILY_DEMAND_UNPROVEN", soldComparableCount: 0,
       familyId: text(marketTestRadarFamily.familyId, 120),
       familyName: text(marketTestRadarFamily.familyName, 160),
       reasonCode: `ON_DEMAND_MARKETPLACE_INSIGHTS_${report.insightsAvailability}`,

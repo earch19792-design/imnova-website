@@ -10,9 +10,12 @@ import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { completeLunaQuickPickBatchReceiptV1,
   processLunaQuickPickBatchV1, readLunaQuickPickBatchReceiptsV1,
-  readLunaQuickPickProgressV1, receiveLunaQuickPickBatchV1,
+  readLunaQuickPickBatchRehydrationV1, readLunaQuickPickProgressV1,
+  receiveLunaQuickPickBatchV1,
   type LunaQuickPickCardV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-v1"
+import { buildSellerOsOnDemandCapabilityGapFallbackV1 } from
+  "@/lib/ebay/ebay-demand-first-broad-net-orchestrator-v1"
 import { continueLunaQuickPickRequiredSpecificsV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-required-specifics-v1"
 import { mergeSellerOsQuickPickPresentationV1 } from
@@ -164,9 +167,18 @@ export async function GET(req: Request) {
     ])
     const receiptKeys = receipts.flatMap((receipt) => receipt.candidateKeys)
     const requestedKeys = [...new Set([...keys, ...receiptKeys])]
+    const receiptSupplierIdentities = receipts.flatMap((receipt) =>
+      receipt.cards.flatMap((card) => card.lunaProductId &&
+        card.lunaVariantId && card.sourceSku ? [{
+          lunaProductId: card.lunaProductId,
+          lunaVariantId: card.lunaVariantId,
+          supplierSku: card.sourceSku,
+        }] : []))
     let durableProgress = await readLunaQuickPickProgressV1({
       supabase, candidateKeys: requestedKeys, accountKey,
-      includeRecent: requestedKeys.length === 0,
+      supplierIdentities: receiptSupplierIdentities,
+      includeRecent: requestedKeys.length === 0 &&
+        receiptSupplierIdentities.length === 0,
     })
     const receiptCards = receipts.flatMap((receipt) => receipt.cards)
     let progress = mergeProgress(receiptCards, durableProgress)
@@ -194,7 +206,9 @@ export async function GET(req: Request) {
       }
       durableProgress = await readLunaQuickPickProgressV1({
         supabase, candidateKeys: requestedKeys, accountKey,
-        includeRecent: requestedKeys.length === 0,
+        supplierIdentities: receiptSupplierIdentities,
+        includeRecent: requestedKeys.length === 0 &&
+          receiptSupplierIdentities.length === 0,
       })
       progress = mergeProgress(receiptCards, durableProgress)
     }
@@ -326,6 +340,72 @@ export async function POST(req: Request) {
           customerProductionTouched: false } }, 202)
     }
     const batchId = typeof body.batchId === "string" ? body.batchId : null
+    if (body.action === "REHYDRATE") {
+      if (!batchId) return response({ success: false,
+        error: "LUNA_QUICK_PICK_BATCH_ID_REQUIRED" }, 400)
+      const supabase = getSupabaseAdminClient()
+      const rehydration = await readLunaQuickPickBatchRehydrationV1({
+        supabase, batchId,
+      })
+      if (!rehydration.rehydrateUrls.length) return response({ success: true,
+        result: { inputCount: rehydration.originalBatchOperationCount,
+          cards: rehydration.storedCards },
+        receipt: { batchId, cards: rehydration.storedCards },
+        rehydration: { originalBatchOperationCount:
+          rehydration.originalBatchOperationCount,
+        rehydratedInputCount: 0, alreadyRehydrated: true,
+        newOperationCount: 0, duplicateOperationCount: 0,
+        marketplaceWrites: 0 },
+        safety: { marketplaceWrites: 0, canPublish: false,
+          customerProductionTouched: false } })
+      const capabilityGaps = [...rehydration.capabilityGaps.values()]
+      const partialResult = await processLunaQuickPickBatchV1({
+        supabase, accountKey, urls: rehydration.rehydrateUrls,
+        taxonomyReader: getEbayTaxonomyListingIntelligence,
+        batchId,
+        onDemandDemandDiscovery: async ({ lunaCatalogRow }) => {
+          const candidate = record(lunaCatalogRow)
+          const gap = capabilityGaps.find((entry) =>
+            entry.lunaProductId === candidate.supplier_product_id &&
+            entry.lunaVariantId === candidate.supplier_variant_id &&
+            entry.supplierSku === candidate.sku)
+          if (!gap) throw new Error(
+            "LUNA_QUICK_PICK_DURABLE_DEMAND_EVIDENCE_REQUIRED")
+          return buildSellerOsOnDemandCapabilityGapFallbackV1({
+            lunaCatalogRow,
+            reasonCode: gap.reasonCode,
+            observedAt: gap.observedAt,
+          })
+        },
+      })
+      const identity = (card: LunaQuickPickCardV1) => card.lunaProductId &&
+        card.lunaVariantId && card.sourceSku
+        ? `${card.lunaProductId}\n${card.lunaVariantId}\n${card.sourceSku}` : null
+      const rehydratedByIdentity = new Map(partialResult.cards.flatMap((card) => {
+        const key = identity(card)
+        return key ? [[key, card] as const] : []
+      }))
+      const cards = rehydration.storedCards.map((stored) => {
+        const key = identity(stored)
+        return key ? rehydratedByIdentity.get(key) ?? stored : stored
+      })
+      if (cards.length !== rehydration.originalBatchOperationCount) throw new Error(
+        "LUNA_QUICK_PICK_BATCH_REHYDRATION_RESULT_INCOMPLETE")
+      const result = Object.freeze({ ...partialResult,
+        inputCount: rehydration.originalBatchOperationCount,
+        cards: Object.freeze(cards) })
+      const receipt = await completeLunaQuickPickBatchReceiptV1({
+        supabase, batchId, result,
+      })
+      return response({ success: true, result, receipt,
+        rehydration: { originalBatchOperationCount:
+          rehydration.originalBatchOperationCount,
+        rehydratedInputCount: rehydration.rehydrateUrls.length,
+        newOperationCount: 0, duplicateOperationCount: 0,
+        marketplaceWrites: 0 },
+        safety: { marketplaceWrites: 0, canPublish: false,
+          customerProductionTouched: false } })
+    }
     if (body.action === "PROCESS" && !batchId) return response({ success: false,
       error: "LUNA_QUICK_PICK_BATCH_ID_REQUIRED" }, 400)
     const supabase = getSupabaseAdminClient()

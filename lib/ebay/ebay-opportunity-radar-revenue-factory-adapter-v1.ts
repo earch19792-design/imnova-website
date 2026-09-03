@@ -76,7 +76,12 @@ export type RadarRevenueFactoryFamilySeedV1 = Readonly<{
   demandEvidenceGrain: "FAMILY"
   exactProductDemandClaimed: false
   familyProductFunction: string
-  familyCategoryId: string
+  familyCategoryId: string | null
+  exactSupplierIdentity: Readonly<{
+    lunaProductId: string
+    lunaVariantId: string
+    supplierSku: string
+  }> | null
   demandTerms: readonly Readonly<{
     term: string
     familyType: "CORE" | "FORM_FACTOR" | "FEATURE" | "USE_CASE" |
@@ -336,6 +341,20 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
     const familyProductFunction = text(
       attributeProfile["product family"] ?? familyName, 200)
     const familyCategoryId = text(attributeProfile["category id"], 20)
+    const exactSupplierIdentity = (() => {
+      const explicit = record(family.exactSupplierIdentity)
+      const lunaProductId = text(explicit.lunaProductId ??
+        attributeProfile["supplier product id"], 80)
+      const lunaVariantId = text(explicit.lunaVariantId ??
+        attributeProfile["supplier variant id"], 80)
+      const supplierSku = text(explicit.supplierSku ??
+        attributeProfile["supplier sku"], 120)
+      return lunaProductId && lunaVariantId && supplierSku
+        ? Object.freeze({ lunaProductId, lunaVariantId, supplierSku }) : null
+    })()
+    const exactUnprovenQuickPick = unprovenMarketTest &&
+      limitations(observation.limitations).includes(
+        "MARKETPLACE_CATEGORY_UNPROVEN") && Boolean(exactSupplierIdentity)
     const structuredDemandTerms = demandTerms(
       observation.demandKeywordDna ?? family.currentDemandKeywordDna)
     const familyDemandStatus = observation.familyDemandStatus
@@ -352,7 +371,8 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
         soldComparableCount === null || soldQuantityEvidence === null ||
         !evidenceObservedAt || !sourceUpdatedAt || maximumAgeSeconds === null ||
         maximumAgeSeconds < 1 || !familyProductFunction ||
-        !familyCategoryId || !/^\d{1,20}$/.test(familyCategoryId) ||
+        (!familyCategoryId || !/^\d{1,20}$/.test(familyCategoryId)) &&
+          !exactUnprovenQuickPick ||
         allowed && !allowed.has(familyName.normalize("NFKC").toLowerCase())) return []
     return [Object.freeze({
       familyId, familyName, opportunityCaseId, demandEvidenceDigest,
@@ -372,7 +392,7 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
       evidenceScope: "FAMILY_DISCOVERY_SEED_ONLY" as const,
       demandEvidenceGrain: "FAMILY" as const,
       exactProductDemandClaimed: false as const,
-      familyProductFunction, familyCategoryId,
+      familyProductFunction, familyCategoryId, exactSupplierIdentity,
       demandTerms: structuredDemandTerms,
     })]
   }).slice(0, RADAR_DISCOVERY_MAXIMUM_ELIGIBLE_FAMILIES)
@@ -512,11 +532,28 @@ function familyLunaAssignments(
   const accepted: FamilyLunaAssignmentV1[] = []
   let ambiguousCount = 0
   for (const [key, row] of uniqueCatalog) {
+    const exactIdentityMatches = (seed: RadarRevenueFactoryFamilySeedV1) =>
+      seed.exactSupplierIdentity?.lunaProductId ===
+        (text(row.supplier_product_id) ?? text(row.product_id)) &&
+      seed.exactSupplierIdentity?.lunaVariantId ===
+        text(row.supplier_variant_id) &&
+      seed.exactSupplierIdentity?.supplierSku === text(row.sku)
+    const exactSeeds = seeds.filter(exactIdentityMatches)
+    if (exactSeeds.length === 1) {
+      accepted.push(Object.freeze({ seed: exactSeeds[0], row, key,
+        confidence: "PROVEN" as const }))
+      continue
+    }
+    if (exactSeeds.length > 1) {
+      ambiguousCount += 1
+      continue
+    }
     if (!supplierCategoryCorroborated(row)) continue
     const title = normalizedPhrase(`${text(row.title, 350) ?? ""} ${
       text(row.variant_title, 200) ?? ""}`)
     if (!title) continue
     const matches = seeds.flatMap((seed) => {
+      if (seed.exactSupplierIdentity) return []
       if (!supplierTypeCompatible(seed, row)) return []
       const familyPhrase = normalizedPhrase(seed.familyProductFunction)
       const exactFamilyPhrase = phraseIncluded(title, familyPhrase)
