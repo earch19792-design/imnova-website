@@ -470,7 +470,9 @@ export async function POST(request: Request) {
         executionEnabled: true,
       })
       const verified = result.titleVerified === true
-      return NextResponse.json({ success: verified,
+      const verifying = ["write_in_flight", "write_acknowledged",
+        "outcome_unknown"].includes(result.phase)
+      return NextResponse.json({ success: verified || verifying,
         outcome: verified ? "APPLIED_AND_OFFICIALLY_VERIFIED" :
           result.phase === "outcome_unknown" ? "VERIFYING_DO_NOT_RETRY" :
             result.phase === "write_in_flight" ?
@@ -482,7 +484,7 @@ export async function POST(request: Request) {
         unknownResultAutoRetry: false,
         safety: { listingEnds: 0, promotionWrites: 0,
           ebayWriteAttemptCount: result.ebayWriteAttemptCount } },
-      { status: verified ? 200 : 409 })
+      { status: verified ? 200 : verifying ? 202 : 409 })
     } catch (error) {
       const code = safeCode(error)
       const invalidated = code ===
