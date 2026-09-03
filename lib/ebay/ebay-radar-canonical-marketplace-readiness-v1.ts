@@ -15,6 +15,10 @@ import { ebayConditionContractFromVerifiedFact,
   // @ts-expect-error Node direct TypeScript tests require the explicit extension;
   // the production bundler resolves the same source module.
   "./ebay-manual-listing-domain.ts"
+import { validateOwnerSupplierPolicyApplicationV1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit
+  // extension; the production bundler resolves the same source module.
+  "./ebay-owner-supplier-merchandise-policy-v1.ts"
 import type { EbayTaxonomyListingIntelligence } from
   "./ebay-seller-keyword-demand-gateway"
 import type { EbayTaxonomyAspectIntelligence } from
@@ -559,6 +563,8 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     && text(packageData.conditionId, 20) === conditionContract.conditionId
     ? conditionContract.conditionId : ""
   const conditionAuthority = record(packageData.conditionAuthority)
+  const supplierPolicyApplication = record(
+    assessment.ownerSupplierMerchandisePolicyApplicationV1)
   const ownerCertifiedLunaCondition = conditionId
     && conditionAuthority.contractVersion ===
       LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1
@@ -569,6 +575,17 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     && conditionAuthority.supplierSku === input.opportunity.supplier_sku
     && conditionAuthority.categoryId === categoryId
     && conditionAuthority.conditionId === conditionId
+    && validateOwnerSupplierPolicyApplicationV1(
+      supplierPolicyApplication, {
+        lunaProductId: input.opportunity.supplier_product_id,
+        lunaVariantId: input.opportunity.supplier_variant_id,
+        supplierSku: input.opportunity.supplier_sku,
+      })
+    && conditionAuthority.policyId === supplierPolicyApplication.policyId
+    && conditionAuthority.policyDigest ===
+      supplierPolicyApplication.policyDigest
+    && conditionAuthority.policyApplicationDigest ===
+      supplierPolicyApplication.applicationDigest
     && conditionAuthority.factInvented === false
   const conditionSource = conditionId
     ? ownerCertifiedLunaCondition

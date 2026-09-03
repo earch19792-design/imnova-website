@@ -1,3 +1,8 @@
+import { validateOwnerSupplierPolicyApplicationV1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit
+  // extension; the production bundler resolves the same source module.
+  "./ebay-owner-supplier-merchandise-policy-v1.ts"
+
 export type JsonRecord = Record<string, unknown>
 
 export const EBAY_MANUAL_LISTING_CONNECTOR =
@@ -61,6 +66,7 @@ export function lunaOwnerCertifiedNewMerchandiseConditionV1(input: Readonly<{
   lunaVariantId: unknown
   supplierSku: unknown
   categoryId: unknown
+  policyApplication: unknown
 }>) {
   const lunaProductId = stringValue(input.lunaProductId)
   const lunaVariantId = stringValue(input.lunaVariantId)
@@ -71,7 +77,11 @@ export function lunaOwnerCertifiedNewMerchandiseConditionV1(input: Readonly<{
     && /^\d{1,30}$/.test(lunaVariantId)
     && Boolean(supplierSku)
     && /^\d{1,20}$/.test(categoryId)
+    && validateOwnerSupplierPolicyApplicationV1(input.policyApplication, {
+      lunaProductId, lunaVariantId, supplierSku,
+    })
   if (!exact) return null
+  const policy = input.policyApplication as Record<string, unknown>
   const condition = ebayConditionContractFromVerifiedFact("New")
   if (!condition) return null
   return Object.freeze({
@@ -79,6 +89,9 @@ export function lunaOwnerCertifiedNewMerchandiseConditionV1(input: Readonly<{
     authority: "OWNER_CERTIFIED_LUNA_SUPPLIER_CATALOG_POLICY",
     supplier: "LUNA_PORTEX",
     scope: "ALL_EXACT_LUNA_CATALOG_PRODUCTS",
+    policyId: policy.policyId,
+    policyDigest: policy.policyDigest,
+    policyApplicationDigest: policy.applicationDigest,
     lunaProductId,
     lunaVariantId,
     supplierSku,

@@ -298,6 +298,8 @@ export function lunaQuickPickOwnerCertifiedConditionAuthorityV1(
   const intelligence = record(assessment.listingIntelligencePackage)
   const category = record(intelligence.categoryRecommendation)
   const quickPick = record(assessment.lunaQuickPickOperationV1)
+  const policyApplication = record(
+    assessment.ownerSupplierMerchandisePolicyApplicationV1)
   return quickPick.contractVersion ===
       "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1"
       && quickPick.candidateKey === opportunity.candidate_key
@@ -311,6 +313,7 @@ export function lunaQuickPickOwnerCertifiedConditionAuthorityV1(
       lunaVariantId: opportunity.supplier_variant_id,
       supplierSku: opportunity.supplier_sku,
       categoryId: category.categoryId,
+      policyApplication,
     }) : null
 }
 
