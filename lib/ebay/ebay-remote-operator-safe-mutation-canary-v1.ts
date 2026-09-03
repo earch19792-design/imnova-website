@@ -288,7 +288,7 @@ export function selectRemoteOperatorSafeMutationCanaryV1(input: {
     if (!active || !publication) continue
     const confirmed = confirmedColorEvidence(packageRow)
     if (!confirmed ||
-      confirmed.productTruth.exactIdentityVerified !== true ||
+      record(confirmed.productTruth.stock).exactIdentityVerified !== true ||
       text(confirmed.productTruth.authorityClass, 100) !==
         "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1" ||
       text(confirmed.productTruth.lunaProductId, 80) !==
