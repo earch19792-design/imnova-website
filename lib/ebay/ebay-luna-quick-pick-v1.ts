@@ -1546,7 +1546,11 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       ? number(frontier.shippingValue) : null
     const waitingForWorker = shipping.shippingJobStatus ===
       "WAITING_BROWSER_WORKER"
-    const shippingBlocker = text(shipping.firstBlocker, 120)
+    // A durable Shipping PASS supersedes the continuation snapshot's old
+    // downstream blocker. Keeping that historical value in the live blocker
+    // union makes a resolved category appear blocked after rehydration.
+    const shippingBlocker = shipping.shippingJobStatus ===
+      "SHIPPING_EVIDENCE_DURABLE" ? null : text(shipping.firstBlocker, 120)
     const exactBlockers = [...new Set([...blockers, ...readinessBlockers,
       ...(shippingBlocker ? [shippingBlocker] : [])])]
     const firstBlocker = exactBlockers[0] ?? null
