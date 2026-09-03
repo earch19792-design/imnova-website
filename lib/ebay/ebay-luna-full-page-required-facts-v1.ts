@@ -12,6 +12,13 @@ export const OWNER_LUNA_UNBRANDED_POLICY_SOURCE =
 
 type JsonRecord = Record<string, unknown>
 
+type LunaExactImageFactV1 = Readonly<{
+  specificName: string
+  exactValue: string
+  imageIndex: number
+  sourceExcerpt: string
+}>
+
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord : {}
@@ -80,16 +87,20 @@ export function buildLunaFullPageImageReviewV1(input: Readonly<{
   imageUrls: readonly string[]
   brandEvidenceStatus: "NO_EXPLICIT_BRAND" | "EXPLICIT_BRAND" | "CONFLICT"
   explicitBrand?: string | null
+  exactFacts?: readonly LunaExactImageFactV1[]
   reviewMethod?: "BOUNDED_COMPLETE_EXACT_IMAGE_REVIEW" |
     "ONE_BOUNDED_OPENAI_BATCH"
   reviewedAt?: string
 }>) {
   const reviewedAt = input.reviewedAt ?? new Date().toISOString()
   const explicitBrand = text(input.explicitBrand, 120) || null
+  const exactFacts = normalizeExactImageFacts(input.exactFacts,
+    input.imageUrls.length)
   if (!/^\d{1,30}$/.test(input.lunaProductId)
       || !/^\d{1,30}$/.test(input.lunaVariantId)
       || !text(input.supplierSku, 120)
       || !Number.isFinite(Date.parse(reviewedAt))
+      || exactFacts === null
       || (input.brandEvidenceStatus === "EXPLICIT_BRAND" && !explicitBrand)
       || (input.brandEvidenceStatus !== "EXPLICIT_BRAND" && explicitBrand)) {
     return null
@@ -105,6 +116,7 @@ export function buildLunaFullPageImageReviewV1(input: Readonly<{
     allExactProductImagesReviewed: true as const,
     brandEvidenceStatus: input.brandEvidenceStatus,
     explicitBrand,
+    exactFacts,
     reviewAuthority: "BOUNDED_EXACT_LUNA_FULL_PAGE_REVIEW" as const,
     reviewMethod: input.reviewMethod ??
       "BOUNDED_COMPLETE_EXACT_IMAGE_REVIEW" as const,
@@ -115,12 +127,35 @@ export function buildLunaFullPageImageReviewV1(input: Readonly<{
   return Object.freeze({ ...core, evidenceDigest: digest(core) })
 }
 
+function normalizeExactImageFacts(value: unknown, imageCount: number) {
+  if (value === undefined) return [] as LunaExactImageFactV1[]
+  if (!Array.isArray(value) || value.length > 20) return null
+  const normalized: LunaExactImageFactV1[] = []
+  for (const raw of value) {
+    const fact = record(raw)
+    const specificName = text(fact.specificName, 120)
+    const exactValue = text(fact.exactValue, 500)
+    const sourceExcerpt = text(fact.sourceExcerpt, 500)
+    const imageIndex = Number(fact.imageIndex)
+    if (!specificName || !exactValue || !sourceExcerpt
+        || !Number.isInteger(imageIndex) || imageIndex < 0
+        || imageIndex >= imageCount
+        || normalized.some((entry) => key(entry.specificName)
+          === key(specificName))) return null
+    normalized.push(Object.freeze({ specificName, exactValue,
+      imageIndex, sourceExcerpt }))
+  }
+  return normalized
+}
+
 function validatedImageReview(input: Readonly<{
   opportunity: JsonRecord
   imageUrls: readonly string[]
 }>) {
   const assessment = record(input.opportunity.assessment)
   const review = record(assessment.lunaFullPageImageReviewV1)
+  const exactFacts = normalizeExactImageFacts(review.exactFacts,
+    input.imageUrls.length)
   const { evidenceDigest, ...core } = review
   const exact = review.contractVersion === LUNA_FULL_PAGE_IMAGE_REVIEW_V1
     && review.lunaProductId === input.opportunity.supplier_product_id
@@ -137,6 +172,7 @@ function validatedImageReview(input: Readonly<{
       "ONE_BOUNDED_OPENAI_BATCH"].includes(String(review.reviewMethod ?? ""))
     && review.marketplaceResearchUsed === false
     && review.factInvented === false
+    && exactFacts !== null
     && typeof review.reviewedAt === "string"
     && Number.isFinite(Date.parse(review.reviewedAt))
     && /^sha256:[0-9a-f]{64}$/.test(String(evidenceDigest ?? ""))
@@ -262,6 +298,9 @@ export function buildLunaExactProductEvidenceSetV1(input: Readonly<{
     imageBrandEvidenceStatus: imageReview?.brandEvidenceStatus ??
       (images.length === 0 ? "NO_EXPLICIT_BRAND" : "UNREVIEWED"),
     imageExplicitBrand: text(imageReview?.explicitBrand, 120) || null,
+    imageExactFacts: imageReview
+      ? normalizeExactImageFacts(imageReview.exactFacts, images.length) ?? []
+      : [],
     sectionCoverage: {
       structuredProductJson: sectionStatus(exactIdentity),
       variantData: sectionStatus(exactIdentity),
@@ -394,6 +433,17 @@ export function resolveLunaFullPageRequiredFactV1(input: Readonly<{
   const aspectHasMaterialConflict = input.evidence.sourceConflicts.some(
     (conflict) => conflict.affectedFacts.some((name) => key(name) === aspect))
   if (aspectHasMaterialConflict) return null
+  const exactImageFact = input.evidence.imageExactFacts.find((fact) =>
+    key(fact.specificName) === aspect)
+  if (exactImageFact) {
+    const value = officialValue({ proposed: exactImageFact.exactValue,
+      freeTextAllowed: input.freeTextAllowed,
+      allowedValues: input.allowedValues,
+      allowedValuesComplete: input.allowedValuesComplete,
+      maxLength: input.maxLength })
+    if (value) return result({ value, source: "EXPLICIT_LUNA_EVIDENCE",
+      sourceField: "IMAGE", sourceExcerpt: exactImageFact.sourceExcerpt })
+  }
   if (aspect === "brand") {
     const candidates = explicitBrandCandidates(input.evidence)
     const grouped = new Map<string, typeof candidates>()
@@ -437,6 +487,19 @@ export function resolveLunaFullPageRequiredFactV1(input: Readonly<{
   }
   const corpus = `${input.evidence.title}\n${input.evidence.variantTitle}\n${
     input.evidence.description}`
+  if (aspect === "model" && input.freeTextAllowed) {
+    const model = corpus.match(
+      /\b(?:product\s+)?model\s*[:#=-]\s*([A-Z0-9][A-Z0-9._/-]{1,39})\b/iu)
+    const proposed = model?.[1] ?? null
+    const value = proposed ? officialValue({ proposed,
+      freeTextAllowed: input.freeTextAllowed,
+      allowedValues: input.allowedValues,
+      allowedValuesComplete: input.allowedValuesComplete,
+      maxLength: input.maxLength }) : null
+    if (model && value) return result({ value,
+      source: "EXPLICIT_LUNA_EVIDENCE", sourceField: "DESCRIPTION",
+      sourceExcerpt: text(model[0], 180) })
+  }
   if (aspect === "type" && input.freeTextAllowed) {
     const match = corpus.match(
       /\b(?:multicolor\s+|rgb\s+|usb(?:-powered)?\s+)?(led\s+(?:tv\s+)?backlight\s+strips?)\b/iu,
@@ -451,6 +514,19 @@ export function resolveLunaFullPageRequiredFactV1(input: Readonly<{
     if (match && value) return result({ value,
       source: "LUNA_CONTEXTUAL_DERIVATION", sourceField: "DESCRIPTION",
       sourceExcerpt: text(match[0], 180) })
+    const sideSleeper = /\bside\s+sleeper\b/iu.exec(corpus)
+    const pillow = /\bpillow\b/iu.exec(corpus)
+    const sideSleeperValue = sideSleeper && pillow
+      ? officialValue({ proposed: "Side Sleeper Pillow",
+        freeTextAllowed: input.freeTextAllowed,
+        allowedValues: input.allowedValues,
+        allowedValuesComplete: input.allowedValuesComplete,
+        maxLength: input.maxLength }) : null
+    if (sideSleeper && pillow && sideSleeperValue) return result({
+      value: sideSleeperValue, source: "LUNA_CONTEXTUAL_DERIVATION",
+      sourceField: "DESCRIPTION",
+      sourceExcerpt: `${sideSleeper[0]}; ${pillow[0]}`,
+    })
   }
   if (aspect === "size" && input.freeTextAllowed) {
     const adjustable = /\badjustable\s+width\b/iu.exec(corpus)

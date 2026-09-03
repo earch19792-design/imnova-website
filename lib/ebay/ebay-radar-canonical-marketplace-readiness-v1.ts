@@ -257,6 +257,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     // durable owner policy remain the only Brand authorities.
     const legacyTitleBrand = requestedAspectKey === "brand"
       && priorResolution.source === "LUNA_EXACT_PRODUCT_TITLE"
+      && fullLunaEvidence.imageBrandEvidenceStatus === "NO_EXPLICIT_BRAND"
     if (legacyTitleBrand && priorEntry) delete provenProductValues[priorEntry[0]]
     if (exactIdentity && prior && !legacyTitleBrand) {
       value = exactOfficialValue(aspect, prior)
