@@ -34,6 +34,8 @@ import { persistQuickPickRequiredUpcResolutionV1 } from
   "@/lib/ebay/ebay-quick-pick-required-upc-resolution-v1"
 import { preflightEbayCategoryProductIdentifiers } from
   "@/lib/ebay/ebay-draft-only-gateway"
+import { materializeSellerOsDeterministicFactoryCandidateV1 } from
+  "@/lib/ebay/ebay-smart-stocking-durable-factory-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
@@ -151,7 +153,7 @@ async function persistQuickPickOwnerReview(input: Readonly<{
 
 export async function GET(req: Request) {
   const auth = await validateAdminApiRequest(req)
-  if (!auth.ok || !auth.userId) return response({ success: false,
+  if (!auth.ok) return response({ success: false,
     error: auth.error ?? "LUNA_QUICK_PICK_ADMIN_REQUIRED" },
   auth.status || 403)
   try {
@@ -182,6 +184,59 @@ export async function GET(req: Request) {
     })
     const receiptCards = receipts.flatMap((receipt) => receipt.cards)
     let progress = mergeProgress(receiptCards, durableProgress)
+    const pendingCategory = progress.flatMap((card) =>
+      card.candidateKey && card.opportunityId
+        && card.exactBlockers.some((blocker) =>
+          blocker === "MARKETPLACE_CATEGORY_NOT_READY")
+        && card.stages.SHIPPING === "PASS"
+        && card.stages.ECONOMICS === "PASS"
+        && card.stages.PRODUCT_TRUTH === "PASS"
+        ? [{ candidateKey: card.candidateKey,
+          opportunityId: card.opportunityId }] : [])
+    const categoryContinuation: Array<Readonly<{
+      candidateKey: string
+      status: "COMPLETED" | "BLOCKED"
+      categoryId?: string | null
+      blocker?: string | null
+    }>> = []
+    // This endpoint already performs bounded durable continuation for required
+    // specifics. Category continuation follows the same model and only resumes
+    // candidates whose Shipping, Economics, and Product Truth gates are already
+    // certified; it never recreates an intake operation.
+    for (let offset = 0; offset < pendingCategory.length; offset += 3) {
+      const batch = await Promise.all(pendingCategory.slice(offset, offset + 3)
+        .map(async (candidate) => {
+          try {
+            const materialized =
+              await materializeSellerOsDeterministicFactoryCandidateV1({
+                supabase, accountKey,
+                opportunityId: candidate.opportunityId,
+                candidateKey: candidate.candidateKey,
+                taxonomyReader: getEbayTaxonomyListingIntelligence,
+                productIdentifierPolicyReader:
+                  preflightEbayCategoryProductIdentifiers,
+              })
+            return Object.freeze({ candidateKey: candidate.candidateKey,
+              status: "COMPLETED" as const,
+              categoryId: typeof materialized.categoryId === "string"
+                ? materialized.categoryId : null,
+              blocker: typeof materialized.firstBlocker === "string"
+                ? materialized.firstBlocker : null })
+          } catch (error) {
+            return Object.freeze({ candidateKey: candidate.candidateKey,
+              status: "BLOCKED" as const, blocker: safeError(error) })
+          }
+        }))
+      categoryContinuation.push(...batch)
+    }
+    if (pendingCategory.length) {
+      durableProgress = await readLunaQuickPickProgressV1({
+        supabase, candidateKeys: requestedKeys, accountKey,
+        supplierIdentities: receiptSupplierIdentities,
+        includeRecent: false,
+      })
+      progress = mergeProgress(receiptCards, durableProgress)
+    }
     const pendingSpecifics = progress.flatMap((card) =>
       card.candidateKey && (!card.automaticResolutionExhausted
         || !card.automaticResolutionContractCurrent)
@@ -220,6 +275,7 @@ export async function GET(req: Request) {
       readyForReview: progress.filter((card) => card.state === "READY").length,
       blocked: progress.filter((card) => card.state === "BLOCKED").length,
       total: progress.length }, receipt: receipts[0] ?? null, receipts,
+      categoryContinuation,
       requiredSpecificsContinuation,
       overnightEnrichment,
       safety: { marketplaceWrites: 0, canPublish: false } })
