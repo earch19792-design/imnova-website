@@ -183,7 +183,16 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
     publishHandoff.finalListingPackageMatch === true &&
     /^sha256:[0-9a-f]{64}$/.test(text(review.packageDigest, 100)) &&
     text(review.packageDigest, 100) ===
-      text(ownerMarker.reviewedPackageDigest, 100)
+      text(ownerMarker.reviewedPackageDigest, 100) &&
+    ownerMarker.authorizedPackageId === packageId &&
+    ownerMarker.authorizedSku === supplierSku &&
+    number(ownerMarker.authorizedQuantity) ===
+      number(record(review.authorizationBinding).quantity) &&
+    record(ownerMarker.exactProductLineage).lunaProductId === lunaProductId &&
+    record(ownerMarker.exactProductLineage).lunaVariantId === lunaVariantId &&
+    ownerMarker.materialPackageDigestVersion ===
+      "QUICK_PICK_MATERIAL_PACKAGE_DIGEST_V1" &&
+    ownerMarker.materialPackageChangeInvalidatesAuthorization === true
   const marketTestReady = input.card.marketTestReady === true &&
     input.card.disposition === "MARKET_TEST_READY" &&
     opportunity.decision === "MARKET_TEST_READY" &&
@@ -287,6 +296,7 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
     lunaProductId,
     lunaVariantId,
     supplierSku,
+    quantity: number(record(review.authorizationBinding).quantity),
     gtin: text(productTruth.gtin, 80),
     canonicalLunaUrl: input.canonicalLunaUrl,
     productTruthDigest: text(productTruth.evidenceDigest, 100),

@@ -49,6 +49,7 @@ type QuickPickCard = {
   marketTestPathEligible: boolean
   marketTestReady: boolean
   marketTestReview: Record<string, unknown> | null
+  listingReview: Record<string, unknown> | null
   requiredItemSpecificsCount: number | null
   requiredItemSpecificsSatisfied: number | null
   requiredItemSpecificsReady: boolean | null
@@ -150,6 +151,22 @@ function cardBlockers(card: QuickPickCard) {
     : card.exactBlocker ? [card.exactBlocker] : [])]
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
+
+function ownerPublicationDecisionReady(card: QuickPickCard) {
+  return record(record(card.listingReview).publishAuthorizationHandoff)
+    .ownerPublicationDecisionReady === true
+}
+
+function ownerReviewHref(card: QuickPickCard) {
+  const candidate = card.candidateKey ?? ""
+  return `/admin?quickPickOwnerReview=${encodeURIComponent(candidate)}` +
+    "#dashboard-owner-review-queue"
+}
+
 export default function LunaQuickPickPage() {
   const [input, setInput] = useState("")
   const [cards, setCards] = useState<QuickPickCard[]>([])
@@ -197,7 +214,7 @@ export default function LunaQuickPickPage() {
       familyDemandStatus: null, familyBindingCreatedOrReused: false,
       demandEvidenceClass: null, demandNegativeEvidencePresent: false,
       marketTestPathEligible: false, marketTestReady: false,
-      marketTestReview: null,
+      marketTestReview: null, listingReview: null,
       requiredItemSpecificsCount: null,
       requiredItemSpecificsSatisfied: null,
       requiredItemSpecificsReady: null, unresolvedRequiredAspects: [],
@@ -489,10 +506,16 @@ export default function LunaQuickPickPage() {
               </button>)}</div>
           </div>}
 
-          <ol className="mt-4 space-y-1.5 text-sm">{stages.map(([key, label]) =>
-            <li key={key} className={`flex items-center gap-2 rounded-xl px-2 py-1.5 ${card.stages[key] === "RUNNING" ? "bg-cyan-200/[0.08] text-cyan-50" : card.stages[key] === "BLOCKED" ? "text-amber-100" : "text-white/65"}`}>
-              <span aria-hidden="true">{stageIcon(card.stages[key])}</span><span>{label}</span>
-            </li>)}</ol>
+          <ol className="mt-4 space-y-1.5 text-sm">{stages.map(([key, label]) => {
+            const displayedState = key === "LISTING_READY" &&
+              card.marketTestReady && ownerPublicationDecisionReady(card)
+              ? "PASS" : card.stages[key]
+            const displayedLabel = key === "LISTING_READY" &&
+              card.marketTestReady ? "Listo para decisión owner" : label
+            return <li key={key} className={`flex items-center gap-2 rounded-xl px-2 py-1.5 ${displayedState === "RUNNING" ? "bg-cyan-200/[0.08] text-cyan-50" : displayedState === "BLOCKED" ? "text-amber-100" : "text-white/65"}`}>
+              <span aria-hidden="true">{stageIcon(displayedState)}</span><span>{displayedLabel}</span>
+            </li>
+          })}</ol>
 
           {card.stages.SHIPPING === "PASS" && <p className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.06] p-2 text-sm text-emerald-50">Envío comprobado{card.shippingUsd !== null ? ` · ${money(card.shippingUsd)}` : ""}</p>}
           {card.stages.SHIPPING === "RUNNING" && <p className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-2 text-sm text-cyan-50">Esperando worker Luna. Seller OS reanudará este producto automáticamente.</p>}
@@ -571,8 +594,12 @@ export default function LunaQuickPickPage() {
               <div><dt>ROI</dt><dd className="font-black">{percent(card.dollarCheck.roi)}</dd></div>
               <div><dt>Stock</dt><dd className="font-black">Seguro</dd></div>
             </dl>
-            {card.marketTestReady ? <button type="button"
-              className="mt-3 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black">REVISAR PRUEBA DE MERCADO</button> : card.opportunityId && card.candidateKey && <a
+            {card.marketTestReady && ownerPublicationDecisionReady(card)
+              ? <a href={ownerReviewHref(card)}
+                data-quick-pick-market-test-owner-review-path
+                className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-amber-200 px-4 font-black text-black">REVISAR PRUEBA DE MERCADO</a>
+              : card.marketTestReady ? <button type="button" disabled
+                className="mt-3 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black opacity-40">PREPARANDO REVISIÓN OWNER…</button> : card.opportunityId && card.candidateKey && <a
               href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(card.opportunityId)}&candidate=${encodeURIComponent(card.candidateKey)}`}
               className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-200 px-4 font-black text-black">PUBLICAR EN EBAY</a>}
             <p className={`mt-2 text-xs ${card.marketTestReady

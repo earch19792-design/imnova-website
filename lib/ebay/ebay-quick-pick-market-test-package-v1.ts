@@ -272,15 +272,19 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   const ownerReview = record(packageData.quickPickOwnerReviewV1)
   const priorProjection = record(packageData.quickPickMarketTestPackageV1)
   const ownerEdits = record(ownerReview.authorizedEdits)
-  const title = text(ownerEdits.title, 80) ?? text(priorProjection.title, 80)
-    ?? generatedTitle.value
+  const persistedReviewedTitle = Object.keys(ownerReview).length > 0
+    ? text(packageData.title, 80) : null
+  const title = persistedReviewedTitle ?? text(ownerEdits.title, 80)
+    ?? text(priorProjection.title, 80) ?? generatedTitle.value
   const conditionId = text(packageData.conditionId, 30)
     ?? text(readiness.conditionId, 30)
   const conditionLabel = text(packageData.conditionLabel, 80)
     ?? text(readiness.conditionLabel, 80)
   const description = listingDescription({
-    packageDescription: text(ownerEdits.description, 5_000)
-      ?? text(packageData.description, 5_000),
+    packageDescription: Object.keys(ownerReview).length > 0
+      ? text(packageData.description, 5_000)
+      : text(ownerEdits.description, 5_000)
+        ?? text(packageData.description, 5_000),
     exactPublicDescription: publicDescription,
     exactTitle, aspects: aspects.values, conditionLabel,
   })
@@ -332,24 +336,51 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     evidenceClass: exactGtin
       ? "EXACT_PRODUCT_IDENTITY" : "UNPROVEN",
   })
-  const contentCore = Object.freeze({ title, keywords, itemSpecifics:
-    aspects.values, description: description.value, categoryId, categoryName,
-  conditionId, conditionLabel, targetPrice, supplierCost, shipping,
-  ebayFees, profit, margin, roi,
-  ...(exactGtin ? { productIdentifiers } : {}) })
-  const packageDigest = digest(contentCore)
   const currentListingPackageId = text(input.listingPackage.id, 80)
+  const opportunityId = text(input.opportunity.id, 80)
+  const candidateKey = text(input.opportunity.candidate_key, 120)
+  const supplierSku = text(input.opportunity.supplier_sku, 160)
+  const lunaProductId = text(input.opportunity.supplier_product_id, 80)
+  const lunaVariantId = text(input.opportunity.supplier_variant_id, 80)
+  const quantity = Math.max(1, Math.trunc(number(packageData.quantity) ?? 1))
+  const imageUrls = unique((Array.isArray(packageData.imageUrls)
+    ? packageData.imageUrls : []).map((value) => text(value, 2_000)), 24)
+  const persistedItemSpecifics = Object.keys(ownerReview).length > 0
+    ? record(packageData.aspects) : aspects.values
+  const packageShipping = money(record(packageData.shipping)
+    .supplierShippingEconomicsUsd) ?? shipping
+  const materialPackage = Object.freeze({
+    contractVersion: "QUICK_PICK_MATERIAL_PACKAGE_DIGEST_V1",
+    listingPackageId: currentListingPackageId,
+    opportunityId,
+    candidateKey,
+    exactProductLineage: Object.freeze({ supplierSku, lunaProductId,
+      lunaVariantId,
+      productTruthDigest: text(truth.evidenceDigest, 100) }),
+    title, description: description.value, itemSpecifics: persistedItemSpecifics,
+    categoryId, categoryName, conditionId, conditionLabel,
+    price: targetPrice, quantity, imageUrls,
+    shipping: packageShipping, supplierCost, ebayFees, profit, margin, roi,
+    ...(exactGtin ? { productIdentifiers } : {}),
+  })
+  const packageDigest = digest(materialPackage)
   const ownerReviewConfirmed = ownerReview.status === "CONFIRMED" &&
     ownerReview.readyForOwnerPublishAuthorization === true
   const reviewedPackageDigest = text(ownerReview.reviewedPackageDigest, 100)
+  const boundLineage = record(ownerReview.exactProductLineage)
   const finalListingPackageMatch = ownerReviewConfirmed &&
-    reviewedPackageDigest === packageDigest && Boolean(currentListingPackageId)
+    reviewedPackageDigest === packageDigest && Boolean(currentListingPackageId) &&
+    ownerReview.authorizedPackageId === currentListingPackageId &&
+    ownerReview.authorizedSku === supplierSku &&
+    boundLineage.lunaProductId === lunaProductId &&
+    boundLineage.lunaVariantId === lunaVariantId
   const listingReady = !marketTest && ((minimumContractCurrent
       && minimumReadiness.listingReady === true)
     || input.opportunity.decision === "LISTING_READY")
   const publishableAsMarketTest = marketTest && packageReady
   const publishableReadiness = packageReady &&
     (listingReady || publishableAsMarketTest)
+  const ownerPublicationDecisionReady = publishableReadiness
   const readyForOwnerPublishAuthorization = publishableReadiness &&
     ownerReviewConfirmed && finalListingPackageMatch
   return Object.freeze({
@@ -414,6 +445,10 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
       listingReady,
       publishableAsMarketTest,
       publishableReadiness,
+      ownerPublicationDecisionReady,
+      ownerDecisionCtaVisible: ownerPublicationDecisionReady,
+      secondNightPassRequired: false as const,
+      timeWaitBeforeOwnerDecisionSeconds: 0 as const,
       ownerReviewConfirmed,
       confirmedPackageId: finalListingPackageMatch
         ? currentListingPackageId : null,
@@ -427,6 +462,16 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
       falseGenericReadyBlocker: false as const,
       goldenPathRestarted: false as const,
       marketplaceWriteAuthorized: false as const,
+    }),
+    authorizationBinding: Object.freeze({
+      contractVersion: "QUICK_PICK_MATERIAL_PACKAGE_DIGEST_V1",
+      packageId: currentListingPackageId,
+      packageDigest,
+      sku: supplierSku,
+      exactProductLineage: materialPackage.exactProductLineage,
+      quantity,
+      imageCount: imageUrls.length,
+      materialPackageChangeInvalidatesAuthorization: true as const,
     }),
     reuseAudit: Object.freeze({ demandIntelligenceReused: true,
       soldEvidenceReused: true, intelligentTitleFactoryReused: true,
@@ -467,6 +512,13 @@ export function buildQuickPickOwnerReviewPackageDataV1(input: Readonly<{
     reviewedBy: input.actorUserId, reviewedAt: input.now,
     authorizedEdits,
     reviewedPackageDigest: input.review.packageDigest,
+    authorizedPackageId: input.review.authorizationBinding.packageId,
+    authorizedSku: input.review.authorizationBinding.sku,
+    authorizedQuantity: input.review.authorizationBinding.quantity,
+    exactProductLineage: input.review.authorizationBinding.exactProductLineage,
+    materialPackageDigestVersion:
+      input.review.authorizationBinding.contractVersion,
+    materialPackageChangeInvalidatesAuthorization: true,
     readyForOwnerPublishAuthorization: input.action === "CONFIRM",
     marketplaceWriteAuthorized: false,
     marketplaceWrites: 0,
@@ -479,6 +531,7 @@ export function buildQuickPickOwnerReviewPackageDataV1(input: Readonly<{
     categoryName: input.review.category.name,
     conditionId: input.review.condition.id,
     conditionLabel: input.review.condition.label,
+    quantity: input.review.authorizationBinding.quantity,
     aspects: input.review.itemSpecifics,
     shipping: { ...record(input.currentPackageData.shipping),
       supplierShippingEconomicsUsd: input.review.shipping.amount,

@@ -89,12 +89,12 @@ async function persistQuickPickOwnerReview(input: Readonly<{
   if (!candidateKey || !listingPackageId || !intent) {
     throw new Error("QUICK_PICK_OWNER_REVIEW_INPUT_INVALID")
   }
-  const progress = await readLunaQuickPickProgressV1({
+  let progress = await readLunaQuickPickProgressV1({
     supabase: input.supabase, candidateKeys: [candidateKey],
     accountKey: input.accountKey,
   })
-  const card = progress.find((entry) => entry.candidateKey === candidateKey)
-  const review = record(card?.listingReview)
+  let card = progress.find((entry) => entry.candidateKey === candidateKey)
+  let review = record(card?.listingReview)
   if (!card || card.listingPackageId !== listingPackageId ||
       (!card.marketTestReady && card.disposition !== "LISTING_READY") ||
       review.finalListingPackageReady !== true ||
@@ -105,7 +105,7 @@ async function persistQuickPickOwnerReview(input: Readonly<{
     .select("id,account_key,opportunity_id,candidate_key,status,package_data,readiness,source_observed_at,created_by,updated_at")
     .eq("id", listingPackageId).eq("candidate_key", candidateKey)
     .eq("account_key", input.accountKey).maybeSingle()
-  const current = record(currentRead.data)
+  let current = record(currentRead.data)
   if (currentRead.error || !current.id ||
       current.opportunity_id !== card.opportunityId ||
       !["draft", "ready_for_review"].includes(String(current.status ?? "")) ||
@@ -118,6 +118,41 @@ async function persistQuickPickOwnerReview(input: Readonly<{
       typeof edits.title !== "string" &&
       typeof edits.description !== "string") {
     throw new Error("QUICK_PICK_OWNER_REVIEW_EDIT_REQUIRED")
+  }
+  if (intent === "CONFIRM") {
+    if (current.created_by === null) {
+      const claimedAt = new Date().toISOString()
+      const claimed = await input.supabase.from("ebay_listing_packages")
+        .update({ created_by: input.actorUserId, updated_at: claimedAt })
+        .eq("id", listingPackageId).eq("opportunity_id", card.opportunityId)
+        .eq("candidate_key", candidateKey).eq("account_key", input.accountKey)
+        .eq("updated_at", current.updated_at).is("created_by", null)
+        .select("id,account_key,opportunity_id,candidate_key,status,package_data,readiness,source_observed_at,created_by,updated_at")
+        .maybeSingle()
+      if (claimed.error || !claimed.data) {
+        throw new Error("QUICK_PICK_OWNER_REVIEW_PACKAGE_OWNERSHIP_MISMATCH")
+      }
+      current = record(claimed.data)
+    }
+    if (record(record(current.package_data).supplierImageReadiness)
+        .imageReady !== true) {
+      const preparedImages = await ensureAutomaticLunaSupplierImagesV1({
+        supabase: input.supabase, accountKey: input.accountKey,
+        actor: input.actorUserId, packageRow: current,
+      })
+      current = record(preparedImages.listingPackage)
+    }
+    progress = await readLunaQuickPickProgressV1({
+      supabase: input.supabase, candidateKeys: [candidateKey],
+      accountKey: input.accountKey,
+    })
+    card = progress.find((entry) => entry.candidateKey === candidateKey)
+    review = record(card?.listingReview)
+    if (!card || card.listingPackageId !== listingPackageId ||
+        review.finalListingPackageReady !== true ||
+        record(review.authorizationBinding).imageCount === 0) {
+      throw new Error("QUICK_PICK_OWNER_REVIEW_FINAL_PACKAGE_NOT_READY")
+    }
   }
   const now = new Date().toISOString()
   const nextPackageData = buildQuickPickOwnerReviewPackageDataV1({

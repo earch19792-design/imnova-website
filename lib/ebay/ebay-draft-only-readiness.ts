@@ -662,6 +662,9 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const quickPickSupplierStock = numberOrNull(
     quickPickPublicationAuthorization.supplierInventoryQuantity,
   )
+  const quickPickAuthorizedQuantity = numberOrNull(
+    quickPickPublicationAuthorization.quantity,
+  )
   const quickPickPublicationAuthorized =
     quickPickPublicationAuthorization.validated === true
     && text(quickPickPublicationAuthorization.version)
@@ -701,6 +704,11 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && quickPickPublicationAuthorization.marketTestReadiness === "PASS"
     && quickPickPublicationAuthorization.publishableAsMarketTest === true
     && quickPickPublicationAuthorization.demandProven === false
+    && quickPickAuthorizedQuantity !== null
+    && Number.isInteger(quickPickAuthorizedQuantity)
+    && quickPickAuthorizedQuantity === Math.trunc(
+      numberOrNull(configuration.quantity) ?? 0,
+    )
     && quickPickPublicationAuthorization.sourceRevalidationAuthority
       === "QUICK_PICK_DURABLE_GOLDEN_PATH_REVALIDATION_V1"
     && quickPickPublicationAuthorization.finalHumanAuthorizationRequired === true

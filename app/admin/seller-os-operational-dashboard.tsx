@@ -473,10 +473,12 @@ function percentage(value: unknown) {
   return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : "—"
 }
 
-function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
+function QuickPickOwnerReviewInline({ card, request, onUpdated,
+  onKeepWaiting }: Readonly<{
   card: OwnerRuntimeQuickPickCard
   request: (path: string, init?: RequestInit) => Promise<Record<string, unknown>>
   onUpdated: () => Promise<void>
+  onKeepWaiting: () => void
 }>) {
   const review = record(card.listingReview)
   const category = record(review.category)
@@ -486,6 +488,7 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
   const band = record(review.supportedPriceBand)
   const ownerReview = record(review.ownerReview)
   const publishHandoff = record(review.publishAuthorizationHandoff)
+  const authorizationBinding = record(review.authorizationBinding)
   const keywords = Array.isArray(review.keywords)
     ? review.keywords.map(record) : []
   const specifics = record(review.itemSpecifics)
@@ -508,6 +511,8 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
   const publishAuthorizationReady = confirmed &&
     publishHandoff.readyForOwnerPublishAuthorization === true &&
     publishHandoff.publishCtaEnabled === true
+  const ownerPublicationDecisionReady =
+    publishHandoff.ownerPublicationDecisionReady === true && ready
   const canonicalHandoff = record(canonicalPublishAuthorization?.handoff)
   const canonicalSummary = record(canonicalHandoff.summary)
   const visualPublicationGate = record(
@@ -604,7 +609,7 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
           "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE"
           ? "🟡 Prueba de mercado" : "Paquete final"}
       </p><p className="mt-1 text-xs text-white/50">
-        Revisión owner inline · ningún cambio se publica desde aquí
+        Revisa el producto y decide si quieres probarlo en eBay
       </p></div>
       <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${
         confirmed ? "bg-emerald-200 text-emerald-950" : ready
@@ -616,28 +621,28 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
     <dl data-quick-pick-publish-authorization-handoff
       className="mt-3 grid gap-2 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
       <div className="rounded-xl bg-black/20 p-2"><dt
-        className="text-white/40">Market Test readiness</dt><dd
+        className="text-white/40">Estado</dt><dd
         className="mt-1 font-black text-emerald-100">
-        {publishHandoff.marketTestReadiness === "PASS" ? "PASS" : "—"}
+        {publishHandoff.marketTestReadiness === "PASS"
+          ? "Listo para prueba de mercado" : "Aún no listo"}
       </dd></div>
       <div className="rounded-xl bg-black/20 p-2"><dt
-        className="text-white/40">Demanda probada</dt><dd
+        className="text-white/40">Demanda exacta</dt><dd
         className="mt-1 font-black">{publishHandoff.demandProven === true
-          ? "SÍ" : "NO · prueba de mercado"}</dd></div>
+          ? "Probada" : "Aún no probada · Market Test"}</dd></div>
       <div className="rounded-xl bg-black/20 p-2"><dt
-        className="text-white/40">Listing ready</dt><dd
-        className="mt-1 font-black">{publishHandoff.listingReady === true
-          ? "PASS" : "NO · no requerido para Market Test"}</dd></div>
+        className="text-white/40">Blockers</dt><dd
+        className="mt-1 font-black text-emerald-100">Ninguno</dd></div>
       <div className="rounded-xl bg-black/20 p-2"><dt
-        className="text-white/40">Publicable como Market Test</dt><dd
+        className="text-white/40">Publicación</dt><dd
         className="mt-1 font-black text-emerald-100">{marketTest
-          ? "SÍ" : "NO"}</dd></div>
+          ? "Sólo con tu autorización" : "Lista para tu autorización"}</dd></div>
     </dl>
 
     <div className="mt-3 grid gap-3 xl:grid-cols-[1.2fr_1fr_0.9fr]">
       <div className="rounded-xl bg-black/20 p-3">
         <p className="text-[10px] font-black uppercase tracking-wide text-white/40">
-          Título final optimizado
+          Resumen del listing
         </p>
         {editing ? <input value={title} maxLength={80}
           onChange={(event) => setTitle(event.target.value)}
@@ -729,11 +734,19 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
         className="min-h-11 rounded-xl bg-cyan-200 px-5 text-sm font-black text-cyan-950 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
         GUARDAR CAMBIOS
       </button>}
+      {!editing && <button type="button" onClick={onKeepWaiting}
+        disabled={busy}
+        className="min-h-11 rounded-xl border border-white/20 px-5 text-sm font-black text-white/70 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60">
+        MANTENER EN ESPERA / NO PUBLICAR TODAVÍA
+      </button>}
       {!editing && <button type="button"
         onClick={() => void persist("CONFIRM")}
-        disabled={busy || !ready || confirmed}
+        disabled={busy || !ownerPublicationDecisionReady || confirmed}
+        data-owner-publication-authorization-cta
+        data-package-digest-bound={authorizationBinding.packageDigest ===
+          review.packageDigest ? "true" : "false"}
         className="min-h-11 rounded-xl bg-emerald-200 px-5 text-sm font-black text-emerald-950 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">
-        {confirmed ? "CONFIRMADO" : "CONFIRMAR"}
+        {confirmed ? "PUBLICACIÓN AUTORIZADA ✓" : "AUTORIZAR PUBLICACIÓN"}
       </button>}
       {!editing && publishAuthorizationReady &&
         <button type="button" onClick={() => void authorizeCanonicalPublishHandoff()}
@@ -741,8 +754,8 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
           data-quick-pick-publish-authorization-cta
           data-publishable-as-market-test={marketTest ? "true" : "false"}
           className="inline-flex min-h-11 items-center justify-center rounded-xl bg-rose-200 px-5 text-sm font-black text-rose-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200">
-          {canonicalPublishReady ? "AUTORIZACIÓN LISTA" :
-            "AUTORIZAR PUBLICACIÓN"}
+          {canonicalPublishReady ? "PUBLISHER LISTO" :
+            "CONTINUAR AL PUBLISHER"}
         </button>}
     </div>
     {canonicalPublishReady && publishAuthorizationUrl && <div
@@ -818,6 +831,16 @@ export function SellerOsOperationalDashboard() {
   const [radarReadState, setRadarReadState] =
     useState<DashboardReadState>("REFRESHING")
   const [ownerReviewOpen, setOwnerReviewOpen] = useState(false)
+  const [requestedOwnerReviewCandidateKey,
+    setRequestedOwnerReviewCandidateKey] = useState("")
+
+  useEffect(() => {
+    const candidateKey = new URL(window.location.href).searchParams.get(
+      "quickPickOwnerReview") ?? ""
+    if (!/^sha256:[0-9a-f]{64}$/.test(candidateKey)) return
+    setRequestedOwnerReviewCandidateKey(candidateKey)
+    setOwnerReviewOpen(true)
+  }, [])
 
   const adminRequest = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error } = await supabase.auth.getSession()
@@ -1054,6 +1077,13 @@ export function SellerOsOperationalDashboard() {
     card.state === "READY" &&
     ["MARKET_TEST_READY", "LISTING_READY"].includes(card.disposition)),
   [ownerReviewCandidateKeys, quickPickCards])
+  useEffect(() => {
+    if (!ownerReviewOpen || !requestedOwnerReviewCandidateKey) return
+    const id = `quick-pick-owner-review-${requestedOwnerReviewCandidateKey
+      .replace(/[^A-Za-z0-9_-]/g, "-")}`
+    window.requestAnimationFrame(() => document.getElementById(id)
+      ?.scrollIntoView({ block: "center" }))
+  }, [ownerReviewOpen, requestedOwnerReviewCandidateKey, ownerReviewCards])
   const opportunitiesReady = snapshot.readyForOwnerReviewCount
   const opportunityDataAvailable = snapshot.readyForOwnerReviewAvailable
 
@@ -1077,8 +1107,11 @@ export function SellerOsOperationalDashboard() {
         </p>
         {ownerReviewOpen && <div id="dashboard-owner-review-queue"
           data-owner-review-inline-queue className="mt-4 space-y-3 border-t border-emerald-100/15 pt-4">
+          <h3 className="text-lg font-black">Listos para revisar</h3>
           {ownerReviewCards.map((card) => <article
             key={card.candidateKey ?? card.sourceUrl}
+            id={`quick-pick-owner-review-${String(card.candidateKey ?? "")
+              .replace(/[^A-Za-z0-9_-]/g, "-")}`}
             data-owner-review-inline-card
             className="rounded-2xl border border-emerald-100/15 bg-black/20 p-3">
             <p className="text-sm font-black">{card.title ?? "Producto Luna"}</p>
@@ -1086,7 +1119,8 @@ export function SellerOsOperationalDashboard() {
               "SKU pendiente"} · {card.disposition === "MARKET_TEST_READY"
               ? "Prueba de mercado" : "Listing listo"}</p>
             <QuickPickOwnerReviewInline card={card} request={adminRequest}
-              onUpdated={ownerRuntime.refreshQuickPicks} />
+              onUpdated={ownerRuntime.refreshQuickPicks}
+              onKeepWaiting={() => setOwnerReviewOpen(false)} />
           </article>)}
           {opportunityDataAvailable && opportunitiesReady === 0 &&
             <p className="rounded-xl border border-white/10 p-3 text-sm text-white/50">

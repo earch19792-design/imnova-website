@@ -579,6 +579,7 @@ test("exact durable Quick Pick authorization bypasses stale legacy opportunity g
     lunaProductId: input.opportunity.supplier_product_id,
     lunaVariantId: input.opportunity.supplier_variant_id,
     supplierSku: input.opportunity.supplier_sku,
+    quantity: 1,
     stockState: "IN_STOCK_SUPPLIER_STATED",
     stockFreshness: "FRESH",
     supplierInventoryQuantity: 7,
