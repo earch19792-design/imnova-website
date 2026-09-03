@@ -21,6 +21,9 @@ import { validateOwnerSupplierPolicyApplicationV1 } from
   "./ebay-owner-supplier-merchandise-policy-v1.ts"
 import { ownerExplicitProductTruthValuesV1 } from
   "./ebay-human-product-truth-evidence-v1"
+import { buildLunaExactProductEvidenceSetV1,
+  resolveLunaFullPageRequiredFactV1 } from
+  "./ebay-luna-full-page-required-facts-v1"
 import type { EbayTaxonomyListingIntelligence } from
   "./ebay-seller-keyword-demand-gateway"
 import type { EbayTaxonomyAspectIntelligence } from
@@ -34,7 +37,7 @@ import {
 export const RADAR_CANONICAL_MARKETPLACE_READINESS_VERSION =
   "RADAR_CANONICAL_MARKETPLACE_READINESS_CONTINUATION_V3" as const
 export const RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION =
-  "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V1" as const
+  "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V2" as const
 
 const TAXONOMY_REVALIDATION_MS = 6 * 60 * 60 * 1_000
 const REQUIRED_ASPECT_SCOPE = "ALL_OFFICIAL_REQUIRED_ASPECTS" as const
@@ -79,13 +82,6 @@ function strings(value: unknown, maximum = 100) {
     : []
 }
 
-function urls(value: unknown, maximum = 20) {
-  return Array.isArray(value)
-    ? value.map((entry) => text(entry, 2_000))
-      .filter((entry) => /^https:\/\//.test(entry)).slice(0, maximum)
-    : []
-}
-
 function stringRecord(value: unknown, maximumEntries = 80) {
   return Object.fromEntries(Object.entries(record(value)).flatMap(
     ([name, entry]) => {
@@ -94,11 +90,6 @@ function stringRecord(value: unknown, maximumEntries = 80) {
       return normalizedName && normalizedValue
         ? [[normalizedName, normalizedValue] as const] : []
     }).slice(0, maximumEntries))
-}
-
-function plainText(value: unknown, maximum = 8_000) {
-  return text(typeof value === "string"
-    ? value.replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ") : "", maximum)
 }
 
 function canonical(value: unknown): string {
@@ -155,8 +146,20 @@ function compactAspectContract(aspect: EbayTaxonomyAspectIntelligence) {
     required: aspect.required,
     dataType: aspect.dataType,
     mode: aspect.mode,
-    freeTextAllowed: aspect.mode !== "SELECTION_ONLY",
+    inputMode: aspect.mode === "FREE_TEXT" ? "FREE_TEXT" as const
+      : aspect.mode === "SELECTION_ONLY" ? "SELECTION_ONLY" as const
+        : "UNPROVEN" as const,
+    freeTextAllowed: aspect.mode === "FREE_TEXT",
     cardinality: aspect.cardinality,
+    maxLength: aspect.maxLength,
+    format: aspect.format,
+    constraintsComplete: aspect.constraintsComplete,
+    constraints: aspect.values.flatMap((value) =>
+      value.valueConstraints.map((constraint) => ({
+        allowedValue: value.value,
+        applicableForAspectName: constraint.applicableForAspectName,
+        applicableForAspectValues: constraint.applicableForAspectValues,
+      }))),
     allowedValues: values.length <= 50 ? values : unique([
       ...aspect.suggestedValues, ...marketplaceFallbackValues,
     ]),
@@ -200,6 +203,9 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
       input.opportunity.supplier_variant_id
     && input.catalogRow.sku === input.opportunity.supplier_sku)
   const existingValues = record(input.productTruth.provenProductValues)
+  const fullLunaEvidence = buildLunaExactProductEvidenceSetV1({
+    opportunity: input.opportunity, catalogRow: input.catalogRow,
+  })
   const provenProductValues: Record<string, string> = {}
   for (const [name, value] of Object.entries(existingValues)) {
     const normalized = text(value, 500)
@@ -224,17 +230,39 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     value: string | null
     source: string | null
     exactProductSupported: boolean
+    resolutionClass?: string | null
+    sourceField?: string | null
+    sourceExcerpt?: string | null
+    fullPageGapDiagnostic?: string | null
   }>> = {}
   for (const aspect of required) {
     const requestedName = aspect.name
     let value: string | null = null
     let source: string | null = null
+    let resolutionClass: string | null = null
+    let sourceField: string | null = null
+    let sourceExcerpt: string | null = null
+    let fullPageGapDiagnostic: string | null = null
     const prior = Object.entries(provenProductValues).find(([name]) =>
       aspectKey(name) === aspectKey(requestedName))?.[1]
     if (exactIdentity && prior) {
       value = exactOfficialValue(aspect, prior)
-        ?? (aspect.mode !== "SELECTION_ONLY" ? text(prior, 500) : null)
-      if (value) source = "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1"
+        ?? (aspect.mode === "FREE_TEXT" ? text(prior, 500) : null)
+      if (value) {
+        const priorTruth = record(record(record(input.productTruth.sourceEvidence)
+          .requiredItemSpecificsTruthV1).resolutions)
+        const priorResolution = record(Object.entries(priorTruth).find(
+          ([name]) => aspectKey(name) === aspectKey(requestedName))?.[1])
+        const durableSource = text(priorResolution.source, 120)
+        source = priorResolution.exactProductSupported === true
+          && text(priorResolution.value, 500) === value && durableSource
+          ? durableSource : "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1"
+        resolutionClass = text(priorResolution.resolutionClass, 120) || null
+        sourceField = text(priorResolution.sourceField, 80) || null
+        sourceExcerpt = text(priorResolution.sourceExcerpt, 500) || null
+        fullPageGapDiagnostic = text(
+          priorResolution.fullPageGapDiagnostic, 120) || null
+      }
     }
     if (!value && exactIdentity && aspectKey(requestedName) === "brand") {
       const allowed = exactOfficialValue(aspect, structuredVendor)
@@ -243,15 +271,40 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
         value = allowed
         source = "LUNA_EXACT_STRUCTURED_VENDOR"
       }
-    } else if (!value && exactIdentity) {
+    }
+    if (!value && exactIdentity) {
       value = firstExactTitleValue(aspect, exactTitle)
       if (value) source = "LUNA_EXACT_PRODUCT_TITLE"
+    }
+    const fullPageResolution = !value && exactIdentity
+      ? resolveLunaFullPageRequiredFactV1({
+        opportunity: input.opportunity, evidence: fullLunaEvidence,
+        specificName: requestedName,
+        freeTextAllowed: aspect.mode === "FREE_TEXT",
+        allowedValues: aspect.values.map((entry) => entry.value),
+        allowedValuesComplete: aspect.valuesComplete,
+        maxLength: aspect.maxLength,
+      }) : null
+    if (fullPageResolution) {
+      value = fullPageResolution.value
+      source = fullPageResolution.source
+      resolutionClass = fullPageResolution.source
+      sourceField = fullPageResolution.sourceField
+      sourceExcerpt = fullPageResolution.sourceExcerpt
+      fullPageGapDiagnostic = fullPageResolution.fullPageGapDiagnostic
     }
     if (value) provenProductValues[aspect.name] = value
     resolutions[requestedName] = Object.freeze({
       value,
       source,
       exactProductSupported: Boolean(value),
+      ...(resolutionClass || sourceField || sourceExcerpt
+          || fullPageGapDiagnostic ? {
+        resolutionClass,
+        sourceField,
+        sourceExcerpt,
+        fullPageGapDiagnostic,
+      } : {}),
     })
   }
   const unresolved = Object.entries(resolutions)
@@ -292,6 +345,8 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     unsupportedRequiredSpecifics: unresolved,
     demandEvidenceGrain: "FAMILY",
     exactProductDemandClaimed: false,
+    fullLunaPageIsPrimaryProductEvidence: true,
+    lunaExactProductEvidenceSetV1: fullLunaEvidence,
     marketplaceWrites: 0,
   }
   const requiredItemSpecificsTruthV1 = Object.freeze({
@@ -322,9 +377,10 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
   const exactVariantData = exactIdentity ? {
     title: text(input.catalogRow?.variant_title, 240),
     sku: text(input.catalogRow?.sku, 120),
-    ...stringRecord(input.catalogRow?.variant_metadata),
+    ...stringRecord(input.catalogRow?.metadata),
   } : {}
   const batchInputCore = {
+    operationId: text(input.opportunity.id, 80),
     radarCandidateId: text(record(record(input.opportunity.assessment)
       .radarFactoryCandidateV1).candidateId, 80),
     lunaProductId: text(input.opportunity.supplier_product_id, 80),
@@ -334,13 +390,28 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     categoryId: input.taxonomy.categoryId ?? "",
     exactProductIdentityProven: exactIdentity,
     exactProductTitle: exactTitle,
-    exactDescription: exactIdentity
-      ? plainText(input.catalogRow?.body_html) : "",
+    exactDescription: fullLunaEvidence.description,
     exactSpecs,
     exactVariantData,
-    exactImageUrls: exactIdentity
-      ? unique([text(input.catalogRow?.featured_image_url, 2_000),
-        ...urls(input.catalogRow?.image_urls, 20)]) : [],
+    exactImageUrls: fullLunaEvidence.exactImageUrls,
+    compactLunaEvidence: {
+      evidenceSetDigest: fullLunaEvidence.evidenceDigest,
+      sectionCoverage: fullLunaEvidence.sectionCoverage,
+      title: fullLunaEvidence.title,
+      variantTitle: fullLunaEvidence.variantTitle,
+      description: fullLunaEvidence.description,
+      productMetadata: fullLunaEvidence.productMetadata,
+      variantMetadata: fullLunaEvidence.variantMetadata,
+      existingDurableProductTruth:
+        fullLunaEvidence.existingDurableProductTruth,
+      exactImageCount: fullLunaEvidence.exactImageCount,
+      imageSetDigest: fullLunaEvidence.imageSetDigest,
+      allExactProductImagesReviewed:
+        fullLunaEvidence.allExactProductImagesReviewed,
+      imageBrandEvidenceStatus:
+        fullLunaEvidence.imageBrandEvidenceStatus,
+      sourceConflicts: fullLunaEvidence.sourceConflicts,
+    },
     unresolvedRequiredAspects: unresolved,
     officialAspectDefinitions: aspectContracts,
   }

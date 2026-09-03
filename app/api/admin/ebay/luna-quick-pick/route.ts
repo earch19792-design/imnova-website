@@ -18,10 +18,6 @@ import { buildSellerOsOnDemandCapabilityGapFallbackV1 } from
   "@/lib/ebay/ebay-demand-first-broad-net-orchestrator-v1"
 import { continueLunaQuickPickRequiredSpecificsV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-required-specifics-v1"
-import { continueLunaQuickPickExactSoldEnrichmentV1 } from
-  "@/lib/ebay/ebay-luna-quick-pick-exact-sold-enrichment-v1"
-import { continueLunaQuickPickVisualTopSellerEnrichmentV1 } from
-  "@/lib/ebay/ebay-luna-quick-pick-visual-top-seller-enrichment-v1"
 import { continueLunaQuickPickMinimumReadinessV1 } from
   "@/lib/ebay/ebay-quick-pick-minimum-readiness-continuation-v1"
 import { persistQuickPickOwnerExplicitFactV1 } from
@@ -200,8 +196,11 @@ export async function GET(req: Request) {
     let progress = mergeProgress(receiptCards, durableProgress)
     const minimumReadinessKeys = progress.flatMap((card) =>
       card.candidateKey && card.opportunityId && card.listingPackageId
-        && !card.alreadyLive ? [card.candidateKey] : [])
-    const minimumReadinessContinuation =
+        && !card.alreadyLive
+        && card.stages.SHIPPING === "PASS"
+        && card.stages.ECONOMICS === "PASS"
+        ? [card.candidateKey] : [])
+    let minimumReadinessContinuation =
       await continueLunaQuickPickMinimumReadinessV1({
         supabase, accountKey, candidateKeys: minimumReadinessKeys,
       })
@@ -277,8 +276,18 @@ export async function GET(req: Request) {
           && card.automaticResolutionExhausted)
         ? [card.candidateKey] : [])
     let requiredSpecificsContinuation: unknown = null
-    let exactSoldMarketEnrichment: unknown = null
-    let visualIdentityTopSellerEnrichment: unknown = null
+    const exactSoldMarketEnrichment: unknown = Object.freeze({
+      status: "SKIPPED",
+      reasonCode: "FULL_LUNA_PAGE_PRIMARY_EVIDENCE",
+      rerunCount: 0,
+      marketplaceWrites: 0,
+    })
+    const visualIdentityTopSellerEnrichment: unknown = Object.freeze({
+      status: "SKIPPED",
+      reasonCode: "FULL_LUNA_PAGE_PRIMARY_EVIDENCE",
+      rerunCount: 0,
+      marketplaceWrites: 0,
+    })
     if (pendingSpecifics.length) {
       try {
         requiredSpecificsContinuation =
@@ -300,50 +309,18 @@ export async function GET(req: Request) {
           receiptSupplierIdentities.length === 0,
       })
       progress = mergeProgress(receiptCards, durableProgress)
-      const residualProductTruthKeys = progress.flatMap((card) =>
-        card.candidateKey && (card.unresolvedRequiredAspects.length > 0
-          || card.conditionReady === false)
-          ? [card.candidateKey] : [])
-      if (residualProductTruthKeys.length) {
-        try {
-          exactSoldMarketEnrichment =
-            await continueLunaQuickPickExactSoldEnrichmentV1({
-              supabase, accountKey,
-              candidateKeys: residualProductTruthKeys,
-              taxonomyReader: getEbayTaxonomyListingIntelligence,
-              productIdentifierPolicyReader:
-                preflightEbayCategoryProductIdentifiers,
-            })
-        } catch (error) {
-          exactSoldMarketEnrichment = { status: "BLOCKED",
-            reasonCode: safeError(error), marketplaceWrites: 0 }
-        }
-        durableProgress = await readLunaQuickPickProgressV1({
-          supabase, candidateKeys: requestedKeys, accountKey,
-          supplierIdentities: receiptSupplierIdentities,
-          includeRecent: requestedKeys.length === 0 &&
-            receiptSupplierIdentities.length === 0,
+      const postSpecificsMinimumReadiness =
+        await continueLunaQuickPickMinimumReadinessV1({
+          supabase, accountKey, candidateKeys: minimumReadinessKeys,
         })
-        progress = mergeProgress(receiptCards, durableProgress)
-      }
-      const visualResidualKeys = progress.flatMap((card) =>
-        card.candidateKey && (card.unresolvedRequiredAspects.length > 0
-          || card.conditionReady === false)
-          ? [card.candidateKey] : [])
-      if (visualResidualKeys.length) {
-        try {
-          visualIdentityTopSellerEnrichment =
-            await continueLunaQuickPickVisualTopSellerEnrichmentV1({
-              supabase, accountKey,
-              candidateKeys: visualResidualKeys,
-              taxonomyReader: getEbayTaxonomyListingIntelligence,
-              productIdentifierPolicyReader:
-                preflightEbayCategoryProductIdentifiers,
-            })
-        } catch (error) {
-          visualIdentityTopSellerEnrichment = { status: "BLOCKED",
-            reasonCode: safeError(error), marketplaceWrites: 0 }
-        }
+      minimumReadinessContinuation = Object.freeze({
+        ...minimumReadinessContinuation,
+        updated: Number(minimumReadinessContinuation.updated ?? 0)
+          + Number(postSpecificsMinimumReadiness.updated ?? 0),
+        postSpecificsUpdated:
+          Number(postSpecificsMinimumReadiness.updated ?? 0),
+      })
+      if (postSpecificsMinimumReadiness.updated > 0) {
         durableProgress = await readLunaQuickPickProgressV1({
           supabase, candidateKeys: requestedKeys, accountKey,
           supplierIdentities: receiptSupplierIdentities,

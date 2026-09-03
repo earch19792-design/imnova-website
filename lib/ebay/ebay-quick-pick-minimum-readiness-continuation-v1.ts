@@ -144,7 +144,13 @@ export async function continueLunaQuickPickMinimumReadinessV1(input: Readonly<{
     /^sha256:[0-9a-f]{64}$/.test(value)))].slice(0, MAXIMUM_QUICK_PICKS)
   if (!candidateKeys.length) return Object.freeze({ attempted: 0, updated: 0,
     unchanged: 0, ownerLastMileProductsCount: 0,
-    ownerLastMileFactCount: 0, marketplaceWrites: 0 as const })
+    ownerLastMileFactCount: 0, results: Object.freeze([] as JsonRecord[]),
+    newOperationCount: 0 as const,
+    duplicateOperationCount: 0 as const,
+    soldResearchRerunCount: 0 as const,
+    visualRerunCount: 0 as const,
+    sellerWideTradingCalls: 0 as const,
+    marketplaceWrites: 0 as const })
   const opportunityRead = await input.supabase
     .from("ebay_luna_opportunity_queue")
     .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,supplier_available,supplier_price,supplier_inventory_quantity,assessment,updated_at")

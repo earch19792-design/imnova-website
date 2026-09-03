@@ -13,6 +13,12 @@ export const LUNA_ALL_MERCHANDISE_NEW_POLICY_VERSION =
   "LUNA_ALL_MERCHANDISE_NEW_V1" as const
 export const LUNA_ALL_MERCHANDISE_NEW_STATEMENT =
   "LUNA PORTEX SOLO VENDE PRODUCTOS NUEVOS." as const
+export const LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY =
+  "LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW" as const
+export const LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY_VERSION =
+  "LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_V1" as const
+export const LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_STATEMENT =
+  "Para un producto con lineage Luna exacto certificado: preservar cualquier marca explícita encontrada en toda la página Luna; si no existe evidencia de marca después del barrido completo, usar Brand=Unbranded." as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -53,6 +59,24 @@ export function lunaNewMerchandisePolicyDigestV1() {
     "EXACT_SUPPLIER_LINEAGE_REQUIRED=true",
     "PRODUCT_IDENTITY_EXACT_REQUIRED=true",
   ].join("\n"))
+}
+
+export function lunaUnbrandedAfterFullPageReviewPolicyDigestV1() {
+  return sha256(canonical({
+    contractVersion: OWNER_SUPPLIER_MERCHANDISE_POLICY_V1,
+    supplierCode: LUNA_PORTEX_SUPPLIER_CODE,
+    policyCode: LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY,
+    policyVersion: LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY_VERSION,
+    statement: LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_STATEMENT,
+    conditionLabel: null,
+    brandValue: "Unbranded",
+    exactSupplierLineageRequired: true,
+    productIdentityExactRequired: true,
+    fullLunaPageEvidenceRequired: true,
+    explicitLunaBrandPreserved: true,
+    imageEvidenceReviewRequired: true,
+    factInvented: false,
+  }))
 }
 
 export type LunaNewMerchandisePolicyV1 = Readonly<{
@@ -114,6 +138,73 @@ export async function readLunaNewMerchandisePolicyV1(input: Readonly<{
     .limit(1).maybeSingle()
   if (read.error) throw new Error("OWNER_SUPPLIER_POLICY_READ_FAILED")
   return validateLunaNewMerchandisePolicyRowV1(read.data, input.accountKey)
+}
+
+export type LunaUnbrandedAfterFullPageReviewPolicyV1 = Readonly<{
+  id: string
+  marketplaceAccountKey: string
+  evidenceDigest: string
+  certifiedAt: string
+  authorizationReferenceDigest: string
+}>
+
+export function validateLunaUnbrandedAfterFullPageReviewPolicyRowV1(
+  value: unknown,
+  accountKey: string,
+): LunaUnbrandedAfterFullPageReviewPolicyV1 | null {
+  const row = record(value)
+  const payload = record(row.policy_payload)
+  const certifiedAt = text(row.certified_at, 80)
+  const authorizationReferenceDigest = text(
+    row.authorization_reference_digest, 80)
+  const valid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(String(row.id ?? ""))
+    && row.marketplace_account_key === accountKey
+    && row.marketplace === "EBAY_US"
+    && row.supplier_code === LUNA_PORTEX_SUPPLIER_CODE
+    && row.policy_code === LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY
+    && row.policy_version ===
+      LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY_VERSION
+    && row.decision === "CERTIFIED"
+    && row.revoked_at === null
+    && payload.statement ===
+      LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_STATEMENT
+    && payload.conditionLabel === null
+    && payload.brandValue === "Unbranded"
+    && payload.exactSupplierLineageRequired === true
+    && payload.productIdentityExactRequired === true
+    && payload.fullLunaPageEvidenceRequired === true
+    && payload.explicitLunaBrandPreserved === true
+    && payload.imageEvidenceReviewRequired === true
+    && payload.factInvented === false
+    && row.evidence_digest ===
+      lunaUnbrandedAfterFullPageReviewPolicyDigestV1()
+    && /^sha256:[0-9a-f]{64}$/.test(authorizationReferenceDigest ?? "")
+    && Boolean(certifiedAt && Number.isFinite(Date.parse(certifiedAt)))
+  return valid ? Object.freeze({
+    id: String(row.id), marketplaceAccountKey: accountKey,
+    evidenceDigest: String(row.evidence_digest), certifiedAt: certifiedAt!,
+    authorizationReferenceDigest: authorizationReferenceDigest!,
+  }) : null
+}
+
+export async function readLunaUnbrandedAfterFullPageReviewPolicyV1(
+  input: Readonly<{ supabase: SupabaseClient, accountKey: string }>,
+) {
+  const read = await input.supabase
+    .from("seller_os_owner_supplier_policies_v1")
+    .select("id,marketplace_account_key,marketplace,supplier_code,policy_code,policy_version,decision,policy_payload,evidence_digest,authorization_reference_digest,certified_at,revoked_at")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("supplier_code", LUNA_PORTEX_SUPPLIER_CODE)
+    .eq("policy_code", LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY)
+    .eq("policy_version",
+      LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY_VERSION)
+    .eq("decision", "CERTIFIED").is("revoked_at", null)
+    .order("certified_at", { ascending: false }).limit(1).maybeSingle()
+  if (read.error) throw new Error("OWNER_LUNA_BRAND_POLICY_READ_FAILED")
+  return validateLunaUnbrandedAfterFullPageReviewPolicyRowV1(
+    read.data, input.accountKey)
 }
 
 export type OwnerSupplierPolicyApplicationV1 = Readonly<{
@@ -213,6 +304,124 @@ export function validateOwnerSupplierPolicyApplicationV1(
     && typeof application.policyAppliedAt === "string"
     && Number.isFinite(Date.parse(application.policyAppliedAt))
     && application.policyDigest === lunaNewMerchandisePolicyDigestV1()
+    && /^sha256:[0-9a-f]{64}$/.test(String(
+      application.authorizationReferenceDigest ?? ""))
+    && /^sha256:[0-9a-f]{64}$/.test(String(application.applicationDigest ?? ""))
+    && application.applicationDigest === sha256(canonical(core))
+}
+
+export const OWNER_LUNA_UNBRANDED_POLICY_APPLICATION_V1 =
+  "OWNER_LUNA_UNBRANDED_POLICY_APPLICATION_V1" as const
+
+export type OwnerLunaUnbrandedPolicyApplicationV1 = Readonly<{
+  contractVersion: typeof OWNER_LUNA_UNBRANDED_POLICY_APPLICATION_V1
+  policyId: string
+  policyDigest: string
+  authorizationReferenceDigest: string
+  supplier: typeof LUNA_PORTEX_SUPPLIER_CODE
+  policyCode: typeof LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY
+  policyVersion: typeof LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY_VERSION
+  marketplaceBrandValue: "Unbranded"
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  exactSupplierLineageCertified: true
+  productIdentityExact: true
+  fullLunaPageEvidenceRequired: true
+  explicitLunaBrandPreserved: true
+  policyAppliedAt: string
+  applicationDigest: string
+  factInvented: false
+}>
+
+function brandApplicationCore(input: Readonly<{
+  policy: LunaUnbrandedAfterFullPageReviewPolicyV1
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  appliedAt: string
+}>) {
+  return {
+    contractVersion: OWNER_LUNA_UNBRANDED_POLICY_APPLICATION_V1,
+    policyId: input.policy.id,
+    policyDigest: input.policy.evidenceDigest,
+    authorizationReferenceDigest: input.policy.authorizationReferenceDigest,
+    supplier: LUNA_PORTEX_SUPPLIER_CODE,
+    policyCode: LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY,
+    policyVersion: LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY_VERSION,
+    marketplaceBrandValue: "Unbranded" as const,
+    lunaProductId: input.lunaProductId,
+    lunaVariantId: input.lunaVariantId,
+    supplierSku: input.supplierSku,
+    exactSupplierLineageCertified: true as const,
+    productIdentityExact: true as const,
+    fullLunaPageEvidenceRequired: true as const,
+    explicitLunaBrandPreserved: true as const,
+    policyAppliedAt: new Date(input.appliedAt).toISOString(),
+    factInvented: false as const,
+  }
+}
+
+export function buildOwnerLunaUnbrandedPolicyApplicationV1(
+  input: Readonly<{
+    policy: LunaUnbrandedAfterFullPageReviewPolicyV1
+    lunaProductId: string
+    lunaVariantId: string
+    supplierSku: string
+    exactSupplierLineageCertified: boolean
+    productIdentityExact: boolean
+    appliedAt?: string
+  }>,
+): OwnerLunaUnbrandedPolicyApplicationV1 | null {
+  const lunaProductId = text(input.lunaProductId, 30)
+  const lunaVariantId = text(input.lunaVariantId, 30)
+  const supplierSku = text(input.supplierSku, 120)
+  const appliedAt = input.appliedAt ?? new Date().toISOString()
+  if (input.exactSupplierLineageCertified !== true
+      || input.productIdentityExact !== true
+      || !/^\d{1,30}$/.test(lunaProductId ?? "")
+      || !/^\d{1,30}$/.test(lunaVariantId ?? "") || !supplierSku
+      || !Number.isFinite(Date.parse(appliedAt))) return null
+  const core = brandApplicationCore({ policy: input.policy,
+    lunaProductId: lunaProductId!, lunaVariantId: lunaVariantId!,
+    supplierSku, appliedAt })
+  return Object.freeze({ ...core,
+    applicationDigest: sha256(canonical(core)) })
+}
+
+export function validateOwnerLunaUnbrandedPolicyApplicationV1(
+  value: unknown,
+  expected: Readonly<{
+    lunaProductId: unknown
+    lunaVariantId: unknown
+    supplierSku: unknown
+  }>,
+): value is OwnerLunaUnbrandedPolicyApplicationV1 {
+  const application = record(value)
+  const core = { ...application }
+  delete core.applicationDigest
+  return application.contractVersion ===
+      OWNER_LUNA_UNBRANDED_POLICY_APPLICATION_V1
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(String(application.policyId ?? ""))
+    && application.supplier === LUNA_PORTEX_SUPPLIER_CODE
+    && application.policyCode ===
+      LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY
+    && application.policyVersion ===
+      LUNA_UNBRANDED_AFTER_FULL_PAGE_REVIEW_POLICY_VERSION
+    && application.marketplaceBrandValue === "Unbranded"
+    && application.lunaProductId === expected.lunaProductId
+    && application.lunaVariantId === expected.lunaVariantId
+    && application.supplierSku === expected.supplierSku
+    && application.exactSupplierLineageCertified === true
+    && application.productIdentityExact === true
+    && application.fullLunaPageEvidenceRequired === true
+    && application.explicitLunaBrandPreserved === true
+    && application.factInvented === false
+    && typeof application.policyAppliedAt === "string"
+    && Number.isFinite(Date.parse(application.policyAppliedAt))
+    && application.policyDigest ===
+      lunaUnbrandedAfterFullPageReviewPolicyDigestV1()
     && /^sha256:[0-9a-f]{64}$/.test(String(
       application.authorizationReferenceDigest ?? ""))
     && /^sha256:[0-9a-f]{64}$/.test(String(application.applicationDigest ?? ""))
