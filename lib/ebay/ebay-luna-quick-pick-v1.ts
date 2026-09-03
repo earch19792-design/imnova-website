@@ -42,6 +42,10 @@ import { buildQuickPickMarketTestListingReviewV1 } from
   "./ebay-quick-pick-market-test-package-v1.ts"
 import { projectQuickPickOvernightEligibilityV1 } from
   "./ebay-quick-pick-radar-overnight-enrichment-v1"
+import { MINIMUM_TRUTHFUL_LISTING_READINESS_V1 } from
+  "./ebay-minimum-truthful-listing-readiness-v1"
+import { ownerExplicitProductTruthFactsV1 } from
+  "./ebay-human-product-truth-evidence-v1"
 
 export const LUNA_QUICK_PICK_FAST_LISTING_V1 =
   "LUNA_QUICK_PICK_FAST_LISTING_V1" as const
@@ -136,7 +140,22 @@ export type LunaQuickPickCardV1 = Readonly<{
   automaticResolutionContractCurrent: boolean
   exactUnresolvedFields: readonly string[]
   ownerResidualActions: readonly JsonRecord[]
+  ownerTruePublicationBlockers: readonly JsonRecord[]
+  ownerCapturedFacts: readonly JsonRecord[]
+  postPublishEnrichmentOpportunities: readonly JsonRecord[]
   nextOwnerAction: "CONFIRM" | "ENTER_FACT" | null
+  minimumTruthfulListingReady: boolean
+  officialRequirementClassification: boolean
+  requirementCounts: Readonly<{
+    requiredToList: number
+    conditionallyRequired: number
+    recommended: number
+    optional: number
+    unproven: number
+  }>
+  productIdentifierRequirementStatus: "PASS" | "BLOCKED_REQUIRED_FACT" |
+    "UNPROVEN_CAPABILITY" | null
+  safeResumeAfterOwnerFact: boolean
   marketplaceReadinessReady: boolean
   conditionReady: boolean | null
   shippingUsd: number | null
@@ -371,6 +390,17 @@ function batchCardSnapshotV1(value: LunaQuickPickCardV1) {
     variantSelectionRequired: value.variantSelectionRequired,
     variants: value.variants, alreadyLive: value.alreadyLive,
     linkedLiveItemIds: value.linkedLiveItemIds, stages: value.stages,
+    minimumTruthfulListingReady: value.minimumTruthfulListingReady,
+    officialRequirementClassification:
+      value.officialRequirementClassification,
+    requirementCounts: value.requirementCounts,
+    ownerTruePublicationBlockers: value.ownerTruePublicationBlockers,
+    ownerCapturedFacts: value.ownerCapturedFacts,
+    postPublishEnrichmentOpportunities:
+      value.postPublishEnrichmentOpportunities,
+    productIdentifierRequirementStatus:
+      value.productIdentifierRequirementStatus,
+    safeResumeAfterOwnerFact: value.safeResumeAfterOwnerFact,
     listingReview: value.listingReview,
     overnightEnrichmentPending: value.overnightEnrichmentPending,
     overnightEnrichmentStatus: value.overnightEnrichmentStatus,
@@ -806,7 +836,25 @@ function card(input: Partial<LunaQuickPickCardV1> &
     ownerResidualActions: Object.freeze([
       ...(input.ownerResidualActions ?? []),
     ]),
+    ownerTruePublicationBlockers: Object.freeze([
+      ...(input.ownerTruePublicationBlockers ?? []),
+    ]),
+    ownerCapturedFacts: Object.freeze([...(input.ownerCapturedFacts ?? [])]),
+    postPublishEnrichmentOpportunities: Object.freeze([
+      ...(input.postPublishEnrichmentOpportunities ?? []),
+    ]),
     nextOwnerAction: input.nextOwnerAction ?? null,
+    minimumTruthfulListingReady:
+      input.minimumTruthfulListingReady ?? false,
+    officialRequirementClassification:
+      input.officialRequirementClassification ?? false,
+    requirementCounts: input.requirementCounts ?? Object.freeze({
+      requiredToList: 0, conditionallyRequired: 0,
+      recommended: 0, optional: 0, unproven: 0,
+    }),
+    productIdentifierRequirementStatus:
+      input.productIdentifierRequirementStatus ?? null,
+    safeResumeAfterOwnerFact: input.safeResumeAfterOwnerFact ?? false,
     marketplaceReadinessReady:
       input.marketplaceReadinessReady ?? false,
     conditionReady: input.conditionReady ?? null,
@@ -1475,8 +1523,45 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const marketTestReview = record(assessment.quickPickMarketTestReviewV1)
     const specificsContinuation = record(
       assessment.quickPickRequiredSpecificsContinuationV1)
-    const ownerResidualActions = rows(
-      specificsContinuation.residualOwnerActions)
+    const minimumReadiness = record(
+      assessment.minimumTruthfulListingReadinessV1)
+    const minimumContractCurrent = minimumReadiness.contractVersion ===
+      MINIMUM_TRUTHFUL_LISTING_READINESS_V1
+      && minimumReadiness.candidateKey === row.candidate_key
+      && minimumReadiness.opportunityId === row.id
+    const ownerTruePublicationBlockers = minimumContractCurrent
+      ? rows(minimumReadiness.ownerLastMileActions) : []
+    const ownerResidualActions = minimumContractCurrent
+      ? ownerTruePublicationBlockers.map((entry) => Object.freeze({
+        productField: entry.specificName,
+        exactUnresolvedField: entry.specificName,
+        disposition: "OWNER_FACT_REQUIRED",
+        bestProposal: entry.bestProposal ?? null,
+        proposalEvidence: entry.proposalEvidence ??
+          "SELLER_OS_AUTOMATION_EXHAUSTED",
+        confidence: entry.bestProposal ? "MEDIUM" : "LOW",
+        ownerAction: entry.bestProposal ? "CONFIRM" : "ENTER_FACT",
+        whyAutomationCouldNotResolve:
+          "EXACT_EVIDENCE_INSUFFICIENT_OR_CONFLICTING",
+        exactEvidenceMissing:
+          `AUTHORITATIVE_EXACT_PRODUCT_${String(entry.specificName ?? "FACT")
+            .toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`,
+        editAllowed: true,
+        automaticResolutionExhausted: true,
+        factInvented: false,
+      })) : rows(specificsContinuation.residualOwnerActions)
+    const postPublishEnrichmentOpportunities = minimumContractCurrent
+      ? rows(minimumReadiness.postPublishEnrichmentOpportunities) : []
+    const ownerCapturedFacts = ownerExplicitProductTruthFactsV1(row)
+      .map((entry) => Object.freeze({
+        specificName: entry.specificName,
+        exactValue: entry.exactValue,
+        normalizedMarketplaceValue: entry.normalizedMarketplaceValue,
+        capturedAt: entry.capturedAt,
+        evidenceDigest: entry.evidenceDigest,
+        correctionAllowedBeforePublication: true,
+        factInvented: false,
+      }))
     const canonicalMarketplaceReadiness = record(
       assessment.canonicalMarketplaceReadinessV1)
     const specificsResolution = record(
@@ -1484,10 +1569,14 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const overnightAudit = record(
       assessment.quickPickRadarOvernightEnrichmentV1)
     const specificsResolutions = rows(specificsResolution.resolutions)
-    const listingReady = intake.finalDecision === "LISTING_READY" ||
-      row.decision === "LISTING_READY"
-    const marketTestReady = marketTestReview.finalDecision ===
-      "MARKET_TEST_READY" || row.decision === "MARKET_TEST_READY"
+    const listingReady = (minimumContractCurrent
+        && minimumReadiness.listingReady === true)
+      || intake.finalDecision === "LISTING_READY"
+      || row.decision === "LISTING_READY"
+    const marketTestReady = (minimumContractCurrent
+        && minimumReadiness.marketTestReady === true)
+      || marketTestReview.finalDecision === "MARKET_TEST_READY"
+      || row.decision === "MARKET_TEST_READY"
     const reviewReady = listingReady || marketTestReady
     const autonomousDisposition = text(
       specificsContinuation.finalDisposition, 120)
@@ -1551,7 +1640,13 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     // union makes a resolved category appear blocked after rehydration.
     const shippingBlocker = shipping.shippingJobStatus ===
       "SHIPPING_EVIDENCE_DURABLE" ? null : text(shipping.firstBlocker, 120)
-    const exactBlockers = [...new Set([...blockers, ...readinessBlockers,
+    const minimumBlockers = minimumContractCurrent
+      ? textList(minimumReadiness.blockers) : []
+    const legacyBlockers = [...blockers, ...readinessBlockers]
+      .filter((blocker) => !minimumContractCurrent
+        || !blocker.startsWith(
+          "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN"))
+    const exactBlockers = [...new Set([...minimumBlockers, ...legacyBlockers,
       ...(shippingBlocker ? [shippingBlocker] : [])])]
     const firstBlocker = exactBlockers[0] ?? null
     const requiredItemSpecificsCount =
@@ -1572,6 +1667,18 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       (requiredItemSpecificsCount !== null &&
         requiredItemSpecificsSatisfied === requiredItemSpecificsCount &&
         requiredItemSpecificsCount > 0)
+    const waitingForRequirementCapability = minimumContractCurrent
+      && ownerTruePublicationBlockers.length === 0
+      && (number(minimumReadiness.unprovenRequirementCount) ?? 0) > 0
+    const effectiveRequiredItemSpecificsReady = minimumContractCurrent
+      ? ownerTruePublicationBlockers.length === 0
+        && !waitingForRequirementCapability
+      : requiredItemSpecificsReady
+    const effectiveUnresolvedRequiredAspects = minimumContractCurrent
+      ? ownerTruePublicationBlockers.flatMap((entry) => {
+        const specificName = text(entry.specificName, 120)
+        return specificName ? [specificName] : []
+      }) : unresolvedRequiredAspects
     const conditionReady = typeof canonicalMarketplaceReadiness.conditionReady
       === "boolean" ? canonicalMarketplaceReadiness.conditionReady : null
     const marketplaceReadinessReady =
@@ -1579,19 +1686,33 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const overnightEligibility = projectQuickPickOvernightEligibilityV1({
       row, alreadyLive: false,
     })
-    const requiredSpecificsBlocked = !requiredItemSpecificsReady &&
-      (unresolvedRequiredAspects.length > 0 || exactBlockers.some((value) =>
-        value.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")))
+    const requiredSpecificsBlocked = minimumContractCurrent
+      ? ownerTruePublicationBlockers.length > 0
+      : !requiredItemSpecificsReady &&
+        (unresolvedRequiredAspects.length > 0 || exactBlockers.some((value) =>
+          value.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")))
+    const waitingForIdentifierCapability = minimumContractCurrent
+      && ownerTruePublicationBlockers.length === 0
+      && record(minimumReadiness.gateStates).productIdentifiers ===
+        "UNPROVEN_CAPABILITY"
+    const waitingForEbayCapability = waitingForRequirementCapability
+      || waitingForIdentifierCapability
     const marketplaceReadinessBlocked = !marketplaceReadinessReady &&
       (conditionReady === false || exactBlockers.some((value) =>
         value.startsWith("MARKETPLACE_CONDITION_NOT_READY")))
+    const minimumDemand = text(
+      record(minimumReadiness.gateStates).demand, 80)
+    const marketTestPathEligible = minimumDemand ===
+      "UNPROVEN_MARKET_TEST_ALLOWED" || marketTestReady
     const projectedLastStage = marketTestReady ? "MARKET_TEST_READY" :
       listingReady ? "LISTING_READY" : waitingForWorker ? "SHIPPING" :
         requiredSpecificsBlocked ? "REQUIRED_SPECIFICS" :
-          marketplaceReadinessBlocked ? "MARKETPLACE_READINESS" :
-            firstBlocker ?? "ECONOMICS"
+          waitingForRequirementCapability ? "REQUIRED_SPECIFICS" :
+            waitingForIdentifierCapability ? "MARKETPLACE_READINESS" :
+              marketplaceReadinessBlocked ? "MARKETPLACE_READINESS" :
+                firstBlocker ?? "ECONOMICS"
     const mapped = emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
-      STOCK: "PASS", DEMAND: marketTestReady ? "WAITING" :
+      STOCK: "PASS", DEMAND: marketTestPathEligible ? "WAITING" :
         stages.DEMAND_READY === "READY" ? "PASS" : "BLOCKED",
       SHIPPING: waitingForWorker ? "WAITING" :
         shipping.shippingJobStatus === "SHIPPING_EVIDENCE_DURABLE"
@@ -1601,8 +1722,10 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         ? "PASS" : "BLOCKED",
       LISTING_PACKAGE: stages.LISTING_PACKAGE_READY === "READY"
         ? "PASS" : "BLOCKED",
-      REQUIRED_SPECIFICS: requiredItemSpecificsReady ? "PASS" : "BLOCKED",
-      MARKETPLACE_READINESS: marketplaceReadinessReady ? "PASS" : "BLOCKED",
+      REQUIRED_SPECIFICS: effectiveRequiredItemSpecificsReady ? "PASS"
+        : waitingForRequirementCapability ? "WAITING" : "BLOCKED",
+      MARKETPLACE_READINESS: marketplaceReadinessReady ? "PASS"
+        : waitingForIdentifierCapability ? "WAITING" : "BLOCKED",
       LISTING_READY: listingReady ? "PASS" : marketTestReady
         ? "WAITING" : "BLOCKED" })
     const waitingForContinuation = !reviewReady && !waitingForWorker &&
@@ -1620,10 +1743,12 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       lunaVariantId: text(row.supplier_variant_id, 80),
       title: text(row.product_title, 350),
       state: reviewReady ? "READY" as const : waitingForWorker
+        || waitingForEbayCapability
         ? "WAITING" as const : firstBlocker
           ? "BLOCKED" as const : "WAITING" as const,
       lastStage: projectedLastStage,
       disposition: waitingForWorker ? "WAITING_FOR_SHIPPING_WORKER" :
+        waitingForEbayCapability ? "WAITING_FOR_EBAY_CAPABILITY" :
         waitingForContinuation
           ? `WAITING_FOR_${projectedLastStage}_CONTINUATION`
           : autonomousDisposition ??
@@ -1636,16 +1761,16 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       durableFamilyHit: false, onDemandDemandDiscoveryRequired: false,
       onDemandDemandDiscoveryExecuted: false, soldComparableCount: 0,
       familyDemandStatus: null, familyBindingCreatedOrReused: false,
-      demandEvidenceClass: marketTestReady
+      demandEvidenceClass: marketTestPathEligible
         ? "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE" : null,
       demandNegativeEvidencePresent: false,
-      marketTestPathEligible: marketTestReady,
+      marketTestPathEligible,
       marketTestReady,
       marketTestReview: marketTestReady ? marketTestReview : null,
       requiredItemSpecificsCount,
       requiredItemSpecificsSatisfied,
-      requiredItemSpecificsReady,
-      unresolvedRequiredAspects,
+      requiredItemSpecificsReady: effectiveRequiredItemSpecificsReady,
+      unresolvedRequiredAspects: effectiveUnresolvedRequiredAspects,
       deterministicResolvedCount: specificsResolutions.filter((value) =>
         ["EXPLICIT_PRODUCT_TRUTH", "DETERMINISTIC_DERIVATION"]
           .includes(String(value.resolutionClass)) &&
@@ -1663,13 +1788,40 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       automaticResolutionContractCurrent:
         specificsContinuation.autonomousResolutionContractVersion ===
           QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1,
-      exactUnresolvedFields: textList(
-        specificsContinuation.exactUnresolvedFields),
+      exactUnresolvedFields: minimumContractCurrent
+        ? Object.freeze(effectiveUnresolvedRequiredAspects)
+        : textList(specificsContinuation.exactUnresolvedFields),
       ownerResidualActions: Object.freeze(ownerResidualActions),
+      ownerTruePublicationBlockers:
+        Object.freeze(ownerTruePublicationBlockers),
+      ownerCapturedFacts: Object.freeze(ownerCapturedFacts),
+      postPublishEnrichmentOpportunities:
+        Object.freeze(postPublishEnrichmentOpportunities),
       nextOwnerAction: ownerResidualActions.some((value) =>
         value.ownerAction === "ENTER_FACT") ? "ENTER_FACT" as const
         : ownerResidualActions.some((value) => value.ownerAction === "CONFIRM")
           ? "CONFIRM" as const : null,
+      minimumTruthfulListingReady:
+        minimumReadiness.minimumTruthfulListingReady === true,
+      officialRequirementClassification:
+        minimumReadiness.officialRequirementClassification === true,
+      requirementCounts: Object.freeze({
+        requiredToList: number(minimumReadiness.requiredToListCount) ?? 0,
+        conditionallyRequired:
+          number(minimumReadiness.conditionallyRequiredCount) ?? 0,
+        recommended: number(minimumReadiness.recommendedCount) ?? 0,
+        optional: number(minimumReadiness.optionalCount) ?? 0,
+        unproven: number(minimumReadiness.unprovenRequirementCount) ?? 0,
+      }),
+      productIdentifierRequirementStatus: ["PASS",
+        "BLOCKED_REQUIRED_FACT", "UNPROVEN_CAPABILITY"].includes(String(
+        record(minimumReadiness.gateStates).productIdentifiers ?? ""))
+        ? record(minimumReadiness.gateStates).productIdentifiers as
+          "PASS" | "BLOCKED_REQUIRED_FACT" | "UNPROVEN_CAPABILITY"
+        : null,
+      safeResumeAfterOwnerFact: minimumContractCurrent
+        && minimumReadiness.safeResumeFrom ===
+          "PRODUCT_TRUTH_REQUIRED_SPECIFICS_IDENTIFIER_POLICY_MARKETPLACE_READINESS",
       marketplaceReadinessReady,
       conditionReady,
       shippingUsd,

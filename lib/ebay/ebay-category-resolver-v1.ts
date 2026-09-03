@@ -3,7 +3,8 @@ import { isDeepStrictEqual } from "node:util"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-import { humanConfirmedProductTruthValuesV1 } from
+import { humanConfirmedProductTruthValuesV1,
+  ownerExplicitProductTruthValuesV1 } from
   "./ebay-human-product-truth-evidence-v1"
 
 import {
@@ -213,6 +214,9 @@ function exactProductValuesFromOpportunity(input: Readonly<{
   const productTruth = record(assessment.productTruth)
   const brand = record(productTruth.brand)
   const candidate = record(assessment.candidate)
+  const ownerExplicit = ownerExplicitProductTruthValuesV1(input.opportunity)
+  const ownerKeys = new Set(Object.keys(ownerExplicit).map(
+    normalizeIdentityPhrase))
   const proven: Record<string, string> = {}
   for (const [name, value] of Object.entries(supplierConfirmed)) {
     const normalized = text(value, 500)
@@ -223,6 +227,10 @@ function exactProductValuesFromOpportunity(input: Readonly<{
     const normalizedName = text(name, 120)
     const normalizedValue = text(value, 500)
     if (!normalizedName || !normalizedValue) continue
+    // A pre-publication owner correction supersedes only the prior active
+    // owner value that the last readiness pass copied into this projection.
+    // It does not override independent supplier-confirmed evidence.
+    if (ownerKeys.has(normalizeIdentityPhrase(normalizedName))) continue
     const conflict = Object.entries(proven).find(([candidate, existing]) =>
       normalizeIdentityPhrase(candidate) ===
         normalizeIdentityPhrase(normalizedName)
@@ -246,6 +254,15 @@ function exactProductValuesFromOpportunity(input: Readonly<{
     if (existing && normalizeIdentityPhrase(existing[1]) !==
         normalizeIdentityPhrase(value)) {
       throw new Error("HUMAN_PRODUCT_TRUTH_EVIDENCE_CONFLICT")
+    }
+    proven[name] = value
+  }
+  for (const [name, value] of Object.entries(ownerExplicit)) {
+    const existing = Object.entries(proven).find(([candidate]) =>
+      normalizeIdentityPhrase(candidate) === normalizeIdentityPhrase(name))
+    if (existing && normalizeIdentityPhrase(existing[1]) !==
+        normalizeIdentityPhrase(value)) {
+      throw new Error("OWNER_EXPLICIT_PRODUCT_FACT_CONFLICT")
     }
     proven[name] = value
   }

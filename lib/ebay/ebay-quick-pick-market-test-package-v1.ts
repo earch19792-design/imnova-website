@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto"
 
 import { calculateEbayUnitEconomics } from "./ebay-unit-economics"
+import { MINIMUM_TRUTHFUL_LISTING_READINESS_V1 } from
+  "./ebay-minimum-truthful-listing-readiness-v1"
 
 export const QUICK_PICK_MARKET_TEST_PACKAGE_AND_REMOTE_OWNER_REVIEW_V1 =
   "QUICK_PICK_MARKET_TEST_PACKAGE_AND_REMOTE_OWNER_REVIEW_V1" as const
@@ -240,6 +242,12 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   const intelligence = record(assessment.listingIntelligencePackage)
   const titleStrategy = record(intelligence.titleStrategy)
   const readiness = record(assessment.canonicalMarketplaceReadinessV1)
+  const minimumReadiness = record(
+    assessment.minimumTruthfulListingReadinessV1)
+  const minimumContractCurrent = minimumReadiness.contractVersion ===
+      MINIMUM_TRUTHFUL_LISTING_READINESS_V1
+    && minimumReadiness.candidateKey === input.opportunity.candidate_key
+    && minimumReadiness.opportunityId === input.opportunity.id
   const taxonomy = record(readiness.taxonomyPreflight)
   const marketTestReview = record(assessment.quickPickMarketTestReviewV1)
   const catalog = record(input.catalogRow)
@@ -254,7 +262,9 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     ...(Array.isArray(catalog.tags) ? catalog.tags.map((value) =>
       text(value, 120)) : []), ...Object.values(aspects.values).map((value) =>
       text(value, 300))].filter(Boolean).join(" ")
-  const marketTest = marketTestReview.finalDecision === "MARKET_TEST_READY"
+  const marketTest = (minimumContractCurrent
+      && minimumReadiness.marketTestReady === true)
+    || marketTestReview.finalDecision === "MARKET_TEST_READY"
     || input.opportunity.decision === "MARKET_TEST_READY"
   const generatedTitle = optimizedTitle({ exactTitle,
     primaryPhrase: text(titleStrategy.primarySearchPhrase, 160),
@@ -300,8 +310,13 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   ] })
   const keywords = keywordEvidence({ titleStrategy, aspects: aspects.values,
     aspectEvidence: aspects.evidence, exactEvidence, marketTest })
-  const itemSpecificsReady = readiness.requiredItemSpecificsReady === true
-  const marketplaceReady = readiness.ready === true
+  const itemSpecificsReady = minimumContractCurrent
+    ? rows(minimumReadiness.ownerLastMileActions).length === 0
+      && Number(minimumReadiness.unprovenRequirementCount ?? 0) === 0
+    : readiness.requiredItemSpecificsReady === true
+  const marketplaceReady = minimumContractCurrent
+    ? minimumReadiness.minimumTruthfulListingReady === true
+    : readiness.ready === true
   const identityExact = truth.exact === true ||
     text(truth.lunaProductId, 80) === input.opportunity.supplier_product_id
   const packageReady = Boolean(identityExact && title && description.value
@@ -329,8 +344,9 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   const reviewedPackageDigest = text(ownerReview.reviewedPackageDigest, 100)
   const finalListingPackageMatch = ownerReviewConfirmed &&
     reviewedPackageDigest === packageDigest && Boolean(currentListingPackageId)
-  const listingReady = !marketTest &&
-    input.opportunity.decision === "LISTING_READY"
+  const listingReady = !marketTest && ((minimumContractCurrent
+      && minimumReadiness.listingReady === true)
+    || input.opportunity.decision === "LISTING_READY")
   const publishableAsMarketTest = marketTest && packageReady
   const publishableReadiness = packageReady &&
     (listingReady || publishableAsMarketTest)

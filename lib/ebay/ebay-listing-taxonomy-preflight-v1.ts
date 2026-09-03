@@ -28,6 +28,11 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
+
 function key(value: unknown) {
   return text(value).toLocaleLowerCase("en-US")
     .replace(/[^a-z0-9]+/g, " ").trim()
@@ -50,6 +55,18 @@ function compatibleOfficialValue(
 }
 
 function canonicalAspect(aspect: EbayTaxonomyAspectIntelligence) {
+  const conditional = record(aspect.officialConditionalRequirement)
+  const officialConditionalRequirement = conditional.source ===
+      "EBAY_TAXONOMY_OFFICIAL_READONLY"
+    && conditional.machineEvaluable === true
+    && ["APPLIES", "DOES_NOT_APPLY", "UNPROVEN"].includes(
+      String(conditional.evaluation ?? ""))
+    ? {
+        source: "EBAY_TAXONOMY_OFFICIAL_READONLY" as const,
+        machineEvaluable: true as const,
+        evaluation: conditional.evaluation as
+          "APPLIES" | "DOES_NOT_APPLY" | "UNPROVEN",
+      } : null
   return {
     name: aspect.name,
     mode: aspect.mode,
@@ -66,6 +83,7 @@ function canonicalAspect(aspect: EbayTaxonomyAspectIntelligence) {
     values: aspect.values,
     valuesComplete: aspect.valuesComplete,
     constraintsComplete: aspect.constraintsComplete,
+    officialConditionalRequirement,
   }
 }
 

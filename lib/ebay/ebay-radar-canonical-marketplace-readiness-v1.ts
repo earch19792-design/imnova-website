@@ -19,6 +19,8 @@ import { validateOwnerSupplierPolicyApplicationV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit
   // extension; the production bundler resolves the same source module.
   "./ebay-owner-supplier-merchandise-policy-v1.ts"
+import { ownerExplicitProductTruthValuesV1 } from
+  "./ebay-human-product-truth-evidence-v1"
 import type { EbayTaxonomyListingIntelligence } from
   "./ebay-seller-keyword-demand-gateway"
 import type { EbayTaxonomyAspectIntelligence } from
@@ -202,6 +204,18 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
   for (const [name, value] of Object.entries(existingValues)) {
     const normalized = text(value, 500)
     if (normalized) provenProductValues[text(name, 120)] = normalized
+  }
+  // The original owner expression remains in its evidence record. The
+  // marketplace-normalized value is projected here and may correct an earlier
+  // owner value before publication without becoming a supplier-wide rule.
+  for (const [name, value] of Object.entries(
+    ownerExplicitProductTruthValuesV1(input.opportunity))) {
+    for (const existingName of Object.keys(provenProductValues)) {
+      if (aspectKey(existingName) === aspectKey(name)) {
+        delete provenProductValues[existingName]
+      }
+    }
+    provenProductValues[name] = value
   }
   const exactTitle = exactIdentity ? text(input.catalogRow?.title, 350) : ""
   const structuredVendor = exactIdentity

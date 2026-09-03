@@ -22,6 +22,10 @@ import { continueLunaQuickPickExactSoldEnrichmentV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-exact-sold-enrichment-v1"
 import { continueLunaQuickPickVisualTopSellerEnrichmentV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-visual-top-seller-enrichment-v1"
+import { continueLunaQuickPickMinimumReadinessV1 } from
+  "@/lib/ebay/ebay-quick-pick-minimum-readiness-continuation-v1"
+import { persistQuickPickOwnerExplicitFactV1 } from
+  "@/lib/ebay/ebay-quick-pick-owner-fact-capture-v1"
 import { mergeSellerOsQuickPickPresentationV1 } from
   "@/lib/ebay/seller-os-quick-pick-presentation-v1"
 import { buildQuickPickOwnerReviewPackageDataV1 } from
@@ -42,6 +46,8 @@ import { materializeSellerOsDeterministicFactoryCandidateV1 } from
   "@/lib/ebay/ebay-smart-stocking-durable-factory-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
+import { SELLER_OS_ACCESS_ROLES } from
+  "@/lib/seller-os-access-control"
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -172,8 +178,11 @@ export async function GET(req: Request) {
         .catch(() => null),
     ])
     const receiptKeys = receipts.flatMap((receipt) => receipt.candidateKeys)
-    const requestedKeys = [...new Set([...keys, ...receiptKeys])]
-    const receiptSupplierIdentities = receipts.flatMap((receipt) =>
+    const explicitCandidateScope = keys.length > 0
+    const requestedKeys = [...new Set(explicitCandidateScope
+      ? keys : receiptKeys)]
+    const receiptSupplierIdentities = (explicitCandidateScope ? [] : receipts)
+      .flatMap((receipt) =>
       receipt.cards.flatMap((card) => card.lunaProductId &&
         card.lunaVariantId && card.sourceSku ? [{
           lunaProductId: card.lunaProductId,
@@ -186,8 +195,25 @@ export async function GET(req: Request) {
       includeRecent: requestedKeys.length === 0 &&
         receiptSupplierIdentities.length === 0,
     })
-    const receiptCards = receipts.flatMap((receipt) => receipt.cards)
+    const receiptCards = explicitCandidateScope ? []
+      : receipts.flatMap((receipt) => receipt.cards)
     let progress = mergeProgress(receiptCards, durableProgress)
+    const minimumReadinessKeys = progress.flatMap((card) =>
+      card.candidateKey && card.opportunityId && card.listingPackageId
+        && !card.alreadyLive ? [card.candidateKey] : [])
+    const minimumReadinessContinuation =
+      await continueLunaQuickPickMinimumReadinessV1({
+        supabase, accountKey, candidateKeys: minimumReadinessKeys,
+      })
+    if (minimumReadinessContinuation.updated > 0) {
+      durableProgress = await readLunaQuickPickProgressV1({
+        supabase, candidateKeys: requestedKeys, accountKey,
+        supplierIdentities: receiptSupplierIdentities,
+        includeRecent: requestedKeys.length === 0
+          && receiptSupplierIdentities.length === 0,
+      })
+      progress = mergeProgress(receiptCards, durableProgress)
+    }
     const pendingCategory = progress.flatMap((card) =>
       card.candidateKey && card.opportunityId
         && card.exactBlockers.some((blocker) =>
@@ -247,6 +273,8 @@ export async function GET(req: Request) {
           "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")
         || card.exactBlockers.some((blocker) => blocker.startsWith(
           "MARKETPLACE_CONDITION_NOT_READY")))
+        && !(card.automaticResolutionContractCurrent
+          && card.automaticResolutionExhausted)
         ? [card.candidateKey] : [])
     let requiredSpecificsContinuation: unknown = null
     let exactSoldMarketEnrichment: unknown = null
@@ -325,13 +353,39 @@ export async function GET(req: Request) {
         progress = mergeProgress(receiptCards, durableProgress)
       }
     }
+    const ownerLastMileCards = progress.filter((card) =>
+      card.ownerTruePublicationBlockers.length > 0)
+      .sort((left, right) =>
+        left.ownerTruePublicationBlockers.length
+          - right.ownerTruePublicationBlockers.length
+        || String(left.sourceSku ?? "").localeCompare(
+          String(right.sourceSku ?? "")))
+    const ownerLastMileCanary = ownerLastMileCards[0]
+      ? Object.freeze({
+        sourceSku: ownerLastMileCards[0].sourceSku,
+        title: ownerLastMileCards[0].title,
+        candidateKey: ownerLastMileCards[0].candidateKey,
+        listingPackageId: ownerLastMileCards[0].listingPackageId,
+        missingRequiredFact:
+          ownerLastMileCards[0].ownerTruePublicationBlockers[0]
+            ?.specificName ?? null,
+        ownerInputSurfaceReady: true,
+        safeResumePathReady:
+          ownerLastMileCards[0].safeResumeAfterOwnerFact,
+      }) : null
     return response({ success: true, progress,
       summary: { inProgress: progress.filter((card) =>
         card.state === "RUNNING").length,
       readyForReview: progress.filter((card) => card.state === "READY").length,
       blocked: progress.filter((card) => card.state === "BLOCKED").length,
+      waiting: progress.filter((card) => card.state === "WAITING").length,
+      ownerLastMileProducts: ownerLastMileCards.length,
+      ownerLastMileFacts: ownerLastMileCards.reduce((total, card) =>
+        total + card.ownerTruePublicationBlockers.length, 0),
       total: progress.length }, receipt: receipts[0] ?? null, receipts,
+      ownerLastMileCanary,
       categoryContinuation,
+      minimumReadinessContinuation,
       requiredSpecificsContinuation,
       exactSoldMarketEnrichment,
       visualIdentityTopSellerEnrichment,
@@ -355,6 +409,33 @@ export async function POST(req: Request) {
     error: "LUNA_QUICK_PICK_INPUT_TOO_LARGE" }, 413)
   try {
     const body = record(await req.json())
+    if (body.action === "OWNER_FACT_CAPTURE") {
+      if (auth.authenticationMode !== "admin_user"
+          || auth.accessRole !== SELLER_OS_ACCESS_ROLES.owner
+          || !auth.userId) return response({ success: false,
+        error: "QUICK_PICK_OWNER_FACT_OWNER_AUTH_REQUIRED" }, 403)
+      const candidateKey = typeof body.candidateKey === "string"
+        ? body.candidateKey : ""
+      const listingPackageId = typeof body.listingPackageId === "string"
+        ? body.listingPackageId : ""
+      const specificName = typeof body.specificName === "string"
+        ? body.specificName : ""
+      const exactValue = typeof body.exactValue === "string"
+        ? body.exactValue : ""
+      const ownerFact = await persistQuickPickOwnerExplicitFactV1({
+        supabase: getSupabaseAdminClient(), accountKey,
+        actorUserId: auth.userId, candidateKey, listingPackageId,
+        specificName, exactValue,
+      })
+      const progress = await readLunaQuickPickProgressV1({
+        supabase: getSupabaseAdminClient(), candidateKeys: [candidateKey],
+        accountKey,
+      })
+      return response({ success: true, ownerFact, progress,
+        safety: { marketplaceWrites: 0, listingPublications: 0,
+          listingMutations: 0, canPublish: false,
+          customerProductionTouched: false } })
+    }
     if (body.action === "RESOLVE_REQUIRED_UPC") {
       const candidateKey = typeof body.candidateKey === "string" &&
         /^sha256:[0-9a-f]{64}$/.test(body.candidateKey)
@@ -514,7 +595,15 @@ export async function POST(req: Request) {
       const receipt = await completeLunaQuickPickBatchReceiptV1({
         supabase, batchId, result,
       })
+      const minimumReadinessContinuation =
+        await continueLunaQuickPickMinimumReadinessV1({
+          supabase, accountKey,
+          candidateKeys: result.cards.flatMap((card) =>
+            card.candidateKey && !card.alreadyLive
+              ? [card.candidateKey] : []),
+        })
       return response({ success: true, result, receipt,
+        minimumReadinessContinuation,
         rehydration: { originalBatchOperationCount:
           rehydration.originalBatchOperationCount,
         rehydratedInputCount: rehydration.rehydrateUrls.length,
@@ -544,7 +633,14 @@ export async function POST(req: Request) {
     const receipt = batchId
       ? await completeLunaQuickPickBatchReceiptV1({ supabase, batchId,
         result }) : null
+    const minimumReadinessContinuation =
+      await continueLunaQuickPickMinimumReadinessV1({
+        supabase, accountKey,
+        candidateKeys: result.cards.flatMap((card) =>
+          card.candidateKey && !card.alreadyLive ? [card.candidateKey] : []),
+      })
     return response({ success: true, result, receipt,
+      minimumReadinessContinuation,
       safety: { marketplaceWrites: 0, canPublish: false,
         customerProductionTouched: false } })
   } catch (error) {

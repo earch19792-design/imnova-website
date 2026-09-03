@@ -4,6 +4,8 @@ export const EBAY_HUMAN_PRODUCT_TRUTH_EVIDENCE_V1 =
   "SELLER_OS_HUMAN_CONFIRMED_PRODUCT_TRUTH_EVIDENCE_V1" as const
 export const LUNA_OFFICIAL_PRODUCT_PAGE_EVIDENCE_V1 =
   "LUNA_OFFICIAL_PRODUCT_PAGE" as const
+export const EBAY_OWNER_EXPLICIT_PRODUCT_FACT_V1 =
+  "SELLER_OS_OWNER_EXPLICIT_PRODUCT_FACT_V1" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -13,6 +15,9 @@ export type HumanProductTruthOfficialAspectV1 = Readonly<{
   mode: string
   valuesComplete: boolean
   values: ReadonlyArray<Readonly<{ value: string }>>
+  maxLength?: number | null
+  dataType?: string | null
+  officialRequirementClass?: "REQUIRED_TO_LIST" | "CONDITIONALLY_REQUIRED"
 }>
 
 function record(value: unknown): JsonRecord {
@@ -96,6 +101,253 @@ function canonicalOfficialValue(
   if (aspect.mode !== "SELECTION_ONLY" || !aspect.valuesComplete) return value
   return aspect.values.find((entry) =>
     normalizedKey(entry.value) === normalizedKey(value))?.value ?? ""
+}
+
+function validateOwnerFactShape(
+  aspect: HumanProductTruthOfficialAspectV1,
+  proposed: unknown,
+) {
+  const original = typeof proposed === "string"
+    ? proposed.normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/\s+/g, " ").trim() : ""
+  if (original.length > 500) return ""
+  if (!original) return ""
+  if (aspect.maxLength && original.length > aspect.maxLength) return ""
+  const dataType = text(aspect.dataType, 40).toUpperCase()
+  if (["NUMBER", "DECIMAL", "INTEGER"].includes(dataType)
+      && !/^-?\d+(?:\.\d+)?$/.test(original)) return ""
+  if (dataType === "DATE" && !Number.isFinite(Date.parse(original))) return ""
+  if (aspect.mode === "SELECTION_ONLY" && !aspect.valuesComplete) return ""
+  return canonicalOfficialValue(aspect, original)
+}
+
+export function buildOwnerExplicitProductFactV1(input: Readonly<{
+  opportunity: JsonRecord
+  listingPackageId: string
+  marketplaceId: "EBAY_US"
+  actorId: string
+  aspect: HumanProductTruthOfficialAspectV1
+  exactValue: string
+  officialPolicyEvidenceDigest: string
+  categoryId: string
+  capturedAt?: string | Date
+  supersedesEvidenceDigest?: string | null
+}>) {
+  const identity = opportunityIdentity(input.opportunity)
+  const productTruth = record(record(input.opportunity.assessment).productTruth)
+  const listingPackageId = text(input.listingPackageId, 64)
+  const actorId = text(input.actorId, 64)
+  const specificName = text(input.aspect.name, 120)
+  const exactValue = typeof input.exactValue === "string"
+    ? input.exactValue.normalize("NFKC")
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/\s+/g, " ").trim() : ""
+  const normalizedMarketplaceValue = validateOwnerFactShape(
+    input.aspect, exactValue,
+  )
+  const policyDigest = text(input.officialPolicyEvidenceDigest, 100)
+  const categoryId = text(input.categoryId, 20)
+  const capturedAt = input.capturedAt instanceof Date
+    ? input.capturedAt.toISOString() : timestamp(input.capturedAt ?? new Date())
+  const supersedesEvidenceDigest = text(input.supersedesEvidenceDigest, 100)
+    || null
+  if (
+    !/^[0-9a-f-]{36}$/i.test(identity.opportunityId)
+    || !identity.candidateKey
+    || !identity.lunaProductId || !identity.lunaVariantId
+    || !identity.supplierSku
+    || !/^[0-9a-f-]{36}$/i.test(listingPackageId)
+    || !/^[0-9a-f-]{36}$/i.test(actorId)
+    || input.marketplaceId !== "EBAY_US"
+    || (!input.aspect.required
+      && input.aspect.officialRequirementClass !== "CONDITIONALLY_REQUIRED")
+    || !specificName || !exactValue || !normalizedMarketplaceValue
+    || !/^sha256:[0-9a-f]{64}$/.test(policyDigest)
+    || !/^\d{1,20}$/.test(categoryId)
+    || !/^sha256:[0-9a-f]{64}$/.test(
+      text(productTruth.evidenceDigest, 100))
+    || (supersedesEvidenceDigest
+      && !/^sha256:[0-9a-f]{64}$/.test(supersedesEvidenceDigest))
+    || !capturedAt
+  ) throw new Error("OWNER_EXPLICIT_PRODUCT_FACT_INVALID")
+
+  const payload = {
+    schemaVersion: EBAY_OWNER_EXPLICIT_PRODUCT_FACT_V1,
+    authorityClass: EBAY_OWNER_EXPLICIT_PRODUCT_FACT_V1,
+    source: "OWNER_EXPLICIT_FACT" as const,
+    ownerFactCaptured: true as const,
+    boundToExactProductIdentity: true as const,
+    durable: true as const,
+    marketplaceId: input.marketplaceId,
+    opportunityId: identity.opportunityId,
+    listingPackageId,
+    candidateKey: identity.candidateKey,
+    supplierProductId: identity.lunaProductId,
+    variantId: identity.lunaVariantId,
+    supplierSku: identity.supplierSku,
+    specificName,
+    officialRequirementClass: input.aspect.required
+      ? "REQUIRED_TO_LIST" as const : "CONDITIONALLY_REQUIRED" as const,
+    exactValue,
+    normalizedMarketplaceValue,
+    normalizationSeparatedFromOwnerValue: true as const,
+    categoryId,
+    officialPolicySource: "EBAY_TAXONOMY_OFFICIAL_READONLY" as const,
+    officialPolicyEvidenceDigest: policyDigest,
+    confirmedBy: actorId,
+    capturedAt,
+    supersedesEvidenceDigest,
+    factInvented: false as const,
+    marketplaceWrites: 0 as const,
+    listingPublications: 0 as const,
+  }
+  return Object.freeze({ ...payload, evidenceDigest: digest(payload) })
+}
+
+function ownerEvidencePayload(value: JsonRecord) {
+  const { evidenceDigest: _digest, ...payload } = value
+  return payload
+}
+
+function assertOwnerEvidenceMatchesOpportunity(
+  opportunity: JsonRecord,
+  value: unknown,
+) {
+  const evidence = record(value)
+  const identity = opportunityIdentity(opportunity)
+  if (
+    evidence.schemaVersion !== EBAY_OWNER_EXPLICIT_PRODUCT_FACT_V1
+    || evidence.authorityClass !== EBAY_OWNER_EXPLICIT_PRODUCT_FACT_V1
+    || evidence.source !== "OWNER_EXPLICIT_FACT"
+    || evidence.ownerFactCaptured !== true
+    || evidence.boundToExactProductIdentity !== true
+    || evidence.durable !== true
+    || evidence.marketplaceId !== "EBAY_US"
+    || evidence.opportunityId !== identity.opportunityId
+    || evidence.candidateKey !== identity.candidateKey
+    || evidence.supplierProductId !== identity.lunaProductId
+    || evidence.variantId !== identity.lunaVariantId
+    || evidence.supplierSku !== identity.supplierSku
+    || !/^[0-9a-f-]{36}$/i.test(text(evidence.listingPackageId, 64))
+    || !text(evidence.specificName, 120)
+    || !["REQUIRED_TO_LIST", "CONDITIONALLY_REQUIRED"].includes(
+      String(evidence.officialRequirementClass ?? ""))
+    || !text(evidence.exactValue, 500)
+    || !text(evidence.normalizedMarketplaceValue, 500)
+    || String(evidence.exactValue).length > 500
+    || String(evidence.normalizedMarketplaceValue).length > 500
+    || evidence.normalizationSeparatedFromOwnerValue !== true
+    || !/^\d{1,20}$/.test(text(evidence.categoryId, 20))
+    || evidence.officialPolicySource !==
+      "EBAY_TAXONOMY_OFFICIAL_READONLY"
+    || !/^sha256:[0-9a-f]{64}$/.test(
+      text(evidence.officialPolicyEvidenceDigest, 100))
+    || !/^[0-9a-f-]{36}$/i.test(text(evidence.confirmedBy, 64))
+    || !timestamp(evidence.capturedAt)
+    || evidence.factInvented !== false
+    || evidence.marketplaceWrites !== 0
+    || evidence.listingPublications !== 0
+    || evidence.evidenceDigest !== digest(ownerEvidencePayload(evidence))
+  ) throw new Error("OWNER_EXPLICIT_PRODUCT_FACT_IDENTITY_MISMATCH")
+  return evidence
+}
+
+export function applyOwnerExplicitProductFactV1(input: Readonly<{
+  opportunity: JsonRecord
+  evidence: JsonRecord
+}>) {
+  const evidence = assertOwnerEvidenceMatchesOpportunity(
+    input.opportunity, input.evidence,
+  )
+  const assessment = record(input.opportunity.assessment)
+  const productTruth = record(assessment.productTruth)
+  if (!/^sha256:[0-9a-f]{64}$/.test(
+    text(productTruth.evidenceDigest, 100))) {
+    throw new Error("OWNER_EXPLICIT_PRODUCT_FACT_BASE_AUTHORITY_REQUIRED")
+  }
+  const history = Array.isArray(productTruth.ownerExplicitFactEvidenceV1)
+    ? productTruth.ownerExplicitFactEvidenceV1.map(record) : []
+  const current = record(productTruth.ownerExplicitRequiredFactsV1)
+  const currentEntry = Object.values(current).map(record).find((entry) =>
+    normalizedKey(entry.specificName) ===
+      normalizedKey(evidence.specificName))
+  if (currentEntry) {
+    const currentDigest = text(currentEntry.evidenceDigest, 100)
+    const sameValue = normalizedKey(currentEntry.exactValue) ===
+        normalizedKey(evidence.exactValue)
+      && normalizedKey(currentEntry.normalizedMarketplaceValue) ===
+        normalizedKey(evidence.normalizedMarketplaceValue)
+      && currentEntry.officialPolicyEvidenceDigest ===
+        evidence.officialPolicyEvidenceDigest
+      && currentEntry.categoryId === evidence.categoryId
+    if (sameValue) return Object.freeze({
+      assessment,
+      productTruth,
+      evidence: currentEntry,
+      created: false as const,
+      corrected: false as const,
+    })
+    if (evidence.supersedesEvidenceDigest !== currentDigest) {
+      throw new Error("OWNER_EXPLICIT_PRODUCT_FACT_CORRECTION_PRECONDITION")
+    }
+  } else if (evidence.supersedesEvidenceDigest) {
+    throw new Error("OWNER_EXPLICIT_PRODUCT_FACT_SUPERSEDES_MISMATCH")
+  }
+  const evidenceDigest = text(evidence.evidenceDigest, 100)
+  const nextHistory = history.some((entry) =>
+    text(entry.evidenceDigest, 100) === evidenceDigest)
+    ? history : [...history, evidence]
+  const nextProductTruthCore = {
+    ...productTruth,
+    evidenceDigest: undefined,
+    ownerExplicitFactEvidenceV1: nextHistory,
+    ownerExplicitRequiredFactsV1: {
+      ...current,
+      [text(evidence.specificName, 120)]: evidence,
+    },
+  }
+  const nextProductTruth = {
+    ...nextProductTruthCore,
+    evidenceDigest: digest(nextProductTruthCore),
+  }
+  return Object.freeze({
+    assessment: { ...assessment, productTruth: nextProductTruth },
+    productTruth: nextProductTruth,
+    evidence,
+    created: !currentEntry,
+    corrected: Boolean(currentEntry),
+  })
+}
+
+export function ownerExplicitProductTruthFactsV1(opportunity: JsonRecord) {
+  const productTruth = record(record(opportunity.assessment).productTruth)
+  const current = record(productTruth.ownerExplicitRequiredFactsV1)
+  const history = Array.isArray(productTruth.ownerExplicitFactEvidenceV1)
+    ? productTruth.ownerExplicitFactEvidenceV1.map(record) : []
+  const historyDigests = new Set(history.map((entry) =>
+    text(entry.evidenceDigest, 100)).filter(Boolean))
+  return Object.freeze(Object.values(current).map((raw) => {
+    const evidence = assertOwnerEvidenceMatchesOpportunity(opportunity, raw)
+    if (!historyDigests.has(text(evidence.evidenceDigest, 100))) {
+      throw new Error("OWNER_EXPLICIT_PRODUCT_FACT_HISTORY_REQUIRED")
+    }
+    return Object.freeze({ ...evidence })
+  }))
+}
+
+export function ownerExplicitProductTruthValuesV1(opportunity: JsonRecord) {
+  const values: Record<string, string> = {}
+  for (const evidence of ownerExplicitProductTruthFactsV1(opportunity)) {
+    const name = text(evidence.specificName, 120)
+    const value = text(evidence.normalizedMarketplaceValue, 500)
+    const existing = Object.entries(values).find(([candidate]) =>
+      normalizedKey(candidate) === normalizedKey(name))
+    if (existing && normalizedKey(existing[1]) !== normalizedKey(value)) {
+      throw new Error("OWNER_EXPLICIT_PRODUCT_FACT_CONFLICT")
+    }
+    values[name] = value
+  }
+  return Object.freeze(values)
 }
 
 export function buildHumanConfirmedProductTruthEvidenceV1(input: Readonly<{

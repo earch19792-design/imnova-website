@@ -60,6 +60,36 @@ type QuickPickCard = {
     bestProposal: string | null; proposalEvidence: string
     confidence: string; ownerAction: "CONFIRM" | "ENTER_FACT" }>
   nextOwnerAction: "CONFIRM" | "ENTER_FACT" | null
+  ownerTruePublicationBlockers: Array<{
+    specificName: string
+    requirementClass: "REQUIRED_TO_LIST" | "CONDITIONALLY_REQUIRED"
+    officialPolicySource: string
+    currentFactStatus: string
+    aiAutonomousResolutionAllowed: boolean
+    ownerInputRequired: boolean
+    blocksMinimumTruthfulListing: boolean
+    mode: string
+    maxLength: number | null
+    dataType: string
+    valuesComplete: boolean
+    allowedValues: string[]
+    bestProposal: string | null
+    proposalEvidence: string | null
+    factInvented: false
+  }>
+  ownerCapturedFacts: Array<{ specificName: string; exactValue: string
+    normalizedMarketplaceValue: string; capturedAt: string
+    evidenceDigest: string; correctionAllowedBeforePublication: boolean
+    factInvented: false }>
+  postPublishEnrichmentOpportunities: Array<{ specificName: string
+    requirementClass: "RECOMMENDED" | "OPTIONAL" }>
+  minimumTruthfulListingReady: boolean
+  officialRequirementClassification: boolean
+  requirementCounts: { requiredToList: number; conditionallyRequired: number
+    recommended: number; optional: number; unproven: number }
+  productIdentifierRequirementStatus: "PASS" | "BLOCKED_REQUIRED_FACT" |
+    "UNPROVEN_CAPABILITY" | null
+  safeResumeAfterOwnerFact: boolean
   deterministicResolvedCount: number
   marketplaceFallbackResolvedCount: number
   aiCallCount: number
@@ -126,6 +156,9 @@ export default function LunaQuickPickPage() {
   const [error, setError] = useState("")
   const [rehydrating, setRehydrating] = useState(true)
   const [receipt, setReceipt] = useState<QuickPickReceipt | null>(null)
+  const [factDrafts, setFactDrafts] = useState<Record<string, string>>({})
+  const [factBusy, setFactBusy] = useState<Record<string, boolean>>({})
+  const [factFeedback, setFactFeedback] = useState<Record<string, string>>({})
 
   const candidateKeys = useMemo(() => cards.flatMap((card) =>
     card.candidateKey ? [card.candidateKey] : []), [cards])
@@ -170,10 +203,18 @@ export default function LunaQuickPickPage() {
       requiredItemSpecificsReady: null, unresolvedRequiredAspects: [],
       conditionReady: null, automaticResolutionExhausted: false,
       exactUnresolvedFields: [], ownerResidualActions: [],
+      ownerTruePublicationBlockers: [], ownerCapturedFacts: [],
+      postPublishEnrichmentOpportunities: [],
       nextOwnerAction: null, deterministicResolvedCount: 0,
       marketplaceFallbackResolvedCount: 0, aiCallCount: 0,
       aiAspectsResolvedCount: 0, factInvented: false,
       marketplaceReadinessReady: false,
+      minimumTruthfulListingReady: false,
+      officialRequirementClassification: false,
+      requirementCounts: { requiredToList: 0, conditionallyRequired: 0,
+        recommended: 0, optional: 0, unproven: 0 },
+      productIdentifierRequirementStatus: null,
+      safeResumeAfterOwnerFact: false,
       shippingUsd: null, rehydrated: false, updatedAt: null,
       dollarCheck: null, elapsedMs: 0 })))
     try {
@@ -215,6 +256,45 @@ export default function LunaQuickPickPage() {
   async function chooseVariant(card: QuickPickCard, variantId: string) {
     if (!card.canonicalUrl) return
     await processLinks([card.sourceUrl], { [card.canonicalUrl]: variantId })
+  }
+
+  const ownerFactKey = (card: QuickPickCard, specificName: string) =>
+    `${card.candidateKey ?? "unknown"}:${specificName}`
+
+  async function saveOwnerFact(card: QuickPickCard,
+    blocker: Readonly<{ specificName: string; bestProposal?: string | null }>,
+    explicitValue?: string) {
+    if (!card.candidateKey || !card.listingPackageId) return
+    const key = ownerFactKey(card, blocker.specificName)
+    const exactValue = (explicitValue ?? factDrafts[key] ??
+      blocker.bestProposal ?? "").trim()
+    if (!exactValue) {
+      setFactFeedback((current) => ({ ...current,
+        [key]: "Escribe el dato exacto antes de guardar." }))
+      return
+    }
+    setFactBusy((current) => ({ ...current, [key]: true }))
+    setFactFeedback((current) => ({ ...current, [key]: "" }))
+    try {
+      const payload = await request("/api/admin/ebay/luna-quick-pick", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "OWNER_FACT_CAPTURE",
+          candidateKey: card.candidateKey,
+          listingPackageId: card.listingPackageId,
+          specificName: blocker.specificName,
+          exactValue }),
+      })
+      mergeCards(payload.progress ?? [])
+      setFactFeedback((current) => ({ ...current,
+        [key]: "Dato guardado. Seller OS continuó desde este punto ✓" }))
+    } catch (caught) {
+      setFactFeedback((current) => ({ ...current,
+        [key]: caught instanceof Error
+          ? "No se pudo guardar. Tu producto no avanzó y puedes intentarlo de nuevo."
+          : "No se pudo guardar este dato." }))
+    } finally {
+      setFactBusy((current) => ({ ...current, [key]: false }))
+    }
   }
 
   useEffect(() => {
@@ -266,6 +346,16 @@ export default function LunaQuickPickPage() {
       cards: [] as QuickPickCard[] },
   ], [cards])
 
+  const ownerLastMileCards = useMemo(() => cards.filter((card) =>
+    card.ownerTruePublicationBlockers?.length > 0)
+    .sort((left, right) =>
+      left.ownerTruePublicationBlockers.length
+        - right.ownerTruePublicationBlockers.length
+      || String(left.sourceSku ?? "").localeCompare(
+        String(right.sourceSku ?? ""))), [cards])
+  const ownerLastMileFactCount = ownerLastMileCards.reduce((total, card) =>
+    total + card.ownerTruePublicationBlockers.length, 0)
+
   return <main className="min-h-screen bg-[#080b11] px-4 pb-28 pt-6 text-white">
     <div className="mx-auto max-w-5xl space-y-5">
       <header className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-5">
@@ -293,6 +383,86 @@ export default function LunaQuickPickPage() {
       </section>}
 
       {rehydrating && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4 text-sm text-cyan-50">Recuperando tus Quick Picks guardados…</p>}
+
+      {ownerLastMileCards.length > 0 && <section
+        aria-labelledby="owner-last-mile-title"
+        className="rounded-3xl border border-sky-200/35 bg-sky-200/[0.07] p-4 sm:p-5">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-100/70">Tu última revisión</p>
+        <h2 id="owner-last-mile-title" className="mt-1 text-xl font-black">
+          {ownerLastMileCards.length} productos necesitan tu atención
+        </h2>
+        <p className="mt-1 text-sm text-white/65">
+          {ownerLastMileFactCount} datos en total. Aquí aparecen únicamente los datos que eBay exige para poder continuar.
+        </p>
+        <div className="mt-4 grid gap-3">
+          {ownerLastMileCards.map((card) => <article
+            key={`owner:${card.candidateKey}`}
+            className="rounded-2xl border border-white/15 bg-black/20 p-4">
+            <p className="text-xs font-black uppercase tracking-wider text-white/45">{card.sourceSku}</p>
+            <h3 className="mt-1 font-black">{card.title}</h3>
+            <p className="mt-2 text-sm text-sky-50">
+              Falta {card.ownerTruePublicationBlockers.length === 1
+                ? "1 dato" : `${card.ownerTruePublicationBlockers.length} datos`} para poder publicar.
+            </p>
+            <div className="mt-3 grid gap-3">
+              {card.ownerTruePublicationBlockers.map((blocker) => {
+                const fieldKey = ownerFactKey(card, blocker.specificName)
+                const draft = factDrafts[fieldKey] ?? ""
+                const busy = factBusy[fieldKey] === true
+                return <div key={blocker.specificName}
+                  className="rounded-xl border border-sky-100/15 bg-white/[0.04] p-3">
+                  <p className="text-xs font-black uppercase tracking-wider text-sky-100/65">Campo</p>
+                  <p className="mt-1 font-black">{blocker.specificName}</p>
+                  <p className="mt-2 text-sm leading-5 text-white/65">
+                    Seller OS revisó la información disponible pero no pudo demostrar este dato con suficiente evidencia. eBay lo exige para continuar.
+                  </p>
+                  {blocker.bestProposal && <div className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.06] p-3">
+                    <p className="text-sm">Seller OS propone: <strong>{blocker.bestProposal}</strong></p>
+                    <button type="button" disabled={busy}
+                      onClick={() => void saveOwnerFact(card, blocker,
+                        blocker.bestProposal ?? undefined)}
+                      className="mt-2 min-h-11 rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">
+                      {busy ? "Guardando…" : "Confirmar"}
+                    </button>
+                  </div>}
+                  <label className="mt-3 block">
+                    <span className="text-xs font-black text-white/65">
+                      {blocker.bestProposal ? "Editar valor" : "Dato exacto"}
+                    </span>
+                    {blocker.mode === "SELECTION_ONLY"
+                        && blocker.valuesComplete
+                        && blocker.allowedValues.length > 0
+                      ? <select value={draft}
+                        onChange={(event) => setFactDrafts((current) => ({
+                          ...current, [fieldKey]: event.target.value }))}
+                        className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-[#101722] px-3 outline-none focus:border-sky-200">
+                        <option value="">Selecciona el valor exacto</option>
+                        {blocker.allowedValues.map((value) => <option
+                          key={value} value={value}>{value}</option>)}
+                      </select>
+                      : <input value={draft}
+                        maxLength={blocker.maxLength ?? 500}
+                        onChange={(event) => setFactDrafts((current) => ({
+                          ...current, [fieldKey]: event.target.value }))}
+                        placeholder={`Escribe ${blocker.specificName}`}
+                        className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3 outline-none focus:border-sky-200" />}
+                  </label>
+                  <button type="button" disabled={busy || !draft.trim()}
+                    onClick={() => void saveOwnerFact(card, blocker)}
+                    className="mt-2 min-h-11 w-full rounded-xl bg-sky-200 px-4 font-black text-black disabled:opacity-40">
+                    {busy ? "Guardando…" : blocker.bestProposal
+                      ? "Guardar edición" : "Guardar y continuar"}
+                  </button>
+                  {factFeedback[fieldKey] && <p aria-live="polite"
+                    className="mt-2 text-xs text-sky-50">
+                    {factFeedback[fieldKey]}
+                  </p>}
+                </div>
+              })}
+            </div>
+          </article>)}
+        </div>
+      </section>}
 
       {sections.map((section) => <section key={section.id}
         aria-labelledby={`quick-pick-${section.id}`} className="space-y-3">
@@ -327,12 +497,19 @@ export default function LunaQuickPickPage() {
           {card.stages.SHIPPING === "PASS" && <p className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.06] p-2 text-sm text-emerald-50">Envío comprobado{card.shippingUsd !== null ? ` · ${money(card.shippingUsd)}` : ""}</p>}
           {card.stages.SHIPPING === "RUNNING" && <p className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-2 text-sm text-cyan-50">Esperando worker Luna. Seller OS reanudará este producto automáticamente.</p>}
 
-          {cardBlockers(card).length > 0 && <ul
-            className="mt-3 space-y-1 rounded-xl border border-amber-200/20 bg-black/20 p-2 text-xs text-amber-50">
-            {cardBlockers(card).map((blocker) => <li key={blocker}>{blocker}</li>)}
-          </ul>}
+          {card.ownerTruePublicationBlockers.length > 0 && <p
+            className="mt-3 rounded-xl border border-sky-200/20 bg-sky-200/[0.06] p-3 text-sm text-sky-50">
+            Este producto está incluido en “Tu última revisión” para completar únicamente lo que eBay exige.
+          </p>}
+          {card.ownerTruePublicationBlockers.length === 0
+              && card.productIdentifierRequirementStatus ===
+                "UNPROVEN_CAPABILITY" && <p
+            className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">
+            Esperando que eBay permita comprobar su política de identificadores. Tu avance está guardado.
+          </p>}
 
-          {(card.ownerResidualActions ?? []).length > 0 && <section
+          {!card.officialRequirementClassification
+              && (card.ownerResidualActions ?? []).length > 0 && <section
             className="mt-3 rounded-xl border border-sky-200/20 bg-sky-200/[0.06] p-3 text-sm text-sky-50">
             <strong>{card.nextOwnerAction === "ENTER_FACT"
               ? "Último dato del owner requerido"
@@ -346,6 +523,35 @@ export default function LunaQuickPickPage() {
               </li>)}
             </ul>
           </section>}
+
+          {card.ownerCapturedFacts.length > 0 && <details
+            className="mt-3 rounded-xl border border-white/10 p-3 text-sm text-white/65">
+            <summary className="flex min-h-11 cursor-pointer items-center font-black">
+              Corregir datos que confirmaste
+            </summary>
+            <div className="mt-2 grid gap-3">
+              {card.ownerCapturedFacts.map((fact) => {
+                const fieldKey = ownerFactKey(card, fact.specificName)
+                const value = factDrafts[fieldKey] ?? fact.exactValue
+                return <label key={fact.evidenceDigest} className="block">
+                  <span className="text-xs font-black">{fact.specificName}</span>
+                  <input value={value} onChange={(event) =>
+                    setFactDrafts((current) => ({ ...current,
+                      [fieldKey]: event.target.value }))}
+                    className="mt-1 min-h-11 w-full rounded-xl border border-white/15 bg-black/25 px-3" />
+                  <button type="button" disabled={factBusy[fieldKey] === true
+                      || !value.trim()}
+                    onClick={() => void saveOwnerFact(card, {
+                      specificName: fact.specificName,
+                    }, value)}
+                    className="mt-2 min-h-11 rounded-xl border border-white/20 px-4 font-black disabled:opacity-40">
+                    {factBusy[fieldKey] ? "Guardando…" : "Guardar corrección"}
+                  </button>
+                  {factFeedback[fieldKey] && <span className="mt-2 block text-xs text-sky-50">{factFeedback[fieldKey]}</span>}
+                </label>
+              })}
+            </div>
+          </details>}
 
           {card.state === "READY" && card.dollarCheck && <section
             className={`mt-4 rounded-2xl border p-3 ${card.marketTestReady

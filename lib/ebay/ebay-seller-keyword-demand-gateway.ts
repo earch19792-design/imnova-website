@@ -1000,6 +1000,11 @@ export type EbayTaxonomyAspectIntelligence = {
   values: EbayTaxonomyAspectValueIntelligence[]
   valuesComplete: boolean
   constraintsComplete: boolean
+  officialConditionalRequirement?: Readonly<{
+    source: "EBAY_TAXONOMY_OFFICIAL_READONLY"
+    machineEvaluable: true
+    evaluation: "APPLIES" | "DOES_NOT_APPLY" | "UNPROVEN"
+  }> | null
 }
 
 function catalogStrings(value: unknown) {
