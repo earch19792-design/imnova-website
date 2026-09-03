@@ -951,7 +951,10 @@ export function createOpenAiRequiredSpecificsBatchResolverV1(
               "brandEvidenceStatus"] : "NOT_APPLICABLE" as const,
           allExactProductImagesReviewed:
             raw?.allExactProductImagesReviewed === true,
-          explicitBrand: text(raw?.explicitBrand, 120) || null,
+          // A conflict may name several marks for audit, but it cannot become
+          // one exact Product Truth brand. Persist the conflict with no value.
+          explicitBrand: raw?.brandEvidenceStatus === "EXPLICIT_BRAND"
+            ? text(raw?.explicitBrand, 120) || null : null,
           brandEvidenceReviewSource: input.stage === "VISION"
             && key(aspectName) === "brand"
             ? "ONE_BOUNDED_OPENAI_FULL_IMAGE_BATCH" as const : undefined,

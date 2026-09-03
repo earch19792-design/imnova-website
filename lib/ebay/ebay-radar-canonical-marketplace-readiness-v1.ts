@@ -197,6 +197,15 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
   catalogRow: JsonRecord | null
 }>) {
   const required = input.taxonomy.aspects.filter((aspect) => aspect.required)
+  const optionalBrand = input.taxonomy.aspects.find((aspect) =>
+    aspectKey(aspect.name) === "brand" && !aspect.required)
+  // Brand is Product Truth even when a category does not require it to list.
+  // Evaluate it through the same Luna evidence resolver, while keeping it out
+  // of required-item-specific counts and publication blockers.
+  const resolutionAspects = optionalBrand
+    ? [...required, optionalBrand] : required
+  const requiredAspectKeys = new Set(required.map((aspect) =>
+    aspectKey(aspect.name)))
   const exactIdentity = Boolean(input.catalogRow
     && input.catalogRow.supplier_product_id ===
       input.opportunity.supplier_product_id
@@ -236,7 +245,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     sourceExcerpt?: string | null
     fullPageGapDiagnostic?: string | null
   }>> = {}
-  for (const aspect of required) {
+  for (const aspect of resolutionAspects) {
     const requestedName = aspect.name
     const requestedAspectKey = aspectKey(requestedName)
     let value: string | null = null
@@ -326,6 +335,10 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     })
   }
   const unresolved = Object.entries(resolutions)
+    .filter(([name, resolution]) => requiredAspectKeys.has(aspectKey(name))
+      && !resolution.exactProductSupported)
+    .map(([name]) => name)
+  const unresolvedEvidenceAspects = Object.entries(resolutions)
     .filter(([, resolution]) => !resolution.exactProductSupported)
     .map(([name]) => name)
   const existingUnknown = strings(input.productTruth.knownUnknownAspectNames)
@@ -346,6 +359,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     }
   }
   const aspectContracts = required.map(compactAspectContract)
+  const evidenceAspectContracts = resolutionAspects.map(compactAspectContract)
   const evidenceCore = {
     contractVersion: RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION,
     authority: "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
@@ -420,6 +434,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
       description: fullLunaEvidence.description,
       productMetadata: fullLunaEvidence.productMetadata,
       variantMetadata: fullLunaEvidence.variantMetadata,
+      structuredVendor: fullLunaEvidence.structuredVendor,
       existingDurableProductTruth:
         fullLunaEvidence.existingDurableProductTruth,
       exactImageCount: fullLunaEvidence.exactImageCount,
@@ -430,8 +445,8 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
         fullLunaEvidence.imageBrandEvidenceStatus,
       sourceConflicts: fullLunaEvidence.sourceConflicts,
     },
-    unresolvedRequiredAspects: unresolved,
-    officialAspectDefinitions: aspectContracts,
+    unresolvedRequiredAspects: unresolvedEvidenceAspects,
+    officialAspectDefinitions: evidenceAspectContracts,
   }
   const requiredSpecificsBatchInput = Object.freeze({
     ...batchInputCore,

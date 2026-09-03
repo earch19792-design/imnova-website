@@ -268,6 +268,7 @@ export async function GET(req: Request) {
     }
     const pendingSpecifics = progress.flatMap((card) =>
       card.candidateKey && (card.unresolvedRequiredAspects.length > 0
+        || card.fullLunaBrandEvidenceReviewPending
         || card.exactBlocker?.startsWith(
           "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")
         || card.exactBlockers.some((blocker) => blocker.startsWith(

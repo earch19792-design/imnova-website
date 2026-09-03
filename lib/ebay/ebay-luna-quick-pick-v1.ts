@@ -139,6 +139,7 @@ export type LunaQuickPickCardV1 = Readonly<{
   automaticResolutionExhausted: boolean
   automaticResolutionContractCurrent: boolean
   automaticResolutionUpgradeHasPriorResidual: boolean
+  fullLunaBrandEvidenceReviewPending: boolean
   exactUnresolvedFields: readonly string[]
   ownerResidualActions: readonly JsonRecord[]
   ownerTruePublicationBlockers: readonly JsonRecord[]
@@ -301,6 +302,10 @@ async function persistQuickPickOperationV1(input: Readonly<{
     lastSubmittedAt: now,
     ownerSurface: "/admin/ebay/quick-pick",
     batchId: text(input.batchId, 80),
+    // A contract capability marker, not a SKU/batch exception. It lets the
+    // continuation distinguish new operations that require the systemic full
+    // Luna Brand evidence pass from legacy durable rows.
+    fullLunaBrandEvidenceReviewRequired: true,
     marketplaceWrites: 0 as const,
   })
   const write = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -399,6 +404,8 @@ function batchCardSnapshotV1(value: LunaQuickPickCardV1) {
     ownerCapturedFacts: value.ownerCapturedFacts,
     postPublishEnrichmentOpportunities:
       value.postPublishEnrichmentOpportunities,
+    fullLunaBrandEvidenceReviewPending:
+      value.fullLunaBrandEvidenceReviewPending,
     productIdentifierRequirementStatus:
       value.productIdentifierRequirementStatus,
     safeResumeAfterOwnerFact: value.safeResumeAfterOwnerFact,
@@ -833,6 +840,8 @@ function card(input: Partial<LunaQuickPickCardV1> &
       input.automaticResolutionContractCurrent ?? false,
     automaticResolutionUpgradeHasPriorResidual:
       input.automaticResolutionUpgradeHasPriorResidual ?? false,
+    fullLunaBrandEvidenceReviewPending:
+      input.fullLunaBrandEvidenceReviewPending ?? false,
     exactUnresolvedFields: Object.freeze([
       ...(input.exactUnresolvedFields ?? []),
     ]),
@@ -1303,6 +1312,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         entry.selected.supplierSku))?.demandNegativeEvidencePresent ?? false,
       marketTestPathEligible: candidate.marketTestPath,
       marketTestReady,
+      fullLunaBrandEvidenceReviewPending: true,
       marketTestReview: marketTestReady
         ? record(outcome.marketTestReview) : null,
       variants: entry.variants, stages: outcomeStages(outcome, candidate),
@@ -1568,6 +1578,21 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       }))
     const canonicalMarketplaceReadiness = record(
       assessment.canonicalMarketplaceReadinessV1)
+    const requiredSpecificsTruth = record(
+      canonicalMarketplaceReadiness.requiredItemSpecificsTruth)
+    const brandResolution = record(Object.entries(record(
+      requiredSpecificsTruth.resolutions)).find(([name]) =>
+        name.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+          .toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ")
+          .trim() === "brand")?.[1])
+    const imageReview = record(assessment.lunaFullPageImageReviewV1)
+    const fullLunaBrandEvidenceReviewPending =
+      operation.fullLunaBrandEvidenceReviewRequired === true
+      && brandResolution.exactProductSupported !== true
+      && !(imageReview.allExactProductImagesReviewed === true
+        && imageReview.lunaProductId === row.supplier_product_id
+        && imageReview.lunaVariantId === row.supplier_variant_id
+        && imageReview.supplierSku === row.supplier_sku)
     const specificsResolution = record(
       assessment.marketplaceRequiredSpecificsBatchResolutionV1)
     const overnightAudit = record(
@@ -1796,6 +1821,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         ...textList(specificsContinuation.unresolvedAspectsBefore),
         ...textList(specificsContinuation.unresolvedAspectsAfter),
       ]).size > 0,
+      fullLunaBrandEvidenceReviewPending,
       exactUnresolvedFields: minimumContractCurrent
         ? Object.freeze(effectiveUnresolvedRequiredAspects)
         : textList(specificsContinuation.exactUnresolvedFields),

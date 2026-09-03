@@ -20,8 +20,11 @@ import type {
   RequiredSpecificsBatchProductV1,
 } from "./ebay-marketplace-required-specifics-batch-resolution-v1"
 import { buildOwnerLunaUnbrandedPolicyApplicationV1,
+  buildOwnerSupplierPolicyApplicationV1,
+  readLunaNewMerchandisePolicyV1,
   readLunaUnbrandedAfterFullPageReviewPolicyV1,
-  validateOwnerLunaUnbrandedPolicyApplicationV1 } from
+  validateOwnerLunaUnbrandedPolicyApplicationV1,
+  validateOwnerSupplierPolicyApplicationV1 } from
   "./ebay-owner-supplier-merchandise-policy-v1"
 import { buildLunaFullPageImageReviewV1 } from
   "./ebay-luna-full-page-required-facts-v1"
@@ -538,20 +541,39 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     /^sha256:[0-9a-f]{64}$/.test(value)))].slice(0, MAXIMUM_QUICK_PICKS)
   if (!candidateKeys.length) return Object.freeze({ attempted: 0,
     claimed: 0, aiCallCount: 0, marketplaceWrites: 0 as const })
-  const ownerBrandPolicy =
-    await readLunaUnbrandedAfterFullPageReviewPolicyV1({
+  const [ownerBrandPolicy, ownerConditionPolicy] = await Promise.all([
+    readLunaUnbrandedAfterFullPageReviewPolicyV1({
       supabase: input.supabase, accountKey: input.accountKey,
-    })
+    }),
+    readLunaNewMerchandisePolicyV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+    }),
+  ])
   const read = await input.supabase.from("ebay_luna_opportunity_queue")
     .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment,updated_at")
     .in("candidate_key", candidateKeys).limit(MAXIMUM_QUICK_PICKS)
   if (read.error) throw new Error("LUNA_QUICK_PICK_SPECIFICS_READ_FAILED")
+  const queueRows = rows(read.data)
+  const waitingBatchIds = new Set(queueRows.flatMap((row) => {
+    const assessment = record(row.assessment)
+    const operation = record(assessment.lunaQuickPickOperationV1)
+    const shipping = record(
+      assessment.radarAutomaticLunaShippingContinuationV1)
+    const batchId = text(operation.batchId, 80)
+    return batchId && shipping.shippingJobStatus === "WAITING_BROWSER_WORKER"
+      ? [batchId] : []
+  }))
   const claimed: Array<Readonly<{ row: JsonRecord, candidate: NonNullable<
     ReturnType<typeof durableQuickPickRequiredSpecificsCandidateV1>>,
     aiExhausted: boolean, aiCallCountBefore: number,
     baselineUnresolvedFields: readonly string[] }>> = []
-  for (const row of rows(read.data)) {
+  for (const row of queueRows) {
     const assessment = record(row.assessment)
+    const operation = record(assessment.lunaQuickPickOperationV1)
+    const operationBatchId = text(operation.batchId, 80)
+    // The receipt is the AI batching boundary. Do not let one fast Shipping
+    // job consume the only batch call while a sibling is still executing.
+    if (operationBatchId && waitingBatchIds.has(operationBatchId)) continue
     const factory = record(assessment.sellerOsDeterministicFactory)
     const blockers = Array.isArray(factory.blockers)
       ? factory.blockers as unknown[] : []
@@ -565,6 +587,19 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const blockedByCondition = blockers.some((blocker) => text(blocker, 120)
       ?.startsWith("MARKETPLACE_CONDITION_NOT_READY"))
     const metadataBlocked = blockedBySpecifics || blockedByCondition
+    const requiredTruth = record(record(
+      assessment.canonicalMarketplaceReadinessV1)
+      .requiredItemSpecificsTruth)
+    const fullLunaEvidence = record(
+      requiredTruth.lunaExactProductEvidenceSetV1)
+    const brandResolution = record(Object.entries(record(
+      requiredTruth.resolutions)).find(([name]) =>
+        normalized(name) === "brand")?.[1])
+    const brandEvidencePending =
+      operation.fullLunaBrandEvidenceReviewRequired === true
+      && Number(fullLunaEvidence.exactImageCount ?? 0) > 0
+      && fullLunaEvidence.allExactProductImagesReviewed !== true
+      && brandResolution.exactProductSupported !== true
     const durableDigestUpgrade = typeof existingResolution.digestVersion ===
       "string" && existingResolution.digestVersion.length > 0
       && existingResolution.digestVersion !== REQUIRED_SPECIFICS_DIGEST_VERSION
@@ -593,10 +628,11 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       && Date.now() - claimedAt >= STALE_CLAIM_MS)
     const overnightReevaluation = input.trigger === "OVERNIGHT_ENRICHMENT"
       && Boolean(currentMarker?.completedAt)
-    if (!candidate || (!metadataBlocked && !safeContractUpgrade)
+    if (!candidate || (!metadataBlocked && !safeContractUpgrade
+        && !brandEvidencePending)
       || (currentMarker && !legacyScopeReconciliation
         && !autonomousUpgradeRequired && !incompleteClaimStale
-        && !overnightReevaluation)) continue
+        && !overnightReevaluation && !brandEvidencePending)) continue
     const now = new Date().toISOString()
     const aiCallCountBefore = Number(currentMarker?.aiCallCount ?? 0)
     const baselineUnresolvedFields = unique([
@@ -657,10 +693,36 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
         productIdentityExact: true,
         appliedAt: now,
       }) : null)
+    const currentConditionPolicyApplication = record(
+      assessment.ownerSupplierMerchandisePolicyApplicationV1)
+    const reusableConditionPolicyApplication = ownerConditionPolicy
+      && currentConditionPolicyApplication.policyId === ownerConditionPolicy.id
+      && currentConditionPolicyApplication.policyDigest ===
+        ownerConditionPolicy.evidenceDigest
+      && validateOwnerSupplierPolicyApplicationV1(
+        currentConditionPolicyApplication, {
+          lunaProductId: row.supplier_product_id,
+          lunaVariantId: row.supplier_variant_id,
+          supplierSku: row.supplier_sku,
+        }) ? currentConditionPolicyApplication : null
+    const conditionPolicyApplication = reusableConditionPolicyApplication
+      ?? (ownerConditionPolicy ? buildOwnerSupplierPolicyApplicationV1({
+        policy: ownerConditionPolicy,
+        lunaProductId: String(row.supplier_product_id),
+        lunaVariantId: String(row.supplier_variant_id),
+        supplierSku: String(row.supplier_sku),
+        exactSupplierLineageCertified: true,
+        productIdentityExact: true,
+        appliedAt: now,
+      }) : null)
     const nextAssessment = { ...assessment,
         quickPickRequiredSpecificsContinuationV1: nextMarker,
         ...(brandPolicyApplication ? {
           ownerLunaUnbrandedPolicyApplicationV1: brandPolicyApplication,
+        } : {}),
+        ...(conditionPolicyApplication ? {
+          ownerSupplierMerchandisePolicyApplicationV1:
+            conditionPolicyApplication,
         } : {}),
       }
     const claim = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -696,11 +758,12 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     }))
   for (const { entry, materialized } of initialMaterializations) {
     before.set(entry.candidate.radarCandidateId, materialized)
-    if (materialized.listingReady !== true
-        && Array.isArray(materialized.unsupportedRequiredSpecifics)
-        && materialized.unsupportedRequiredSpecifics.length > 0
-        && validBatchInput(materialized.requiredSpecificsBatchInput,
-          entry.candidate)) {
+    if (validBatchInput(materialized.requiredSpecificsBatchInput,
+          entry.candidate)
+        && materialized.requiredSpecificsBatchInput
+          .unresolvedRequiredAspects.length > 0) {
+      // This may contain an optional Brand evidence review. It is allowed to
+      // enrich Product Truth but remains absent from publication blockers.
       pending.push(materialized.requiredSpecificsBatchInput)
     }
   }

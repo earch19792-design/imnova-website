@@ -291,6 +291,7 @@ export function buildLunaExactProductEvidenceSetV1(input: Readonly<{
     description,
     productMetadata,
     variantMetadata,
+    structuredVendor: exactIdentity ? text(row?.vendor, 160) : "",
     existingDurableProductTruth,
     productType: exactIdentity ? text(row?.product_type, 160) : "",
     tags: exactIdentity && Array.isArray(row?.tags)
@@ -317,8 +318,10 @@ export function buildLunaExactProductEvidenceSetV1(input: Readonly<{
       fullNarrativeDescription: sectionStatus(Boolean(description)),
       productFeaturesSection: sectionStatus(hasFeatureSection),
       materialsAndCareSection: sectionStatus(hasMaterialsCare),
-      allExactProductImages: sectionStatus(images.length === 0
-        || imageReview?.allExactProductImagesReviewed === true),
+      // Capture and visual review are separate facts. The durable catalog has
+      // captured the complete gallery even when a later bounded vision pass is
+      // still pending.
+      allExactProductImages: sectionStatus(images.length > 0),
       existingDurableProductTruth: sectionStatus(Boolean(
         Object.keys(durableProductTruth).length)),
     },
@@ -342,6 +345,12 @@ function explicitBrandCandidates(evidence: ReturnType<
   const structured = {
     ...evidence.productMetadata,
     ...evidence.variantMetadata,
+  }
+  if (evidence.structuredVendor
+      && !SUPPLIER_NAMES.has(key(evidence.structuredVendor))) {
+    candidates.push({ value: evidence.structuredVendor,
+      sourceField: "SPECS", excerpt: `Vendor: ${evidence.structuredVendor}`,
+      imageIndex: null, strength: 3 })
   }
   for (const [name, value] of Object.entries(structured)) {
     if (!["brand", "manufacturer", "product brand", "manufacturer brand"]

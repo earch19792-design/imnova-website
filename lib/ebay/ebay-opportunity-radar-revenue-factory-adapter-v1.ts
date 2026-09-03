@@ -1694,6 +1694,9 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         familyId: candidate.familyId, familyName: candidate.familyName,
         lunaProductId: candidate.lunaProductId,
         lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
+        opportunityId: waitingForBrowser ? durableQueueRow?.id ?? null : null,
+        candidateKey: waitingForBrowser
+          ? durableQueueRow?.candidate_key ?? null : null,
         status: priceFailure ? "EXCEPTION"
           : reason === "PARKED_ECONOMICS" ||
             reason === "NO_SUPPORTED_PRICE_MEETS_MARGIN_FLOOR"
