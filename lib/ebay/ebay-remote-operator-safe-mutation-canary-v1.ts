@@ -319,9 +319,11 @@ export function selectRemoteOperatorSafeMutationCanaryV1(input: {
     if (!proposedTitle || proposedTitle === currentTitle ||
       proposedTitle !== `${currentTitle} ${confirmed.color}` ||
       proposedTitle.length > 80) continue
-    const observedAt = validObservedAt(signal.lastObservationTime)
+    const signalObservedAt = validObservedAt(signal.lastObservationTime)
+    const observedAt = validObservedAt(active.last_ebay_sync_at)
     const sourceSignalId = text(signal.dedupeIdentity, 160)
-    if (!observedAt || !/^[A-Za-z0-9._:-]{3,160}$/.test(sourceSignalId)) {
+    if (!signalObservedAt || !observedAt ||
+      !/^[A-Za-z0-9._:-]{3,160}$/.test(sourceSignalId)) {
       continue
     }
     const digestInput = {
@@ -449,7 +451,7 @@ async function loadContext(input: {
         .eq("account_key", input.accountKey).eq("status", "approved")
         .in("opportunity_id", opportunityIds),
       input.supabase.from("ebay_active_listings")
-        .select("id,account_key,ebay_item_id,ebay_sku,listing_status")
+        .select("id,account_key,ebay_item_id,ebay_sku,listing_status,last_ebay_sync_at")
         .eq("account_key", input.accountKey).eq("listing_status", "active")
         .in("ebay_item_id", itemIds),
       input.supabase.from("ebay_authorized_listing_publications")
