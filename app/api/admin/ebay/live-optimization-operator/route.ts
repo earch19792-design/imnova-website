@@ -379,34 +379,80 @@ export async function POST(request: Request) {
         error: "REMOTE_OPERATOR_CANARY_OWNER_AUTHORITY_REQUIRED" },
       { status: 403 })
     }
+    console.info("REMOTE_OPERATOR_OWNER_AUTHORIZATION_REQUEST_V1", {
+      requestPath: new URL(request.url).pathname,
+      authUserPresent: true,
+      ownerAuthValid: true,
+      ownerRoleResolved: auth.validation.accessRole,
+      roleSource: "SUPABASE_AUTH_GET_USER_APP_METADATA",
+      ebayItemId: expectedItemId,
+      authorizationDigest: expectedAuthorizationDigest,
+      idempotencyKeyPresent: true,
+      authorizationVersion: expectedAuthorizationVersion,
+      piiIncluded: false,
+      marketplaceWrites: 0,
+      listingMutations: 0,
+    })
+    let candidateRefreshAttempted = false
     try {
       const account = getEbaySellerAccountScopeConfiguration()
       if (!account.accountKey) {
         throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
       }
+      const accountKey = account.accountKey
       const supabase = getSupabaseAdminClient()
       const operatorUserId = await resolveRemoteOperatorUserIdV1(supabase)
       if (!operatorUserId) {
         throw new Error("REMOTE_OPERATOR_ACCOUNT_REQUIRED")
       }
-      const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
-      const commercialExceptions = buildProactiveExceptionQueueV1({
-        monitor, maximumEntries: 250,
-      })
-      const canary = await authorizeRemoteOperatorSafeMutationCanaryV1({
-        supabase,
-        accountKey: account.accountKey,
-        listings: currentLiveListingsForMonitorV1(monitor),
-        commercialExceptions,
-        ownerUserId: auth.validation.userId,
-        operatorUserId,
-        expectedItemId,
-        expectedSourceSignalId,
-        expectedCurrentValue,
-        expectedProposedValue,
-        expectedAuthorizationVersion,
-        expectedAuthorizationDigest,
-        executionEnabled: titleCanaryEnabled(),
+      const authorizeFromMonitor = (monitor: Awaited<ReturnType<
+        typeof loadSellerOsAssistantMonitorSnapshotV1>>) =>
+        authorizeRemoteOperatorSafeMutationCanaryV1({
+          supabase,
+          accountKey,
+          listings: currentLiveListingsForMonitorV1(monitor),
+          commercialExceptions: buildProactiveExceptionQueueV1({
+            monitor, maximumEntries: 250,
+          }),
+          ownerUserId: auth.validation.userId,
+          operatorUserId,
+          expectedItemId,
+          expectedSourceSignalId,
+          expectedCurrentValue,
+          expectedProposedValue,
+          expectedAuthorizationVersion,
+          expectedAuthorizationDigest,
+          executionEnabled: titleCanaryEnabled(),
+        })
+      let authorization
+      try {
+        authorization = await authorizeFromMonitor(
+          await loadSellerOsAssistantMonitorSnapshotV1(),
+        )
+      } catch (error) {
+        if (safeCode(error) !==
+            "REMOTE_OPERATOR_CANARY_CURRENT_CANDIDATE_REQUIRED") throw error
+        candidateRefreshAttempted = true
+        authorization = await authorizeFromMonitor(
+          await loadSellerOsAssistantMonitorV1(),
+        )
+      }
+      const canary = authorization.candidate
+      console.info("REMOTE_OPERATOR_OWNER_AUTHORIZATION_RESULT_V1", {
+        requestPath: new URL(request.url).pathname,
+        ownerAuthValid: true,
+        ownerRoleResolved: auth.validation.accessRole,
+        ebayItemId: expectedItemId,
+        authorizationDigest: expectedAuthorizationDigest,
+        idempotencyKeyPresent: true,
+        candidateRefreshAttempted,
+        databaseWriteAttempted: authorization.databaseWriteAttempted,
+        databaseWriteResult: authorization.databaseWriteResult,
+        durableReadbackPass: authorization.durableReadbackPass,
+        exactAuthorizationRowCount: 1,
+        piiIncluded: false,
+        marketplaceWrites: 0,
+        listingMutations: 0,
       })
       return NextResponse.json({ success: true,
         outcome: "OWNER_AUTHORIZED_SAFE_TITLE_CANARY",
@@ -416,7 +462,24 @@ export async function POST(request: Request) {
         safety: { marketplaceWrites: 0, listingMutations: 0,
           promotionWrites: 0, listingEnds: 0 } })
     } catch (error) {
-      return NextResponse.json({ success: false, error: safeCode(error),
+      const errorCode = safeCode(error)
+      console.warn("REMOTE_OPERATOR_OWNER_AUTHORIZATION_FAILURE_V1", {
+        requestPath: new URL(request.url).pathname,
+        ownerAuthValid: true,
+        ownerRoleResolved: auth.validation.accessRole,
+        ebayItemId: expectedItemId,
+        authorizationDigest: expectedAuthorizationDigest,
+        idempotencyKeyPresent: true,
+        candidateRefreshAttempted,
+        databaseWriteAttempted: errorCode ===
+          "REMOTE_OPERATOR_CANARY_CURRENT_CANDIDATE_REQUIRED" ? false
+          : "UNCONFIRMED",
+        errorCode,
+        piiIncluded: false,
+        marketplaceWrites: 0,
+        listingMutations: 0,
+      })
+      return NextResponse.json({ success: false, error: errorCode,
         operatorMessage:
           "No se pudo autorizar esta mejora. No se aplicó ningún cambio." },
       { status: 409 })

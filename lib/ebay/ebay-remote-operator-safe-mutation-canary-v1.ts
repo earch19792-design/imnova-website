@@ -188,6 +188,21 @@ function authorizationStatus(row: JsonRecord | null) {
   return "UNAVAILABLE" as const
 }
 
+function authorizedCandidate(
+  candidate: RemoteOperatorSafeMutationCanaryV1,
+  authorizationId: string,
+  executionEnabled: boolean,
+) {
+  return Object.freeze({
+    ...candidate,
+    ownerApprovalStatus: "AUTHORIZED" as const,
+    authorizationId,
+    authorizationInvalidated: false,
+    executionBlocked: !executionEnabled,
+    applyAvailable: executionEnabled,
+  })
+}
+
 function confirmedColorEvidence(packageRow: JsonRecord) {
   const packageData = record(packageRow.package_data)
   const aspects = record(packageData.aspects)
@@ -531,7 +546,12 @@ export async function authorizeRemoteOperatorSafeMutationCanaryV1(input: {
     if (context.candidate.authorizationInvalidated) {
       throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED")
     }
-    return context.candidate
+    return Object.freeze({
+      candidate: context.candidate,
+      databaseWriteAttempted: false as const,
+      databaseWriteResult: "EXISTING_EXACT_AUTHORIZATION" as const,
+      durableReadbackPass: true as const,
+    })
   }
   const targetTitleHash = sha256(context.candidate.proposedValue)
   const idempotencyKeyHash = context.candidate.authorizationDigest
@@ -556,24 +576,77 @@ export async function authorizeRemoteOperatorSafeMutationCanaryV1(input: {
     authorizationDigest: context.candidate.authorizationDigest,
     ownerUserId,
   })
+  const rowMatchesExactAuthorization = (value: unknown) => {
+    const row = record(value)
+    return uuid(row.id) &&
+      uuid(row.listing_package_id) === context.listingPackageId &&
+      row.candidate_id === null &&
+      uuid(row.opportunity_id) === context.opportunityId &&
+      uuid(row.manual_listing_link_id) === context.manualListingLinkId &&
+      uuid(row.active_listing_id) === context.activeListingId &&
+      uuid(row.actor_user_id) === operatorUserId &&
+      text(row.marketplace_account_key, 160) === input.accountKey &&
+      text(row.ebay_item_id, 20) === context.candidate.ebayItemId &&
+      text(row.ebay_sku, 50) === context.ebaySku &&
+      text(row.target_title, 80) === context.candidate.proposedValue &&
+      text(row.target_title_hash, 64) === targetTitleHash &&
+      text(row.title_strategy_version, 100) ===
+        REMOTE_OPERATOR_SAFE_TITLE_CANARY_STRATEGY &&
+      text(row.authorization_contract_version, 100) ===
+        REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION &&
+      text(row.authorization_digest, 80) ===
+        context.candidate.authorizationDigest &&
+      text(row.request_hash, 64) === requestHash &&
+      text(row.idempotency_key_hash, 64) === idempotencyKeyHash &&
+      text(row.execution_authority, 80) ===
+        REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY &&
+      text(row.source_authority, 80) === context.candidate.sourceAuthority &&
+      text(row.source_signal_id, 160) === context.candidate.sourceSignalId &&
+      validObservedAt(row.source_observed_at) === context.candidate.observedAt &&
+      text(row.authorized_current_title, 80) === context.candidate.currentValue &&
+      text(row.authorized_current_title_hash, 64) ===
+        sha256(context.candidate.currentValue) &&
+      text(row.product_truth_reference, 80) === context.productTruthReference &&
+      uuid(row.owner_approved_by) === ownerUserId &&
+      Boolean(validObservedAt(row.owner_approved_at)) &&
+      text(row.phase, 60) === "preview_ready"
+  }
+  const readExactAuthorization = async () => {
+    const readback = await input.supabase
+      .from("ebay_active_listing_title_revision_executions")
+      .select("id,listing_package_id,candidate_id,opportunity_id,manual_listing_link_id,active_listing_id,actor_user_id,marketplace_account_key,ebay_item_id,ebay_sku,target_title,target_title_hash,title_strategy_version,authorization_contract_version,authorization_digest,request_hash,idempotency_key_hash,execution_authority,source_authority,source_signal_id,source_observed_at,authorized_current_title,authorized_current_title_hash,product_truth_reference,owner_approved_by,owner_approved_at,phase")
+      .eq("idempotency_key_hash", idempotencyKeyHash).maybeSingle()
+    if (readback.error) {
+      throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_READ_FAILED")
+    }
+    if (!readback.data) return null
+    if (!rowMatchesExactAuthorization(readback.data)) {
+      throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_CONFLICT")
+    }
+    return record(readback.data)
+  }
   const existing = await input.supabase
     .from("ebay_active_listing_title_revision_executions")
-    .select("*").eq("idempotency_key_hash", idempotencyKeyHash).maybeSingle()
+    .select("id,listing_package_id,candidate_id,opportunity_id,manual_listing_link_id,active_listing_id,actor_user_id,marketplace_account_key,ebay_item_id,ebay_sku,target_title,target_title_hash,title_strategy_version,authorization_contract_version,authorization_digest,request_hash,idempotency_key_hash,execution_authority,source_authority,source_signal_id,source_observed_at,authorized_current_title,authorized_current_title_hash,product_truth_reference,owner_approved_by,owner_approved_at,phase")
+    .eq("idempotency_key_hash", idempotencyKeyHash).maybeSingle()
   if (existing.error) {
     throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_READ_FAILED")
   }
   if (existing.data) {
-    const row = record(existing.data)
-    if (text(row.request_hash, 64) !== requestHash ||
-      uuid(row.owner_approved_by) !== ownerUserId ||
-      uuid(row.actor_user_id) !== operatorUserId) {
+    if (!rowMatchesExactAuthorization(existing.data)) {
       throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_CONFLICT")
     }
-    return (await loadContext({ ...input, operatorUserId }))!.candidate
+    return Object.freeze({
+      candidate: authorizedCandidate(context.candidate,
+        uuid(record(existing.data).id), input.executionEnabled),
+      databaseWriteAttempted: false as const,
+      databaseWriteResult: "EXISTING_EXACT_AUTHORIZATION" as const,
+      durableReadbackPass: true as const,
+    })
   }
   const approvedAt = new Date().toISOString()
   const insert = await input.supabase
-    .from("ebay_active_listing_title_revision_executions").insert({
+    .from("ebay_active_listing_title_revision_executions").upsert({
       listing_package_id: context.listingPackageId,
       candidate_id: null,
       opportunity_id: context.opportunityId,
@@ -601,12 +674,25 @@ export async function authorizeRemoteOperatorSafeMutationCanaryV1(input: {
       product_truth_reference: context.productTruthReference,
       owner_approved_by: ownerUserId,
       owner_approved_at: approvedAt,
-    }).select("id").single()
-  if (insert.error || !insert.data) {
+    }, { onConflict: "idempotency_key_hash", ignoreDuplicates: true })
+      .select("id").maybeSingle()
+  if (insert.error) {
     throw new Error(safeDatabaseCode(insert.error,
       "REMOTE_OPERATOR_CANARY_AUTHORIZATION_FAILED"))
   }
-  return (await loadContext({ ...input, operatorUserId }))!.candidate
+  const durable = await readExactAuthorization()
+  if (!durable) {
+    throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_READBACK_FAILED")
+  }
+  return Object.freeze({
+    candidate: authorizedCandidate(context.candidate, uuid(durable.id),
+      input.executionEnabled),
+    databaseWriteAttempted: true as const,
+    databaseWriteResult: insert.data
+      ? "CREATED_EXACT_AUTHORIZATION" as const
+      : "CONCURRENT_EXACT_AUTHORIZATION_READ" as const,
+    durableReadbackPass: true as const,
+  })
 }
 
 async function bindOperatorIdempotencyKey(input: {
