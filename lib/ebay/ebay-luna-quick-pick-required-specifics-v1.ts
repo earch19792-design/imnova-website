@@ -29,7 +29,7 @@ import { buildLunaFullPageImageReviewV1 } from
 export const QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1 =
   "QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1" as const
 export const QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1 =
-  "QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V4" as const
+  "QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V5" as const
 
 const MAXIMUM_QUICK_PICKS = 20
 const MATERIALIZATION_CONCURRENCY = 3
@@ -580,6 +580,12 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const autonomousUpgradeRequired = Boolean(currentMarker
       && currentMarker.autonomousResolutionContractVersion !==
         QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1)
+    const priorResidualScope = unique(currentMarker?.completedAt
+      && currentMarker.fullLunaPageIsPrimaryProductEvidence === true
+      ? unresolvedFields(currentMarker?.unresolvedAspectsBefore)
+      : unresolvedFields(currentMarker?.unresolvedAspectsAfter))
+    const safeContractUpgrade = autonomousUpgradeRequired
+      && priorResidualScope.length > 0
     const claimedAt = Date.parse(String(currentMarker?.autonomousClaimedAt
       ?? currentMarker?.claimedAt ?? ""))
     const incompleteClaimStale = Boolean(currentMarker
@@ -587,14 +593,14 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       && Date.now() - claimedAt >= STALE_CLAIM_MS)
     const overnightReevaluation = input.trigger === "OVERNIGHT_ENRICHMENT"
       && Boolean(currentMarker?.completedAt)
-    if (!candidate || !metadataBlocked
+    if (!candidate || (!metadataBlocked && !safeContractUpgrade)
       || (currentMarker && !legacyScopeReconciliation
         && !autonomousUpgradeRequired && !incompleteClaimStale
         && !overnightReevaluation)) continue
     const now = new Date().toISOString()
     const aiCallCountBefore = Number(currentMarker?.aiCallCount ?? 0)
     const baselineUnresolvedFields = unique([
-      ...unresolvedFields(currentMarker?.unresolvedAspectsAfter),
+      ...priorResidualScope,
       ...blockers.flatMap((blocker) => {
         const value = text(blocker, 500) ?? ""
         return value.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN:")

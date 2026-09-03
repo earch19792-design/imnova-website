@@ -237,22 +237,31 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
   }>> = {}
   for (const aspect of required) {
     const requestedName = aspect.name
+    const requestedAspectKey = aspectKey(requestedName)
     let value: string | null = null
     let source: string | null = null
     let resolutionClass: string | null = null
     let sourceField: string | null = null
     let sourceExcerpt: string | null = null
     let fullPageGapDiagnostic: string | null = null
-    const prior = Object.entries(provenProductValues).find(([name]) =>
-      aspectKey(name) === aspectKey(requestedName))?.[1]
-    if (exactIdentity && prior) {
+    const priorEntry = Object.entries(provenProductValues).find(([name]) =>
+      aspectKey(name) === requestedAspectKey)
+    const prior = priorEntry?.[1]
+    const priorTruth = record(record(record(input.productTruth.sourceEvidence)
+      .requiredItemSpecificsTruthV1).resolutions)
+    const priorResolution = record(Object.entries(priorTruth).find(
+      ([name]) => aspectKey(name) === requestedAspectKey)?.[1])
+    // A marketplace Brand vocabulary phrase occurring in a product title is
+    // not explicit manufacturer-brand evidence. Invalidate values previously
+    // produced by that legacy matcher so the full Luna evidence review and
+    // durable owner policy remain the only Brand authorities.
+    const legacyTitleBrand = requestedAspectKey === "brand"
+      && priorResolution.source === "LUNA_EXACT_PRODUCT_TITLE"
+    if (legacyTitleBrand && priorEntry) delete provenProductValues[priorEntry[0]]
+    if (exactIdentity && prior && !legacyTitleBrand) {
       value = exactOfficialValue(aspect, prior)
         ?? (aspect.mode === "FREE_TEXT" ? text(prior, 500) : null)
       if (value) {
-        const priorTruth = record(record(record(input.productTruth.sourceEvidence)
-          .requiredItemSpecificsTruthV1).resolutions)
-        const priorResolution = record(Object.entries(priorTruth).find(
-          ([name]) => aspectKey(name) === aspectKey(requestedName))?.[1])
         const durableSource = text(priorResolution.source, 120)
         source = priorResolution.exactProductSupported === true
           && text(priorResolution.value, 500) === value && durableSource
@@ -264,7 +273,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
           priorResolution.fullPageGapDiagnostic, 120) || null
       }
     }
-    if (!value && exactIdentity && aspectKey(requestedName) === "brand") {
+    if (!value && exactIdentity && requestedAspectKey === "brand") {
       const allowed = exactOfficialValue(aspect, structuredVendor)
       if (allowed && !SUPPLIER_VENDOR_IDENTITIES.has(
         normalizedPhrase(structuredVendor))) {
@@ -272,7 +281,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
         source = "LUNA_EXACT_STRUCTURED_VENDOR"
       }
     }
-    if (!value && exactIdentity) {
+    if (!value && exactIdentity && requestedAspectKey !== "brand") {
       value = firstExactTitleValue(aspect, exactTitle)
       if (value) source = "LUNA_EXACT_PRODUCT_TITLE"
     }

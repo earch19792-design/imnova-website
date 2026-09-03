@@ -138,6 +138,7 @@ export type LunaQuickPickCardV1 = Readonly<{
   factInvented: false
   automaticResolutionExhausted: boolean
   automaticResolutionContractCurrent: boolean
+  automaticResolutionUpgradeHasPriorResidual: boolean
   exactUnresolvedFields: readonly string[]
   ownerResidualActions: readonly JsonRecord[]
   ownerTruePublicationBlockers: readonly JsonRecord[]
@@ -830,6 +831,8 @@ function card(input: Partial<LunaQuickPickCardV1> &
       input.automaticResolutionExhausted ?? false,
     automaticResolutionContractCurrent:
       input.automaticResolutionContractCurrent ?? false,
+    automaticResolutionUpgradeHasPriorResidual:
+      input.automaticResolutionUpgradeHasPriorResidual ?? false,
     exactUnresolvedFields: Object.freeze([
       ...(input.exactUnresolvedFields ?? []),
     ]),
@@ -1788,6 +1791,10 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       automaticResolutionContractCurrent:
         specificsContinuation.autonomousResolutionContractVersion ===
           QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1,
+      automaticResolutionUpgradeHasPriorResidual: new Set([
+        ...textList(specificsContinuation.unresolvedAspectsBefore),
+        ...textList(specificsContinuation.unresolvedAspectsAfter),
+      ]).size > 0,
       exactUnresolvedFields: minimumContractCurrent
         ? Object.freeze(effectiveUnresolvedRequiredAspects)
         : textList(specificsContinuation.exactUnresolvedFields),
