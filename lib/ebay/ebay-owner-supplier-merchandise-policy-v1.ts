@@ -32,6 +32,16 @@ function sha256(value: string) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`
 }
 
+function canonical(value: unknown): string {
+  if (value === undefined) return "null"
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
+  if (value && typeof value === "object") return `{${Object.entries(
+    value as JsonRecord).sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
+    .join(",")}}`
+  return JSON.stringify(value)
+}
+
 export function lunaNewMerchandisePolicyDigestV1() {
   return sha256([
     OWNER_SUPPLIER_MERCHANDISE_POLICY_V1,
@@ -173,7 +183,7 @@ export function buildOwnerSupplierPolicyApplicationV1(input: Readonly<{
     lunaProductId: lunaProductId!, lunaVariantId: lunaVariantId!,
     supplierSku, appliedAt })
   return Object.freeze({ ...core,
-    applicationDigest: sha256(JSON.stringify(core)) })
+    applicationDigest: sha256(canonical(core)) })
 }
 
 export function validateOwnerSupplierPolicyApplicationV1(
@@ -206,5 +216,5 @@ export function validateOwnerSupplierPolicyApplicationV1(
     && /^sha256:[0-9a-f]{64}$/.test(String(
       application.authorizationReferenceDigest ?? ""))
     && /^sha256:[0-9a-f]{64}$/.test(String(application.applicationDigest ?? ""))
-    && application.applicationDigest === sha256(JSON.stringify(core))
+    && application.applicationDigest === sha256(canonical(core))
 }
