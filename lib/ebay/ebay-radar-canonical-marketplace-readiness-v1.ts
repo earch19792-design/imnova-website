@@ -285,6 +285,21 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     ...stringRecord(input.catalogRow?.metadata),
     productType: text(input.catalogRow?.product_type, 160),
     tags: strings(input.catalogRow?.tags, 40).join(" | "),
+    ...(() => {
+      const brand = record(input.productTruth.brand)
+      return {
+        productTruthNoManufacturerBrandClaim:
+          text(brand.noManufacturerBrandClaim, 80),
+        productTruthEbayBrandSemantics:
+          text(brand.ebayBrandSemantics, 80),
+        productTruthVisibleManufacturerBrandingPresent:
+          typeof brand.visibleManufacturerBrandingPresent === "boolean"
+            ? String(brand.visibleManufacturerBrandingPresent) : "",
+        productTruthSupplierImageBrandConflictFound:
+          typeof brand.supplierImageBrandConflictFound === "boolean"
+            ? String(brand.supplierImageBrandConflictFound) : "",
+      }
+    })(),
   } : {}
   const exactVariantData = exactIdentity ? {
     title: text(input.catalogRow?.variant_title, 240),
@@ -429,6 +444,15 @@ function existingEvidence(input: Readonly<{
   const assessment = record(input.opportunity.assessment)
   const value = record(assessment.canonicalMarketplaceReadinessV1)
   const { evidenceDigest: storedDigest, ...core } = value
+  const unresolvedRequiredSpecifics = strings(
+    value.unsupportedRequiredSpecifics, 100)
+  // A blocked cached readiness row is not a substitute for the exact batch
+  // input needed by the Required Specifics resolver. Reacquire only this gate;
+  // ready rows remain reusable without Taxonomy/catalog work.
+  const unresolvedSpecificsNeedBatchInput =
+    unresolvedRequiredSpecifics.length > 0
+    && (!input.requiredSpecificsBatchResolutionDigest
+      || !input.requiredSpecificsBatchResolutionCompleteScope)
   const exact = value.contractVersion ===
       RADAR_CANONICAL_MARKETPLACE_READINESS_VERSION
     && value.authority === "SELLER_OS_DETERMINISTIC_FACTORY"
@@ -445,6 +469,7 @@ function existingEvidence(input: Readonly<{
       input.requiredSpecificsBatchResolutionDigest
     && (!input.requiredSpecificsBatchResolutionDigest
       || input.requiredSpecificsBatchResolutionCompleteScope)
+    && !unresolvedSpecificsNeedBatchInput
     && validCandidateId(value.radarCandidateId)
     && value.demandEvidenceGrain === "FAMILY"
     && value.exactProductDemandClaimed === false
@@ -687,6 +712,18 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
   const exactGtin = input.productTruthExact
     ? text(input.opportunity.gtin ?? input.productTruth.gtin, 32)
       .replace(/[\s-]/g, "") : ""
+  const resolvedMarketplaceValues = record(batchResolution.values)
+  const exactProductValues = record(resolvedProductTruth.provenProductValues)
+  const exactMpn = text(packageIdentifiers.mpn, 80)
+    || text(resolvedMarketplaceValues.MPN, 80)
+    || text(exactProductValues.MPN, 80)
+  const availableProductIdentifiers = Object.freeze({
+    upc: exactGtin.length === 12 ? exactGtin
+      : text(packageIdentifiers.upc, 32) || null,
+    ean: exactGtin.length === 13 ? exactGtin
+      : text(packageIdentifiers.ean, 32) || null,
+    mpn: exactMpn || null,
+  })
   const inventoryItemPayload = { product: {
     ...(exactGtin.length === 12 ? { upc: [exactGtin] } : {}),
     ...(exactGtin.length === 13 ? { ean: [exactGtin] } : {}),
@@ -699,6 +736,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     ...(text(packageIdentifiers.isbn, 32) ? {
       isbn: [text(packageIdentifiers.isbn, 32)],
     } : {}),
+    ...(exactMpn ? { mpn: exactMpn } : {}),
   } }
   let productIdentifierPolicy: Awaited<ReturnType<
     NonNullable<typeof input.productIdentifierPolicyReader>>> | null = null
@@ -791,6 +829,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     unsupportedRequiredSpecifics,
     requiredItemSpecificsReady,
     productIdentifierPolicy,
+    availableProductIdentifiers,
     productIdentifiersReady,
     missingRequiredIdentifiers,
     requiredItemSpecificsTruth:

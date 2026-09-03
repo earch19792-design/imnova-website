@@ -22,7 +22,7 @@ import type {
 export const QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1 =
   "QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1" as const
 export const QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1 =
-  "QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V2" as const
+  "QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V3" as const
 
 const MAXIMUM_QUICK_PICKS = 20
 const REQUIRED_ASPECT_SCOPE = "ALL_OFFICIAL_REQUIRED_ASPECTS" as const
@@ -101,6 +101,20 @@ function sourceClassForResolution(value: JsonRecord) {
   return "DETERMINISTIC_EXACT_EVIDENCE"
 }
 
+function sourceAuthorityForResolution(value: JsonRecord) {
+  const field = String(record(value.sourceEvidence).sourceField ?? "NONE")
+  if (field === "SPECS") return "EXACT_LUNA_STRUCTURED_PRODUCT_DATA"
+  if (field === "VARIANT") return "EXACT_LUNA_STRUCTURED_VARIANT_DATA"
+  if (field === "TITLE" || field === "DESCRIPTION") {
+    return "EXACT_LUNA_SUPPLIER_TEXT"
+  }
+  if (field === "IMAGE") return "EXACT_LUNA_PRODUCT_IMAGE"
+  if (field === "MARKETPLACE_POLICY") {
+    return "OFFICIAL_EBAY_CATEGORY_POLICY"
+  }
+  return "NO_SUFFICIENT_EXACT_EVIDENCE"
+}
+
 export function projectQuickPickAutonomousResolutionV1(input: Readonly<{
   initial: JsonRecord
   refreshed: JsonRecord
@@ -156,6 +170,13 @@ export function projectQuickPickAutonomousResolutionV1(input: Readonly<{
         ? (field === "Condition" ? "LOW" : resolution?.confidence ?? "LOW")
         : "LOW",
       ownerAction: proposal ? "CONFIRM" : "ENTER_FACT",
+      whyAutomationCouldNotResolve: proposal
+        ? "EXACT_EVIDENCE_REQUIRES_OWNER_CONFIRMATION"
+        : "EXACT_EVIDENCE_INSUFFICIENT_OR_CONFLICTING",
+      exactEvidenceMissing: field === "Condition"
+        ? "AUTHORITATIVE_EXACT_PRODUCT_CONDITION"
+        : `AUTHORITATIVE_EXACT_PRODUCT_${normalized(field)
+          .toLocaleUpperCase("en-US").replace(/\s+/g, "_")}`,
       editAllowed: true,
       automaticResolutionExhausted: true,
       factInvented: false,
@@ -174,14 +195,34 @@ export function projectQuickPickAutonomousResolutionV1(input: Readonly<{
   const resolvedFieldAudits = input.resolutions.filter((entry) =>
     entry.humanReviewRequired === false && text(entry.resolvedValue, 500))
     .map((entry) => Object.freeze({
+      specificName: text(entry.aspectName, 120),
       aspect: text(entry.aspectName, 120),
       resolvedValue: text(entry.resolvedValue, 500),
+      sourceAuthority: sourceAuthorityForResolution(entry),
+      sourceFieldOrText:
+        text(record(entry.sourceEvidence).sourceExcerpt, 500),
       sourceClass: sourceClassForResolution(entry),
       sourceEvidence: record(entry.sourceEvidence),
       resolutionMethod: entry.resolutionClass,
       confidence: entry.confidence,
+      ownerConfirmationRequired: false,
       factInvented: false,
     }))
+  const requiredSpecificFactTraces = input.resolutions.map((entry) => {
+    const value = text(entry.resolvedValue, 500)
+    return Object.freeze({
+      specificName: text(entry.aspectName, 120),
+      resolvedValue: value,
+      sourceAuthority: sourceAuthorityForResolution(entry),
+      sourceFieldOrText:
+        text(record(entry.sourceEvidence).sourceExcerpt, 500),
+      resolutionClass: entry.resolutionClass,
+      confidence: entry.confidence,
+      ownerConfirmationRequired:
+        entry.humanReviewRequired === true && Boolean(value),
+      factInvented: false,
+    })
+  })
   return Object.freeze({
     autonomousResolutionContractVersion:
       QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1,
@@ -192,6 +233,8 @@ export function projectQuickPickAutonomousResolutionV1(input: Readonly<{
     finalUnresolvedFieldCount: finalFields.length,
     exactUnresolvedFields: Object.freeze(finalFields),
     resolvedFieldAudits: Object.freeze(resolvedFieldAudits),
+    requiredSpecificFactTraces:
+      Object.freeze(requiredSpecificFactTraces),
     residualOwnerActions: Object.freeze(residualOwnerActions),
     finalDisposition,
     automaticResolutionExhausted: true,
@@ -659,6 +702,12 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
         total + batch.marketplaceFallbackResolvedCount, 0),
     aiCallCount: resolvedBatches.reduce((total, batch) =>
       total + batch.aiCallCount, 0),
+    autoResolvedRequiredSpecificsCount: resolvedBatches.reduce(
+      (total, batch) => total + batch.candidates.reduce(
+        (candidateTotal, candidate) => candidateTotal
+          + candidate.resolutions.filter((resolution) =>
+            resolution.humanReviewRequired === false
+            && Boolean(resolution.resolvedValue)).length, 0), 0),
     initialUnresolvedFieldCount: autonomousResults.reduce((sum, result) =>
       sum + result.initialUnresolvedFieldCount, 0),
     finalUnresolvedFieldCount: autonomousResults.reduce((sum, result) =>
@@ -685,5 +734,10 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       return initial > 0 ? (initial - final) / initial : 1
     })(),
     candidateReadinessReevaluated: reevaluated,
+    futureQuickPickProductTruthAutoEnrichment: true as const,
+    skuSpecialCases: 0 as const,
+    historicalBatchSpecialCase: false as const,
+    factInventedTrueCount: 0 as const,
+    newOperationCount: 0 as const,
     resolverReasonCode, marketplaceWrites: 0 as const })
 }
