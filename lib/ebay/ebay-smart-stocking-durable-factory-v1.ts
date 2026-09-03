@@ -298,21 +298,46 @@ export function lunaQuickPickOwnerCertifiedConditionAuthorityV1(
   const intelligence = record(assessment.listingIntelligencePackage)
   const category = record(intelligence.categoryRecommendation)
   const quickPick = record(assessment.lunaQuickPickOperationV1)
+  const requiredSpecifics = record(
+    assessment.quickPickRequiredSpecificsContinuationV1)
+  const exactSoldEnrichment = record(
+    assessment.quickPickExactSoldMarketEnrichmentV1)
+  const canonicalMarketplace = record(
+    assessment.canonicalMarketplaceReadinessV1)
   const policyApplication = record(
     assessment.ownerSupplierMerchandisePolicyApplicationV1)
-  return quickPick.contractVersion ===
+  const legacyQuickPickLineage = quickPick.contractVersion ===
       "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1"
-      && quickPick.candidateKey === opportunity.candidate_key
-      && quickPick.lunaProductId === opportunity.supplier_product_id
-      && quickPick.lunaVariantId === opportunity.supplier_variant_id
-      && quickPick.supplierSku === opportunity.supplier_sku
+    && quickPick.candidateKey === opportunity.candidate_key
+    && quickPick.lunaProductId === opportunity.supplier_product_id
+    && quickPick.lunaVariantId === opportunity.supplier_variant_id
+    && quickPick.supplierSku === opportunity.supplier_sku
+  const continuedQuickPickLineage = requiredSpecifics.contractVersion ===
+      "QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1"
+    && requiredSpecifics.factInvented === false
+    && requiredSpecifics.marketplaceWrites === 0
+    && exactSoldEnrichment.contractVersion ===
+      "QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V2"
+    && Boolean(exactSoldEnrichment.completedAt)
+    && exactSoldEnrichment.factInvented === false
+    && exactSoldEnrichment.marketplaceWrites === 0
+  const canonicalCategoryExact = canonicalMarketplace.categoryReady === true
+    && canonicalMarketplace.queueCandidateKey === opportunity.candidate_key
+    && canonicalMarketplace.supplierProductId ===
+      opportunity.supplier_product_id
+    && canonicalMarketplace.supplierVariantId ===
+      opportunity.supplier_variant_id
+    && canonicalMarketplace.supplierSku === opportunity.supplier_sku
+  const categoryId = canonicalCategoryExact
+    ? canonicalMarketplace.categoryId : category.categoryId
+  return legacyQuickPickLineage || continuedQuickPickLineage
     ? lunaOwnerCertifiedNewMerchandiseConditionV1({
       exactProductIdentityProven: exactSupplierIdentity(opportunity, frontier)
         && exactProductTruth(opportunity).exact,
       lunaProductId: opportunity.supplier_product_id,
       lunaVariantId: opportunity.supplier_variant_id,
       supplierSku: opportunity.supplier_sku,
-      categoryId: category.categoryId,
+      categoryId,
       policyApplication,
     }) : null
 }

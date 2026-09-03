@@ -725,7 +725,8 @@ export async function continueLunaQuickPickVisualTopSellerEnrichmentV1(
     identity: NonNullable<ReturnType<
       typeof durableQuickPickRequiredSpecificsCandidateV1>>,
     catalog: CatalogRow, fingerprint: ExactProductFingerprintV1,
-    residualNamesBefore: readonly string[], conditionPolicyApplied: boolean }>> = []
+    residualNamesBefore: readonly string[], conditionPolicyApplied: boolean,
+    conditionOnlyReconciliation: boolean }>> = []
   for (const row of sourceRows) {
     const assessment = record(row.assessment)
     const actions = residualActions(assessment)
@@ -744,19 +745,46 @@ export async function continueLunaQuickPickVisualTopSellerEnrichmentV1(
     const exactTruth = resolveSellerOsExactProductTruthV1(row).exact
     const catalog = exactCatalogFor(row)
     const quickPick = record(assessment.lunaQuickPickOperationV1)
-    const exactQuickPick = quickPick.contractVersion ===
+    const requiredSpecifics = record(
+      assessment.quickPickRequiredSpecificsContinuationV1)
+    const exactSoldEnrichment = record(
+      assessment.quickPickExactSoldMarketEnrichmentV1)
+    const legacyQuickPickLineage = quickPick.contractVersion ===
         "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1"
       && quickPick.candidateKey === row.candidate_key
       && quickPick.lunaProductId === row.supplier_product_id
       && quickPick.lunaVariantId === row.supplier_variant_id
       && quickPick.supplierSku === row.supplier_sku
+    const continuedQuickPickLineage = requiredSpecifics.contractVersion ===
+        "QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1"
+      && requiredSpecifics.factInvented === false
+      && requiredSpecifics.marketplaceWrites === 0
+      && exactSoldEnrichment.contractVersion ===
+        "QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V2"
+      && Boolean(exactSoldEnrichment.completedAt)
+      && exactSoldEnrichment.factInvented === false
+      && exactSoldEnrichment.marketplaceWrites === 0
+    const exactQuickPick = legacyQuickPickLineage
+      || continuedQuickPickLineage
     const current = record(assessment[QUICK_PICK_VISUAL_TOP_SELLER_MARKER])
     const claimedAt = Date.parse(String(current.claimedAt ?? ""))
     const stale = Boolean(!current.completedAt && Number.isFinite(claimedAt)
       && now.getTime() - claimedAt >= STALE_CLAIM_MS)
+    const reconciliationClaimedAt = Date.parse(String(
+      current.conditionReconciliationClaimedAt ?? ""))
+    const activeConditionReconciliation = current.conditionRepairStatus ===
+        "CLAIMED"
+      && !current.conditionReconciliationCompletedAt
+      && Number.isFinite(reconciliationClaimedAt)
+      && now.getTime() - reconciliationClaimedAt < STALE_CLAIM_MS
+    const currentCompleted = Boolean(current.completedAt
+      && current.contractVersion === QUICK_PICK_VISUAL_TOP_SELLER_ENRICHMENT_V1)
+    const conditionOnlyReconciliation = currentCompleted
+      && names.some((name) => normalized(name) === "condition")
+      && current.conditionResolved !== true && Boolean(policy)
+      && !activeConditionReconciliation
     if (!identity || !exactTruth || !catalog || !exactQuickPick || !names.length
-        || (current.completedAt
-          && current.contractVersion === QUICK_PICK_VISUAL_TOP_SELLER_ENRICHMENT_V1)
+        || (currentCompleted && !conditionOnlyReconciliation)
         || (current.claimedAt && !current.completedAt && !stale)) continue
     const appliedAt = now.toISOString()
     const application = policy ? buildOwnerSupplierPolicyApplicationV1({
@@ -765,7 +793,16 @@ export async function continueLunaQuickPickVisualTopSellerEnrichmentV1(
       exactSupplierLineageCertified: true, productIdentityExact: true,
       appliedAt,
     }) : null
-    const marker = {
+    const marker = conditionOnlyReconciliation ? {
+      ...current, ownerSupplierPolicyAvailable: Boolean(policy),
+      conditionPolicyApplied: Boolean(application),
+      conditionReconciliationClaimedAt: appliedAt,
+      conditionReconciliationCompletedAt: null,
+      conditionRepairStatus: "CLAIMED",
+      conditionRepairSearchRepeated: false,
+      conditionRepairVisionRepeated: false,
+      factInvented: false, marketplaceWrites: 0,
+    } : {
       contractVersion: QUICK_PICK_VISUAL_TOP_SELLER_ENRICHMENT_V1,
       claimedAt: appliedAt, completedAt: null,
       stageAuthority: "REQUIRED_SPECIFICS_PRODUCT_TRUTH_CONTINUATION",
@@ -803,7 +840,8 @@ export async function continueLunaQuickPickVisualTopSellerEnrichmentV1(
       claimed.push(Object.freeze({ row: claimedRow, identity, catalog,
         fingerprint: fingerprintFor({ row: claimedRow, catalog }),
         residualNamesBefore: names,
-        conditionPolicyApplied: Boolean(application) }))
+        conditionPolicyApplied: Boolean(application),
+        conditionOnlyReconciliation }))
     }
   }
   if (!claimed.length) return Object.freeze({ attempted: candidateKeys.length,
@@ -812,18 +850,135 @@ export async function continueLunaQuickPickVisualTopSellerEnrichmentV1(
     conditionResolvedByOwnerPolicy: 0, marketplaceWrites: 0 as const,
     newOperationCount: 0 as const, duplicateOperationCount: 0 as const })
 
+  const results = []
+  const researchClaims = claimed.filter((entry) =>
+    !entry.conditionOnlyReconciliation)
+  for (const entry of claimed.filter((candidate) =>
+    candidate.conditionOnlyReconciliation)) {
+    let materialized = await materializeSellerOsDeterministicFactoryCandidateV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      opportunityId: entry.identity.rowId,
+      candidateKey: entry.identity.candidateKey,
+      taxonomyReader: input.taxonomyReader,
+      productIdentifierPolicyReader: input.productIdentifierPolicyReader,
+    })
+    if (entry.conditionPolicyApplied && materialized.conditionReady !== true) {
+      materialized = await materializeSellerOsDeterministicFactoryCandidateV1({
+        supabase: input.supabase, accountKey: input.accountKey,
+        opportunityId: entry.identity.rowId,
+        candidateKey: entry.identity.candidateKey,
+        taxonomyReader: input.taxonomyReader,
+        productIdentifierPolicyReader: input.productIdentifierPolicyReader,
+      })
+    }
+    const conditionResolved = entry.conditionPolicyApplied
+      && materialized.conditionReady === true
+    const finalRead = await input.supabase.from("ebay_luna_opportunity_queue")
+      .select("id,candidate_key,assessment,updated_at")
+      .eq("id", entry.identity.rowId)
+      .eq("candidate_key", entry.identity.candidateKey).maybeSingle()
+    const finalRow = record(finalRead.data)
+    if (finalRead.error || !finalRow.id) {
+      throw new Error("QUICK_PICK_VISUAL_CONDITION_REPAIR_READ_FAILED")
+    }
+    const finalAssessment = record(finalRow.assessment)
+    const trace = conditionResolved ? [{ specificName: "Condition",
+      resolvedValue: "New", sourceAuthority: "OWNER_SUPPLIER_POLICY",
+      sourceFieldOrText: "LUNA PORTEX SOLO VENDE PRODUCTOS NUEVOS.",
+      resolutionClass: "OWNER_SUPPLIER_POLICY", confidence: "HIGH",
+      ownerConfirmationRequired: false, factInvented: false }] : []
+    const ownerMarker = finalOwnerMarker({ assessment: finalAssessment,
+      materialized: record(materialized),
+      resolvedNames: conditionResolved ? ["Condition"] : [], traces: trace })
+    const currentEvidence = record(
+      finalAssessment[QUICK_PICK_VISUAL_TOP_SELLER_MARKER])
+    const residuals = rows(currentEvidence.residuals).filter((residual) =>
+      !conditionResolved || normalized(residual.specificName) !== "condition")
+    const { evidenceDigest: _priorEvidenceDigest, ...priorEvidence } =
+      currentEvidence
+    const completedAt = new Date().toISOString()
+    const safeFailureCode = conditionResolved
+      ? text(currentEvidence.safeFailureCode, 120)
+      : "OWNER_SUPPLIER_POLICY_CONDITION_MATERIALIZATION_FAILED"
+    const durableEvidence = { ...priorEvidence,
+      completedAt: text(currentEvidence.completedAt, 80) ?? completedAt,
+      conditionPolicyApplied: entry.conditionPolicyApplied,
+      conditionResolved, conditionRepairStatus: conditionResolved
+        ? "RECONCILED" : "COMPLETED_WITH_SAFE_RESIDUAL",
+      conditionReconciliationCompletedAt: completedAt,
+      conditionRepairSearchRepeated: false,
+      conditionRepairVisionRepeated: false,
+      safeFailureCode, residuals, factInvented: false, marketplaceWrites: 0 }
+    const finalWrite = await input.supabase.from(
+      "ebay_luna_opportunity_queue")
+      .update({ assessment: { ...finalAssessment,
+        quickPickRequiredSpecificsContinuationV1: ownerMarker,
+        [QUICK_PICK_VISUAL_TOP_SELLER_MARKER]: { ...durableEvidence,
+          evidenceDigest: digest(durableEvidence) } },
+      updated_at: completedAt })
+      .eq("id", finalRow.id).eq("candidate_key", finalRow.candidate_key)
+      .eq("updated_at", finalRow.updated_at)
+      .select("id,candidate_key,assessment").maybeSingle()
+    const stored = record(record(record(finalWrite.data).assessment)
+      [QUICK_PICK_VISUAL_TOP_SELLER_MARKER])
+    if (finalWrite.error || !finalWrite.data
+        || stored.evidenceDigest !== digest(durableEvidence)) {
+      throw new Error("QUICK_PICK_VISUAL_CONDITION_REPAIR_WRITE_FAILED")
+    }
+    const primaryReference = currentEvidence.primaryReference
+      && typeof currentEvidence.primaryReference === "object"
+      && !Array.isArray(currentEvidence.primaryReference)
+      ? record(currentEvidence.primaryReference) : null
+    const ownerActions = residualActions({
+      quickPickRequiredSpecificsContinuationV1: ownerMarker,
+    })
+    results.push(Object.freeze({ supplierSku: entry.identity.supplierSku,
+      conditionResolved,
+      physicalIdentityStatus: text(currentEvidence.physicalIdentityStatus, 80)
+        ?? "UNPROVEN",
+      searchCandidatesInitial: Number(
+        currentEvidence.searchCandidatesInitial ?? 0),
+      marketCandidatesEvaluated: Number(
+        currentEvidence.marketCandidatesEvaluated ?? 0),
+      visualShortlistCount: Number(currentEvidence.visualShortlistCount ?? 0),
+      visualCandidatesEvaluated: Number(
+        currentEvidence.visualCandidatesEvaluated ?? 0),
+      exactProductClusterFound: Number(
+        currentEvidence.exactProductClusterCount ?? 0) > 0,
+      strongProductClusterFound: Number(
+        currentEvidence.strongProductClusterCount ?? 0) > 0,
+      primaryReference,
+      topReferenceCount: rows(currentEvidence.topReferenceSet).length,
+      semanticMappedCount: rows(currentEvidence.semanticMappings).length,
+      strictFactsCorroborated: Number(
+        currentEvidence.strictFactsCorroborated ?? 0),
+      strictFactsPromoted:
+        Object.keys(record(currentEvidence.strictPromotions)).length,
+      residuals, finalDisposition: ownerMarker.finalDisposition,
+      ownerFactRequired: ownerActions.some((action) =>
+        action.disposition === "OWNER_FACT_REQUIRED"),
+      ownerConfirmationRequired: ownerActions.some((action) =>
+        action.disposition === "OWNER_CONFIRMATION_REQUIRED"),
+      waitingForEbayCapability: Array.isArray(materialized.blockers)
+        && materialized.blockers.includes("WAITING_FOR_EBAY_CAPABILITY"),
+      marketTestReady: materialized.marketTestReady === true,
+      listingReady: materialized.listingReady === true,
+      safeFailureCode }))
+  }
   let soldRows: Awaited<ReturnType<typeof readReviewedOfficialSoldEvidence>> = []
   let durableSoldFailureCode: string | null = null
-  try {
-    soldRows = await (input.soldEvidenceReader
-      ?? readReviewedOfficialSoldEvidence)({ supabase: input.supabase,
-      accountKey: input.accountKey })
-  } catch (error) {
-    durableSoldFailureCode = safeCode(error,
-      "DURABLE_SOLD_EVIDENCE_READ_FAILED")
+  if (researchClaims.length) {
+    try {
+      soldRows = await (input.soldEvidenceReader
+        ?? readReviewedOfficialSoldEvidence)({ supabase: input.supabase,
+        accountKey: input.accountKey })
+    } catch (error) {
+      durableSoldFailureCode = safeCode(error,
+        "DURABLE_SOLD_EVIDENCE_READ_FAILED")
+    }
   }
 
-  const researched = await mapWithConcurrency(claimed,
+  const researched = await mapWithConcurrency(researchClaims,
     MARKET_LOOKUP_CONCURRENCY, async (entry) => {
       const assessment = record(entry.row.assessment)
       const identity = quickPickExactSoldCandidateIdentityV1(entry.row)
@@ -969,7 +1124,6 @@ export async function continueLunaQuickPickVisualTopSellerEnrichmentV1(
         ?? null }
   })
 
-  const results = []
   for (const entry of enriched) {
     const strictPromotions = entry.mapping.strictPromotions
     const strictPromotionCount = Object.keys(strictPromotions).length
