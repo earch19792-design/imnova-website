@@ -1501,7 +1501,12 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
   const categorized = input.activeEvidence.filter((entry) =>
     entry.categoryId && /^\d{1,20}$/.test(entry.categoryId))
   const categories = new Set(categorized.map((entry) => entry.categoryId as string))
-  if (categories.size > 1 || !input.productType) return null
+  if (!input.productType) return null
+  // Active Browse candidates can span multiple marketplace categories even
+  // when Marketplace Insights is unavailable. That ambiguity belongs to the
+  // downstream category gate; it is not negative demand evidence and must not
+  // prevent an exact Luna identity from entering the unproven market-test path.
+  const categoryAmbiguous = categories.size > 1
   const categoryId = categories.size === 1 ? [...categories][0] : null
   const lunaProductId = text(input.lunaCatalogRow.supplier_product_id ??
     input.lunaCatalogRow.product_id, 80)
@@ -1577,7 +1582,8 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
     sourceContractVersion: input.report.validationVersion,
     limitations: ["DEMAND_EVIDENCE_ABSENT_NOT_NEGATIVE",
       "EXACT_PRODUCT_DEMAND_NOT_CLAIMED", "MARKET_PRICE_SUPPORT_UNPROVEN",
-      ...(!categoryId ? ["MARKETPLACE_CATEGORY_UNPROVEN"] : [])],
+      ...(!categoryId ? ["MARKETPLACE_CATEGORY_UNPROVEN"] : []),
+      ...(categoryAmbiguous ? ["MARKETPLACE_CATEGORY_AMBIGUOUS"] : [])],
   })
   const radarFamily = Object.freeze({ familyId: observation.familyId,
     familyName, opportunityCaseId: observation.opportunityCaseId,
