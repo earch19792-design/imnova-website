@@ -4,7 +4,7 @@ import { validateOwnerLunaUnbrandedPolicyApplicationV1 } from
   "./ebay-owner-supplier-merchandise-policy-v1"
 
 export const LUNA_EXACT_PRODUCT_EVIDENCE_SET_VERSION =
-  "LUNA_EXACT_PRODUCT_EVIDENCE_SET_V2" as const
+  "LUNA_EXACT_PRODUCT_EVIDENCE_SET_V3" as const
 export const LUNA_FULL_PAGE_IMAGE_REVIEW_V1 =
   "LUNA_FULL_PAGE_IMAGE_REVIEW_V1" as const
 export const OWNER_LUNA_UNBRANDED_POLICY_SOURCE =

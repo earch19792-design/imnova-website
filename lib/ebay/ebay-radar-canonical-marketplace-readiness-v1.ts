@@ -38,7 +38,7 @@ import {
 export const RADAR_CANONICAL_MARKETPLACE_READINESS_VERSION =
   "RADAR_CANONICAL_MARKETPLACE_READINESS_CONTINUATION_V3" as const
 export const RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION =
-  "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V3" as const
+  "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V4" as const
 
 const TAXONOMY_REVALIDATION_MS = 6 * 60 * 60 * 1_000
 const REQUIRED_ASPECT_SCOPE = "ALL_OFFICIAL_REQUIRED_ASPECTS" as const
@@ -197,8 +197,13 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
   catalogRow: JsonRecord | null
 }>) {
   const required = input.taxonomy.aspects.filter((aspect) => aspect.required)
-  const optionalBrand = input.taxonomy.aspects.find((aspect) =>
-    aspectKey(aspect.name) === "brand" && !aspect.required)
+  const quickPickOperation = record(record(input.opportunity.assessment)
+    .lunaQuickPickOperationV1)
+  const optionalBrand =
+    quickPickOperation.fullLunaBrandEvidenceReviewRequired === true
+      ? input.taxonomy.aspects.find((aspect) =>
+        aspectKey(aspect.name) === "brand" && !aspect.required)
+      : undefined
   // Brand is Product Truth even when a category does not require it to list.
   // Evaluate it through the same Luna evidence resolver, while keeping it out
   // of required-item-specific counts and publication blockers.
