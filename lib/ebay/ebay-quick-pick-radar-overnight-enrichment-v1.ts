@@ -8,6 +8,8 @@ import { readAlreadyLiveExactLunaIdentitiesV1 } from
   "./ebay-opportunity-radar-revenue-factory-adapter-v1"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1"
+import type { RadarProductIdentifierPolicyReaderV1 } from
+  "./ebay-radar-canonical-marketplace-readiness-v1"
 import { materializeSellerOsDeterministicFactoryCandidateV1 } from
   "./ebay-smart-stocking-durable-factory-v1"
 
@@ -281,6 +283,7 @@ export async function runQuickPickRadarOvernightEnrichmentV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
+  productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
   runId?: string | null
   dependencies?: OvernightDependencies
 }>) {
@@ -325,7 +328,8 @@ export async function runQuickPickRadarOvernightEnrichmentV1(input: Readonly<{
       const result = await materialize({ supabase: input.supabase,
         accountKey: input.accountKey, opportunityId: String(row.id),
         candidateKey: String(row.candidate_key),
-        taxonomyReader: input.taxonomyReader })
+        taxonomyReader: input.taxonomyReader,
+        productIdentifierPolicyReader: input.productIdentifierPolicyReader })
       materializedIds.push(String(row.id))
       if (result.marketTestReady === true || result.listingReady === true) {
         continue
@@ -345,6 +349,7 @@ export async function runQuickPickRadarOvernightEnrichmentV1(input: Readonly<{
         continueLunaQuickPickRequiredSpecificsV1)({
         supabase: input.supabase, accountKey: input.accountKey,
         candidateKeys: continuationKeys, taxonomyReader: input.taxonomyReader,
+        productIdentifierPolicyReader: input.productIdentifierPolicyReader,
         trigger: "OVERNIGHT_ENRICHMENT",
       })
     } catch (error) {

@@ -199,6 +199,8 @@ export async function GET(req: Request) {
             supabase, accountKey,
             candidateKeys: pendingSpecifics,
             taxonomyReader: getEbayTaxonomyListingIntelligence,
+            productIdentifierPolicyReader:
+              preflightEbayCategoryProductIdentifiers,
           })
       } catch (error) {
         requiredSpecificsContinuation = { status: "BLOCKED",
@@ -362,6 +364,7 @@ export async function POST(req: Request) {
       const partialResult = await processLunaQuickPickBatchV1({
         supabase, accountKey, urls: rehydration.rehydrateUrls,
         taxonomyReader: getEbayTaxonomyListingIntelligence,
+        productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
         batchId,
         onDemandDemandDiscovery: async ({ lunaCatalogRow }) => {
           const candidate = record(lunaCatalogRow)
@@ -416,6 +419,7 @@ export async function POST(req: Request) {
         urls: body.urls,
         selectedVariants: record(body.selectedVariants) as Record<string, string>,
         taxonomyReader: getEbayTaxonomyListingIntelligence,
+        productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
         batchId,
       })
     } catch (error) {

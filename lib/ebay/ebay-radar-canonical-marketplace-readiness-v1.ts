@@ -41,6 +41,22 @@ export type RadarMarketplaceTaxonomyReaderV1 = (
   options?: { allowTitleSuggestionFallback?: boolean },
 ) => Promise<EbayTaxonomyListingIntelligence>
 
+export type RadarProductIdentifierPolicyReaderV1 = (input: Readonly<{
+  categoryId: string
+  marketplaceId: "EBAY_US"
+  inventoryItemPayload: JsonRecord
+}>) => Promise<Readonly<{
+  safe: boolean
+  exactPolicyFound: boolean
+  policies: unknown[]
+  missingRequiredIdentifiers: string[]
+  blocker: string | null
+  source: string
+  httpStatus?: number
+  readAttempts?: number
+  errorIds?: string[]
+}>>
+
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord : {}
@@ -448,6 +464,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     productTruthExact: boolean
     productTruth: JsonRecord
     taxonomyReader: RadarMarketplaceTaxonomyReaderV1
+    productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
     now?: Date
   }>,
 ) {
@@ -502,10 +519,15 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     accountKey: input.accountKey,
   })
   const packageData = record(listingPackage.package_data)
+  const categoryResolver = record(packageData.categoryResolverV1)
   const categoryId = packageExact && validCategoryId(packageData.categoryId)
     ? text(packageData.categoryId, 20) : ""
   const categorySource = categoryId
-    ? "EXISTING_DURABLE_LISTING_PACKAGE_EXACT_OPPORTUNITY_BINDING" : null
+    ? strings(categoryResolver.categorySource, 10)[0]
+      ?? "EXISTING_DURABLE_LISTING_PACKAGE_EXACT_OPPORTUNITY_BINDING" : null
+  const waitingForCategoryCapability = !categoryId
+    && categoryResolver.categoryResolutionAttempted === true
+    && categoryResolver.capabilityUnavailable === true
   const conditionContract = packageExact
     ? ebayConditionContractFromVerifiedFact(packageData.conditionLabel) : null
   const conditionId = conditionContract
@@ -661,17 +683,67 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     && taxonomyPreflight.status === "CONSULTADO"
     && unsupportedRequiredSpecifics.length === 0
   const conditionReady = Boolean(conditionId)
+  const packageIdentifiers = record(packageData.productIdentifiers)
+  const exactGtin = input.productTruthExact
+    ? text(input.opportunity.gtin ?? input.productTruth.gtin, 32)
+      .replace(/[\s-]/g, "") : ""
+  const inventoryItemPayload = { product: {
+    ...(exactGtin.length === 12 ? { upc: [exactGtin] } : {}),
+    ...(exactGtin.length === 13 ? { ean: [exactGtin] } : {}),
+    ...(text(packageIdentifiers.upc, 32) ? {
+      upc: [text(packageIdentifiers.upc, 32)],
+    } : {}),
+    ...(text(packageIdentifiers.ean, 32) ? {
+      ean: [text(packageIdentifiers.ean, 32)],
+    } : {}),
+    ...(text(packageIdentifiers.isbn, 32) ? {
+      isbn: [text(packageIdentifiers.isbn, 32)],
+    } : {}),
+  } }
+  let productIdentifierPolicy: Awaited<ReturnType<
+    NonNullable<typeof input.productIdentifierPolicyReader>>> | null = null
+  if (categoryReady && input.productIdentifierPolicyReader) {
+    try {
+      productIdentifierPolicy = await input.productIdentifierPolicyReader({
+        categoryId, marketplaceId: "EBAY_US", inventoryItemPayload,
+      })
+    } catch {
+      productIdentifierPolicy = {
+        safe: false, exactPolicyFound: false, policies: [],
+        missingRequiredIdentifiers: [],
+        blocker: "EBAY_CATEGORY_PRODUCT_IDENTIFIER_POLICY_UNAVAILABLE",
+        source: "EBAY_METADATA_GET_CATEGORY_POLICIES_READONLY",
+        httpStatus: 0, readAttempts: 0, errorIds: [],
+      }
+    }
+  }
+  const productIdentifierCapabilityWaiting = Boolean(productIdentifierPolicy
+    && (productIdentifierPolicy.blocker ===
+      "EBAY_CATEGORY_PRODUCT_IDENTIFIER_POLICY_UNAVAILABLE"
+      || productIdentifierPolicy.httpStatus === 0
+      || productIdentifierPolicy.httpStatus === 429
+      || Number(productIdentifierPolicy.httpStatus ?? 0) >= 500))
+  const missingRequiredIdentifiers = productIdentifierPolicy
+    ?.missingRequiredIdentifiers ?? []
+  const productIdentifiersReady = productIdentifierPolicy
+    ? productIdentifierPolicy.safe : null
 
   const blockers = unique([
     ...(!sellerAccountBindingReady ? ["SELLER_ACCOUNT_BINDING_NOT_READY"] : []),
     ...(!marketplaceIdentityReady ? ["MARKETPLACE_IDENTITY_NOT_READY"] : []),
-    ...(!categoryReady ? ["MARKETPLACE_CATEGORY_NOT_READY"] : []),
+    ...(!categoryReady ? [waitingForCategoryCapability
+      ? "WAITING_FOR_EBAY_CAPABILITY" : "MARKETPLACE_CATEGORY_NOT_READY"] : []),
     ...(!conditionReady ? ["MARKETPLACE_CONDITION_NOT_READY"] : []),
     ...(!requiredItemSpecificsReady ? [
       unsupportedRequiredSpecifics.length
         ? `MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN:${unsupportedRequiredSpecifics.join("|")}`
         : "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN",
     ] : []),
+    ...(productIdentifierCapabilityWaiting
+      ? ["WAITING_FOR_EBAY_CAPABILITY"] : []),
+    ...(!productIdentifierCapabilityWaiting
+      && missingRequiredIdentifiers.length
+      ? [`OWNER_FACT_REQUIRED:${missingRequiredIdentifiers.join("|")}`] : []),
     ...(!fulfillmentPolicyReady ? ["FULFILLMENT_POLICY_NOT_READY"] : []),
     ...(!paymentPolicyReady ? ["PAYMENT_POLICY_NOT_READY"] : []),
     ...(!returnPolicyReady ? ["RETURN_POLICY_NOT_READY"] : []),
@@ -700,6 +772,15 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     categoryId: categoryId || null,
     categoryName: taxonomy?.categoryName ?? packageData.categoryName ?? null,
     categorySource,
+    categoryResolutionAttempted:
+      categoryResolver.categoryResolutionAttempted === true,
+    categoryCandidateCount:
+      Number(categoryResolver.categoryCandidateCount ?? 0),
+    categoryConfidence: categoryResolver.categoryConfidence ?? null,
+    categoryBlockerReason: categoryReady
+      ? null : categoryResolver.categoryBlockerReason
+        ?? (waitingForCategoryCapability
+          ? "WAITING_FOR_EBAY_CAPABILITY" : "CATEGORY_UNRESOLVED"),
     categoryReady,
     conditionId: conditionId || null,
     conditionLabel: conditionContract?.canonicalLabel ?? null,
@@ -709,6 +790,9 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     requiredItemSpecificsSatisfied,
     unsupportedRequiredSpecifics,
     requiredItemSpecificsReady,
+    productIdentifierPolicy,
+    productIdentifiersReady,
+    missingRequiredIdentifiers,
     requiredItemSpecificsTruth:
       specificsTruth?.evidence ?? null,
     requiredSpecificsBatchResolutionDigest,

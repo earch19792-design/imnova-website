@@ -7,6 +7,8 @@ import { buildSmartStockingLearningProfileV1,
   "./ebay-smart-stocking-learning-profile-v1.ts"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1"
+import type { RadarProductIdentifierPolicyReaderV1 } from
+  "./ebay-radar-canonical-marketplace-readiness-v1"
 import { lunaOwnerCertifiedNewMerchandiseConditionV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit
   // extension; the production bundler resolves the same source module.
@@ -317,6 +319,13 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
   const intelligence = record(assessment.listingIntelligencePackage)
   const candidate = record(assessment.candidate)
   const category = record(intelligence.categoryRecommendation)
+  const canonicalMarketplace = record(
+    assessment.canonicalMarketplaceReadinessV1)
+  const canonicalCategoryReady = canonicalMarketplace.categoryReady === true
+    && canonicalMarketplace.queueCandidateKey === opportunity.candidate_key
+    && canonicalMarketplace.supplierProductId === opportunity.supplier_product_id
+    && canonicalMarketplace.supplierVariantId === opportunity.supplier_variant_id
+    && canonicalMarketplace.supplierSku === opportunity.supplier_sku
   const titleStrategy = record(intelligence.titleStrategy)
   const itemSpecifics = record(intelligence.itemSpecifics)
   const conditionAuthority =
@@ -324,8 +333,10 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
   return {
     title: String(intelligence.recommendedTitle ?? titleStrategy.titleFormula
       ?? opportunity.product_title ?? "").slice(0, 80),
-    categoryId: text(category.categoryId),
-    categoryName: text(category.categoryName),
+    categoryId: canonicalCategoryReady
+      ? text(canonicalMarketplace.categoryId) : text(category.categoryId),
+    categoryName: canonicalCategoryReady
+      ? text(canonicalMarketplace.categoryName) : text(category.categoryName),
     aspects: record(itemSpecifics.supplierConfirmed),
     ...(conditionAuthority ? {
       conditionId: conditionAuthority.conditionId,
@@ -629,6 +640,167 @@ export function isSellerOsDeterministicFactoryPackageV1(value: unknown) {
     && /^sha256:[0-9a-f]{64}$/.test(String(authority.evidenceDigest ?? ""))
 }
 
+function numericCategoryId(value: unknown) {
+  const candidate = text(value)
+  return candidate && /^\d{1,20}$/.test(candidate) ? candidate : null
+}
+
+function exactDurableCategoryAuthorityV1(
+  opportunity: JsonRecord,
+  listingPackage: JsonRecord,
+) {
+  const packageData = record(listingPackage.package_data)
+  const packageCategoryId = numericCategoryId(packageData.categoryId)
+  if (!packageCategoryId) return null
+  const marketplace = record(record(opportunity.assessment)
+    .canonicalMarketplaceReadinessV1)
+  const resolver = record(packageData.categoryResolverV1)
+  const marketplaceExact = marketplace.categoryReady === true
+    && marketplace.listingPackageId === listingPackage.id
+    && marketplace.queueCandidateKey === opportunity.candidate_key
+    && marketplace.supplierProductId === opportunity.supplier_product_id
+    && marketplace.supplierVariantId === opportunity.supplier_variant_id
+    && marketplace.supplierSku === opportunity.supplier_sku
+    && marketplace.categoryId === packageCategoryId
+  const resolverExact = resolver.status === "AUTO_SELECTED"
+    && resolver.listingPackageId === listingPackage.id
+    && resolver.opportunityId === opportunity.id
+    && resolver.candidateKey === opportunity.candidate_key
+    && resolver.selectedCategoryId === packageCategoryId
+    && resolver.capabilityUnavailable !== true
+  return marketplaceExact || resolverExact ? Object.freeze({
+    categoryId: packageCategoryId,
+    categoryName: text(packageData.categoryName),
+    authorityClass: marketplaceExact
+      ? "EXACT_PREVIOUSLY_CERTIFIED_CATEGORY"
+      : "EXACT_DURABLE_CATEGORY_RESOLVER_BINDING",
+    exactProductIdentityVerified: true as const,
+  }) : null
+}
+
+async function priorExactDurableCategoryAuthorityV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  opportunity: JsonRecord
+}>) {
+  const read = await input.supabase.from("ebay_luna_opportunity_queue")
+    .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment")
+    .eq("supplier_product_id", input.opportunity.supplier_product_id)
+    .eq("supplier_variant_id", input.opportunity.supplier_variant_id)
+    .eq("supplier_sku", input.opportunity.supplier_sku)
+    .neq("id", input.opportunity.id).limit(3)
+  if (read.error) throw new Error("QUICK_PICK_EXACT_CATEGORY_REUSE_READ_FAILED")
+  const candidates = (read.data ?? []).flatMap((raw) => {
+    const row = record(raw)
+    const evidence = record(record(row.assessment)
+      .canonicalMarketplaceReadinessV1)
+    const categoryId = numericCategoryId(evidence.categoryId)
+    return evidence.categoryReady === true
+      && evidence.queueCandidateKey === row.candidate_key
+      && evidence.supplierProductId === row.supplier_product_id
+      && evidence.supplierVariantId === row.supplier_variant_id
+      && evidence.supplierSku === row.supplier_sku
+      && categoryId && /^[0-9a-f-]{36}$/i.test(String(
+        evidence.listingPackageId ?? ""))
+      ? [{ packageId: String(evidence.listingPackageId), categoryId,
+        categoryName: text(evidence.categoryName) }] : []
+  })
+  if (!candidates.length) return null
+  const categories = [...new Set(candidates.map((entry) => entry.categoryId))]
+  if (categories.length !== 1) return null
+  const packageRead = await input.supabase.from("ebay_listing_packages")
+    .select("id,account_key,opportunity_id,candidate_key,package_data")
+    .in("id", candidates.map((entry) => entry.packageId))
+    .eq("account_key", input.accountKey).limit(3)
+  if (packageRead.error) {
+    throw new Error("QUICK_PICK_EXACT_CATEGORY_PACKAGE_READ_FAILED")
+  }
+  const exactPackages = (packageRead.data ?? []).filter((raw) => {
+    const row = record(raw)
+    return candidates.some((candidate) => candidate.packageId === row.id
+      && numericCategoryId(record(row.package_data).categoryId) ===
+        candidate.categoryId)
+  })
+  return exactPackages.length === candidates.length ? Object.freeze({
+    categoryId: categories[0],
+    categoryName: candidates.find((entry) => entry.categoryName)
+      ?.categoryName ?? null,
+    authorityClass: "EXACT_PRODUCT_IDENTITY_DURABLE_CATEGORY_REUSE",
+    exactProductIdentityVerified: true as const,
+  }) : null
+}
+
+async function resolveAndPersistQuickPickCategoryV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  opportunity: JsonRecord
+  listingPackage: JsonRecord
+  taxonomyReader: RadarMarketplaceTaxonomyReaderV1
+}>) {
+  if (input.listingPackage.created_by !== null
+      || !isSellerOsDeterministicFactoryPackageV1(
+        input.listingPackage.package_data)) return input.listingPackage
+  const exactCanonicalCategory = exactDurableCategoryAuthorityV1(
+    input.opportunity, input.listingPackage)
+    ?? await priorExactDurableCategoryAuthorityV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      opportunity: input.opportunity,
+    })
+  const currentPackageData = record(input.listingPackage.package_data)
+  const categoryResolver = await import(
+    // @ts-expect-error Node direct TypeScript tests require the explicit
+    // extension; the production bundler resolves the same source module.
+    "./ebay-category-resolver-v1.ts")
+  const binding = await categoryResolver.resolveAndBindEbayListingCategoryV1({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    context: {
+      marketplaceId: "EBAY_US",
+      listingPackageId: String(input.listingPackage.id),
+      opportunityId: String(input.opportunity.id),
+      candidateKey: String(input.opportunity.candidate_key),
+    },
+    opportunity: input.opportunity,
+    packageData: currentPackageData,
+    taxonomyReader: input.taxonomyReader,
+    exactCanonicalCategory,
+  })
+  if (!categoryResolver.canonicalCategoryBindingNeedsDurableSaveV1({
+    currentPackageData,
+    resolvedPackageData: binding.packageData,
+  })) return input.listingPackage
+  const now = new Date().toISOString()
+  const write = await input.supabase.from("ebay_listing_packages")
+    .update({ package_data: binding.packageData, updated_at: now })
+    .eq("id", input.listingPackage.id)
+    .eq("account_key", input.accountKey)
+    .eq("opportunity_id", input.opportunity.id)
+    .eq("candidate_key", input.opportunity.candidate_key)
+    .eq("updated_at", input.listingPackage.updated_at)
+    .is("created_by", null).select("*").maybeSingle()
+  if (write.error || !write.data) {
+    throw new Error("QUICK_PICK_CATEGORY_BINDING_WRITE_FAILED")
+  }
+  const stored = write.data as JsonRecord
+  if (categoryResolver.canonicalCategoryBindingNeedsDurableSaveV1({
+    currentPackageData: record(stored.package_data),
+    resolvedPackageData: binding.packageData,
+  })) throw new Error("QUICK_PICK_CATEGORY_BINDING_READBACK_MISMATCH")
+  return stored
+}
+
+function preserveCanonicalCategoryBindingV1(
+  seed: JsonRecord,
+  durablePackageData: JsonRecord,
+) {
+  const next = { ...seed }
+  for (const field of ["categoryId", "categoryName", "aspects",
+    "taxonomyPreflight", "categoryResolverV1"] as const) {
+    next[field] = durablePackageData[field] ?? null
+  }
+  return next
+}
+
 export function isGenericSmartStockingListingIntakeV1(value: unknown) {
   const marker = record(record(value).smartStockingListingIntakeV1)
   return isSmartStockingListingIntakeReadinessV1(value)
@@ -699,6 +871,9 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
       || (number(opportunity.supplier_inventory_quantity) ?? 0) > 0)
   const seed = listingSeed(opportunity, frontier)
   const categoryReady = Boolean(seed.categoryId)
+  const waitingForCategoryCapability = strings(
+    record(assessment.canonicalMarketplaceReadinessV1).blockers)
+    .includes("WAITING_FOR_EBAY_CAPABILITY")
   const packageInputsReady = Boolean(seed.title && seed.imageUrls.length > 0
     && categoryReady)
   const demandPathReady = demandReady || marketTestPath
@@ -724,7 +899,8 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     ...(input.activeDuplicateCount === null
       ? ["ACTIVE_DUPLICATE_GUARD_UNAVAILABLE"]
       : !duplicateGuardPassed ? ["ACTIVE_DUPLICATE"] : []),
-    ...(!categoryReady ? ["MARKETPLACE_CATEGORY_NOT_READY"] : []),
+    ...(!categoryReady ? [waitingForCategoryCapability
+      ? "WAITING_FOR_EBAY_CAPABILITY" : "MARKETPLACE_CATEGORY_NOT_READY"] : []),
     ...(!packageInputsReady ? ["LISTING_PACKAGE_INPUTS_NOT_READY"] : []),
     ...(!canonicalMarketplaceReady
       ? canonicalMarketplaceBlockers.length
@@ -864,6 +1040,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     candidateKey: string
     decisionPackageId?: string | null
     taxonomyReader?: RadarMarketplaceTaxonomyReaderV1
+    productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
+    categoryBootstrapPass?: 0 | 1
   }>,
 ) {
   const opportunityRead = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -926,6 +1104,17 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   const radarCandidateEligibleForBinding = radarCandidate.contractVersion ===
       "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1"
     && radarCandidate.authority === SELLER_OS_DETERMINISTIC_FACTORY
+  let durableListingPackage = packageRead.data as JsonRecord | null
+  if (durableListingPackage && radarCandidateEligibleForBinding
+      && input.taxonomyReader) {
+    durableListingPackage = await resolveAndPersistQuickPickCategoryV1({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      opportunity,
+      listingPackage: durableListingPackage,
+      taxonomyReader: input.taxonomyReader,
+    })
+  }
   const activeDuplicateCount = (duplicateRead.data ?? []).filter((value) => {
     const listing = record(value)
     return listing.supplier_variant_id === variantId
@@ -944,10 +1133,11 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       supabase: input.supabase,
       accountKey: input.accountKey,
       opportunity,
-      listingPackage: packageRead.data as JsonRecord | null,
+      listingPackage: durableListingPackage,
       productTruthExact: initialProductTruthContinuation.exact,
       productTruth: initialProductTruthContinuation.truth,
       taxonomyReader: input.taxonomyReader,
+      productIdentifierPolicyReader: input.productIdentifierPolicyReader,
     }) : null
   const currentAssessment = record(opportunity.assessment)
   const existingCanonicalBlockers = strings(
@@ -1033,7 +1223,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     throw new Error("DETERMINISTIC_FACTORY_PRODUCT_TRUTH_READBACK_MISMATCH")
   }
 
-  const existingPackage = packageRead.data as JsonRecord | null
+  const existingPackage = durableListingPackage
   let listingPackage: JsonRecord
   let packageCreated = false
   if (existingPackage) {
@@ -1042,7 +1232,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       && isSellerOsDeterministicFactoryPackageV1(existingPackage.package_data)) {
       const packageWrite = await input.supabase.from("ebay_listing_packages")
         .update({
-          package_data: plan.packageSeed,
+          package_data: preserveCanonicalCategoryBindingV1(
+            plan.packageSeed, record(existingPackage.package_data)),
           status: plan.listingReady || plan.marketTestReady
             ? "ready_for_review" : "draft",
           readiness: plan.readiness,
@@ -1073,6 +1264,14 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     }
     listingPackage = packageWrite.data as JsonRecord
     packageCreated = true
+  }
+  if (packageCreated && input.taxonomyReader
+      && radarCandidateEligibleForBinding
+      && input.categoryBootstrapPass !== 1) {
+    return materializeSellerOsDeterministicFactoryCandidateV1({
+      ...input,
+      categoryBootstrapPass: 1,
+    })
   }
   const serverOwned = listingPackage.created_by === null
     && isSellerOsDeterministicFactoryPackageV1(listingPackage.package_data)

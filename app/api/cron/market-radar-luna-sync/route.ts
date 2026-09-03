@@ -25,6 +25,8 @@ import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { preflightEbayCategoryProductIdentifiers } from
+  "@/lib/ebay/ebay-draft-only-gateway"
 import { runQuickPickRadarOvernightEnrichmentV1 } from
   "@/lib/ebay/ebay-quick-pick-radar-overnight-enrichment-v1"
 
@@ -69,6 +71,7 @@ export async function GET(req: Request) {
       const materialized = await materializeRadarRevenueFactoryCandidateBatchV1({
         supabase, accountKey, batch: candidateBatch,
         taxonomyReader: getEbayTaxonomyListingIntelligence,
+        productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
       })
       factory = {
         ...materialized,
@@ -113,6 +116,8 @@ export async function GET(req: Request) {
         await runQuickPickRadarOvernightEnrichmentV1({
           supabase, accountKey,
           taxonomyReader: getEbayTaxonomyListingIntelligence,
+          productIdentifierPolicyReader:
+            preflightEbayCategoryProductIdentifiers,
           runId: automationRunId,
         })
     } catch (error) {

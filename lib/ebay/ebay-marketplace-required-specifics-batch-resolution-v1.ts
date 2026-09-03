@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 export const MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1 =
   "MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1" as const
 export const REQUIRED_SPECIFICS_DIGEST_VERSION =
-  "CANONICAL_JSON_V3_POLICY_FALLBACKS_EXACT_MATERIAL" as const
+  "CANONICAL_JSON_V4_OFFICIAL_COMPOSITE_VALUE_ALIASES" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -278,11 +278,18 @@ function deterministicResolution(
   }
   const corpus = exactSources(product)
   const matches = definition.allowedValues.flatMap((value) => {
-    const needle = key(value)
-    if (!needle || ABSENCE_MARKERS.has(needle)) return []
+    const canonicalNeedle = key(value)
+    if (!canonicalNeedle || ABSENCE_MARKERS.has(canonicalNeedle)) return []
+    // eBay sometimes represents a single official value as equivalent labels
+    // (for example "Lavalier/Lapel"). Exact Product Truth may contain either
+    // label. Matching a whole, non-trivial alternative is deterministic; the
+    // stored value remains the unmodified official taxonomy value.
+    const needles = [...new Set([canonicalNeedle,
+      ...value.split(/[\/|]/).map(key).filter((entry) => entry.length >= 4)])]
     return (Object.entries(corpus) as [keyof typeof corpus, string][])
-      .filter(([, source]) => ` ${key(source)} `.includes(` ${needle} `))
-      .map(([sourceField]) => ({ value, sourceField }))
+      .flatMap(([sourceField, source]) => needles
+        .filter((needle) => ` ${key(source)} `.includes(` ${needle} `))
+        .map((needle) => ({ value, sourceField, excerpt: needle })))
   })
   const uniqueMatches = [...new Map(matches.map((match) =>
     [key(match.value), match])).values()]
@@ -294,7 +301,7 @@ function deterministicResolution(
       resolutionClass: "DETERMINISTIC_DERIVATION",
       sourceEvidence: Object.freeze({
         sourceField: match.sourceField,
-        sourceExcerpt: match.value,
+        sourceExcerpt: match.excerpt,
         imageIndex: null,
       }),
       confidence: "HIGH", factInvented: false,

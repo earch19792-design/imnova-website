@@ -15,6 +15,8 @@ import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics,
   DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG } from "./ebay-unit-economics"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1"
+import type { RadarProductIdentifierPolicyReaderV1 } from
+  "./ebay-radar-canonical-marketplace-readiness-v1"
 import {
   createOpenAiRequiredSpecificsBatchResolverV1,
   MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
@@ -1496,6 +1498,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     materializeCandidate?: DurableFactoryMaterializerV1
     continuePriceDistribution?: typeof continueRadarCandidatePriceDistributionV1
     taxonomyReader?: RadarMarketplaceTaxonomyReaderV1
+    productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
     requiredSpecificsAiResolver?: RequiredSpecificsAiBatchV1 | null
     requiredSpecificsAiStages?: readonly ("TEXT" | "VISION")[]
   }>,
@@ -1746,6 +1749,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         candidateKey: String(queueRow.candidate_key),
         decisionPackageId: embeddedId,
         taxonomyReader: input.taxonomyReader,
+        productIdentifierPolicyReader: input.productIdentifierPolicyReader,
       })
       const packageSeed = record(result.packageSeed)
       const pricing = record(packageSeed.pricing)
@@ -1929,6 +1933,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
           candidateKey: String(row.candidate_key),
           decisionPackageId: embeddedDecisionPackageId(row),
           taxonomyReader: input.taxonomyReader,
+          productIdentifierPolicyReader: input.productIdentifierPolicyReader,
         })
         const previous = outcomes[pending.outcomeIndex]
         const refreshedSeed = record(refreshed.packageSeed)

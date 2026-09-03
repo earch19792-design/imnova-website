@@ -4,6 +4,8 @@ import { materializeSellerOsDeterministicFactoryCandidateV1 } from
   "./ebay-smart-stocking-durable-factory-v1"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1"
+import type { RadarProductIdentifierPolicyReaderV1 } from
+  "./ebay-radar-canonical-marketplace-readiness-v1"
 import {
   createOpenAiRequiredSpecificsBatchResolverV1,
   MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
@@ -351,6 +353,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   accountKey: string
   candidateKeys: readonly string[]
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
+  productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
   aiResolver?: RequiredSpecificsAiBatchV1 | null
   trigger?: "IMMEDIATE" | "OVERNIGHT_ENRICHMENT"
 }>) {
@@ -457,6 +460,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       opportunityId: entry.candidate.rowId,
       candidateKey: entry.candidate.candidateKey,
       taxonomyReader: input.taxonomyReader,
+      productIdentifierPolicyReader: input.productIdentifierPolicyReader,
     })
     before.set(entry.candidate.radarCandidateId, materialized)
     if (materialized.listingReady !== true
@@ -556,6 +560,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       opportunityId: entry.candidate.rowId,
       candidateKey: entry.candidate.candidateKey,
       taxonomyReader: input.taxonomyReader,
+      productIdentifierPolicyReader: input.productIdentifierPolicyReader,
     })
     after.set(entry.candidate.radarCandidateId, materialized)
     reevaluated += 1

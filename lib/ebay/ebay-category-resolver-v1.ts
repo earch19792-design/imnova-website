@@ -543,12 +543,17 @@ export async function resolveEbayCategoryV1(input: Readonly<{
   const needsOfficialSuggestion = !ranked.length
     || ranked[0].score < EBAY_CATEGORY_RESOLVER_POLICY_V1.highConfidenceMinimum
     || topTwoAmbiguous
+  let officialSuggestionStatus: EbayTaxonomyListingIntelligence["status"] |
+    null = null
+  let officialSuggestionFailureCode: string | null = null
   if (needsOfficialSuggestion) {
     const suggestion = await input.taxonomyReader(
       input.productTruth.title,
       null,
       { allowTitleSuggestionFallback: false },
     )
+    officialSuggestionStatus = suggestion.status
+    officialSuggestionFailureCode = suggestion.failureCode
     if (suggestion.status === "AVAILABLE" && categoryId(suggestion.categoryId)) {
       ranked = rankEbayCategoryCandidatesV1({
         signals: [
@@ -612,6 +617,11 @@ export async function resolveEbayCategoryV1(input: Readonly<{
     && selected.score >= EBAY_CATEGORY_RESOLVER_POLICY_V1.highConfidenceMinimum
     && !ambiguous)
   if (!selected || !highConfidence) {
+    const capabilityUnavailable = officialSuggestionStatus === "REQUEST_FAILED"
+      || (testedCategoryIds.length > 0
+        && validationFailures.length === testedCategoryIds.length
+        && validationFailures.every((failure) =>
+          /REQUEST_FAILED|EBAY_(?:READONLY|TAXONOMY)_/.test(failure)))
     return Object.freeze({
       authorityClass: EBAY_CATEGORY_RESOLVER_V1,
       status: "CATEGORY_EXCEPTION" as const,
@@ -619,6 +629,15 @@ export async function resolveEbayCategoryV1(input: Readonly<{
       selectedCategory: null,
       testedCategoryIds,
       validationFailures,
+      categoryCandidateCount: ranked.length,
+      categoryConfidence: selected?.score ?? null,
+      categorySource: selected?.sources ?? [],
+      categoryBlockerReason: capabilityUnavailable
+        ? "WAITING_FOR_EBAY_CAPABILITY"
+        : selected ? "CATEGORY_AMBIGUOUS" : "CATEGORY_UNRESOLVED",
+      capabilityUnavailable,
+      officialSuggestionStatus,
+      officialSuggestionFailureCode,
       boundedCandidateLimit:
         EBAY_CATEGORY_RESOLVER_POLICY_V1.maximumCandidatesTested,
       factoryContinuationAllowed: true as const,
@@ -634,6 +653,13 @@ export async function resolveEbayCategoryV1(input: Readonly<{
     selectedCategory: selected,
     testedCategoryIds,
     validationFailures,
+    categoryCandidateCount: ranked.length,
+    categoryConfidence: selected.score,
+    categorySource: selected.sources,
+    categoryBlockerReason: null,
+    capabilityUnavailable: false,
+    officialSuggestionStatus,
+    officialSuggestionFailureCode,
     boundedCandidateLimit: EBAY_CATEGORY_RESOLVER_POLICY_V1.maximumCandidatesTested,
     factoryContinuationAllowed: true as const,
     manualCategorySelectionRequired: false as const,
@@ -845,6 +871,16 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
         ? [] : [`${exactCanonicalCategoryId}:${
           exactCanonicalTaxonomy?.failureCode
             ?? exactCanonicalTaxonomy?.status ?? "UNAVAILABLE"}`],
+      categoryCandidateCount: 1,
+      categoryConfidence: exactCanonicalCategoryPass ? 100 : null,
+      categorySource: ["PRODUCT_TRUTH" as const],
+      categoryBlockerReason: exactCanonicalCategoryPass
+        ? null : exactCanonicalTaxonomy?.status === "REQUEST_FAILED"
+          ? "WAITING_FOR_EBAY_CAPABILITY" : "CATEGORY_UNRESOLVED",
+      capabilityUnavailable:
+        exactCanonicalTaxonomy?.status === "REQUEST_FAILED",
+      officialSuggestionStatus: null,
+      officialSuggestionFailureCode: null,
       boundedCandidateLimit: 1,
       factoryContinuationAllowed: true as const,
       manualCategorySelectionRequired: false as const,
@@ -874,6 +910,12 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
           normalizedProductFamily: productTruth.normalizedProductFamily,
           normalizedProductType: productTruth.normalizedProductType,
           familyTypeFingerprint: productTruth.familyTypeFingerprint,
+          categoryResolutionAttempted: true,
+          categoryCandidateCount: resolution.categoryCandidateCount,
+          categoryConfidence: resolution.categoryConfidence,
+          categorySource: resolution.categorySource,
+          categoryBlockerReason: resolution.categoryBlockerReason,
+          capabilityUnavailable: resolution.capabilityUnavailable,
         },
       },
       resolution,
@@ -940,6 +982,12 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
         normalizedProductFamily: productTruth.normalizedProductFamily,
         normalizedProductType: productTruth.normalizedProductType,
         familyTypeFingerprint: productTruth.familyTypeFingerprint,
+        categoryResolutionAttempted: true,
+        categoryCandidateCount: resolution.categoryCandidateCount,
+        categoryConfidence: resolution.categoryConfidence,
+        categorySource: resolution.categorySource,
+        categoryBlockerReason: null,
+        capabilityUnavailable: false,
         selectedCategoryId: selected.categoryId,
         taxonomySnapshotDigest: selected.taxonomySnapshotDigest,
         taxonomyPreflightEvidenceDigest: preflight.evidenceDigest,

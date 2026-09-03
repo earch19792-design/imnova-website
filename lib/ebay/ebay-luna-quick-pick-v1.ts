@@ -27,6 +27,8 @@ import {
   "./ebay-opportunity-radar-revenue-factory-adapter-v1.ts"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1.ts"
+import type { RadarProductIdentifierPolicyReaderV1 } from
+  "./ebay-radar-canonical-marketplace-readiness-v1.ts"
 import {
   discoverAndPersistSellerOsOnDemandFamilyDemandV1,
   type SellerOsOnDemandFamilyDemandDiscoveryResultV1,
@@ -890,6 +892,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
   urls: unknown
   selectedVariants?: Readonly<Record<string, string>>
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
+  productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
   fetchImpl?: typeof fetch
   onDemandDemandDiscovery?: typeof discoverAndPersistSellerOsOnDemandFamilyDemandV1
   batchId?: string | null
@@ -1153,6 +1156,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     ? await materializeRadarRevenueFactoryCandidateBatchV1({
         supabase: input.supabase, accountKey: input.accountKey,
         batch: currentBatch, taxonomyReader: input.taxonomyReader,
+        productIdentifierPolicyReader: input.productIdentifierPolicyReader,
         // Quick Pick permits a single residual AI pass. Text receives every
         // exact field and every unresolved aspect; residuals fail to review.
         requiredSpecificsAiStages: ["TEXT"],
