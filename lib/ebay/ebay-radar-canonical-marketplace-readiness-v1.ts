@@ -563,13 +563,12 @@ function existingEvidence(input: Readonly<{
     ? text(fullLunaEvidence.imageReviewMarkerDigest, 80) : null
   const unresolvedRequiredSpecifics = strings(
     value.unsupportedRequiredSpecifics, 100)
-  // A blocked cached readiness row is not a substitute for the exact batch
-  // input needed by the Required Specifics resolver. Reacquire only this gate;
-  // ready rows remain reusable without Taxonomy/catalog work.
+  // A blocked cached readiness row is never a substitute for the exact batch
+  // input needed by the Required Specifics resolver. This also closes the race
+  // where another read refreshes the cache after the continuation claims the
+  // row but before it builds its bounded batch. Ready rows remain reusable.
   const unresolvedSpecificsNeedBatchInput =
     unresolvedRequiredSpecifics.length > 0
-    && (!input.requiredSpecificsBatchResolutionDigest
-      || !input.requiredSpecificsBatchResolutionCompleteScope)
   const exact = value.contractVersion ===
       RADAR_CANONICAL_MARKETPLACE_READINESS_VERSION
     && value.authority === "SELLER_OS_DETERMINISTIC_FACTORY"
