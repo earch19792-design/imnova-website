@@ -18,6 +18,8 @@ import { buildSellerOsOnDemandCapabilityGapFallbackV1 } from
   "@/lib/ebay/ebay-demand-first-broad-net-orchestrator-v1"
 import { continueLunaQuickPickRequiredSpecificsV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-required-specifics-v1"
+import { continueLunaQuickPickExactSoldEnrichmentV1 } from
+  "@/lib/ebay/ebay-luna-quick-pick-exact-sold-enrichment-v1"
 import { mergeSellerOsQuickPickPresentationV1 } from
   "@/lib/ebay/seller-os-quick-pick-presentation-v1"
 import { buildQuickPickOwnerReviewPackageDataV1 } from
@@ -245,6 +247,7 @@ export async function GET(req: Request) {
           "MARKETPLACE_CONDITION_NOT_READY")))
         ? [card.candidateKey] : [])
     let requiredSpecificsContinuation: unknown = null
+    let exactSoldMarketEnrichment: unknown = null
     if (pendingSpecifics.length) {
       try {
         requiredSpecificsContinuation =
@@ -266,6 +269,32 @@ export async function GET(req: Request) {
           receiptSupplierIdentities.length === 0,
       })
       progress = mergeProgress(receiptCards, durableProgress)
+      const residualProductTruthKeys = progress.flatMap((card) =>
+        card.candidateKey && (card.unresolvedRequiredAspects.length > 0
+          || card.conditionReady === false)
+          ? [card.candidateKey] : [])
+      if (residualProductTruthKeys.length) {
+        try {
+          exactSoldMarketEnrichment =
+            await continueLunaQuickPickExactSoldEnrichmentV1({
+              supabase, accountKey,
+              candidateKeys: residualProductTruthKeys,
+              taxonomyReader: getEbayTaxonomyListingIntelligence,
+              productIdentifierPolicyReader:
+                preflightEbayCategoryProductIdentifiers,
+            })
+        } catch (error) {
+          exactSoldMarketEnrichment = { status: "BLOCKED",
+            reasonCode: safeError(error), marketplaceWrites: 0 }
+        }
+        durableProgress = await readLunaQuickPickProgressV1({
+          supabase, candidateKeys: requestedKeys, accountKey,
+          supplierIdentities: receiptSupplierIdentities,
+          includeRecent: requestedKeys.length === 0 &&
+            receiptSupplierIdentities.length === 0,
+        })
+        progress = mergeProgress(receiptCards, durableProgress)
+      }
     }
     return response({ success: true, progress,
       summary: { inProgress: progress.filter((card) =>
@@ -275,6 +304,7 @@ export async function GET(req: Request) {
       total: progress.length }, receipt: receipts[0] ?? null, receipts,
       categoryContinuation,
       requiredSpecificsContinuation,
+      exactSoldMarketEnrichment,
       overnightEnrichment,
       safety: { marketplaceWrites: 0, canPublish: false } })
   } catch (error) {
