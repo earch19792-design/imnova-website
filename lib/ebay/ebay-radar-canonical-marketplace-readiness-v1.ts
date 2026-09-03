@@ -22,6 +22,7 @@ import { validateOwnerSupplierPolicyApplicationV1 } from
 import { ownerExplicitProductTruthValuesV1 } from
   "./ebay-human-product-truth-evidence-v1"
 import { buildLunaExactProductEvidenceSetV1,
+  LUNA_EXACT_PRODUCT_EVIDENCE_SET_VERSION,
   resolveLunaFullPageRequiredFactV1 } from
   "./ebay-luna-full-page-required-facts-v1"
 import type { EbayTaxonomyListingIntelligence } from
@@ -37,7 +38,7 @@ import {
 export const RADAR_CANONICAL_MARKETPLACE_READINESS_VERSION =
   "RADAR_CANONICAL_MARKETPLACE_READINESS_CONTINUATION_V3" as const
 export const RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION =
-  "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V2" as const
+  "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V3" as const
 
 const TAXONOMY_REVALIDATION_MS = 6 * 60 * 60 * 1_000
 const REQUIRED_ASPECT_SCOPE = "ALL_OFFICIAL_REQUIRED_ASPECTS" as const
@@ -258,8 +259,15 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     const legacyTitleBrand = requestedAspectKey === "brand"
       && priorResolution.source === "LUNA_EXACT_PRODUCT_TITLE"
       && fullLunaEvidence.imageBrandEvidenceStatus === "NO_EXPLICIT_BRAND"
-    if (legacyTitleBrand && priorEntry) delete provenProductValues[priorEntry[0]]
-    if (exactIdentity && prior && !legacyTitleBrand) {
+    const staleUnbrandedPolicy = requestedAspectKey === "brand"
+      && priorResolution.source === "OWNER_LUNA_UNBRANDED_POLICY"
+      && aspectKey(prior) === "unbranded"
+      && fullLunaEvidence.imageBrandEvidenceStatus !== "NO_EXPLICIT_BRAND"
+    const invalidPriorBrand = legacyTitleBrand || staleUnbrandedPolicy
+    if (invalidPriorBrand && priorEntry) {
+      delete provenProductValues[priorEntry[0]]
+    }
+    if (exactIdentity && prior && !invalidPriorBrand) {
       value = exactOfficialValue(aspect, prior)
         ?? (aspect.mode === "FREE_TEXT" ? text(prior, 500) : null)
       if (value) {
@@ -543,6 +551,16 @@ function existingEvidence(input: Readonly<{
   const assessment = record(input.opportunity.assessment)
   const value = record(assessment.canonicalMarketplaceReadinessV1)
   const { evidenceDigest: storedDigest, ...core } = value
+  const requiredTruth = record(value.requiredItemSpecificsTruth)
+  const fullLunaEvidence = record(
+    requiredTruth.lunaExactProductEvidenceSetV1)
+  const currentImageReview = record(assessment.lunaFullPageImageReviewV1)
+  const currentImageReviewDigest = /^sha256:[0-9a-f]{64}$/.test(text(
+    currentImageReview.evidenceDigest, 80))
+    ? text(currentImageReview.evidenceDigest, 80) : null
+  const cachedImageReviewDigest = /^sha256:[0-9a-f]{64}$/.test(text(
+    fullLunaEvidence.imageReviewMarkerDigest, 80))
+    ? text(fullLunaEvidence.imageReviewMarkerDigest, 80) : null
   const unresolvedRequiredSpecifics = strings(
     value.unsupportedRequiredSpecifics, 100)
   // A blocked cached readiness row is not a substitute for the exact batch
@@ -572,6 +590,11 @@ function existingEvidence(input: Readonly<{
     && validCandidateId(value.radarCandidateId)
     && value.demandEvidenceGrain === "FAMILY"
     && value.exactProductDemandClaimed === false
+    && requiredTruth.contractVersion ===
+      RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION
+    && fullLunaEvidence.contractVersion ===
+      LUNA_EXACT_PRODUCT_EVIDENCE_SET_VERSION
+    && cachedImageReviewDigest === currentImageReviewDigest
     && /^sha256:[0-9a-f]{64}$/.test(text(storedDigest, 80))
     && storedDigest === digest(core)
     && Date.parse(text(value.revalidateAfter, 64)) > input.now.getTime()

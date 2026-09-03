@@ -3,8 +3,8 @@ import { createHash } from "node:crypto"
 import { validateOwnerLunaUnbrandedPolicyApplicationV1 } from
   "./ebay-owner-supplier-merchandise-policy-v1"
 
-export const LUNA_EXACT_PRODUCT_EVIDENCE_SET_V1 =
-  "LUNA_EXACT_PRODUCT_EVIDENCE_SET_V1" as const
+export const LUNA_EXACT_PRODUCT_EVIDENCE_SET_VERSION =
+  "LUNA_EXACT_PRODUCT_EVIDENCE_SET_V2" as const
 export const LUNA_FULL_PAGE_IMAGE_REVIEW_V1 =
   "LUNA_FULL_PAGE_IMAGE_REVIEW_V1" as const
 export const OWNER_LUNA_UNBRANDED_POLICY_SOURCE =
@@ -266,6 +266,11 @@ export function buildLunaExactProductEvidenceSetV1(input: Readonly<{
     ? stringRecord(row?.metadata) : {}
   const durableProductTruth = exactIdentity
     ? record(record(input.opportunity.assessment).productTruth) : {}
+  const imageReviewMarker = record(record(
+    input.opportunity.assessment).lunaFullPageImageReviewV1)
+  const imageReviewMarkerDigest = /^sha256:[0-9a-f]{64}$/.test(
+    text(imageReviewMarker.evidenceDigest, 80))
+    ? text(imageReviewMarker.evidenceDigest, 80) : null
   const existingDurableProductTruth = exactIdentity
     ? stableDurableProductTruth(durableProductTruth) : {}
   const title = exactIdentity ? text(row?.title, 350) : ""
@@ -275,7 +280,7 @@ export function buildLunaExactProductEvidenceSetV1(input: Readonly<{
   const hasMaterialsCare = /\bmaterials?(?:\s+and|\s*&)?\s+care\b/iu
     .test(description)
   const evidenceCore = {
-    contractVersion: LUNA_EXACT_PRODUCT_EVIDENCE_SET_V1,
+    contractVersion: LUNA_EXACT_PRODUCT_EVIDENCE_SET_VERSION,
     exactSupplierLineageCertified: exactIdentity,
     productIdentityExact: exactIdentity,
     lunaProductId: text(input.opportunity.supplier_product_id, 30),
@@ -298,6 +303,9 @@ export function buildLunaExactProductEvidenceSetV1(input: Readonly<{
     imageBrandEvidenceStatus: imageReview?.brandEvidenceStatus ??
       (images.length === 0 ? "NO_EXPLICIT_BRAND" : "UNREVIEWED"),
     imageExplicitBrand: text(imageReview?.explicitBrand, 120) || null,
+    imageReviewMarkerDigest,
+    validatedImageReviewEvidenceDigest:
+      text(imageReview?.evidenceDigest, 80) || null,
     imageExactFacts: imageReview
       ? normalizeExactImageFacts(imageReview.exactFacts, images.length) ?? []
       : [],
