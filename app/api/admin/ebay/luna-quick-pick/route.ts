@@ -273,7 +273,6 @@ export async function GET(req: Request) {
         || card.exactBlockers.some((blocker) => blocker.startsWith(
           "MARKETPLACE_CONDITION_NOT_READY"))
         || (!card.automaticResolutionContractCurrent
-          && card.automaticResolutionExhausted
           && card.automaticResolutionUpgradeHasPriorResidual))
         && !(card.automaticResolutionContractCurrent
           && card.automaticResolutionExhausted)
