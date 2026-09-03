@@ -383,11 +383,13 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const blockedByCondition = blockers.some((blocker) => text(blocker, 120)
       ?.startsWith("MARKETPLACE_CONDITION_NOT_READY"))
     const metadataBlocked = blockedBySpecifics || blockedByCondition
+    const durableDigestUpgrade = typeof existingResolution.digestVersion ===
+      "string" && existingResolution.digestVersion.length > 0
+      && existingResolution.digestVersion !== REQUIRED_SPECIFICS_DIGEST_VERSION
     const legacyScopeReconciliation = Boolean(currentMarker
       && currentMarker.completedAt
       && (currentMarker.aspectScope !== REQUIRED_ASPECT_SCOPE
-        || existingResolution.digestVersion !==
-          REQUIRED_SPECIFICS_DIGEST_VERSION
+        || durableDigestUpgrade
         || (["LUNA_QUICK_PICK_SPECIFICS_BATCH_INPUT_INVALID",
           "REQUIRED_SPECIFICS_AI_CONFIGURATION_MISSING"].includes(
           String(currentMarker.resolverReasonCode ?? ""))
