@@ -13,6 +13,7 @@ import { runEbaySellerKeywordDemandValidation,
 import type { EbaySellerKeywordCandidate } from
   "./ebay-seller-keyword-demand-validation"
 import { quickPickActiveComparableObservationV1,
+  QUICK_PICK_EXACT_SOLD_PRODUCT_TRUTH_V1,
   quickPickSoldComparableObservationV1,
   resolveQuickPickExactSoldProductTruthV1 } from
   "./ebay-quick-pick-exact-sold-product-truth-v1"
@@ -213,6 +214,7 @@ export async function continueLunaQuickPickExactSoldEnrichmentV1(
     .in("candidate_key", candidateKeys).limit(MAXIMUM_QUICK_PICKS)
   if (read.error) throw new Error("LUNA_QUICK_PICK_EXACT_SOLD_READ_FAILED")
   const claimed: JsonRecord[] = []
+  let reconciledMarkers = 0
   for (const row of rows(read.data)) {
     const assessment = record(row.assessment)
     const specifics = record(
@@ -223,6 +225,20 @@ export async function continueLunaQuickPickExactSoldEnrichmentV1(
       QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V1 && !current.completedAt
       && Number.isFinite(claimedAt) && Date.now() - claimedAt >= STALE_CLAIM_MS)
     const residualNames = ownerResidualNames(assessment)
+    if (current.completedAt && current.contractVersion ===
+        QUICK_PICK_EXACT_SOLD_PRODUCT_TRUTH_V1) {
+      const reconciled = await input.supabase.from(
+        "ebay_luna_opportunity_queue").update({ assessment: { ...assessment,
+          quickPickExactSoldMarketEnrichmentV1: { ...current,
+            contractVersion: QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V1,
+            resolverContractVersion: QUICK_PICK_EXACT_SOLD_PRODUCT_TRUTH_V1,
+            markerReconciledAt: new Date().toISOString(),
+          } }, updated_at: new Date().toISOString() })
+        .eq("id", row.id).eq("candidate_key", row.candidate_key)
+        .eq("updated_at", row.updated_at).select("id").maybeSingle()
+      if (!reconciled.error && reconciled.data) reconciledMarkers += 1
+      continue
+    }
     if (!specifics.completedAt || !residualNames.length ||
       current.completedAt || (current.claimedAt && !stale)) continue
     const now = new Date().toISOString()
@@ -244,8 +260,15 @@ export async function continueLunaQuickPickExactSoldEnrichmentV1(
     if (!claim.error && claim.data) claimed.push(record(claim.data))
   }
   if (!claimed.length) return Object.freeze({ attempted: candidateKeys.length,
-    claimed: 0, exactSoldProductsFound: 0,
-    soldMarketFactsAutoResolved: 0, marketplaceWrites: 0 as const })
+    claimed: 0, reconciledMarkers, exactSoldProductsFound: 0,
+    soldMarketFactsAutoResolved: 0,
+    futureQuickPickExactSoldEnrichment: true as const,
+    skuSpecialCases: 0 as const,
+    historicalBatchSpecialCase: false as const,
+    familyEvidencePromotedToProductTruth: false as const,
+    aiCallCount: 0 as const, factInvented: false as const,
+    newOperationCount: 0 as const, duplicateOperationCount: 0 as const,
+    marketplaceWrites: 0 as const })
 
   const soldRows = await (input.soldEvidenceReader
     ?? readReviewedOfficialSoldEvidence)({ supabase: input.supabase,
@@ -298,7 +321,10 @@ export async function continueLunaQuickPickExactSoldEnrichmentV1(
         ],
         catalogProducts: catalog.products,
       })
-      const evidenceCore = { ...enrichment,
+      const { contractVersion: resolverContractVersion,
+        ...enrichmentEvidence } = enrichment
+      const evidenceCore = { ...enrichmentEvidence,
+        resolverContractVersion,
         sourceOrder: ["DURABLE_OFFICIAL_SOLD_AND_RESEARCH",
           "OFFICIAL_EBAY_MARKETPLACE_READONLY", "NIGHT_RADAR_FAMILY_CONTEXT"],
         durableSoldEvidenceCandidateCount: soldComparables.length,
@@ -418,7 +444,8 @@ export async function continueLunaQuickPickExactSoldEnrichmentV1(
         safeFailureCode })
     })
   return Object.freeze({ attempted: candidateKeys.length,
-    claimed: claimed.length, productsEvaluated: results.length,
+    claimed: claimed.length, reconciledMarkers,
+    productsEvaluated: results.length,
     exactSoldProductsFound: results.filter((result) =>
       result.exactSoldProductFound).length,
     soldMarketFactsAutoResolved: results.reduce((sum, result) =>
