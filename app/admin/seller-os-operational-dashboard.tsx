@@ -4,6 +4,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from
   "react"
 
 import { supabase } from "@/lib/supabase"
+import { QUICK_PICK_OWNER_STAGE_CATALOG_V1 } from
+  "@/lib/ebay/seller-os-quick-pick-owner-read-model-v1"
 import { mergeOwnerRuntimeQuickPickCards, parseOwnerRuntimeQuickPickCard,
   parseOwnerRuntimeQuickPickReceipt, useAdminOwnerRuntime,
   type OwnerRuntimeQuickPickCard, type OwnerRuntimeQuickPickReceipt,
@@ -408,20 +410,6 @@ function workerDetail(status: WorkerStatus, reasonCode: string) {
   return "Esperando una condición requerida del worker"
 }
 
-const QUICK_PICK_STAGES = [
-  ["IDENTITY", "Identidad"],
-  ["DUPLICATE", "Duplicado"],
-  ["STOCK", "Stock"],
-  ["DEMAND", "Demanda"],
-  ["SHIPPING", "Shipping"],
-  ["ECONOMICS", "Economics"],
-  ["PRODUCT_TRUTH", "Product Truth"],
-  ["LISTING_PACKAGE", "Marketplace prep"],
-  ["REQUIRED_SPECIFICS", "Required specifics"],
-  ["MARKETPLACE_READINESS", "Marketplace readiness"],
-  ["LISTING_READY", "Ready"],
-] as const
-
 function quickPickStageTone(state: OwnerRuntimeQuickPickStageState) {
   if (state === "PASS") return "bg-emerald-200/15 text-emerald-50"
   if (state === "RUNNING") return "bg-cyan-200/15 text-cyan-50"
@@ -441,8 +429,19 @@ function quickPickStageLabel(card: OwnerRuntimeQuickPickCard) {
         "MARKETPLACE_CONDITION_NOT_READY"))) {
     return "Marketplace readiness"
   }
-  return QUICK_PICK_STAGES.find(([key]) => key === card.lastStage)?.[1] ??
+  return QUICK_PICK_OWNER_STAGE_CATALOG_V1.find(
+    ([key]) => key === card.lastStage)?.[1] ??
     card.lastStage.replaceAll("_", " ")
+}
+
+function quickPickCommercialLabel(card: OwnerRuntimeQuickPickCard) {
+  if (card.state === "READY" && card.disposition === "MARKET_TEST_READY") {
+    return "Prueba de mercado lista para revisar"
+  }
+  if (card.state === "READY") return "Listing listo para revisar"
+  if (card.state === "RUNNING") return "Procesando ahora"
+  if (card.state === "WAITING") return "En espera"
+  return "Bloqueado"
 }
 
 function quickPickBlockerLabel(value: string | null) {
@@ -1066,6 +1065,9 @@ export function SellerOsOperationalDashboard() {
       submittedQuickPickReceipt.ownerReference
     ? submittedQuickPickReceipt
     : ownerRuntime.quickPickReceipt ?? submittedQuickPickReceipt
+  const quickPickReceiptIsCurrentSubmission = Boolean(
+    submittedQuickPickReceipt && quickPickReceipt &&
+    submittedQuickPickReceipt.ownerReference === quickPickReceipt.ownerReference)
   const quickPickCards = useMemo(() => mergeOwnerRuntimeQuickPickCards(
     submittedQuickPickCards, ownerRuntime.quickPickCards),
   [ownerRuntime.quickPickCards, submittedQuickPickCards])
@@ -1203,40 +1205,63 @@ export function SellerOsOperationalDashboard() {
         {quickPickReceipt && <section aria-live="polite"
           data-quick-pick-inline-receipt={quickPickReceipt.ownerReference}
           className="mt-3 rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.06] p-3 text-emerald-50">
-          <strong className="text-sm">LOTE RECIBIDO · {quickPickReceipt.ownerReference}</strong>
+          <strong className="text-sm">
+            {quickPickReceiptIsCurrentSubmission ? "LOTE RECIBIDO" :
+              "ÚLTIMO LOTE GUARDADO · SNAPSHOT HISTÓRICO"} · {quickPickReceipt.ownerReference}
+          </strong>
           <dl className="mt-2 grid grid-cols-2 gap-2 text-center sm:grid-cols-3">
             {([
               ["Recibidos", quickPickReceipt.rawInputCount],
               ["Materializados", quickPickReceipt.durableOperationCount],
               ["No comprobados", quickPickReceipt.unprovenInputCount],
-              ["Trabajando", ownerRuntime.quickPickAvailable
-                ? ownerRuntime.quickPick.inProgress : null],
-              ["Bloqueados", ownerRuntime.quickPickAvailable
-                ? ownerRuntime.quickPick.blocked : null],
-              ["Listos", ownerRuntime.quickPickAvailable
-                ? ownerRuntime.quickPick.readyForReview : null],
+              ["Trabajando · este lote",
+                ownerRuntime.quickPickCurrentBatch?.inProgress ?? null],
+              ["Bloqueados · este lote",
+                ownerRuntime.quickPickCurrentBatch?.blocked ?? null],
+              ["Listos · este lote",
+                ownerRuntime.quickPickCurrentBatch?.readyForReview ?? null],
             ] as const).map(([label, value]) => <div key={label}
               className="min-w-0 rounded-xl bg-black/20 px-2 py-2">
               <dt className="break-words text-[10px] font-bold uppercase leading-4 tracking-wide text-white/45">{label}</dt>
               <dd className="mt-1 text-sm font-black tabular-nums">{value ?? "—"}</dd>
             </div>)}
           </dl>
+          <p className="mt-2 text-[11px] text-white/55">
+            Este lote · un solo batch durable. Los números de la cola total se muestran aparte.
+          </p>
+        </section>}
+        {ownerRuntime.quickPickAvailable && <section
+          data-dashboard-quick-pick-global-queue-counts
+          className="mt-3 rounded-2xl border border-cyan-100/15 bg-black/15 p-3">
+          <p className="text-[10px] font-black uppercase tracking-wide text-cyan-100/60">Cola total · estado comercial actual</p>
+          <p className="mt-1 text-sm text-white/65">
+            {ownerRuntime.quickPick.inProgress} trabajando · {ownerRuntime.quickPick.readyForReview} listos · {ownerRuntime.quickPick.blocked} bloqueados
+          </p>
+          <p className="mt-1 text-[11px] text-white/45">
+            Sin snapshots históricos ni tarjetas de certificación duplicadas.
+          </p>
         </section>}
         <p aria-live="polite" className="mt-3 text-sm text-white/60">{feedback ||
-          (ownerRuntime.quickPickReadState === "READ_RETRYING"
-            ? "No pude actualizar · reintentando; conservo el último estado válido"
+          (ownerRuntime.quickPickReadState === "READ_FAILED"
+            ? "No pudimos cargar Quick Pick. La última lectura confirmada, si existe, queda identificada como anterior."
             : ownerRuntime.quickPickReadState === "REFRESHING"
               ? "Actualizando estado…"
               : ownerRuntime.quickPickAvailable
                 ? `${ownerRuntime.quickPick.inProgress} en proceso · ${ownerRuntime.quickPick.readyForReview} para revisar · ${ownerRuntime.quickPick.blocked} bloqueados`
                 : "Recuperando operaciones durables…")}</p>
+        {ownerRuntime.quickPickReadState === "READ_FAILED" && <button
+          type="button" onClick={() => void ownerRuntime.refreshQuickPicks()
+            .catch(() => undefined)}
+          className="mt-2 min-h-11 rounded-xl border border-white/20 px-4 text-sm font-black">
+          Reintentar
+        </button>}
         <section data-quick-pick-overnight-summary
           className="mt-3 rounded-2xl border border-violet-200/15 bg-violet-200/[0.05] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-xs font-black uppercase tracking-[0.16em] text-violet-100/75">Trabajo nocturno</h3>
+            <h3 className="text-xs font-black uppercase tracking-[0.16em] text-violet-100/75">Trabajo nocturno · snapshot histórico</h3>
             {ownerRuntime.overnightEnrichment?.observedAt && <span
               className="text-[10px] font-bold text-white/40">
-              {shortTimestamp(ownerRuntime.overnightEnrichment.observedAt)}
+              Estado observado a las {shortTimestamp(ownerRuntime.overnightEnrichment.observedAt)}
             </span>}
           </div>
           {ownerRuntime.overnightEnrichment ? <>
@@ -1251,7 +1276,13 @@ export function SellerOsOperationalDashboard() {
                 className="rounded-xl bg-black/20 px-2.5 py-2 text-xs text-white/60">
                 <strong className="text-white/80">{outcome.productTitle ??
                   outcome.sourceSku ?? "Producto Luna"}</strong>
-                <span className="ml-1">{outcome.beforeStatus} → {outcome.afterStatus}</span>
+                <span className="ml-1">Snapshot: {outcome.beforeStatus} → {outcome.afterStatus}</span>
+                {quickPickCards.find((card) => card.sourceSku &&
+                  card.sourceSku === outcome.sourceSku) && <span className="block font-bold text-cyan-100/75">
+                  Estado actual: {quickPickCommercialLabel(quickPickCards.find(
+                    (card) => card.sourceSku === outcome.sourceSku) as
+                      OwnerRuntimeQuickPickCard)}
+                </span>}
                 {outcome.fieldsResolvedOvernight.length > 0 && <span>
                   {` · resuelto: ${outcome.fieldsResolvedOvernight.join(", ")}`}
                 </span>}
@@ -1276,7 +1307,7 @@ export function SellerOsOperationalDashboard() {
             <summary className="flex min-h-11 cursor-pointer list-none items-start justify-between gap-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
               <div className="min-w-0">
                 <p className="truncate text-sm font-black">{card.title ?? "Producto Luna"}</p>
-                <p className="mt-1 truncate text-xs text-white/50">{card.sourceSku ?? "Identificando…"} · {card.disposition}</p>
+                <p className="mt-1 truncate text-xs text-white/50">{card.sourceSku ?? "Identificando…"} · {quickPickCommercialLabel(card)}</p>
                 <p className="mt-1 text-xs text-white/65">Etapa: <strong>{quickPickStageLabel(card)}</strong></p>
                 {ownerVisibleQuickPickBlockers(card).length > 0 && <ul
                   data-quick-pick-commercial-blockers
@@ -1300,7 +1331,7 @@ export function SellerOsOperationalDashboard() {
               <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${quickPickStageTone(card.state === "READY" ? "PASS" : card.state)}`}>{card.state}</span>
             </summary>
             <ol className="mt-3 grid gap-1.5 border-t border-white/10 pt-3 sm:grid-cols-2">
-              {QUICK_PICK_STAGES.map(([key, label]) => {
+              {QUICK_PICK_OWNER_STAGE_CATALOG_V1.map(([key, label]) => {
                 const state = card.stages[key] ?? "WAITING"
                 return <li key={key}
                   className={`flex min-h-9 items-center justify-between gap-2 rounded-xl px-2.5 text-xs ${quickPickStageTone(state)}`}>

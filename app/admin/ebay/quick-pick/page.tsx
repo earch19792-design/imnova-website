@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { mergeSellerOsQuickPickPresentationV1 } from
   "@/lib/ebay/seller-os-quick-pick-presentation-v1"
+import { QUICK_PICK_OWNER_STAGE_CATALOG_V1 } from
+  "@/lib/ebay/seller-os-quick-pick-owner-read-model-v1"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 
 type StageState = "WAITING" | "RUNNING" | "PASS" | "BLOCKED"
@@ -18,6 +20,8 @@ type QuickPickReceipt = {
   durableOperationCount: number | null
   exactProductCount: number | null
 }
+type QuickPickSummary = { inProgress: number; readyForReview: number
+  blocked: number; waiting: number; total: number }
 type QuickPickCard = {
   sourceUrl: string
   canonicalUrl: string | null
@@ -105,20 +109,6 @@ type QuickPickCard = {
   elapsedMs: number
 }
 
-const stages = [
-  ["IDENTITY", "Producto identificado"],
-  ["DUPLICATE", "Comprobando si ya está publicado"],
-  ["STOCK", "Stock disponible"],
-  ["DEMAND", "Buscando demanda"],
-  ["SHIPPING", "Calculando envío"],
-  ["ECONOMICS", "Comprobando margen"],
-  ["PRODUCT_TRUTH", "Verificando producto exacto"],
-  ["LISTING_PACKAGE", "Preparando eBay"],
-  ["REQUIRED_SPECIFICS", "Comprobando datos requeridos"],
-  ["MARKETPLACE_READINESS", "Comprobando requisitos eBay"],
-  ["LISTING_READY", "Listo para publicar"],
-] as const
-
 function money(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number)
@@ -173,12 +163,15 @@ export default function LunaQuickPickPage() {
   const [error, setError] = useState("")
   const [rehydrating, setRehydrating] = useState(true)
   const [receipt, setReceipt] = useState<QuickPickReceipt | null>(null)
+  const [receiptIsCurrentSession, setReceiptIsCurrentSession] = useState(false)
+  const [currentBatchSummary, setCurrentBatchSummary] =
+    useState<QuickPickSummary | null>(null)
+  const [globalQueueSummary, setGlobalQueueSummary] =
+    useState<QuickPickSummary | null>(null)
+  const [lastReadAt, setLastReadAt] = useState<string | null>(null)
   const [factDrafts, setFactDrafts] = useState<Record<string, string>>({})
   const [factBusy, setFactBusy] = useState<Record<string, boolean>>({})
   const [factFeedback, setFactFeedback] = useState<Record<string, string>>({})
-
-  const candidateKeys = useMemo(() => cards.flatMap((card) =>
-    card.candidateKey ? [card.candidateKey] : []), [cards])
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -196,6 +189,33 @@ export default function LunaQuickPickPage() {
     setCards((current) => [...mergeSellerOsQuickPickPresentationV1(
       current, incoming)])
   }, [])
+
+  const loadReadModel = useCallback(async () => {
+    setRehydrating(true)
+    setError("")
+    try {
+      const payload = await request("/api/admin/ebay/luna-quick-pick")
+      const readModel = record(payload.readModel)
+      const selectedBatch = record(readModel.selectedBatch)
+      const globalQueue = record(readModel.globalQueue)
+      const globalCards = Array.isArray(globalQueue.cards)
+        ? globalQueue.cards as QuickPickCard[]
+        : Array.isArray(payload.progress) ? payload.progress : []
+      setCards(globalCards)
+      setReceipt((record(selectedBatch).receipt ?? payload.receipt ?? null) as
+        QuickPickReceipt | null)
+      setReceiptIsCurrentSession(false)
+      setCurrentBatchSummary(Object.keys(record(selectedBatch.summary)).length
+        ? record(selectedBatch.summary) as QuickPickSummary : null)
+      setGlobalQueueSummary(Object.keys(record(globalQueue.summary)).length
+        ? record(globalQueue.summary) as QuickPickSummary : null)
+      setLastReadAt(new Date().toISOString())
+    } catch {
+      setError("No pudimos cargar Quick Pick")
+    } finally {
+      setRehydrating(false)
+    }
+  }, [request])
 
   const processLinks = useCallback(async (urls: string[],
     selectedVariants: Record<string, string> = {}) => {
@@ -241,6 +261,7 @@ export default function LunaQuickPickPage() {
       })
       batchAccepted = true
       setReceipt(received.receipt)
+      setReceiptIsCurrentSession(true)
       mergeCards(received.receipt.cards ?? [])
       const payload = await request("/api/admin/ebay/luna-quick-pick", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -315,38 +336,9 @@ export default function LunaQuickPickPage() {
   }
 
   useEffect(() => {
-    let cancelled = false
-    request("/api/admin/ebay/luna-quick-pick").then((payload) => {
-      if (!cancelled) {
-        mergeCards(payload.progress ?? [])
-        if (payload.receipt) setReceipt(payload.receipt)
-      }
-    }).catch((caught) => {
-      if (!cancelled) setError(caught instanceof Error ? caught.message :
-        "LUNA_QUICK_PICK_REHYDRATION_FAILED")
-    }).finally(() => { if (!cancelled) setRehydrating(false) })
-    return () => { cancelled = true }
-  }, [mergeCards, request])
-
-  useEffect(() => {
-    let cancelled = false
-    const poll = async () => {
-      try {
-        const params = new URLSearchParams()
-        candidateKeys.forEach((key) => params.append("candidate", key))
-        const payload = await request(`/api/admin/ebay/luna-quick-pick?${params}`)
-        if (cancelled) return
-        mergeCards(payload.progress ?? [])
-        if (payload.receipt) setReceipt(payload.receipt)
-        setError("")
-      } catch {
-        setError("No pude cargar el estado del lote · reintentando")
-      }
-    }
-    void poll()
-    const timer = window.setInterval(() => void poll(), 2_500)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [candidateKeys.join("\n"), mergeCards, request])
+    void loadReadModel().catch(() => undefined)
+    return () => undefined
+  }, [loadReadModel])
 
   const sections = useMemo(() => [
     { id: "in-progress", title: "En proceso",
@@ -389,17 +381,48 @@ export default function LunaQuickPickPage() {
         <button type="button" onClick={() => void submit()} disabled={!input.trim()}
           className="mt-3 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">Procesar ahora</button>
         <p className="mt-2 text-xs text-white/45">Puedes agregar más links mientras los anteriores continúan. Máximo 20 por envío; concurrencia bounded de 4 productos.</p>
-        {error && <p role="alert" className="mt-3 rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">{error}</p>}
       </section>
 
       {receipt && <section aria-live="polite"
         className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4">
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/70">Lote recibido · {receipt.ownerReference}</p>
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/70">
+          {receiptIsCurrentSession ? "Lote recibido" :
+            "Último lote guardado · snapshot histórico"} · {receipt.ownerReference}
+        </p>
         <p className="mt-2 text-lg font-black">{receipt.rawInputCount ?? "—"} links recibidos · {receipt.urlDedupedCount ?? "—"} únicos · {receipt.rejectedInputCount ?? "—"} rechazados · {receipt.durableOperationCount ?? "—"} productos materializados</p>
-        <p className="mt-1 text-sm text-white/55">Seller OS conserva este lote y actualiza sus productos automáticamente.</p>
+        {currentBatchSummary && <p className="mt-1 text-sm text-white/65">
+          Estado de este lote: {currentBatchSummary.inProgress} trabajando · {currentBatchSummary.readyForReview} listos · {currentBatchSummary.blocked} bloqueados.
+        </p>}
+        <p className="mt-1 text-xs text-white/45">Recibo durable de un solo lote; no incluye otros lotes ni representa por sí solo la cola actual.</p>
+      </section>}
+
+      {globalQueueSummary && <section data-quick-pick-global-queue-counts
+        className="rounded-3xl border border-white/15 bg-white/[0.04] p-4">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-white/55">Cola total · operaciones durables actuales</p>
+        <p className="mt-2 text-sm text-white/70">
+          {globalQueueSummary.inProgress} trabajando · {globalQueueSummary.readyForReview} listos para revisar · {globalQueueSummary.blocked} bloqueados · {globalQueueSummary.waiting} en espera.
+        </p>
+        <p className="mt-1 text-xs text-white/45">
+          Los snapshots de lotes históricos y certificaciones no se suman aquí; sólo se usa el estado durable actual de cada operación.
+        </p>
+        <button type="button" onClick={() => void loadReadModel()}
+          disabled={rehydrating}
+          className="mt-3 min-h-11 rounded-xl border border-white/20 px-4 text-sm font-black disabled:opacity-40">
+          {rehydrating ? "Actualizando…" : "Actualizar estado"}
+        </button>
       </section>}
 
       {rehydrating && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4 text-sm text-cyan-50">Recuperando tus Quick Picks guardados…</p>}
+
+      {error && <section role="alert"
+        className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm text-rose-50">
+        <strong>No pudimos cargar Quick Pick</strong>
+        {cards.length > 0 && lastReadAt && <p className="mt-1 text-xs text-white/60">
+          Mostrando la última lectura durable confirmada de esta sesión · {new Date(lastReadAt).toLocaleString("es-NI")}.
+        </p>}
+        <button type="button" onClick={() => void loadReadModel()}
+          className="mt-3 min-h-11 rounded-xl bg-white px-4 font-black text-black">Reintentar</button>
+      </section>}
 
       {ownerLastMileCards.length > 0 && <section
         aria-labelledby="owner-last-mile-title"
@@ -506,7 +529,8 @@ export default function LunaQuickPickPage() {
               </button>)}</div>
           </div>}
 
-          <ol className="mt-4 space-y-1.5 text-sm">{stages.map(([key, label]) => {
+          <ol data-quick-pick-canonical-stage-renderer
+            className="mt-4 list-none space-y-1.5 text-sm">{QUICK_PICK_OWNER_STAGE_CATALOG_V1.map(([key, label]) => {
             const displayedState = key === "LISTING_READY" &&
               card.marketTestReady && ownerPublicationDecisionReady(card)
               ? "PASS" : card.stages[key]

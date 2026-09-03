@@ -24,7 +24,7 @@ export type OwnerRuntimeQuickPickSummary = Readonly<{
 export type OwnerRuntimeQuickPickStageState = "WAITING" | "RUNNING" |
   "PASS" | "BLOCKED"
 export type OwnerRuntimeQuickPickReadState = "REFRESHING" | "STABLE" |
-  "READ_RETRYING"
+  "READ_FAILED"
 
 export type OwnerRuntimeQuickPickCard = Readonly<{
   sourceUrl: string
@@ -37,6 +37,8 @@ export type OwnerRuntimeQuickPickCard = Readonly<{
   title: string | null
   candidateKey: string | null
   state: "WAITING" | "RUNNING" | "BLOCKED" | "READY"
+  processingLifecycle: "ACTIVE" | "COMPLETED"
+  commercialStage: string
   disposition: string
   lastStage: string
   exactBlocker: string | null
@@ -95,6 +97,7 @@ type OwnerRuntimeContextValue = Readonly<{
   quickPick: OwnerRuntimeQuickPickSummary
   quickPickCards: readonly OwnerRuntimeQuickPickCard[]
   quickPickReceipt: OwnerRuntimeQuickPickReceipt | null
+  quickPickCurrentBatch: OwnerRuntimeQuickPickSummary | null
   quickPickAvailable: boolean
   quickPickReadState: OwnerRuntimeQuickPickReadState
   quickPickReconciliationActive: boolean
@@ -120,6 +123,7 @@ const OwnerRuntimeContext = createContext<OwnerRuntimeContextValue>({
   quickPick: EMPTY_SUMMARY,
   quickPickCards: Object.freeze([]),
   quickPickReceipt: null,
+  quickPickCurrentBatch: null,
   quickPickAvailable: false,
   quickPickReadState: "REFRESHING",
   quickPickReconciliationActive: false,
@@ -200,6 +204,12 @@ export function parseOwnerRuntimeQuickPickCard(value: unknown):
     candidateKey: nullableText(item.candidateKey, 160),
     state: new Set(["WAITING", "RUNNING", "BLOCKED", "READY"]).has(state)
       ? state as OwnerRuntimeQuickPickCard["state"] : "WAITING",
+    processingLifecycle: item.processingLifecycle === "ACTIVE" ||
+        (item.processingLifecycle === undefined && state === "RUNNING" &&
+          Object.values(stages).some((value) => value === "RUNNING"))
+      ? "ACTIVE" : "COMPLETED",
+    commercialStage: nullableText(item.commercialStage, 160) ??
+      nullableText(item.disposition, 160) ?? "WAITING",
     disposition: nullableText(item.disposition, 160) ?? "WAITING",
     lastStage: nullableText(item.lastStage, 160) ?? "IDENTITY",
     exactBlocker: nullableText(item.exactBlocker, 200),
@@ -276,11 +286,22 @@ function parseQuickPickSummary(value: unknown,
     .map(nullableCount)
   if (values.some((entry) => entry === null)) return null
   return Object.freeze({
-    inProgress: cards.filter((card) => card.state === "RUNNING").length,
+    inProgress: cards.filter((card) =>
+      card.processingLifecycle === "ACTIVE").length,
     readyForReview: cards.filter((card) => card.state === "READY").length,
     blocked: cards.filter((card) => card.state === "BLOCKED").length,
     total: cards.length,
   })
+}
+
+function parseScopedQuickPickSummary(value: unknown) {
+  const item = record(value)
+  const values = [item.inProgress, item.readyForReview, item.blocked,
+    item.total].map(nullableCount)
+  if (values.some((entry) => entry === null)) return null
+  return Object.freeze({ inProgress: values[0] as number,
+    readyForReview: values[1] as number, blocked: values[2] as number,
+    total: values[3] as number })
 }
 
 export function parseOwnerRuntimeQuickPickReceipt(value: unknown):
@@ -303,7 +324,7 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
   const pathname = usePathname()
   const runtimeRouteEligible = !pathname.startsWith("/admin/login") &&
     !pathname.startsWith("/admin/ebay/luna-shipping-capture")
-  const quickPickPageOwnsPolling = pathname.startsWith("/admin/ebay/quick-pick")
+  const quickPickPageOwnsRead = pathname.startsWith("/admin/ebay/quick-pick")
   const [adminSessionReady, setAdminSessionReady] = useState(false)
   const [lunaWorker, setLunaWorker] = useState(INITIAL_WORKER)
   const [quickPick, setQuickPick] = useState(EMPTY_SUMMARY)
@@ -311,6 +332,8 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
     readonly OwnerRuntimeQuickPickCard[]>([])
   const [quickPickReceipt, setQuickPickReceipt] =
     useState<OwnerRuntimeQuickPickReceipt | null>(null)
+  const [quickPickCurrentBatch, setQuickPickCurrentBatch] =
+    useState<OwnerRuntimeQuickPickSummary | null>(null)
   const [quickPickAvailable, setQuickPickAvailable] = useState(false)
   const [quickPickReadState, setQuickPickReadState] =
     useState<OwnerRuntimeQuickPickReadState>("REFRESHING")
@@ -337,6 +360,7 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
   const reconcileQuickPicks = useCallback(() => {
     if (quickPickRequest.current) return quickPickRequest.current
     setQuickPickReadState("REFRESHING")
+    setQuickPickReconciliationActive(true)
     const request = (async () => {
       try {
         const { data, error } = await supabase.auth.getSession()
@@ -350,12 +374,17 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
             !Array.isArray(payload.progress)) {
           throw new Error("QUICK_PICK_RECONCILIATION_UNAVAILABLE")
         }
+        const readModel = record(payload.readModel)
+        const globalQueue = record(readModel.globalQueue)
+        const globalCards = Array.isArray(globalQueue.cards)
+          ? globalQueue.cards : payload.progress
         const cards = mergeOwnerRuntimeQuickPickCards(
-          payload.progress.flatMap((value: unknown) => {
+          globalCards.flatMap((value: unknown) => {
             const parsed = parseOwnerRuntimeQuickPickCard(value)
             return parsed ? [parsed] : []
           }))
-        const summary = parseQuickPickSummary(payload.summary, cards)
+        const summary = parseQuickPickSummary(
+          record(globalQueue).summary ?? payload.summary, cards)
         if (!summary) {
           throw new Error("QUICK_PICK_RECONCILIATION_INVALID_SUMMARY")
         }
@@ -363,39 +392,39 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
         setQuickPickCards(cards)
         const receipt = parseOwnerRuntimeQuickPickReceipt(payload.receipt)
         if (receipt) setQuickPickReceipt(receipt)
+        const selectedBatch = record(readModel.selectedBatch)
+        setQuickPickCurrentBatch(parseScopedQuickPickSummary(
+          selectedBatch.summary))
         const overnight = parseOwnerRuntimeQuickPickOvernightSummary(
           payload.overnightEnrichment)
         if (overnight) setOvernightEnrichment(overnight)
         setQuickPickAvailable(true)
         setQuickPickReadState("STABLE")
       } catch (error) {
-        setQuickPickReadState("READ_RETRYING")
+        setQuickPickReadState("READ_FAILED")
         throw error
       }
     })()
     quickPickRequest.current = request.finally(() => {
       quickPickRequest.current = null
+      setQuickPickReconciliationActive(false)
     })
     return quickPickRequest.current
   }, [])
 
   useEffect(() => {
-    if (!runtimeEnabled || quickPickPageOwnsPolling) return
-    let active = true
-    setQuickPickReconciliationActive(true)
+    if (!runtimeEnabled || quickPickPageOwnsRead) return
     void reconcileQuickPicks().catch(() => undefined)
-    const timer = window.setInterval(() => {
-      if (active) void reconcileQuickPicks().catch(() => undefined)
-    }, 2_500)
-    return () => { active = false; setQuickPickReconciliationActive(false)
-      window.clearInterval(timer) }
-  }, [quickPickPageOwnsPolling, reconcileQuickPicks, runtimeEnabled])
+    return () => undefined
+  }, [quickPickPageOwnsRead, reconcileQuickPicks, runtimeEnabled])
 
   const value = useMemo(() => ({ lunaWorker, quickPick, quickPickCards,
-    quickPickReceipt, quickPickAvailable, quickPickReadState,
+    quickPickReceipt, quickPickCurrentBatch, quickPickAvailable,
+    quickPickReadState,
     quickPickReconciliationActive, overnightEnrichment,
     refreshQuickPicks: reconcileQuickPicks }),
   [lunaWorker, quickPick, quickPickCards, quickPickReceipt,
+    quickPickCurrentBatch,
     quickPickAvailable, quickPickReadState, quickPickReconciliationActive,
     overnightEnrichment, reconcileQuickPicks])
 
