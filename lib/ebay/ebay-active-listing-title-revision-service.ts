@@ -26,6 +26,10 @@ const SITE_ID_US = "0"
 const READ_TIMEOUT_MS = 15_000
 const WRITE_TIMEOUT_MS = 25_000
 const SNAPSHOT_VERSION = "EBAY_ACTIVE_LISTING_TITLE_SNAPSHOT_V1"
+const REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY =
+  "REMOTE_OPERATOR_SAFE_TITLE_CANARY"
+const REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED =
+  "REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED"
 
 type JsonRecord = Record<string, unknown>
 type FetchLike = typeof fetch
@@ -252,6 +256,8 @@ async function executionByTarget(
 }
 
 function publicResult(row: JsonRecord, messageCode: string) {
+  const preflight = record(row.preflight_snapshot)
+  const authorizedCurrentTitle = text(row.authorized_current_title, 80)
   return {
     executionId: uuid(row.id),
     phase: text(row.phase, 60),
@@ -262,6 +268,12 @@ function publicResult(row: JsonRecord, messageCode: string) {
     ebayWriteDispatched: row.ebay_write_dispatched === true,
     titleVerified: row.phase === "applied_verified",
     reconciled: row.reconciled === true,
+    currentValuePreconditionMatch: authorizedCurrentTitle
+      ? text(preflight.observedTitle, 80) === authorizedCurrentTitle : null,
+    authorizationInvalidated: row.phase === "terminal_failure" &&
+      text(row.last_error_code, 180) ===
+        REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED,
+    unknownResultAutoRetry: false as const,
     messageCode,
   }
 }
@@ -419,6 +431,31 @@ async function completeVerified(input: {
   return record(data)
 }
 
+async function invalidateRemoteOperatorAuthorization(input: {
+  supabase: SupabaseClient
+  row: JsonRecord
+  actorId: string
+  snapshot: JsonRecord
+}) {
+  const { data, error } = await input.supabase
+    .from("ebay_active_listing_title_revision_executions")
+    .update({ phase: "terminal_failure", preflight_snapshot: input.snapshot,
+      last_error_code: REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED,
+      claim_token: null, lease_expires_at: null,
+      updated_at: new Date().toISOString() })
+    .eq("id", input.row.id).eq("actor_user_id", input.actorId)
+    .eq("execution_authority", REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY)
+    .eq("phase", "preview_ready").eq("ebay_write_attempt_count", 0)
+    .eq("ebay_write_dispatched", false).select("*").maybeSingle()
+  if (error) {
+    throw new Error("REMOTE_OPERATOR_CANARY_INVALIDATION_RECORD_FAILED")
+  }
+  if (!data) {
+    throw new Error("EBAY_ACTIVE_TITLE_REVISION_NOT_CLAIMED")
+  }
+  return record(data)
+}
+
 async function markUnknown(input: {
   supabase: SupabaseClient
   row: JsonRecord
@@ -472,6 +509,14 @@ export async function applyPreparedVerifiedActiveListingTitle(input: {
       ? "EBAY_ACTIVE_TITLE_REVISION_ALREADY_VERIFIED"
       : "EBAY_ACTIVE_TITLE_REVISION_TERMINAL_FAILURE")
   }
+  const remoteOperatorCanary = text(row.execution_authority, 80) ===
+    REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY
+  if (remoteOperatorCanary && row.phase === "write_in_flight") {
+    const lease = Date.parse(text(row.lease_expires_at, 60))
+    if (Number.isFinite(lease) && lease > Date.now()) {
+      return publicResult(row, "EBAY_ACTIVE_TITLE_REVISION_WRITE_IN_PROGRESS")
+    }
+  }
   const targetTitle = text(row.target_title, 80)
   const expectedSku = text(row.ebay_sku, 50)
   const fetchImpl = input.fetchImpl ?? fetch
@@ -479,6 +524,12 @@ export async function applyPreparedVerifiedActiveListingTitle(input: {
   const before = await readOfficialSnapshot({ accessToken, itemId: ebayItemId,
     expectedSku, accountKey: input.accountKey, fetchImpl })
   const beforeRecord = snapshotRecord(before, targetTitle, text(row.account_fingerprint, 64))
+  if (remoteOperatorCanary && row.phase === "preview_ready" &&
+      expectedCurrentTitle && before.title !== expectedCurrentTitle) {
+    await invalidateRemoteOperatorAuthorization({ supabase: input.supabase,
+      row, actorId, snapshot: beforeRecord })
+    throw new Error(REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED)
+  }
   if (before.title === targetTitle) {
     row = await completeVerified({ supabase: input.supabase, row, actorId,
       snapshot: beforeRecord, reconciled: row.phase !== "preview_ready" })

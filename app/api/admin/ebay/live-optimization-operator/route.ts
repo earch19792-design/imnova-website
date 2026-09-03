@@ -46,6 +46,7 @@ import {
   applyRemoteOperatorSafeMutationCanaryV1,
   authorizeRemoteOperatorSafeMutationCanaryV1,
   readRemoteOperatorSafeMutationCanaryV1,
+  REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION,
   resolveRemoteOperatorUserIdV1,
 } from "@/lib/ebay/ebay-remote-operator-safe-mutation-canary-v1"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
@@ -77,6 +78,18 @@ function uuid(value: unknown) {
 function idempotencyKey(value: unknown) {
   return typeof value === "string" &&
     /^[A-Za-z0-9._:-]{8,120}$/.test(value.trim()) ? value.trim() : null
+}
+
+function exactTitleValue(value: unknown) {
+  if (typeof value !== "string") return null
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/g, " ")
+  return normalized === value && normalized.length >= 1 &&
+    normalized.length <= 80 ? normalized : null
+}
+
+function authorizationDigest(value: unknown) {
+  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value)
+    ? value : null
 }
 
 async function jsonBody(request: Request) {
@@ -350,8 +363,18 @@ export async function POST(request: Request) {
     const expectedSourceSignalId = typeof body?.sourceSignalId === "string" &&
       /^[A-Za-z0-9._:-]{3,160}$/.test(body.sourceSignalId.trim())
       ? body.sourceSignalId.trim() : ""
+    const expectedCurrentValue = exactTitleValue(body?.currentValue)
+    const expectedProposedValue = exactTitleValue(body?.proposedValue)
+    const expectedAuthorizationVersion = body?.authorizationVersion ===
+      REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION
+      ? REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION : null
+    const expectedAuthorizationDigest = authorizationDigest(
+      body?.authorizationDigest,
+    )
     if (auth.validation.accessRole !== SELLER_OS_ACCESS_ROLES.owner ||
-        !expectedItemId || !expectedSourceSignalId) {
+        !expectedItemId || !expectedSourceSignalId || !expectedCurrentValue ||
+        !expectedProposedValue || !expectedAuthorizationVersion ||
+        !expectedAuthorizationDigest) {
       return NextResponse.json({ success: false,
         error: "REMOTE_OPERATOR_CANARY_OWNER_AUTHORITY_REQUIRED" },
       { status: 403 })
@@ -379,28 +402,44 @@ export async function POST(request: Request) {
         operatorUserId,
         expectedItemId,
         expectedSourceSignalId,
+        expectedCurrentValue,
+        expectedProposedValue,
+        expectedAuthorizationVersion,
+        expectedAuthorizationDigest,
         executionEnabled: titleCanaryEnabled(),
       })
       return NextResponse.json({ success: true,
         outcome: "OWNER_AUTHORIZED_SAFE_TITLE_CANARY",
         canary,
         message:
-          "Canary autorizado. Mayel verá una sola acción preparada; todavía no se aplicó ningún cambio.",
+          "Mejora autorizada para Mayel. Todavía no se aplicó ningún cambio.",
         safety: { marketplaceWrites: 0, listingMutations: 0,
           promotionWrites: 0, listingEnds: 0 } })
     } catch (error) {
       return NextResponse.json({ success: false, error: safeCode(error),
         operatorMessage:
-          "No se pudo autorizar este canary. No se aplicó ningún cambio." },
+          "No se pudo autorizar esta mejora. No se aplicó ningún cambio." },
       { status: 409 })
     }
   }
   if (action === "APPLY_SAFE_MUTATION_CANARY") {
     const authorizationId = uuid(body?.authorizationId)
     const key = idempotencyKey(body?.idempotencyKey)
+    const expectedItemId = typeof body?.ebayItemId === "string" &&
+      /^\d{9,20}$/.test(body.ebayItemId) ? body.ebayItemId : null
+    const expectedCurrentValue = exactTitleValue(body?.currentValue)
+    const expectedProposedValue = exactTitleValue(body?.proposedValue)
+    const expectedAuthorizationVersion = body?.authorizationVersion ===
+      REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION
+      ? REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION : null
+    const expectedAuthorizationDigest = authorizationDigest(
+      body?.authorizationDigest,
+    )
     if (auth.validation.accessRole !==
         SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator ||
-        !authorizationId || !key) {
+        !authorizationId || !key || !expectedItemId ||
+        !expectedCurrentValue || !expectedProposedValue ||
+        !expectedAuthorizationVersion || !expectedAuthorizationDigest) {
       return NextResponse.json({ success: false,
         error: "REMOTE_OPERATOR_CANARY_APPLY_INVALID" }, { status: 400 })
     }
@@ -417,18 +456,17 @@ export async function POST(request: Request) {
         throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
       }
       const supabase = getSupabaseAdminClient()
-      const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
-      const commercialExceptions = buildProactiveExceptionQueueV1({
-        monitor, maximumEntries: 250,
-      })
       const result = await applyRemoteOperatorSafeMutationCanaryV1({
         supabase,
         accountKey: account.accountKey,
-        listings: currentLiveListingsForMonitorV1(monitor),
-        commercialExceptions,
         operatorUserId: auth.validation.userId,
         authorizationId,
         idempotencyKey: key,
+        expectedItemId,
+        expectedCurrentValue,
+        expectedProposedValue,
+        expectedAuthorizationVersion,
+        expectedAuthorizationDigest,
         executionEnabled: true,
       })
       const verified = result.titleVerified === true
@@ -439,18 +477,29 @@ export async function POST(request: Request) {
               "APPLYING_DO_NOT_DOUBLE_TAP" : "NOT_APPLIED",
         result,
         postActionReadbackPass: verified,
+        currentValuePreconditionMatch:
+          result.currentValuePreconditionMatch,
         unknownResultAutoRetry: false,
         safety: { listingEnds: 0, promotionWrites: 0,
           ebayWriteAttemptCount: result.ebayWriteAttemptCount } },
       { status: verified ? 200 : 409 })
     } catch (error) {
       const code = safeCode(error)
+      const invalidated = code ===
+        "REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED"
       return NextResponse.json({ success: false, error: code,
-        operatorMessage: code.includes("OUTCOME_UNKNOWN") ||
+        operatorMessage: invalidated
+          ? "La autorización ya no es válida porque el título actual cambió. No se aplicó ningún cambio."
+          : code.includes("OUTCOME_UNKNOWN") ||
           code.includes("WRITE_IN_PROGRESS")
           ? "Estamos verificando el cambio. No vuelvas a pulsar."
           : "Esta acción no está disponible ahora. No necesitas hacer nada.",
-        unknownResultAutoRetry: false }, { status: 409 })
+        authorizationInvalidated: invalidated,
+        executionBlocked: invalidated,
+        currentValuePreconditionMatch: invalidated ? false : null,
+        unknownResultAutoRetry: false,
+        safety: { marketplaceWrites: invalidated ? 0 : null, listingEnds: 0,
+          promotionWrites: 0 } }, { status: 409 })
     }
   }
   if (action === "REVIEW_IMAGE_PROPOSAL") {

@@ -20,6 +20,8 @@ export const REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY =
   "REMOTE_OPERATOR_SAFE_TITLE_CANARY" as const
 export const REMOTE_OPERATOR_SAFE_TITLE_CANARY_STRATEGY =
   "REMOTE_OPERATOR_VERIFIED_COLOR_TITLE_ENRICHMENT_V1" as const
+export const REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION =
+  "REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_V1" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -50,9 +52,18 @@ export type RemoteOperatorSafeMutationCanaryV1 = Readonly<{
   productTruthSupport: string
   ownerApprovalRequired: true
   ownerApprovalStatus: "PENDING_OWNER_APPROVAL" | "AUTHORIZED" |
-    "APPLYING" | "VERIFYING" | "CONFIRMED" | "UNAVAILABLE"
+    "APPLYING" | "VERIFYING" | "CONFIRMED" | "INVALIDATED" |
+    "UNAVAILABLE"
   authorizationId: string | null
+  authorizationVersion:
+    typeof REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION
+  authorizationDigest: `sha256:${string}`
+  authorizationInvalidated: boolean
+  executionBlocked: boolean
   applyAvailable: boolean
+  humanExplanation: string
+  currentValuePreconditionEnforced: true
+  maximumMarketplaceWrites: 1
   reversible: true
   economicsChanged: false
   idempotency: true
@@ -97,6 +108,59 @@ function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }
 
+type AuthorizationDigestInput = Readonly<{
+  accountKey: string
+  ebayItemId: string
+  ebaySku: string
+  currentValue: string
+  proposedValue: string
+  sourceSignalId: string
+  observedAt: string
+  productTruthReference: string
+  listingPackageId: string
+  opportunityId: string
+  manualListingLinkId: string
+  activeListingId: string
+  operatorUserId: string
+}>
+
+export function remoteOperatorSafeTitleCanaryAuthorizationDigestV1(
+  input: AuthorizationDigestInput,
+): `sha256:${string}` {
+  const payload = JSON.stringify({
+    authorizationVersion:
+      REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION,
+    strategyVersion: REMOTE_OPERATOR_SAFE_TITLE_CANARY_STRATEGY,
+    accountKey: text(input.accountKey, 160),
+    ebayItemId: text(input.ebayItemId, 20),
+    ebaySku: text(input.ebaySku, 50),
+    currentValueHash: sha256(text(input.currentValue, 80)),
+    proposedValueHash: sha256(text(input.proposedValue, 80)),
+    sourceSignalId: text(input.sourceSignalId, 160),
+    observedAt: validObservedAt(input.observedAt),
+    productTruthReference: text(input.productTruthReference, 80),
+    listingPackageId: uuid(input.listingPackageId),
+    opportunityId: uuid(input.opportunityId),
+    manualListingLinkId: uuid(input.manualListingLinkId),
+    activeListingId: uuid(input.activeListingId),
+    operatorUserId: uuid(input.operatorUserId),
+  })
+  return `sha256:${sha256(payload)}`
+}
+
+function authorizationRequestHash(input: AuthorizationDigestInput & {
+  authorizationDigest: string
+  ownerUserId: string
+}) {
+  return sha256(JSON.stringify({
+    authorizationVersion:
+      REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION,
+    authorizationDigest: input.authorizationDigest,
+    ownerUserId: uuid(input.ownerUserId),
+    operatorUserId: uuid(input.operatorUserId),
+  }))
+}
+
 function validObservedAt(value: unknown) {
   const normalized = text(value, 80)
   return Number.isFinite(Date.parse(normalized))
@@ -111,6 +175,10 @@ function safeDatabaseCode(error: unknown, fallback: string) {
 function authorizationStatus(row: JsonRecord | null) {
   const phase = text(row?.phase, 60)
   if (!row) return "PENDING_OWNER_APPROVAL" as const
+  if (phase === "terminal_failure" && text(row.last_error_code, 180) ===
+      "REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED") {
+    return "INVALIDATED" as const
+  }
   if (phase === "preview_ready") return "AUTHORIZED" as const
   if (phase === "write_in_flight") return "APPLYING" as const
   if (phase === "write_acknowledged" || phase === "outcome_unknown") {
@@ -157,6 +225,7 @@ function listingIsExactAndFresh(listing: CommercialListingReadModel) {
 }
 
 export function selectRemoteOperatorSafeMutationCanaryV1(input: {
+  accountKey: string
   listings: readonly CommercialListingReadModel[]
   commercialExceptions: readonly CanonicalCommercialException[]
   manualListingLinks: readonly unknown[]
@@ -173,6 +242,8 @@ export function selectRemoteOperatorSafeMutationCanaryV1(input: {
   const publications = rows(input.publications)
   const authorizations = rows(input.authorizations)
   const operatorUserId = uuid(input.operatorUserId)
+  const accountKey = text(input.accountKey, 160)
+  if (!accountKey || !operatorUserId) return null
   for (const signal of input.commercialExceptions) {
     if (signal.entityType !== "EBAY_LIVE_LISTING" ||
       signal.material === false ||
@@ -238,17 +309,52 @@ export function selectRemoteOperatorSafeMutationCanaryV1(input: {
     if (!observedAt || !/^[A-Za-z0-9._:-]{3,160}$/.test(sourceSignalId)) {
       continue
     }
+    const digestInput = {
+      accountKey,
+      ebayItemId: signal.entityKey,
+      ebaySku: currentSku,
+      currentValue: currentTitle,
+      proposedValue: proposedTitle,
+      sourceSignalId,
+      observedAt,
+      productTruthReference: confirmed.truthDigest,
+      listingPackageId: uuid(packageRow.id),
+      opportunityId: uuid(packageRow.opportunity_id),
+      manualListingLinkId: uuid(link.id),
+      activeListingId: uuid(active.id),
+      operatorUserId,
+    } satisfies AuthorizationDigestInput
+    const authorizationDigest =
+      remoteOperatorSafeTitleCanaryAuthorizationDigestV1(digestInput)
     const authorization = authorizations.find((row) =>
       text(row.execution_authority, 80) ===
         REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY &&
+      text(row.marketplace_account_key, 160) === accountKey &&
       text(row.ebay_item_id, 20) === signal.entityKey &&
+      text(row.ebay_sku, 50) === currentSku &&
       text(row.source_authority, 80) === "COMMERCIAL_EXCEPTION_QUEUE" &&
       text(row.source_signal_id, 160) === sourceSignalId &&
       text(row.authorized_current_title, 80) === currentTitle &&
+      text(row.authorized_current_title_hash, 64) === sha256(currentTitle) &&
       text(row.target_title, 80) === proposedTitle &&
+      text(row.target_title_hash, 64) === sha256(proposedTitle) &&
+      text(row.title_strategy_version, 100) ===
+        REMOTE_OPERATOR_SAFE_TITLE_CANARY_STRATEGY &&
+      text(row.authorization_contract_version, 100) ===
+        REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION &&
+      text(row.authorization_digest, 80) === authorizationDigest &&
+      text(row.idempotency_key_hash, 64) ===
+        authorizationDigest.slice("sha256:".length) &&
       text(row.product_truth_reference, 80) === confirmed.truthDigest &&
-      (!operatorUserId || uuid(row.actor_user_id) === operatorUserId)) ?? null
+      uuid(row.owner_approved_by) && validObservedAt(row.owner_approved_at) &&
+      uuid(row.actor_user_id) === operatorUserId &&
+      text(row.request_hash, 64) === authorizationRequestHash({
+        ...digestInput,
+        authorizationDigest,
+        ownerUserId: uuid(row.owner_approved_by),
+      })) ?? null
     const status = authorizationStatus(authorization)
+    const applyAvailable = status === "AUTHORIZED" && input.executionEnabled
     return Object.freeze({
       candidate: Object.freeze({
         ebayItemId: signal.entityKey,
@@ -267,8 +373,16 @@ export function selectRemoteOperatorSafeMutationCanaryV1(input: {
         ownerApprovalRequired: true as const,
         ownerApprovalStatus: status,
         authorizationId: authorization ? uuid(authorization.id) || null : null,
-        applyAvailable: status === "AUTHORIZED" &&
-          Boolean(operatorUserId) && input.executionEnabled,
+        authorizationVersion:
+          REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION,
+        authorizationDigest,
+        authorizationInvalidated: status === "INVALIDATED",
+        executionBlocked: !applyAvailable,
+        applyAvailable,
+        humanExplanation:
+          `Agrega el color ${confirmed.color}, confirmado para este producto.`,
+        currentValuePreconditionEnforced: true as const,
+        maximumMarketplaceWrites: 1 as const,
         reversible: true as const,
         economicsChanged: false as const,
         idempotency: true as const,
@@ -328,7 +442,7 @@ async function loadContext(input: {
         .eq("marketplace_account_key", input.accountKey)
         .eq("phase", "monitor_registered").in("listing_id", itemIds),
       input.supabase.from("ebay_active_listing_title_revision_executions")
-        .select("id,actor_user_id,execution_authority,ebay_item_id,source_authority,source_signal_id,authorized_current_title,target_title,product_truth_reference,phase")
+        .select("id,listing_package_id,opportunity_id,manual_listing_link_id,active_listing_id,actor_user_id,marketplace_account_key,ebay_item_id,ebay_sku,target_title,target_title_hash,title_strategy_version,authorization_contract_version,authorization_digest,request_hash,idempotency_key_hash,execution_authority,source_authority,source_signal_id,source_observed_at,authorized_current_title,authorized_current_title_hash,product_truth_reference,owner_approved_by,owner_approved_at,phase,last_error_code")
         .eq("marketplace_account_key", input.accountKey)
         .eq("execution_authority", REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY)
         .in("ebay_item_id", itemIds).order("created_at", { ascending: false }),
@@ -338,6 +452,7 @@ async function loadContext(input: {
     throw new Error("REMOTE_OPERATOR_CANARY_LINEAGE_READ_FAILED")
   }
   return selectRemoteOperatorSafeMutationCanaryV1({
+    accountKey: input.accountKey,
     listings: input.listings,
     commercialExceptions: input.commercialExceptions,
     manualListingLinks: links,
@@ -390,6 +505,10 @@ export async function authorizeRemoteOperatorSafeMutationCanaryV1(input: {
   operatorUserId: string
   expectedItemId: string
   expectedSourceSignalId: string
+  expectedCurrentValue: string
+  expectedProposedValue: string
+  expectedAuthorizationVersion: string
+  expectedAuthorizationDigest: string
   executionEnabled: boolean
 }) {
   const ownerUserId = uuid(input.ownerUserId)
@@ -399,36 +518,44 @@ export async function authorizeRemoteOperatorSafeMutationCanaryV1(input: {
   }
   const context = await loadContext({ ...input, operatorUserId })
   if (!context || context.candidate.ebayItemId !== input.expectedItemId ||
-      context.candidate.sourceSignalId !== input.expectedSourceSignalId) {
+      context.candidate.sourceSignalId !== input.expectedSourceSignalId ||
+      context.candidate.currentValue !== input.expectedCurrentValue ||
+      context.candidate.proposedValue !== input.expectedProposedValue ||
+      context.candidate.authorizationVersion !==
+        input.expectedAuthorizationVersion ||
+      context.candidate.authorizationDigest !==
+        input.expectedAuthorizationDigest) {
     throw new Error("REMOTE_OPERATOR_CANARY_CURRENT_CANDIDATE_REQUIRED")
   }
-  if (context.candidate.authorizationId) return context.candidate
+  if (context.candidate.authorizationId) {
+    if (context.candidate.authorizationInvalidated) {
+      throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED")
+    }
+    return context.candidate
+  }
   const targetTitleHash = sha256(context.candidate.proposedValue)
-  const idempotencyKeyHash = sha256([
-    REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY,
-    input.accountKey,
-    context.candidate.ebayItemId,
-    context.candidate.sourceSignalId,
-    targetTitleHash,
+  const idempotencyKeyHash = context.candidate.authorizationDigest
+    .slice("sha256:".length)
+  const digestInput = {
+    accountKey: input.accountKey,
+    ebayItemId: context.candidate.ebayItemId,
+    ebaySku: context.ebaySku,
+    currentValue: context.candidate.currentValue,
+    proposedValue: context.candidate.proposedValue,
+    sourceSignalId: context.candidate.sourceSignalId,
+    observedAt: context.candidate.observedAt,
+    productTruthReference: context.productTruthReference,
+    listingPackageId: context.listingPackageId,
+    opportunityId: context.opportunityId,
+    manualListingLinkId: context.manualListingLinkId,
+    activeListingId: context.activeListingId,
     operatorUserId,
-  ].join("|"))
-  const requestHash = sha256([
-    REMOTE_OPERATOR_SAFE_TITLE_CANARY_STRATEGY,
-    context.listingPackageId,
-    context.opportunityId,
-    context.manualListingLinkId,
-    context.activeListingId,
-    input.accountKey,
-    context.candidate.ebayItemId,
-    context.ebaySku,
-    sha256(context.candidate.currentValue),
-    targetTitleHash,
-    context.candidate.sourceSignalId,
-    context.candidate.observedAt,
-    context.productTruthReference,
+  } satisfies AuthorizationDigestInput
+  const requestHash = authorizationRequestHash({
+    ...digestInput,
+    authorizationDigest: context.candidate.authorizationDigest,
     ownerUserId,
-    operatorUserId,
-  ].join("|"))
+  })
   const existing = await input.supabase
     .from("ebay_active_listing_title_revision_executions")
     .select("*").eq("idempotency_key_hash", idempotencyKeyHash).maybeSingle()
@@ -460,6 +587,9 @@ export async function authorizeRemoteOperatorSafeMutationCanaryV1(input: {
       target_title: context.candidate.proposedValue,
       target_title_hash: targetTitleHash,
       title_strategy_version: REMOTE_OPERATOR_SAFE_TITLE_CANARY_STRATEGY,
+      authorization_contract_version:
+        REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION,
+      authorization_digest: context.candidate.authorizationDigest,
       request_hash: requestHash,
       idempotency_key_hash: idempotencyKeyHash,
       execution_authority: REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY,
@@ -520,28 +650,97 @@ async function bindOperatorIdempotencyKey(input: {
 export async function applyRemoteOperatorSafeMutationCanaryV1(input: {
   supabase: SupabaseClient
   accountKey: string
-  listings: readonly CommercialListingReadModel[]
-  commercialExceptions: readonly CanonicalCommercialException[]
   operatorUserId: string
   authorizationId: string
   idempotencyKey: string
+  expectedItemId: string
+  expectedCurrentValue: string
+  expectedProposedValue: string
+  expectedAuthorizationVersion: string
+  expectedAuthorizationDigest: string
   executionEnabled: boolean
   fetchImpl?: typeof fetch
 }) {
   const operatorUserId = uuid(input.operatorUserId)
   const authorizationId = uuid(input.authorizationId)
   const idempotencyKey = text(input.idempotencyKey, 120)
+  const expectedItemId = text(input.expectedItemId, 20)
+  const expectedCurrentValue = text(input.expectedCurrentValue, 80)
+  const expectedProposedValue = text(input.expectedProposedValue, 80)
+  const expectedAuthorizationDigest = text(
+    input.expectedAuthorizationDigest, 80,
+  )
   if (!input.executionEnabled) {
     throw new Error("REMOTE_OPERATOR_CANARY_PHYSICAL_ENABLEMENT_REQUIRED")
   }
   if (!operatorUserId || !authorizationId ||
-    !/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey)) {
+    !/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey) ||
+    !/^\d{9,20}$/.test(expectedItemId) ||
+    expectedCurrentValue !== input.expectedCurrentValue ||
+    expectedProposedValue !== input.expectedProposedValue ||
+    input.expectedAuthorizationVersion !==
+      REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION ||
+    !/^sha256:[0-9a-f]{64}$/.test(expectedAuthorizationDigest)) {
     throw new Error("REMOTE_OPERATOR_CANARY_APPLY_INVALID")
   }
-  const context = await loadContext({ ...input, operatorUserId })
-  if (!context || context.candidate.authorizationId !== authorizationId ||
-      context.candidate.ownerApprovalStatus !== "AUTHORIZED") {
+  const authorizationRead = await input.supabase
+    .from("ebay_active_listing_title_revision_executions").select("*")
+    .eq("id", authorizationId).eq("actor_user_id", operatorUserId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("execution_authority", REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORITY)
+    .single()
+  if (authorizationRead.error || !authorizationRead.data) {
     throw new Error("REMOTE_OPERATOR_CANARY_OWNER_APPROVAL_REQUIRED")
+  }
+  const authorization = record(authorizationRead.data)
+  if (text(authorization.phase, 60) === "terminal_failure" &&
+      text(authorization.last_error_code, 180) ===
+        "REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED") {
+    throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED")
+  }
+  const digestInput = {
+    accountKey: input.accountKey,
+    ebayItemId: text(authorization.ebay_item_id, 20),
+    ebaySku: text(authorization.ebay_sku, 50),
+    currentValue: text(authorization.authorized_current_title, 80),
+    proposedValue: text(authorization.target_title, 80),
+    sourceSignalId: text(authorization.source_signal_id, 160),
+    observedAt: validObservedAt(authorization.source_observed_at),
+    productTruthReference: text(authorization.product_truth_reference, 80),
+    listingPackageId: uuid(authorization.listing_package_id),
+    opportunityId: uuid(authorization.opportunity_id),
+    manualListingLinkId: uuid(authorization.manual_listing_link_id),
+    activeListingId: uuid(authorization.active_listing_id),
+    operatorUserId,
+  } satisfies AuthorizationDigestInput
+  const durableDigest =
+    remoteOperatorSafeTitleCanaryAuthorizationDigestV1(digestInput)
+  const ownerUserId = uuid(authorization.owner_approved_by)
+  const durableRequestHash = authorizationRequestHash({
+    ...digestInput,
+    authorizationDigest: durableDigest,
+    ownerUserId,
+  })
+  if (!ownerUserId || !validObservedAt(authorization.owner_approved_at) ||
+      text(authorization.source_authority, 80) !==
+        "COMMERCIAL_EXCEPTION_QUEUE" ||
+      text(authorization.title_strategy_version, 100) !==
+        REMOTE_OPERATOR_SAFE_TITLE_CANARY_STRATEGY ||
+      text(authorization.authorization_contract_version, 100) !==
+        REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION ||
+      text(authorization.authorization_digest, 80) !== durableDigest ||
+      text(authorization.authorized_current_title_hash, 64) !==
+        sha256(digestInput.currentValue) ||
+      text(authorization.target_title_hash, 64) !==
+        sha256(digestInput.proposedValue) ||
+      text(authorization.idempotency_key_hash, 64) !==
+        durableDigest.slice("sha256:".length) ||
+      text(authorization.request_hash, 64) !== durableRequestHash ||
+      expectedItemId !== digestInput.ebayItemId ||
+      expectedCurrentValue !== digestInput.currentValue ||
+      expectedProposedValue !== digestInput.proposedValue ||
+      expectedAuthorizationDigest !== durableDigest) {
+    throw new Error("REMOTE_OPERATOR_CANARY_AUTHORIZATION_BINDING_MISMATCH")
   }
   await bindOperatorIdempotencyKey({ supabase: input.supabase,
     authorizationId, operatorUserId, idempotencyKey })
@@ -550,9 +749,9 @@ export async function applyRemoteOperatorSafeMutationCanaryV1(input: {
     accountKey: input.accountKey,
     actorId: operatorUserId,
     executionId: authorizationId,
-    ebayItemId: context.candidate.ebayItemId,
+    ebayItemId: digestInput.ebayItemId,
     confirmation: ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
-    expectedCurrentTitle: context.candidate.currentValue,
+    expectedCurrentTitle: digestInput.currentValue,
     fetchImpl: input.fetchImpl,
   })
 }

@@ -284,9 +284,16 @@ function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
   const [busy, setBusy] = useState(false)
   const [stage, setStage] = useState<ActionStage>("IDLE")
   const [message, setMessage] = useState("")
+  const [confirmedAuthorizationDigest, setConfirmedAuthorizationDigest] =
+    useState("")
   if (!canary) return null
   const activeCanary: NonNullable<
     RemoteLiveOperatorListingV1["safeMutationCanary"]> = canary
+  const ownerConfirmedExactProposal = confirmedAuthorizationDigest ===
+    activeCanary.authorizationDigest
+
+  if (canApply && activeCanary.ownerApprovalStatus ===
+      "PENDING_OWNER_APPROVAL") return null
 
   function stableApplyKey() {
     if (!activeCanary.authorizationId) return ""
@@ -300,7 +307,7 @@ function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
 
   async function authorize() {
     if (!canAuthorize || busy || activeCanary.ownerApprovalStatus !==
-        "PENDING_OWNER_APPROVAL") return
+        "PENDING_OWNER_APPROVAL" || !ownerConfirmedExactProposal) return
     setBusy(true)
     setMessage("")
     try {
@@ -309,10 +316,14 @@ function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "AUTHORIZE_SAFE_MUTATION_CANARY",
             ebayItemId: activeCanary.ebayItemId,
-            sourceSignalId: activeCanary.sourceSignalId }),
+            sourceSignalId: activeCanary.sourceSignalId,
+            currentValue: activeCanary.currentValue,
+            proposedValue: activeCanary.proposedValue,
+            authorizationVersion: activeCanary.authorizationVersion,
+            authorizationDigest: activeCanary.authorizationDigest }),
         })
       setMessage(String(payload.message ??
-        "Canary autorizado. Todavía no se aplicó ningún cambio."))
+        "Mejora autorizada para Mayel. Todavía no se aplicó ningún cambio."))
       await onRefresh()
     } catch (error) {
       setMessage(error instanceof Error ? error.message :
@@ -336,7 +347,12 @@ function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "APPLY_SAFE_MUTATION_CANARY",
             authorizationId: activeCanary.authorizationId,
-            idempotencyKey: stableApplyKey() }),
+            idempotencyKey: stableApplyKey(),
+            ebayItemId: activeCanary.ebayItemId,
+            currentValue: activeCanary.currentValue,
+            proposedValue: activeCanary.proposedValue,
+            authorizationVersion: activeCanary.authorizationVersion,
+            authorizationDigest: activeCanary.authorizationDigest }),
         })
       window.clearTimeout(verifyingTimer)
       if (payload.postActionReadbackPass !== true) {
@@ -351,7 +367,10 @@ function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
       window.clearTimeout(verifyingTimer)
       const code = error && typeof error === "object" && "code" in error
         ? String(error.code) : ""
-      if (code.includes("OUTCOME_UNKNOWN") ||
+      if (code === "REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED") {
+        setStage("IDLE")
+        setMessage("La autorización ya no es válida porque el título actual cambió. No se aplicó ningún cambio.")
+      } else if (code.includes("OUTCOME_UNKNOWN") ||
           code.includes("WRITE_IN_PROGRESS")) {
         setStage("UNKNOWN")
         setMessage("Estamos verificando el cambio. No vuelvas a pulsar.")
@@ -367,20 +386,23 @@ function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
 
   return <section className="mt-5 rounded-2xl border border-[#b8ccc6] bg-[#edf3f1] p-4 sm:p-5"
     data-safe-live-mutation-canary>
-    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#1d5961]">Canary LIVE seguro</p>
-    <h4 className="mt-1 font-serif text-xl font-semibold text-[#292d29]">Actual vs Propuesta</h4>
-    <p className="mt-2 text-sm leading-6 text-[#535852]">Seller OS preparó un enriquecimiento reversible del título. No cambia precio, cantidad, promoción ni condiciones comerciales.</p>
+    <h4 className="font-serif text-xl font-semibold text-[#292d29]">
+      {canApply ? "Revisar propuesta" : "Autorizar mejora"}
+    </h4>
+    {canAuthorize && <p className="mt-2 text-sm font-semibold text-[#535852]">
+      Item ID: {activeCanary.ebayItemId}
+    </p>}
     <dl className="mt-4 grid gap-3 md:grid-cols-2">
       <div className="min-w-0 rounded-xl bg-white p-4">
         <dt className="text-sm font-semibold text-[#73766f]">Actual</dt>
         <dd className="mt-2 break-words text-sm leading-6 text-[#292d29]">{activeCanary.currentValue}</dd>
       </div>
       <div className="min-w-0 rounded-xl bg-white p-4">
-        <dt className="text-sm font-semibold text-[#1d5961]">Propuesto</dt>
+        <dt className="text-sm font-semibold text-[#1d5961]">Propuesta Seller OS</dt>
         <dd className="mt-2 break-words text-sm font-semibold leading-6 text-[#1d5961]">{activeCanary.proposedValue}</dd>
       </div>
     </dl>
-    <p className="mt-3 rounded-xl bg-white/80 p-3 text-sm leading-6 text-[#535852]">{activeCanary.productTruthSupport}. La propuesta usa únicamente este dato confirmado.</p>
+    <p className="mt-3 rounded-xl bg-white/80 p-3 text-sm leading-6 text-[#535852]">{activeCanary.humanExplanation}</p>
     {stage !== "IDLE" && <ol className="mt-4 grid gap-2 text-sm sm:grid-cols-3"
       aria-live="polite">
       {[["APPLYING", "Aplicando cambio…"],
@@ -395,22 +417,32 @@ function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
         </li>
       })}
     </ol>}
-    {activeCanary.ownerApprovalStatus === "PENDING_OWNER_APPROVAL" &&
-      !canAuthorize && <p className="mt-4 text-sm font-semibold leading-6 text-[#704d3c]">Necesita aprobación del owner.</p>}
+    {activeCanary.authorizationInvalidated &&
+      <p className="mt-4 rounded-xl bg-[#f7e9de] p-3 text-sm font-semibold leading-6 text-[#704d3c]">La autorización ya no es válida porque el título actual cambió. No se aplicó ningún cambio.</p>}
     {activeCanary.ownerApprovalStatus === "AUTHORIZED" && !canApply &&
-      <p className="mt-4 text-sm font-semibold leading-6 text-[#3f574f]">Autorizado para una única acción de Mayel.</p>}
+      <p className="mt-4 text-sm font-semibold leading-6 text-[#3f574f]">Autorizada para una única acción de Mayel.</p>}
+    {canAuthorize && activeCanary.ownerApprovalStatus ===
+      "PENDING_OWNER_APPROVAL" && <label className="mt-4 flex cursor-pointer gap-3 rounded-xl border border-[#b8ccc6] bg-white p-4 text-sm leading-6 text-[#3f4540]">
+      <input type="checkbox" className="mt-1 h-5 w-5 shrink-0"
+        checked={ownerConfirmedExactProposal}
+        onChange={(event) => setConfirmedAuthorizationDigest(
+          event.target.checked ? activeCanary.authorizationDigest : "",
+        )} />
+      <span>Confirmo que autorizo para este Item ID el valor actual y la propuesta exacta mostrados arriba.</span>
+    </label>}
     <div className="mt-4 flex justify-end">
       {canAuthorize && activeCanary.ownerApprovalStatus ===
         "PENDING_OWNER_APPROVAL" && <button type="button"
-        onClick={() => void authorize()} disabled={busy}
+        onClick={() => void authorize()}
+        disabled={busy || !ownerConfirmedExactProposal}
         className="min-h-12 rounded-xl bg-[#1d5961] px-5 text-sm font-semibold text-white disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">
-        {busy ? "Autorizando…" : "Autorizar este canary"}
+        {busy ? "Autorizando…" : "Autorizar esta mejora para Mayel"}
       </button>}
       {canApply && activeCanary.ownerApprovalStatus === "AUTHORIZED" &&
         <button type="button" onClick={() => void apply()}
           disabled={busy || !activeCanary.applyAvailable || stage === "UNKNOWN"}
           className="min-h-12 rounded-xl bg-[#1d5961] px-5 text-sm font-semibold text-white disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">
-          {busy ? "Aplicando…" : "Aplicar cambio"}
+          {busy ? "Aplicando…" : "Aplicar esta mejora"}
         </button>}
     </div>
     {message && <p aria-live="polite"
@@ -843,7 +875,7 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
         {!dashboard && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7 text-sm text-[#6f736c]">{readState === "RETRYING" ? "Esta vista no está disponible ahora. No necesitas hacer nada." : "Preparando tu espacio…"}</div>}
         {dashboard && <div className="mt-7 space-y-7">
           {!dashboard.capabilities.safeLiveTitleCanary &&
-            <p className="rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium leading-6 text-[#704d3c]">Vista preparada para certificación. Puedes revisar el recorrido, pero los cambios LIVE siguen cerrados hasta completar el canary físico.</p>}
+            <p className="rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium leading-6 text-[#704d3c]">Puedes revisar las propuestas, pero aplicar esta mejora todavía no está disponible.</p>}
 
           {view === "HOME" && <>
             <section aria-labelledby="attention-heading">
