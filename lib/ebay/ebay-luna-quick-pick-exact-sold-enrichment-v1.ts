@@ -23,7 +23,7 @@ import type { RadarMarketplaceTaxonomyReaderV1,
   "./ebay-radar-canonical-marketplace-readiness-v1"
 
 export const QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V1 =
-  "QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V1" as const
+  "QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V2" as const
 
 const MAXIMUM_QUICK_PICKS = 20
 const STALE_CLAIM_MS = 5 * 60 * 1_000
@@ -74,19 +74,30 @@ function exactValue(values: JsonRecord, name: string) {
   return text(entry?.[1], 500)
 }
 
-function candidateIdentity(row: JsonRecord): ProductIdentityInput {
+function resolvedBatchValue(assessment: JsonRecord, name: string) {
+  const resolution = rows(record(assessment
+    .marketplaceRequiredSpecificsBatchResolutionV1).resolutions)
+    .find((entry) => normalized(entry.aspectName) === normalized(name)
+      && entry.humanReviewRequired !== true)
+  return text(resolution?.resolvedValue, 500)
+}
+
+export function quickPickExactSoldCandidateIdentityV1(
+  row: JsonRecord,
+): ProductIdentityInput {
   const assessment = record(row.assessment)
   const truth = record(assessment.productTruth)
   const values = record(truth.provenProductValues)
-  const pack = Number(exactValue(values, "Number in Pack")
-    ?? exactValue(values, "Pack Quantity"))
+  const value = (name: string) => exactValue(values, name)
+    ?? resolvedBatchValue(assessment, name)
+  const pack = Number(value("Number in Pack") ?? value("Pack Quantity"))
   return Object.freeze({
     productName: text(truth.title ?? row.product_title, 350),
-    manufacturerBrand: exactValue(values, "Brand"),
+    manufacturerBrand: value("Brand"),
     gtin: text(row.gtin ?? truth.gtin, 40),
-    mpn: exactValue(values, "MPN"), model: exactValue(values, "Model"),
-    size: exactValue(values, "Size"), color: exactValue(values, "Color"),
-    variant: exactValue(values, "Variant"),
+    mpn: value("MPN"), model: value("Model"),
+    size: value("Size"), color: value("Color"),
+    variant: value("Variant"),
     packCount: Number.isInteger(pack) && pack > 0 ? pack : null,
   })
 }
@@ -226,7 +237,7 @@ export async function continueLunaQuickPickExactSoldEnrichmentV1(
       && Number.isFinite(claimedAt) && Date.now() - claimedAt >= STALE_CLAIM_MS)
     const residualNames = ownerResidualNames(assessment)
     if (current.completedAt && current.contractVersion ===
-        QUICK_PICK_EXACT_SOLD_PRODUCT_TRUTH_V1) {
+        QUICK_PICK_EXACT_SOLD_PRODUCT_TRUTH_V1 && !residualNames.length) {
       const reconciled = await input.supabase.from(
         "ebay_luna_opportunity_queue").update({ assessment: { ...assessment,
           quickPickExactSoldMarketEnrichmentV1: { ...current,
@@ -239,12 +250,18 @@ export async function continueLunaQuickPickExactSoldEnrichmentV1(
       if (!reconciled.error && reconciled.data) reconciledMarkers += 1
       continue
     }
+    const systemicVersionUpgrade = Boolean(current.completedAt
+      && current.contractVersion !==
+        QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V1)
     if (!specifics.completedAt || !residualNames.length ||
-      current.completedAt || (current.claimedAt && !stale)) continue
+      (current.completedAt && !systemicVersionUpgrade) ||
+      (current.claimedAt && !current.completedAt && !stale)) continue
     const now = new Date().toISOString()
     const marker = { contractVersion:
       QUICK_PICK_EXACT_SOLD_MARKET_ENRICHMENT_V1,
     claimedAt: now, completedAt: null,
+    priorCompletedAt: systemicVersionUpgrade ? current.completedAt : null,
+    systemicVersionUpgrade,
     stageAuthority: "REQUIRED_SPECIFICS_PRODUCT_TRUTH_CONTINUATION",
     residualSpecificNamesBefore: residualNames,
     internalResolversRepeated: false,
@@ -277,7 +294,7 @@ export async function continueLunaQuickPickExactSoldEnrichmentV1(
     async (row) => {
       const assessment = record(row.assessment)
       const requiredSpecificNames = ownerResidualNames(assessment)
-      const candidate = candidateIdentity(row)
+      const candidate = quickPickExactSoldCandidateIdentityV1(row)
       const soldComparables = officialSoldEvidenceComparablesForTarget({
         targetIdentity: candidate, rows: soldRows,
         targetSupplierVariantId: text(row.supplier_variant_id, 80),
