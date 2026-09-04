@@ -104,7 +104,17 @@ function projectFamily(value: unknown) {
   const familyDemandStatus = text(current.familyDemandStatus, 80)
   const momentumStatus = text(current.momentumStatus, 80) ??
     "INSUFFICIENT_HISTORY"
+  const momentumComparable = Boolean(text(current.previousObservationId, 120)) &&
+    !["INSUFFICIENT_HISTORY", "NEEDS_MORE_EVIDENCE"].includes(momentumStatus)
   const fresh = typeof current.fresh === "boolean" ? current.fresh : null
+  const commercialStatus = text(current.commercialComparableStatus, 40) ??
+    "UNPROVEN"
+  const commercialPriceBand = commercialStatus === "AVAILABLE" ? Object.freeze({
+    currency: "USD" as const,
+    minimum: number(current.commercialPriceTypicalLow),
+    maximum: number(current.commercialPriceTypicalHigh),
+    median: number(current.commercialPriceMedian),
+  }) : "UNPROVEN" as const
   return Object.freeze({
     familyId,
     familyName,
@@ -119,6 +129,7 @@ function projectFamily(value: unknown) {
     demandEvidenceDigest: text(current.demandEvidenceDigest, 160),
     momentumStatus,
     soldMomentumClaimed: false,
+    longitudinalMomentumAvailable: momentumComparable,
     competitionState: text(current.competitionState, 80) ?? "UNPROVEN",
     monitorStatus: monitor ? text(monitor.status, 80) : null,
     nextReviewCondition: monitor
@@ -137,6 +148,22 @@ function projectFamily(value: unknown) {
       maximum: number(current.priceBandMaximum),
       median: number(current.priceMedian),
     }),
+    rawFamilyPriceBand: Object.freeze({
+      currency: text(current.priceCurrency, 12),
+      minimum: number(current.priceBandMinimum),
+      maximum: number(current.priceBandMaximum),
+      median: number(current.priceMedian),
+    }),
+    commercialComparableCluster: Object.freeze({
+      status: commercialStatus,
+      comparableCount: number(current.commercialComparableCount) ?? 0,
+      exactCount: number(current.commercialExactCount) ?? 0,
+      strongCount: number(current.commercialStrongCount) ?? 0,
+      rawOutliersExcludedCount: number(current.rawOutliersExcludedCount) ?? 0,
+      exclusionReasons: Object.freeze(safeLimitations(
+        current.commercialExclusionReasons)),
+    }),
+    commercialPriceBand,
     limitations: Object.freeze(safeLimitations(current.limitations)),
     monitorEnrollment: monitor ? Object.freeze({
       enrollmentId: text(monitor.enrollmentId, 120),
@@ -146,7 +173,7 @@ function projectFamily(value: unknown) {
       lastObservationId: text(monitor.lastObservationId, 120),
       lastEvaluatedAt: text(monitor.lastEvaluatedAt, 48),
       monitorPolicyVersion: text(monitor.monitorPolicyVersion, 120),
-      schedulerEnabled: false as const,
+      schedulerEnabled: monitor.schedulerEnabled === true,
     }) : null,
     currentObservation: Object.freeze({
       observationId: currentObservationId,
@@ -165,6 +192,17 @@ function projectFamily(value: unknown) {
     }),
     canonicalFamily: familyName,
     commercialRecommendation: null,
+    qualifiedMarketSignal: Object.freeze({
+      familyId,
+      demandStatus: familyDemandStatus,
+      exactProductDemandProven: false as const,
+      momentumStatus,
+      commercialComparableClusterStatus: commercialStatus,
+      commercialPriceBand,
+      evidenceDigest: text(current.demandEvidenceDigest, 160),
+      freshness: fresh === true ? "FRESH" as const
+        : fresh === false ? "STALE" as const : "UNPROVEN" as const,
+    }),
     legacyDiagnostics: Object.freeze({
       authoritative: false,
       mayOverrideLongitudinalRadar: false,
@@ -193,6 +231,8 @@ export function buildSellerOsLongitudinalOpportunityRadarV1(
     entries: Object.freeze(entries),
     reason: null,
     soldMomentumClaimed: false,
+    longitudinalMomentumAvailable: entries.some((entry) =>
+      entry.longitudinalMomentumAvailable),
     bounded: true,
     limit: maximum,
     phase7Authority: "FUTURE_CANONICAL_AUTHORITY" as const,
@@ -251,6 +291,7 @@ export function buildSellerOsLongitudinalOpportunityCaseV1(
     familyDemandStatus: entry.familyDemandStatus,
     momentumStatus: entry.momentumStatus,
     soldMomentumClaimed: false,
+    longitudinalMomentumAvailable: entry.longitudinalMomentumAvailable,
     competitionState: entry.competitionState,
     monitorEnrollment: entry.monitorEnrollment,
     nextReviewCondition: entry.nextReviewCondition,
@@ -259,6 +300,9 @@ export function buildSellerOsLongitudinalOpportunityCaseV1(
     limitations: entry.limitations,
     canonicalFamily: entry.familyName,
     commercialRecommendation: null,
+    commercialComparableCluster: entry.commercialComparableCluster,
+    commercialPriceBand: entry.commercialPriceBand,
+    qualifiedMarketSignal: entry.qualifiedMarketSignal,
     keywordRecommendation: null,
     keywordOpportunity: null,
     priceOpportunity: null,

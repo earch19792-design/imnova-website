@@ -29,6 +29,8 @@ import { preflightEbayCategoryProductIdentifiers } from
   "@/lib/ebay/ebay-draft-only-gateway"
 import { runQuickPickRadarOvernightEnrichmentV1 } from
   "@/lib/ebay/ebay-quick-pick-radar-overnight-enrichment-v1"
+import { runSellerOsLongitudinalRadarCycleV1 } from
+  "@/lib/ebay/ebay-longitudinal-family-radar-runtime-v1"
 
 function authorized(req: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
@@ -41,6 +43,23 @@ export async function GET(req: Request) {
   }
   const startedAt = Date.now()
   const supabase = getSupabaseAdminClient()
+  const certificationOnly = new URL(req.url).searchParams.get(
+    "longitudinalCertification",
+  ) === "1"
+  if (certificationOnly) {
+    try {
+      const longitudinalRadar = await runSellerOsLongitudinalRadarCycleV1({
+        supabase, mode: "CERTIFICATION",
+      })
+      return NextResponse.json({ success: true, longitudinalRadar,
+        automation: { stage: "LONGITUDINAL_RADAR_CERTIFICATION",
+          schedulerRuntimePathReused: true,
+          elapsedMs: Date.now() - startedAt } })
+    } catch {
+      return NextResponse.json({ success: false,
+        error: "LONGITUDINAL_RADAR_CERTIFICATION_FAILED" }, { status: 502 })
+    }
+  }
   let automationRunId = ""
   try {
     const automationRun = await createSellerAutomationRun(supabase, {
@@ -48,6 +67,14 @@ export async function GET(req: Request) {
       triggerSource: "schedule",
     })
     automationRunId = automationRun.id
+    const longitudinalRadar = await runSellerOsLongitudinalRadarCycleV1({
+      supabase, mode: "SCHEDULED",
+    }).catch(() => ({
+      contractVersion: "SELLER_OS_LONGITUDINAL_RADAR_RUNTIME_V1" as const,
+      status: "RETRYABLE_FAILURE" as const,
+      schedulerEnabled: true as const,
+      marketplaceWrites: 0 as const,
+    }))
     const sync = await runLunaPortexMarketRadarSync(supabase)
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) throw new Error("NIGHT_RADAR_FACTORY_ACCOUNT_SCOPE_REQUIRED")
@@ -160,6 +187,7 @@ export async function GET(req: Request) {
       syncStatus: sync.scanStatus,
       scanCompletenessPercent: sync.scanCompletenessPercent,
       radarRefreshExecuted: true,
+      longitudinalRadar,
       freshFamilyObservationsCreated: broadNet.freshObservationsCreated,
       factory,
       quickPickOvernightEnrichment,
@@ -175,6 +203,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       success: true,
       sync,
+      longitudinalRadar,
       broadNet,
       factory,
       quickPickOvernightEnrichment,

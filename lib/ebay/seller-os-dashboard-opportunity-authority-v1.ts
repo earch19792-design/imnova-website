@@ -32,6 +32,11 @@ export type SellerOsDashboardRadarSignalInputV1 = Readonly<{
   soldComparableCount?: unknown
   soldQuantityEvidence?: unknown
   priceBand?: unknown
+  rawFamilyPriceBand?: unknown
+  commercialComparableCluster?: unknown
+  commercialPriceBand?: unknown
+  momentumStatus?: unknown
+  evidenceObservedAt?: unknown
   nextReviewCondition?: unknown
   monitorStatus?: unknown
 }>
@@ -138,13 +143,27 @@ function projectRadarSignal(value: SellerOsDashboardRadarSignalInputV1) {
         .includes(demandClass ?? "") || value.evidenceFreshness !== "FRESH") {
     return null
   }
-  const priceBand = record(value.priceBand)
+  const rawPriceBand = record(value.rawFamilyPriceBand ?? value.priceBand)
+  const commercial = record(value.commercialComparableCluster)
+  const commercialPrice = record(value.commercialPriceBand)
+  const commercialAvailable = commercial.status === "AVAILABLE"
   return Object.freeze({ familyId, family: familyName, demandClass,
     soldComparableCount: number(value.soldComparableCount),
     soldQuantityEvidence: number(value.soldQuantityEvidence),
-    priceBand: Object.freeze({ currency: text(priceBand.currency, 12),
-      minimum: number(priceBand.minimum), median: number(priceBand.median),
-      maximum: number(priceBand.maximum) }),
+    momentumStatus: text(value.momentumStatus, 80) ?? "INSUFFICIENT_HISTORY",
+    commercialComparableCount: number(commercial.comparableCount) ?? 0,
+    commercialPriceBand: commercialAvailable ? Object.freeze({
+      status: "AVAILABLE" as const,
+      currency: text(commercialPrice.currency, 12) ?? "USD",
+      minimum: number(commercialPrice.minimum),
+      median: number(commercialPrice.median),
+      maximum: number(commercialPrice.maximum),
+    }) : Object.freeze({ status: "UNPROVEN" as const, currency: null,
+      minimum: null, median: null, maximum: null }),
+    rawFamilyPriceBand: Object.freeze({ currency: text(rawPriceBand.currency, 12),
+      minimum: number(rawPriceBand.minimum), median: number(rawPriceBand.median),
+      maximum: number(rawPriceBand.maximum) }),
+    evidenceObservedAt: text(value.evidenceObservedAt, 48),
     enrichmentNextStage: text(value.nextReviewCondition, 160) ??
       "WAITING_NEXT_BOUNDED_ENRICHMENT",
     monitorStatus: text(value.monitorStatus, 80),

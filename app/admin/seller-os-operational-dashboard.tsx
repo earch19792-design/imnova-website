@@ -56,8 +56,13 @@ type RadarSignal = Readonly<{
   demandClass: string
   soldComparableCount: number | null
   soldQuantityEvidence: number | null
-  priceBand: Readonly<{ currency: string | null; minimum: number | null;
+  momentumStatus: string
+  commercialComparableCount: number
+  commercialPriceBand: Readonly<{ status: string; currency: string | null;
+    minimum: number | null; median: number | null; maximum: number | null }>
+  rawFamilyPriceBand: Readonly<{ currency: string | null; minimum: number | null;
     median: number | null; maximum: number | null }>
+  evidenceObservedAt: string | null
   enrichmentNextStage: string
 }>
 
@@ -193,14 +198,24 @@ function parseRadarSignals(value: unknown) {
     const family = nullableText(item.family, 300)
     const demandClass = nullableText(item.demandClass, 120)
     if (!familyId || !family || !demandClass) return []
-    const price = record(item.priceBand)
+    const commercialPrice = record(item.commercialPriceBand)
+    const rawPrice = record(item.rawFamilyPriceBand)
     return [{ familyId, family, demandClass,
       soldComparableCount: availableMetric(item.soldComparableCount),
       soldQuantityEvidence: availableMetric(item.soldQuantityEvidence),
-      priceBand: { currency: nullableText(price.currency, 12),
-        minimum: availableMetric(price.minimum),
-        median: availableMetric(price.median),
-        maximum: availableMetric(price.maximum) },
+      momentumStatus: nullableText(item.momentumStatus, 80) ??
+        "INSUFFICIENT_HISTORY",
+      commercialComparableCount: safeCount(item.commercialComparableCount),
+      commercialPriceBand: { status: nullableText(commercialPrice.status, 40) ??
+          "UNPROVEN", currency: nullableText(commercialPrice.currency, 12),
+        minimum: availableMetric(commercialPrice.minimum),
+        median: availableMetric(commercialPrice.median),
+        maximum: availableMetric(commercialPrice.maximum) },
+      rawFamilyPriceBand: { currency: nullableText(rawPrice.currency, 12),
+        minimum: availableMetric(rawPrice.minimum),
+        median: availableMetric(rawPrice.median),
+        maximum: availableMetric(rawPrice.maximum) },
+      evidenceObservedAt: nullableText(item.evidenceObservedAt, 48),
       enrichmentNextStage: nullableText(item.enrichmentNextStage, 180) ??
         "WAITING_NEXT_BOUNDED_ENRICHMENT" }]
   })
@@ -1150,11 +1165,20 @@ export function SellerOsOperationalDashboard() {
               <strong className="text-white/85">{signal.family}</strong>
               <span className="block">Demanda {signal.demandClass.replaceAll(
                 "FAMILY_DEMAND_", "")} · {signal.soldComparableCount ?? "—"}
-                {" "}comparables · {signal.soldQuantityEvidence ?? "—"} vendidos</span>
-              <span className="block">Banda {signal.priceBand.minimum === null
-                ? "—" : usd(signal.priceBand.minimum)} – {signal.priceBand.maximum
-                === null ? "—" : usd(signal.priceBand.maximum)} · siguiente:
+                {" "}familiares · {signal.soldQuantityEvidence ?? "—"} vendidos</span>
+              <span className="block">Momentum: {signal.momentumStatus.replaceAll(
+                "_", " ")} · {signal.commercialComparableCount} comparables comerciales</span>
+              <span className="block">Precio típico: {
+                signal.commercialPriceBand.status !== "AVAILABLE" ||
+                signal.commercialPriceBand.minimum === null ? "No probado" : `${
+                  usd(signal.commercialPriceBand.minimum)} – ${
+                  usd(signal.commercialPriceBand.maximum ??
+                    signal.commercialPriceBand.minimum)}`} · siguiente:
                 {" "}{signal.enrichmentNextStage.replaceAll("_", " ")}</span>
+              {signal.evidenceObservedAt && <span className="block text-white/40">
+                Evidencia observada: {new Date(signal.evidenceObservedAt)
+                  .toLocaleString("es-NI")}
+              </span>}
             </li>)}
           </ul>
         </details>
