@@ -492,7 +492,7 @@ async function reconcilePublicUpload(input: { supabase: SupabaseClient
   const upload = await input.supabase.storage.from(PUBLIC_BUCKET)
     .upload(input.path, input.bytes, { contentType: "image/jpeg",
       upsert: false, cacheControl: "31536000" })
-  if (!upload.error) return
+  if (!upload.error) return { created: true as const }
   const existing = await input.supabase.storage.from(PUBLIC_BUCKET)
     .download(input.path)
   if (existing.error) throw new Error("MAYEL_VISUAL_CANONICAL_UPLOAD_FAILED")
@@ -501,6 +501,18 @@ async function reconcilePublicUpload(input: { supabase: SupabaseClient
   existingBytes.fill(0)
   if (digest !== input.outputSha256) {
     throw new Error("MAYEL_VISUAL_CANONICAL_PATH_CONFLICT")
+  }
+  return { created: false as const }
+}
+
+async function removeUncommittedPublicUpload(input: {
+  supabase: SupabaseClient
+  path: string
+}) {
+  const removed = await input.supabase.storage.from(PUBLIC_BUCKET)
+    .remove([input.path])
+  if (removed.error) {
+    throw new Error("MAYEL_VISUAL_APPROVAL_COMPENSATION_FAILED")
   }
 }
 
@@ -537,6 +549,42 @@ async function refreshManifest(input: { supabase: SupabaseClient
       updated_at: new Date().toISOString() }).eq("id", input.task.id)
   if (updateError) throw new Error("MAYEL_VISUAL_MANIFEST_PERSIST_FAILED")
   return manifest
+}
+
+async function manifestForApproval(input: {
+  supabase: SupabaseClient
+  task: JsonRecord
+  asset: { id: string; mayel_output_role: MayelVisualOutputRole
+    output_sha256: string }
+  publicUrl: string
+}) {
+  const { data: rows, error } = await input.supabase
+    .from("ebay_listing_image_assets")
+    .select("id,mayel_output_role,output_sha256,public_url")
+    .eq("mayel_visual_task_id", input.task.id).eq("status", "approved")
+    .eq("mayel_approval_status", "APPROVED")
+  if (error) throw new Error("MAYEL_VISUAL_MANIFEST_ASSET_READ_FAILED")
+  const assets = (rows ?? []).flatMap((row) => {
+    const role = text(row.mayel_output_role, 40) as MayelVisualOutputRole | null
+    const publicUrl = httpsUrl(row.public_url)
+    const outputSha256 = sha(row.output_sha256)
+    return uuid(row.id) && role && MAYEL_VISUAL_OUTPUT_ROLES.includes(role) &&
+      publicUrl && outputSha256 ? [{ assetId: row.id, role, outputSha256,
+        publicUrl }] : []
+  })
+  assets.push({ assetId: input.asset.id,
+    role: input.asset.mayel_output_role,
+    outputSha256: input.asset.output_sha256, publicUrl: input.publicUrl })
+  return buildMayelVisualManifestV1({
+    visualTaskId: String(input.task.id),
+    ebayItemId: String(input.task.ebay_item_id),
+    currentImages: Array.isArray(input.task.current_image_set)
+      ? input.task.current_image_set.filter((url): url is string =>
+        Boolean(httpsUrl(url)))
+      : [], assets,
+    productTruthDigest: String(input.task.product_truth_digest),
+    sourceImageSetDigest: String(input.task.source_image_set_digest),
+  })
 }
 
 export async function reviewMayelVisualOutputV1(input: {
@@ -596,26 +644,45 @@ export async function reviewMayelVisualOutputV1(input: {
     throw new Error("MAYEL_VISUAL_STAGING_READBACK_MISMATCH")
   }
   const publicPath = `mayel-visual/${input.taskId}/${input.assetId}/${asset.output_sha256}.jpg`
-  await reconcilePublicUpload({ supabase: input.supabase, path: publicPath,
-    bytes, outputSha256: asset.output_sha256 })
-  bytes.fill(0)
   const publicUrl = input.supabase.storage.from(PUBLIC_BUCKET)
     .getPublicUrl(publicPath).data.publicUrl
-  const { data: approved, error: approveError } = await input.supabase
-    .from("ebay_listing_image_assets").update({ status: "approved",
-      mayel_approval_status: "APPROVED", approved_at: new Date().toISOString(),
-      approved_by: input.actorUserId, published_storage_path: publicPath,
-      public_url: publicUrl, qa_result: { ...record(asset.qa_result),
-        humanReview: { decision: "APPROVE", checks: input.humanQa,
-          reviewedBy: input.actorUserId } } })
-    .eq("id", input.assetId).eq("status", "pending_review")
-    .select("*").single()
-  if (approveError || !approved) {
+  const approvalQa = { ...record(asset.qa_result),
+    humanReview: { decision: "APPROVE", checks: input.humanQa,
+      reviewedBy: input.actorUserId } }
+  let manifest
+  try {
+    manifest = await manifestForApproval({ supabase: input.supabase, task,
+      asset: { id: String(asset.id), mayel_output_role: role,
+        output_sha256: String(asset.output_sha256) }, publicUrl })
+    await reconcilePublicUpload({ supabase: input.supabase, path: publicPath,
+      bytes, outputSha256: asset.output_sha256 })
+  } finally {
+    bytes.fill(0)
+  }
+  const { data: promotion, error: promotionError } = await input.supabase.rpc(
+    "promote_ebay_mayel_visual_asset_v1", {
+      p_account_key: input.accountKey,
+      p_actor_user_id: input.actorUserId,
+      p_task_id: input.taskId,
+      p_asset_id: input.assetId,
+      p_public_path: publicPath,
+      p_public_url: publicUrl,
+      p_qa_result: approvalQa,
+      p_manifest: manifest,
+      p_manifest_digest: manifest.visualManifestDigest,
+    })
+  if (promotionError || !promotion) {
+    await removeUncommittedPublicUpload({ supabase: input.supabase,
+      path: publicPath })
     throw new Error("MAYEL_VISUAL_APPROVAL_PERSIST_FAILED")
   }
-  return { asset: approved,
-    manifest: await refreshManifest({ supabase: input.supabase, task }),
-    idempotent: false }
+  const result = record(promotion)
+  const approved = record(result.asset)
+  if (!uuid(approved.id) || approved.status !== "approved") {
+    throw new Error("MAYEL_VISUAL_APPROVAL_READBACK_FAILED")
+  }
+  return { asset: approved, manifest: record(result.manifest),
+    idempotent: result.idempotent === true }
 }
 
 export async function readMayelVisualWorkstationV1(input: {

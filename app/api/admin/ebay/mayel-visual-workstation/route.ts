@@ -56,6 +56,26 @@ function safeOperatorMessage(error: unknown) {
     "MAYEL_VISUAL_TASK_STATE_UPDATE_FAILED"].includes(code)) {
     return "El archivo llegó a cuarentena, pero no pudimos guardar su registro. No quedó un archivo parcial; puedes volver a intentarlo."
   }
+  if (code === "MAYEL_VISUAL_HUMAN_QA_INCOMPLETE") {
+    return "Completa todas las verificaciones de fidelidad antes de aprobar la imagen."
+  }
+  if (["MAYEL_VISUAL_STAGING_READ_FAILED",
+    "MAYEL_VISUAL_STAGING_READBACK_MISMATCH"].includes(code)) {
+    return "No pudimos recuperar de forma íntegra la imagen en cuarentena. Actualiza la pantalla antes de volver a intentarlo."
+  }
+  if (["MAYEL_VISUAL_CANONICAL_UPLOAD_FAILED",
+    "MAYEL_VISUAL_CANONICAL_PATH_CONFLICT"].includes(code)) {
+    return "No se pudo crear el recurso canónico de forma segura. La imagen sigue en revisión y puedes volver a intentarlo."
+  }
+  if (["MAYEL_VISUAL_APPROVAL_PERSIST_FAILED",
+    "MAYEL_VISUAL_APPROVAL_READBACK_FAILED",
+    "MAYEL_VISUAL_MANIFEST_ASSET_READ_FAILED",
+    "MAYEL_VISUAL_MANIFEST_PERSIST_FAILED"].includes(code)) {
+    return "No se pudo finalizar la aprobación y preparar la vista del owner. La imagen sigue disponible para volver a intentarlo."
+  }
+  if (code === "MAYEL_VISUAL_APPROVAL_COMPENSATION_FAILED") {
+    return "No pudimos confirmar un estado íntegro de la aprobación. Actualiza la pantalla antes de realizar otra acción."
+  }
   return "No pudimos completar esta acción visual. No se cambió ningún listing."
 }
 
