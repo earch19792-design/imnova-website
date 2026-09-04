@@ -358,7 +358,7 @@ async function readCompensatedPublicationFreshSafety(input: {
   })
 }
 
-async function verifyExactUnpublishedPublicationState(input: {
+async function readExactUnpublishedPublicationState(input: {
   approvedPayload: JsonRecord
   offerId: string
   sku: string
@@ -375,21 +375,10 @@ async function verifyExactUnpublishedPublicationState(input: {
     ),
     preflightEbayDraftSkuCollision(input.sku),
   ])
-  if (!inventory.safe) {
-    throw new Error(
-      "EBAY_FINAL_PUBLICATION_INVENTORY_EXACT_READBACK_MISMATCH",
-    )
-  }
-  if (!offer.safe) {
-    throw new Error(offer.blocker ||
-      "EBAY_FINAL_PUBLICATION_OFFER_EXACT_READBACK_MISMATCH")
-  }
-  if (!skuState.inventoryExists || skuState.offerCount !== 1) {
-    throw new Error(
-      "EBAY_FINAL_PUBLICATION_UNPUBLISHED_DRAFT_IDEMPOTENCY_MISMATCH",
-    )
-  }
+  const safe = inventory.safe && offer.safe
+    && skuState.inventoryExists && skuState.offerCount === 1
   return {
+    safe,
     inventory,
     offer,
     idempotency: {
@@ -398,7 +387,72 @@ async function verifyExactUnpublishedPublicationState(input: {
       duplicateInventoryItemCount: 0,
       duplicateOfferCount: skuState.offerCount - 1,
     },
+    error: safe
+      ? null
+      : !inventory.safe
+        ? "EBAY_FINAL_PUBLICATION_INVENTORY_EXACT_READBACK_MISMATCH"
+        : !offer.safe
+          ? offer.blocker ||
+            "EBAY_FINAL_PUBLICATION_OFFER_EXACT_READBACK_MISMATCH"
+          : "EBAY_FINAL_PUBLICATION_UNPUBLISHED_DRAFT_IDEMPOTENCY_MISMATCH",
+    upstreamStatus: !inventory.safe
+      ? inventory.httpStatus
+      : !offer.safe
+        ? offer.httpStatus
+        : Math.max(
+          Number(skuState.inventoryHttpStatus ?? 0),
+          Number(skuState.offersHttpStatus ?? 0),
+        ),
+    errorClass: !inventory.safe
+      ? inventory.errorClass
+      : !offer.safe
+        ? offer.errorClass
+        : "OFFER_STATE_MISMATCH",
+    retryable: !inventory.safe
+      ? inventory.retryable
+      : !offer.safe
+        ? offer.retryable
+        : false,
+    safeNextAction: !inventory.safe
+      ? inventory.safeNextAction
+      : !offer.safe
+        ? offer.safeNextAction
+        : "STOP_AND_REVIEW",
   }
+}
+
+async function verifyExactUnpublishedPublicationState(input: {
+  approvedPayload: JsonRecord
+  offerId: string
+  sku: string
+}) {
+  const readback = await readExactUnpublishedPublicationState(input)
+  if (!readback.safe) throw new Error(readback.error ??
+    "EBAY_FINAL_PUBLICATION_UNPUBLISHED_READBACK_FAILED")
+  return readback
+}
+
+function unpublishedReadbackFailureResponse(readback: Awaited<ReturnType<
+  typeof readExactUnpublishedPublicationState
+>>) {
+  const status = readback.retryable ? 503 : 409
+  return NextResponse.json({
+    success: false,
+    error: readback.error,
+    upstreamStatus: readback.upstreamStatus,
+    errorClass: readback.errorClass,
+    retryable: readback.retryable,
+    safeNextAction: readback.safeNextAction,
+    unpublishedReadback: readback,
+    safety: {
+      inventoryItemCreated: false,
+      offerCreated: false,
+      offerUpdated: false,
+      publishOfferCalled: false,
+      ebayWrites: 0,
+      canPublish: false,
+    },
+  }, { status })
 }
 
 async function readCategoryProductIdentifierPreflight(
@@ -2057,6 +2111,31 @@ export async function GET(req: Request) {
         && !correctedPackageRetryHistory
         ? await readCategoryProductIdentifierPreflight(approvedPayload)
         : null
+    let unpublishedReadback = null
+    if (
+      text(ledger?.phase) === "completed"
+      && !publication
+      && text(ledger?.offer_id)
+      && text(ledger?.sku)
+      && Object.keys(approvedPayload).length > 0
+    ) {
+      try {
+        unpublishedReadback = await readExactUnpublishedPublicationState({
+          approvedPayload,
+          offerId: text(ledger?.offer_id),
+          sku: text(ledger?.sku),
+        })
+      } catch (readError) {
+        unpublishedReadback = {
+          safe: false,
+          error: errorCode(readError),
+          upstreamStatus: 0,
+          errorClass: "AUTH_CAPABILITY",
+          retryable: false,
+          safeNextAction: "STOP_AND_REVIEW",
+        }
+      }
+    }
     return NextResponse.json({
       success: true,
       visualPublicationGate,
@@ -2069,6 +2148,7 @@ export async function GET(req: Request) {
       authenticatedPublicationRecovery,
       rejectedPublishOfficialReadback,
       rejectedPublishCategoryProductIdentifierPreflight,
+      unpublishedReadback,
       historicalPublicationAttempt: correctedPackageRetryHistory ? {
         id: correctedPackageRetryHistory.historical.publicationId,
         status: correctedPackageSafeRetry.oldAttemptStatus,
@@ -2139,21 +2219,31 @@ export async function POST(req: Request) {
   const action = text(body.action)
   try {
     if (action === "taxonomy_preflight") {
-      return taxonomyPreflight(body, auth.actor)
+      return await taxonomyPreflight(body, auth.actor)
     }
     if (action === "confirm_product_truth_evidence") {
-      return confirmProductTruthEvidence(body, auth.actor)
+      return await confirmProductTruthEvidence(body, auth.actor)
     }
-    if (action === "preview") return previewDraft(body, auth.actor)
-    if (action === "preflight") return preflightDraft(body, auth.actor)
-    if (action === "account_preflight") return preflightAccount(body, auth.actor)
-    if (action === "approve") return approveDraft(body, auth.actor)
-    if (action === "execute") return executeDraft(body, auth.actor)
-    if (action === "prepare_publish") return prepareFinalPublication(body, auth.actor)
-    if (action === "publish") return publishFinalPublication(body, auth.actor)
-    if (action === "rearm_publish") return rearmFinalPublication(body, auth.actor)
-    if (action === "reconcile_publish") return reconcileFinalPublication(body, auth.actor)
-    if (action === "revoke") return revokeApproval(body, auth.actor)
+    if (action === "preview") return await previewDraft(body, auth.actor)
+    if (action === "preflight") return await preflightDraft(body, auth.actor)
+    if (action === "account_preflight") {
+      return await preflightAccount(body, auth.actor)
+    }
+    if (action === "approve") return await approveDraft(body, auth.actor)
+    if (action === "execute") return await executeDraft(body, auth.actor)
+    if (action === "prepare_publish") {
+      return await prepareFinalPublication(body, auth.actor)
+    }
+    if (action === "publish") {
+      return await publishFinalPublication(body, auth.actor)
+    }
+    if (action === "rearm_publish") {
+      return await rearmFinalPublication(body, auth.actor)
+    }
+    if (action === "reconcile_publish") {
+      return await reconcileFinalPublication(body, auth.actor)
+    }
+    if (action === "revoke") return await revokeApproval(body, auth.actor)
     return jsonError(new Error("EBAY_DRAFT_ONLY_ACTION_INVALID"), 400)
   } catch (error) {
     return jsonError(error)

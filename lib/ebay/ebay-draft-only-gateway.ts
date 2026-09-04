@@ -807,6 +807,30 @@ function containsExpected(actual: unknown, expected: unknown): boolean {
   return actual === expected
 }
 
+export function ebayReadbackMismatchPathsV1(
+  actual: unknown,
+  expected: unknown,
+  path = "$",
+): string[] {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return [path]
+    const mismatches = expected.flatMap((value, index) =>
+      ebayReadbackMismatchPathsV1(actual[index], value, `${path}[${index}]`))
+    return actual.length === expected.length
+      ? mismatches
+      : [...mismatches, `${path}.length`]
+  }
+  if (expected && typeof expected === "object") {
+    if (!actual || typeof actual !== "object" || Array.isArray(actual)) {
+      return [path]
+    }
+    const actualRecord = actual as JsonRecord
+    return Object.entries(expected as JsonRecord).flatMap(([key, value]) =>
+      ebayReadbackMismatchPathsV1(actualRecord[key], value, `${path}.${key}`))
+  }
+  return actual === expected ? [] : [path]
+}
+
 async function verifyInventoryItemWithToken(
   config: GatewayConfig,
   token: string,
@@ -819,16 +843,40 @@ async function verifyInventoryItemWithToken(
     config.apiOrigin,
   )
   const result = await preflightRead(config, token, url, fetchImpl)
-  const safe = result.ok && containsExpected(result.body, expectedPayload)
+  const mismatchFields = result.ok
+    ? ebayReadbackMismatchPathsV1(result.body, expectedPayload).slice(0, 24)
+    : []
+  const safe = result.ok && mismatchFields.length === 0
   return {
     safe,
     absent: result.status === 404,
     httpStatus: result.status,
+    mismatchFields,
+    errorIds: readErrorIds(result),
+    errorClass: safe
+      ? null
+      : result.status === 401 || result.status === 403
+        ? "AUTH_CAPABILITY"
+        : result.status === 429
+          ? "RATE_LIMIT"
+          : result.status === 0 || result.status >= 500
+            ? "EBAY_UPSTREAM_READ_FAILURE"
+            : result.ok
+              ? "INVENTORY_ITEM_MISMATCH"
+              : "INVENTORY_ITEM_READ_FAILURE",
+    retryable: result.status === 0 || TRANSIENT_STATUSES.has(result.status),
+    safeNextAction: result.ok && mismatchFields.length > 0
+      ? "REVIEW_MISMATCH_WITHOUT_RECREATING_INVENTORY"
+      : result.status === 429 || result.status === 0 || result.status >= 500
+        ? "RETRY_READ_LATER"
+        : "STOP_AND_REVIEW",
     blocker: safe
       ? ""
       : result.status === 404
         ? "EBAY_INVENTORY_WRITE_CONFIRMED_ABSENT"
-        : "EBAY_INVENTORY_OUTCOME_UNKNOWN",
+        : result.ok
+          ? "EBAY_INVENTORY_EXACT_PAYLOAD_MISMATCH"
+          : "EBAY_INVENTORY_READ_FAILED",
   }
 }
 
@@ -1348,6 +1396,9 @@ async function verifyOfferWithToken(
     && offerIdMatches
   const payloadMatches = !expectedPayload
     || containsExpected(result.body, expectedPayload)
+  const mismatchFields = result.ok && expectedPayload
+    ? ebayReadbackMismatchPathsV1(result.body, expectedPayload).slice(0, 24)
+    : []
   const safe = result.ok
     && status === "UNPUBLISHED"
     && !listingPresent
@@ -1363,6 +1414,26 @@ async function verifyOfferWithToken(
     sku: returnedSku,
     marketplaceId: returnedMarketplaceId,
     payloadMatches,
+    mismatchFields,
+    errorIds: readErrorIds(result),
+    errorClass: safe
+      ? null
+      : result.status === 401 || result.status === 403
+        ? "AUTH_CAPABILITY"
+        : result.status === 429
+          ? "RATE_LIMIT"
+          : result.status === 0 || result.status >= 500
+            ? "EBAY_UPSTREAM_READ_FAILURE"
+            : publicationIncident
+              ? "OFFER_STATE_MISMATCH"
+              : !identityMatches
+                ? "OFFER_IDENTITY_MISMATCH"
+                : "OFFER_PAYLOAD_MISMATCH",
+    retryable: result.status === 0 || TRANSIENT_STATUSES.has(result.status),
+    safeNextAction: result.status === 429 || result.status === 0
+      || result.status >= 500
+      ? "RETRY_READ_LATER"
+      : "STOP_AND_REVIEW",
     blocker: safe
       ? ""
       : publicationIncident
