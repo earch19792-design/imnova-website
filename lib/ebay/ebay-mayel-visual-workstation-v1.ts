@@ -242,11 +242,14 @@ export function buildMayelChatGptVisualPromptV1(
     return Object.freeze({ role,
       status: supported ? "READY" as const :
         "BLOCKED_MISSING_EVIDENCE" as const,
-      requiredEvidence: role === "DETAIL" ? "source product identity" :
-        role === "PACKAGE_CONTENTS" ? "proven package contents" :
-          role === "DIMENSIONS" ? "proven dimensions" :
-            role === "PRIMARY_BENEFIT" ? "proven product benefit" :
-              "proven use case" })
+      requiredEvidence: role === "DETAIL" ?
+        "identidad del producto demostrada por las imágenes fuente" :
+        role === "PACKAGE_CONTENTS" ?
+          "contenido del paquete demostrado" :
+          role === "DIMENSIONS" ? "dimensiones demostradas" :
+            role === "PRIMARY_BENEFIT" ?
+              "beneficio del producto demostrado" :
+              "caso de uso demostrado" })
   })
   const facts = (label: string, values: readonly string[]) =>
     `${label}: ${values.length ? values.join(" | ") :
@@ -269,7 +272,6 @@ export function buildMayelChatGptVisualPromptV1(
     return claim.replace(/: UNPROVEN$/u, ": NO DEMOSTRADO")
   }
   const textValue = [
-    "MAYEL_CHATGPT_VISUAL_PROMPT_V1",
     "Actúa como director de arte especializado en fotografía comercial para e-commerce.",
     "Trabaja con exactamente UN producto en esta conversación nueva de ChatGPT.",
     "Mantén el producto exactamente igual a las imágenes fuente.",
@@ -277,6 +279,7 @@ export function buildMayelChatGptVisualPromptV1(
     "Nunca uses una imagen generada anteriormente como única autoridad del producto.",
     "Antes de generar cualquier imagen, valida qué slots cuentan con evidencia suficiente.",
     "Genera una imagen por vez y espera aprobación antes de continuar.",
+    "Contrato interno: MAYEL_CHATGPT_VISUAL_PROMPT_V1",
     "",
     `Producto: ${pack.productTitle}`,
     `Seller OS SKU: ${pack.sku}`,
@@ -313,7 +316,20 @@ export function buildMayelChatGptVisualPromptV1(
     ...pack.prohibitedOrUnprovenClaims.map((claim) =>
       `- ${localizedClaim(claim)}`),
     "",
+    "AUTOCOMPROBACIÓN ANTES DE ENTREGAR CADA IMAGEN:",
+    "- Confirma que la identidad, el color, la forma, los logos visibles, la variante y la cantidad de piezas coinciden con las imágenes fuente.",
+    "- Confirma que no agregaste accesorios, texto, medidas, materiales, funciones ni beneficios no demostrados.",
+    "- Confirma que la imagen cumple el propósito del slot solicitado.",
+    "- Si alguna comprobación falla, no entregues esa imagen; corrígela usando nuevamente las imágenes fuente originales.",
+    "",
+    "INSTRUCCIONES DE APROBACIÓN:",
+    "- Presenta una sola imagen por vez y espera la revisión de Mayel antes de continuar con el siguiente slot.",
+    "- Mayel comparará cada resultado contra las imágenes originales y podrá aprobarlo o rechazarlo.",
+    "- Una aprobación visual no autoriza cambios en eBay.",
+    "",
+    "INSTRUCCIONES FINALES:",
     "Mantén sin cambios la imagen principal actual. Estos resultados son imágenes secundarias para revisión humana en Seller OS.",
+    "No generes slots bloqueados por falta de evidencia y no sustituyas hechos desconocidos con suposiciones.",
   ].join("\n")
   return Object.freeze({ contractVersion: MAYEL_CHATGPT_VISUAL_PROMPT_VERSION,
     text: textValue, digest: mayelVisualDigestV1(textValue), slots,

@@ -139,13 +139,61 @@ async function existingOpenTask(input: {
   return data as JsonRecord | null
 }
 
+function canonicalPromptForTask(task: JsonRecord) {
+  const evidence = record(task.evidence_pack)
+  const prompt = buildMayelChatGptVisualPromptV1(
+    evidence as MayelProductEvidencePackV1,
+  )
+  return { evidence, prompt }
+}
+
+async function reconcileCanonicalPrompt(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorUserId: string
+  task: JsonRecord
+}) {
+  const { prompt } = canonicalPromptForTask(input.task)
+  if (input.task.prompt_contract_version === prompt.contractVersion &&
+      input.task.prompt_text === prompt.text &&
+      input.task.prompt_digest === prompt.digest) return input.task
+  if (input.task.status !== "PROMPT_READY") {
+    throw new Error("MAYEL_VISUAL_PROMPT_RECONCILIATION_REVIEW_REQUIRED")
+  }
+  const { data, error } = await input.supabase
+    .from("ebay_mayel_visual_tasks_v1")
+    .update({ prompt_contract_version: prompt.contractVersion,
+      prompt_text: prompt.text, prompt_digest: prompt.digest,
+      updated_at: new Date().toISOString() })
+    .eq("id", input.task.id)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("assigned_operator_user_id", input.actorUserId)
+    .eq("prompt_digest", input.task.prompt_digest)
+    .select("*").maybeSingle()
+  if (error) throw new Error("MAYEL_VISUAL_PROMPT_RECONCILE_FAILED")
+  if (data) return data as JsonRecord
+  const { data: concurrent, error: concurrentError } = await input.supabase
+    .from("ebay_mayel_visual_tasks_v1").select("*")
+    .eq("id", input.task.id)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("assigned_operator_user_id", input.actorUserId).maybeSingle()
+  if (concurrentError || !concurrent ||
+      concurrent.prompt_contract_version !== prompt.contractVersion ||
+      concurrent.prompt_text !== prompt.text ||
+      concurrent.prompt_digest !== prompt.digest) {
+    throw new Error("MAYEL_VISUAL_PROMPT_RECONCILE_CONFLICT")
+  }
+  return concurrent as JsonRecord
+}
+
 export async function ensureMayelVisualTaskV1(input: {
   supabase: SupabaseClient
   accountKey: string
   actorUserId: string
 }) {
   const existing = await existingOpenTask(input)
-  if (existing) return { created: false, task: existing,
+  if (existing) return { created: false,
+    task: await reconcileCanonicalPrompt({ ...input, task: existing }),
     canaryAvailable: true }
 
   const { data: signalRows, error: signalError } = await input.supabase
@@ -246,7 +294,8 @@ export async function ensureMayelVisualTaskV1(input: {
       canaryAvailable: true }
     if (createError?.code === "23505") {
       const reconciled = await existingOpenTask(input)
-      if (reconciled) return { created: false, task: reconciled,
+      if (reconciled) return { created: false,
+        task: await reconcileCanonicalPrompt({ ...input, task: reconciled }),
         canaryAvailable: true }
     }
     throw new Error("MAYEL_VISUAL_TASK_CREATE_FAILED")
@@ -563,10 +612,12 @@ export async function readMayelVisualWorkstationV1(input: {
       }
       outputs.push({ ...output, previewUrl, previewExpiresInSeconds })
     }
-    const evidence = record(task.evidence_pack)
-    const promptContract = buildMayelChatGptVisualPromptV1(
-      evidence as MayelProductEvidencePackV1,
-    )
+    const { evidence, prompt: promptContract } = canonicalPromptForTask(task)
+    if (task.prompt_contract_version !== promptContract.contractVersion ||
+        task.prompt_text !== promptContract.text ||
+        task.prompt_digest !== promptContract.digest) {
+      throw new Error("MAYEL_VISUAL_PROMPT_RECONCILIATION_REQUIRED")
+    }
     const sourceImages = []
     for (const rawSource of (Array.isArray(task.source_image_references)
       ? task.source_image_references : [])) {
