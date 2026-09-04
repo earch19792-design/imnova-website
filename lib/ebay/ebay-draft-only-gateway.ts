@@ -794,11 +794,13 @@ async function preflightSkuCollisionWithToken(
 
 function containsExpected(actual: unknown, expected: unknown): boolean {
   if (Array.isArray(expected)) {
+    if (expected.length === 0) return true
     return Array.isArray(actual)
       && actual.length === expected.length
       && expected.every((value, index) => containsExpected(actual[index], value))
   }
   if (expected && typeof expected === "object") {
+    if (Object.keys(expected).length === 0) return true
     if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false
     const actualRecord = actual as JsonRecord
     return Object.entries(expected as JsonRecord)
@@ -813,6 +815,7 @@ export function ebayReadbackMismatchPathsV1(
   path = "$",
 ): string[] {
   if (Array.isArray(expected)) {
+    if (expected.length === 0) return []
     if (!Array.isArray(actual)) return [path]
     const mismatches = expected.flatMap((value, index) =>
       ebayReadbackMismatchPathsV1(actual[index], value, `${path}[${index}]`))
@@ -821,6 +824,7 @@ export function ebayReadbackMismatchPathsV1(
       : [...mismatches, `${path}.length`]
   }
   if (expected && typeof expected === "object") {
+    if (Object.keys(expected).length === 0) return []
     if (!actual || typeof actual !== "object" || Array.isArray(actual)) {
       return [path]
     }

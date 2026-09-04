@@ -92,7 +92,7 @@ test("workspace shows COMPLETED, seven previews and one publication control in f
   assert.match(visualAccess, /input\.generationControlsHidden === true/)
   assert.match(visualAccess, /images\.length === V3_FINAL_ASSET_ROLES\.length/)
   assert.match(workspace, /Inventory Item y Offer todavía no existen/)
-  assert.match(workspace, /Inventory Item \+ Offer UNPUBLISHED creados y verificados/)
+  assert.match(workspace, /Inventory Item \+ Offer UNPUBLISHED registrados/)
   assert.match(workspace, /Ejecución registrada · fase/)
   assert.match(workspace, /data-v3-one-click-publication/)
   assert.match(workspace, /PUBLICAR EN EBAY/)

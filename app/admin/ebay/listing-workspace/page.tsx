@@ -268,6 +268,17 @@ type DraftState = {
     reusesExistingHumanApproval: boolean
     newHumanApprovalAllowed: false
   }
+  unpublishedReadback?: {
+    safe: boolean
+    error?: string | null
+    upstreamStatus?: number | null
+    errorClass?: string | null
+    retryable?: boolean | null
+    safeNextAction?: string | null
+    inventory?: { safe?: boolean; httpStatus?: number; mismatchFields?: string[] }
+    offer?: { safe?: boolean; httpStatus?: number; status?: string; listingId?: string | null; mismatchFields?: string[] }
+    idempotency?: { offerCountForReservedSku?: number; duplicateOfferCount?: number }
+  } | null
   compensatedOfferFreshReadEligibility?: {
     eligible: boolean
     reasonCode: string
@@ -796,13 +807,6 @@ function humanFinalPublicationError(error: unknown) {
   ]
   return messages.find(([candidate]) => code.includes(candidate))?.[1]
     ?? getMobileReviewRequestError(error, "No se pudo completar la publicación autorizada.")
-}
-
-function authenticatedPublicationRecoveryError(error: unknown) {
-  const code = error instanceof Error ? error.message : String(error ?? "")
-  return code
-    ? `${code} · ${humanFinalPublicationError(error)}`
-    : humanFinalPublicationError(error)
 }
 
 function fromPackage(value: Record<string, unknown>): FormState {
@@ -1467,7 +1471,6 @@ function ListingWorkspacePageContent() {
   const publicationIntentScrolled = useRef(false)
   const oneClickPublicationApprovalKey = useRef<string | null>(null)
   const compensatedPublicationRearmRun = useRef("")
-  const authenticatedPublicationRecoveryRun = useRef("")
   const lunaSupplierImageRun = useRef("")
   const publicationLunaRecheckRequired = useRef(false)
   const accountPolicyProfileSaved = useRef(false)
@@ -2659,6 +2662,16 @@ function ListingWorkspacePageContent() {
     || !productionTarget
     || (publicationPhase === "terminal_failure"
       && !correctedPackageSafeRetryReady)
+  const controlledPublicationCtaLabel = publicationAutomationBusy
+    ? "SISTEMA EN OPERACIÓN"
+    : ["publish_in_flight", "outcome_unknown",
+        "published_pending_verification"].includes(publicationPhase)
+      ? "VERIFICAR PUBLICACIÓN EN EBAY"
+      : publicationPhase === "preview_ready"
+        ? "AUTORIZAR PUBLICACIÓN FINAL"
+        : executionCompleted
+          ? "VALIDAR DRAFT Y PREPARAR PREVIEW"
+          : "AUTORIZAR DRAFT NO PUBLICADO"
   const publicationButtonBlockReason = !listingPackage
     ? "El paquete V3 aprobado todavía no terminó de cargarse."
     : !quickPickCanonicalMode &&
@@ -3845,6 +3858,8 @@ function ListingWorkspacePageContent() {
     let nextExecution = draftState.execution
     let nextPublication = draftState.publication
     let rearmedSelfLineageAuthorization = false
+    let unpublishedDraftCreatedThisClick = false
+    let previewPreparedThisClick = false
     try {
       if (nextPublication?.phase === "monitor_registered") {
         setPublicationAutomationPhase("complete")
@@ -3975,6 +3990,7 @@ function ListingWorkspacePageContent() {
           idempotencyKey: `execution:${nextApproval.id}`,
         })
         nextExecution = executed.execution
+        unpublishedDraftCreatedThisClick = true
         setDraftState((current) => ({
           ...current,
           ...executed,
@@ -3985,6 +4001,26 @@ function ListingWorkspacePageContent() {
       if (!nextExecution?.id || nextExecution.phase !== "completed") {
         throw new Error(nextExecution?.last_error_code
           ?? "EBAY_ONE_CLICK_UNPUBLISHED_EXECUTION_NOT_COMPLETED")
+      }
+      if (unpublishedDraftCreatedThisClick) {
+        const refreshed = await draftRequest(
+          undefined,
+          listingPackage.id,
+          opportunity.id,
+          opportunity.candidate_key,
+        )
+        if (
+          refreshed.unpublishedReadback?.safe !== true
+          || String(refreshed.execution?.offer_id ?? "") !==
+            String(nextExecution.offer_id ?? "")
+        ) throw new Error(refreshed.unpublishedReadback?.error
+          ?? "EBAY_UNPUBLISHED_READBACK_FAILED")
+        setDraftState((current) => ({ ...current, ...refreshed }))
+        setPublicationAutomationPhase("preview")
+        setMessage(
+          `Offer ${nextExecution.offer_id} UNPUBLISHED verificado. Revisa y confirma el siguiente paso cuando quieras preparar la publicación final.`,
+        )
+        return
       }
 
       if (!nextPublication?.id || nextPublication.phase !== "preview_ready") {
@@ -3997,6 +4033,7 @@ function ListingWorkspacePageContent() {
           executionId: nextExecution.id,
         })
         nextPublication = prepared.publication
+        previewPreparedThisClick = true
         setDraftState((current) => ({
           ...current,
           publication: prepared.publication,
@@ -4005,6 +4042,13 @@ function ListingWorkspacePageContent() {
       }
       if (!nextPublication?.id || nextPublication.phase !== "preview_ready") {
         throw new Error("EBAY_FINAL_PUBLICATION_PREVIEW_NOT_READY")
+      }
+      if (previewPreparedThisClick) {
+        setPublicationAutomationPhase("preview")
+        setMessage(
+          "Preview final preparado y ligado al Offer existente. Revísalo y vuelve a autorizar únicamente si deseas publicar.",
+        )
+        return
       }
 
       setPublicationAutomationPhase("publishing")
@@ -4079,135 +4123,6 @@ function ListingWorkspacePageContent() {
       setDraftBusy(false)
     }
   }
-
-  useEffect(() => {
-    const recovery = draftState.authenticatedPublicationRecovery
-    if (!recovery) return
-    if (
-      recovery.state !== "RESUMABLE_AUTHORIZED_PUBLICATION"
-      || recovery.autoResume !== true
-    ) {
-      if (recovery.blocker) {
-        setError(authenticatedPublicationRecoveryError(
-          new Error(recovery.blocker),
-        ))
-        setMessage("")
-      }
-      return
-    }
-    const executionId = String(recovery.executionId ?? "")
-    const approvalId = String(recovery.approvalId ?? "")
-    const offerId = String(recovery.offerId ?? "")
-    const authorizedPayloadHash = String(
-      recovery.authorizedPayloadHash ?? "",
-    )
-    if (
-      !listingPackage
-      || !opportunity
-      || !executionId
-      || !approvalId
-      || !offerId
-      || !authorizedPayloadHash
-      || recovery.canonicalStockAuthorized !== true
-      || recovery.reusesExistingHumanApproval !== true
-      || recovery.newHumanApprovalAllowed !== false
-      || recovery.listingPackageId !== listingPackage.id
-      || recovery.opportunityId !== opportunity.id
-      || recovery.candidateKey !== opportunity.candidate_key
-    ) return
-    const runKey = `${executionId}:${offerId}:${authorizedPayloadHash}`
-    if (authenticatedPublicationRecoveryRun.current === runKey) return
-    authenticatedPublicationRecoveryRun.current = runKey
-    setPublicationAutomationBusy(true)
-    setDraftBusy(true)
-    setPublicationAutomationFailed(false)
-    setPublicationAutomationStartedAt(Date.now())
-    setPublicationAutomationElapsed(0)
-    setPublicationAutomationPhase("preview")
-    setPublicationAutomationStep(
-      "Recuperando autorización existente · GET oficial de Inventory Item y Offer…",
-    )
-    setError("")
-    setMessage("")
-    void (async () => {
-      try {
-        const prepared = await draftRequest({
-          action: "prepare_publish",
-          executionId,
-        })
-        const preparedPublication = prepared.publication
-        if (
-          !preparedPublication?.id
-          || preparedPublication.phase !== "preview_ready"
-          || String(preparedPublication.offer_id ?? "") !== offerId
-          || String(preparedPublication.draft_execution_id ?? "") !==
-            executionId
-        ) throw new Error("EBAY_AUTHENTICATED_RECOVERY_OFFER_MISMATCH")
-        setDraftState((current) => ({
-          ...current,
-          publication: preparedPublication,
-          publicationRequirements: prepared.publicationRequirements,
-        }))
-        setPublicationAutomationPhase("publishing")
-        setPublicationAutomationStep(
-          "Autorización recuperada · preflight final, claim atómico y publish one-shot…",
-        )
-        const published = await draftRequest({
-          action: "publish",
-          publicationId: preparedPublication.id,
-          idempotencyKey: `publish:${preparedPublication.id}`,
-          authorizationSurface:
-            "SELLER_OS_SMART_STOCKING_ONE_CLICK_PUBLICATION_V1",
-        })
-        if (
-          String(published.publication?.offer_id ?? "") !== offerId
-          || published.listing?.status !== "ACTIVE"
-          || published.monitoring?.registered !== true
-        ) throw new Error("EBAY_AUTHENTICATED_RECOVERY_ACTIVE_REQUIRED")
-        setDraftState((current) => ({
-          ...current,
-          publication: published.publication,
-          authenticatedPublicationRecovery: {
-            ...recovery,
-            state: "ACTIVE_VERIFIED",
-            autoResume: false,
-            blocker: null,
-          },
-        }))
-        setPublicationAutomationPhase("complete")
-        setMessage(
-          `Listing ${published.listing.listingId} ACTIVE, enlazado y monitoreado usando la autorización existente.`,
-        )
-      } catch (requestError) {
-        const code = requestError instanceof Error
-          ? requestError.message
-          : "EBAY_AUTHENTICATED_RECOVERY_FAILED"
-        setDraftState((current) => ({
-          ...current,
-          authenticatedPublicationRecovery: {
-            ...recovery,
-            state: code.includes("RECONCILIATION_REQUIRED")
-              ? "PUBLISH_ALREADY_CLAIMED"
-              : "RECOVERY_BLOCKED",
-            autoResume: false,
-            blocker: code,
-          },
-        }))
-        setPublicationAutomationFailed(true)
-        setError(authenticatedPublicationRecoveryError(requestError))
-        setMessage("")
-      } finally {
-        setPublicationAutomationStep("")
-        setPublicationAutomationBusy(false)
-        setDraftBusy(false)
-      }
-    })()
-  }, [
-    draftRequest,
-    draftState.authenticatedPublicationRecovery,
-    listingPackage,
-    opportunity,
-  ])
 
   async function approveDraft() {
     if (!listingPackage) return
@@ -5061,7 +4976,7 @@ function ListingWorkspacePageContent() {
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Oportunidad vigente</dt><dd className="mt-1 font-black">{String(finalReviewOpportunity.status ?? "PENDIENTE")}</dd></div>
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Mercado/demanda</dt><dd className="mt-1 font-black">{String(finalReviewMarketDemand.status ?? "PENDIENTE")}</dd></div>
         </dl>
-        <p className={`rounded-xl border p-3 text-xs ${executionCompleted ? "border-emerald-200/25 bg-emerald-200/[0.07] text-emerald-50" : unpublishedExecutionExists ? "border-amber-200/25 bg-amber-200/[0.07] text-amber-50" : "border-white/15 bg-black/20 text-white/65"}`}>{executionCompleted ? "Inventory Item + Offer UNPUBLISHED creados y verificados; la automatización continuará desde el preview final." : unpublishedExecutionExists ? `Ejecución registrada · fase ${unpublishedExecutionPhase || "PENDIENTE"}. El botón único la reanudará o reconciliará sin duplicarla.` : "Inventory Item y Offer todavía no existen. El botón único realizará la secuencia completa después de revalidar todas las puertas."}</p>
+        <p className={`rounded-xl border p-3 text-xs ${executionCompleted ? "border-emerald-200/25 bg-emerald-200/[0.07] text-emerald-50" : unpublishedExecutionExists ? "border-amber-200/25 bg-amber-200/[0.07] text-amber-50" : "border-white/15 bg-black/20 text-white/65"}`}>{executionCompleted ? "Inventory Item + Offer UNPUBLISHED registrados. Seller OS los vuelve a leer, pero no continúa sin otro clic del owner." : unpublishedExecutionExists ? `Ejecución registrada · fase ${unpublishedExecutionPhase || "PENDIENTE"}. Una acción explícita la reanudará o reconciliará sin duplicarla.` : "Inventory Item y Offer todavía no existen. La primera autorización sólo llega hasta el readback UNPUBLISHED."}</p>
       </section>
       </details>
       {canonicalReadinessAvailable && (listingReadyUi.listingReady || publicationLifecycleStarted) && <section data-v3-one-click-publication data-unpublished-preflight-state={unpublishedPreflightState} className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.07] p-3">
@@ -5477,8 +5392,10 @@ function ListingWorkspacePageContent() {
               <dl className="grid gap-2 text-xs sm:grid-cols-2"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Package</dt><dd className="break-all font-black">{listingPackage.id}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Marketplace / cuenta</dt><dd className="font-black">{marketplaceAccountLabel}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Precio / cantidad</dt><dd className="font-black">USD {Number(form.pricing.targetPrice ?? 0).toFixed(2)} · {effectiveDraftQuantity}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Policies</dt><dd className="break-all font-black">{draftConfiguration.fulfillmentPolicyId || "pendiente"} · {draftConfiguration.paymentPolicyId || "pendiente"} · {draftConfiguration.returnPolicyId || "pendiente"}</dd></div></dl>
               {currentWorkspaceHeaderSafeRetry && <div data-corrected-package-safe-retry className="rounded-xl border border-emerald-200/35 bg-emerald-200/[0.09] p-3 text-emerald-50"><strong>LISTO PARA REINTENTO SEGURO</strong><p className="mt-2 text-sm">Intento anterior: falló por UPC requerido · <strong>RESUELTO</strong></p><ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><li>UPC {canonicalUpc || "confirmado"} ✓</li><li>Category Policy ✓</li><li>Package confirmado ✓</li><li>Offer UNPUBLISHED ✓</li></ul><p className="mt-2 text-xs text-emerald-50/70">El próximo clic actualizará el mismo Inventory SKU, verificará el UPC por GET y reutilizará el mismo Offer. No creará otro Offer.</p></div>}
               <PublicationLaunchVisualizer phase={publicationVisualizerPhase} busy={publicationAutomationBusy} failed={publicationAutomationFailed} elapsedSeconds={publicationAutomationElapsed} productImageUrl={publicationProductImageUrl} status={publicationAutomationStep} />
-              {publicationPhase === "monitor_registered" ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p></div> : <button type="button" disabled={singleHumanPublicationButtonDisabled} onClick={() => void publishSmartStockingWithSingleAuthorization()} className="min-h-16 w-full rounded-2xl bg-rose-200 px-4 text-lg font-black text-black disabled:opacity-40">{publicationAutomationBusy ? "SISTEMA EN OPERACIÓN" : ["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) ? "VERIFICAR PUBLICACIÓN EN EBAY" : "PUBLICAR EN EBAY"}</button>}
-              <p className="text-xs leading-5 text-rose-50/65">No existe autorización desatendida: el primer clic es obligatorio. Después, Seller OS exige readback oficial exacto del Inventory Item y Offer UNPUBLISHED, publish one-shot y readback ACTIVE antes de persistir Item ID y activar monitoreo.</p>
+              {publicationPhase === "monitor_registered" ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p></div> : <button type="button" disabled={singleHumanPublicationButtonDisabled} onClick={() => void publishSmartStockingWithSingleAuthorization()} className="min-h-16 w-full rounded-2xl bg-rose-200 px-4 text-lg font-black text-black disabled:opacity-40">{controlledPublicationCtaLabel}</button>}
+              <p className="text-xs leading-5 text-rose-50/65">Cada etapa requiere una acción explícita: primero se crea y verifica el Offer UNPUBLISHED; después se prepara el preview; sólo un clic posterior puede ejecutar publish one-shot. Recargar o volver a esta pantalla nunca continúa una escritura.</p>
+              {executionCompleted && !draftState.publication && draftState.unpublishedReadback?.safe === true && <div data-current-unpublished-readback className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Draft no publicado validado ahora ✓</strong><p className="mt-1 text-xs">El Inventory Item y el Offer {draftState.execution?.offer_id} coinciden con el package autorizado. Actualizar esta pantalla sólo repite lecturas.</p></div>}
+              {executionCompleted && !draftState.publication && draftState.unpublishedReadback && draftState.unpublishedReadback.safe !== true && <div data-current-unpublished-readback-error className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-amber-50"><strong>No se pudo validar el draft no publicado</strong><p className="mt-1 text-xs">{draftState.unpublishedReadback.errorClass === "EBAY_UPSTREAM_READ_FAILURE" ? "eBay temporalmente no respondió. No se creó otro Offer." : draftState.unpublishedReadback.errorClass === "INVENTORY_ITEM_MISMATCH" || draftState.unpublishedReadback.errorClass === "OFFER_PAYLOAD_MISMATCH" ? "El contenido oficial no coincide con el package autorizado. No se creó otro Offer." : "Seller OS detuvo la continuación para revisión. No se creó otro Offer."}</p></div>}
             </div>}
             {!singleHumanPublicationEligible && draftState.readiness?.ready && !approvalActive && !executionCompleted && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: {expectedApprovalPhrase}</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que este primer permiso no publica; la publicación final requerirá otra autorización.</label>{productionTarget && <label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmProductionAccount} onChange={(event) => setConfirmProductionAccount(event.target.checked)} />Confirmo que {draftTarget} es mi cuenta real: autorizo crear Inventory Item + Offer API UNPUBLISHED, sin publicarlo.</label>}<button type="button" disabled={draftBusy || approvalPhrase !== expectedApprovalPhrase || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized || (productionTarget && !confirmProductionAccount)} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar {draftTarget} por 15 minutos</button></div>}
             {canonicalReadinessAvailable && !singleHumanPublicationEligible && approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">Autorización registrada; ejecución pendiente. El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">{unpublishedExecutionButtonLabel}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}

@@ -4386,11 +4386,14 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
       [blocker],
     )
   }
-  const officialReadback = await verifyExactUnpublishedPublicationState({
+  const officialReadback = await readExactUnpublishedPublicationState({
     approvedPayload,
     offerId: built.offerId,
     sku: built.sku,
   })
+  if (!officialReadback.safe) {
+    return unpublishedReadbackFailureResponse(officialReadback)
+  }
   await revalidateFinalPublicationDependencies(
     supabase,
     context,

@@ -357,7 +357,7 @@ function recoveryResult(input: {
   return Object.freeze({
     version: EBAY_AUTHENTICATED_PUBLICATION_RECOVERY_VERSION,
     state: input.state,
-    autoResume: resumable,
+    autoResume: false,
     blocker: input.blocker ?? null,
     approvalId: text(input.approval.id) || null,
     executionId: text(input.execution.id) || null,
