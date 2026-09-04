@@ -1,6 +1,6 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+export const maxDuration = 300
 
 import {
   enforceListingAiRouteRateLimit,
@@ -41,6 +41,12 @@ import {
 } from "@/lib/ebay/ebay-product-fit-durable-promotion-v1"
 import { resumeRadarFactoryCandidateAfterShippingV1 } from
   "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
+import { continueLunaQuickPickPostShippingRuntimeV1 } from
+  "@/lib/ebay/ebay-quick-pick-post-shipping-continuation-v1"
+import { getEbayTaxonomyListingIntelligence } from
+  "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { preflightEbayCategoryProductIdentifiers } from
+  "@/lib/ebay/ebay-draft-only-gateway"
 
 function candidateIds(value: unknown) {
   return (Array.isArray(value) ? value : [])
@@ -195,8 +201,37 @@ export async function POST(req: Request) {
           marketplaceWrites: 0,
         })
       }
+      let postShippingContinuation: unknown = null
+      const continuationCandidateId = String(result.identity.candidateId ??
+        listingAiRecord(body.capture).candidateId ?? "")
+      if (economicsContinuation &&
+          listingAiRecord(economicsContinuation).status !== "EXCEPTION") {
+        try {
+          postShippingContinuation =
+            await continueLunaQuickPickPostShippingRuntimeV1({
+              supabase: auth.supabase,
+              accountKey: auth.accountKey,
+              candidateKeys: [continuationCandidateId],
+              taxonomyReader: getEbayTaxonomyListingIntelligence,
+              productIdentifierPolicyReader:
+                preflightEbayCategoryProductIdentifiers,
+            })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : ""
+          postShippingContinuation = Object.freeze({
+            contractVersion: "QUICK_PICK_POST_SHIPPING_CONTINUATION_V1",
+            status: "RETRYABLE_INCOMPLETE",
+            reasonCode: /^[A-Z][A-Z0-9_]{2,119}$/.test(message)
+              ? message : "QUICK_PICK_POST_SHIPPING_CONTINUATION_FAILED",
+            retryConsumerPresent: true,
+            overnightDependency: false,
+            marketplaceWrites: 0,
+          })
+        }
+      }
       return listingAiResponse({ success: true,
-        result: { ...result, economicsContinuation },
+        result: { ...result, economicsContinuation,
+          postShippingContinuation },
         safety: { cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
     }

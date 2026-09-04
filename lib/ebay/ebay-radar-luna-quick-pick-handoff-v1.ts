@@ -5,8 +5,11 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { buildLunaExactProductEvidenceSetV1 } from
   "./ebay-luna-full-page-required-facts-v1"
 import { completeLunaQuickPickBatchReceiptV1,
-  processLunaQuickPickBatchV1, receiveLunaQuickPickBatchV1 } from
+  processLunaQuickPickBatchV1, readLunaQuickPickProgressV1,
+  receiveLunaQuickPickBatchV1 } from
   "./ebay-luna-quick-pick-v1"
+import { continueLunaQuickPickPostShippingRuntimeV1 } from
+  "./ebay-quick-pick-post-shipping-continuation-v1"
 import { readAlreadyLiveExactLunaIdentitiesV1,
   readRadarRevenueFactoryLunaCatalogV1 } from
   "./ebay-opportunity-radar-revenue-factory-adapter-v1"
@@ -555,18 +558,37 @@ export async function runRadarLunaQuickPickHandoffCycleV1(input: Readonly<{
       })
       await completeLunaQuickPickBatchReceiptV1({ supabase: input.supabase,
         batchId: receipt.batchId, result: processed })
-      const card = processed.cards.find((entry) =>
+      const processedCard = processed.cards.find((entry) =>
         entry.lunaProductId === candidate.lunaProductId &&
         entry.lunaVariantId === candidate.lunaVariantId &&
         entry.sourceSku === candidate.lunaSku)
-      if (!card?.opportunityId) throw new Error(
+      if (!processedCard?.opportunityId) throw new Error(
         "RADAR_TO_QUICK_PICK_OPERATION_ID_MISSING")
+      await continueLunaQuickPickPostShippingRuntimeV1({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        candidateKeys: processed.cards.flatMap((entry) =>
+          entry.candidateKey && !entry.alreadyLive
+            ? [entry.candidateKey] : []),
+        taxonomyReader: input.taxonomyReader,
+        productIdentifierPolicyReader: input.productIdentifierPolicyReader,
+      })
+      const refreshedCards = processedCard.candidateKey
+        ? await readLunaQuickPickProgressV1({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          candidateKeys: [processedCard.candidateKey],
+          includeRecent: false,
+        }) : []
+      const card = refreshedCards.find((entry) =>
+        entry.candidateKey === processedCard.candidateKey) ?? processedCard
       aiCallCount += card.aiCallCount
-      quickPickOperationId = card.opportunityId
+      const operationId = card.opportunityId ?? processedCard.opportunityId
+      quickPickOperationId = operationId
       quickPickFinalCanaryState = card.disposition
       const persisted = await persistHandoff({ supabase: input.supabase,
         signal, candidate, evidence, batchId: receipt.batchId,
-        operationId: card.opportunityId, finalState: card.disposition })
+        operationId, finalState: card.disposition })
       quickPickHandoffCreated ||= persisted.created
       bestLunaCandidate = { familyId: signal.familyId,
         lunaProductId: candidate.lunaProductId,

@@ -16,8 +16,8 @@ import { completeLunaQuickPickBatchReceiptV1,
   "@/lib/ebay/ebay-luna-quick-pick-v1"
 import { buildSellerOsOnDemandCapabilityGapFallbackV1 } from
   "@/lib/ebay/ebay-demand-first-broad-net-orchestrator-v1"
-import { continueLunaQuickPickMinimumReadinessV1 } from
-  "@/lib/ebay/ebay-quick-pick-minimum-readiness-continuation-v1"
+import { continueLunaQuickPickPostShippingRuntimeV1 } from
+  "@/lib/ebay/ebay-quick-pick-post-shipping-continuation-v1"
 import { persistQuickPickOwnerExplicitFactV1 } from
   "@/lib/ebay/ebay-quick-pick-owner-fact-capture-v1"
 import { buildQuickPickOwnerReadModelV1,
@@ -438,10 +438,26 @@ export async function POST(req: Request) {
       const rehydration = await readLunaQuickPickBatchRehydrationV1({
         supabase, batchId,
       })
-      if (!rehydration.rehydrateUrls.length) return response({ success: true,
-        result: { inputCount: rehydration.originalBatchOperationCount,
-          cards: rehydration.storedCards },
+      if (!rehydration.rehydrateUrls.length) {
+        const postShippingContinuation =
+          await continueLunaQuickPickPostShippingRuntimeV1({
+            supabase, accountKey,
+            candidateKeys: rehydration.storedCards.flatMap((card) =>
+              card.candidateKey && !card.alreadyLive
+                ? [card.candidateKey] : []),
+            taxonomyReader: getEbayTaxonomyListingIntelligence,
+            productIdentifierPolicyReader:
+              preflightEbayCategoryProductIdentifiers,
+          })
+        return response({ success: true,
+          result: { inputCount: rehydration.originalBatchOperationCount,
+            cards: rehydration.storedCards },
         receipt: { batchId, cards: rehydration.storedCards },
+        postShippingContinuation,
+        requiredSpecificsContinuation:
+          postShippingContinuation.requiredSpecificsContinuation,
+        minimumReadinessContinuation:
+          postShippingContinuation.minimumReadinessContinuation,
         rehydration: { originalBatchOperationCount:
           rehydration.originalBatchOperationCount,
         rehydratedInputCount: 0, alreadyRehydrated: true,
@@ -449,6 +465,7 @@ export async function POST(req: Request) {
         marketplaceWrites: 0 },
         safety: { marketplaceWrites: 0, canPublish: false,
           customerProductionTouched: false } })
+      }
       const capabilityGaps = [...rehydration.capabilityGaps.values()]
       const partialResult = await processLunaQuickPickBatchV1({
         supabase, accountKey, urls: rehydration.rehydrateUrls,
@@ -489,15 +506,22 @@ export async function POST(req: Request) {
       const receipt = await completeLunaQuickPickBatchReceiptV1({
         supabase, batchId, result,
       })
-      const minimumReadinessContinuation =
-        await continueLunaQuickPickMinimumReadinessV1({
+      const postShippingContinuation =
+        await continueLunaQuickPickPostShippingRuntimeV1({
           supabase, accountKey,
           candidateKeys: result.cards.flatMap((card) =>
             card.candidateKey && !card.alreadyLive
               ? [card.candidateKey] : []),
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+          productIdentifierPolicyReader:
+            preflightEbayCategoryProductIdentifiers,
         })
       return response({ success: true, result, receipt,
-        minimumReadinessContinuation,
+        postShippingContinuation,
+        requiredSpecificsContinuation:
+          postShippingContinuation.requiredSpecificsContinuation,
+        minimumReadinessContinuation:
+          postShippingContinuation.minimumReadinessContinuation,
         rehydration: { originalBatchOperationCount:
           rehydration.originalBatchOperationCount,
         rehydratedInputCount: rehydration.rehydrateUrls.length,
@@ -527,14 +551,21 @@ export async function POST(req: Request) {
     const receipt = batchId
       ? await completeLunaQuickPickBatchReceiptV1({ supabase, batchId,
         result }) : null
-    const minimumReadinessContinuation =
-      await continueLunaQuickPickMinimumReadinessV1({
+    const postShippingContinuation =
+      await continueLunaQuickPickPostShippingRuntimeV1({
         supabase, accountKey,
         candidateKeys: result.cards.flatMap((card) =>
           card.candidateKey && !card.alreadyLive ? [card.candidateKey] : []),
+        taxonomyReader: getEbayTaxonomyListingIntelligence,
+        productIdentifierPolicyReader:
+          preflightEbayCategoryProductIdentifiers,
       })
     return response({ success: true, result, receipt,
-      minimumReadinessContinuation,
+      postShippingContinuation,
+      requiredSpecificsContinuation:
+        postShippingContinuation.requiredSpecificsContinuation,
+      minimumReadinessContinuation:
+        postShippingContinuation.minimumReadinessContinuation,
       safety: { marketplaceWrites: 0, canPublish: false,
         customerProductionTouched: false } })
   } catch (error) {
