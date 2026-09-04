@@ -9,6 +9,7 @@ import {
 import {
   ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
   applyPreparedVerifiedActiveListingTitle,
+  safeActiveListingTitleFailureMessage,
 } from "./ebay-active-listing-title-revision-service"
 import { buildVerifiedEbayTitle } from "./ebay-verified-title-strategy"
 import {
@@ -53,7 +54,7 @@ export type RemoteOperatorSafeMutationCanaryV1 = Readonly<{
   ownerApprovalRequired: true
   ownerApprovalStatus: "PENDING_OWNER_APPROVAL" | "AUTHORIZED" |
     "APPLYING" | "VERIFYING" | "CONFIRMED" | "INVALIDATED" |
-    "UNAVAILABLE"
+    "WRITE_FAILED" | "UNAVAILABLE"
   authorizationId: string | null
   authorizationVersion:
     typeof REMOTE_OPERATOR_SAFE_TITLE_CANARY_AUTHORIZATION_VERSION
@@ -70,6 +71,8 @@ export type RemoteOperatorSafeMutationCanaryV1 = Readonly<{
   doubleTapSafe: true
   officialReadbackRequired: true
   ambiguousOutcomeAutoRetry: false
+  failureCode: string | null
+  failureMessage: string | null
 }>
 
 type CanaryContext = Readonly<{
@@ -185,6 +188,7 @@ function authorizationStatus(row: JsonRecord | null) {
     return "VERIFYING" as const
   }
   if (phase === "applied_verified") return "CONFIRMED" as const
+  if (phase === "terminal_failure") return "WRITE_FAILED" as const
   return "UNAVAILABLE" as const
 }
 
@@ -371,6 +375,8 @@ export function selectRemoteOperatorSafeMutationCanaryV1(input: {
         ownerUserId: uuid(row.owner_approved_by),
       })) ?? null
     const status = authorizationStatus(authorization)
+    const failureCode = status === "WRITE_FAILED"
+      ? text(authorization?.last_error_code, 180) : ""
     const applyAvailable = status === "AUTHORIZED" && input.executionEnabled
     return Object.freeze({
       candidate: Object.freeze({
@@ -406,6 +412,9 @@ export function selectRemoteOperatorSafeMutationCanaryV1(input: {
         doubleTapSafe: true as const,
         officialReadbackRequired: true as const,
         ambiguousOutcomeAutoRetry: false as const,
+        failureCode: failureCode || null,
+        failureMessage: failureCode
+          ? safeActiveListingTitleFailureMessage(failureCode) : null,
       }),
       listingPackageId: uuid(packageRow.id),
       opportunityId: uuid(packageRow.opportunity_id),

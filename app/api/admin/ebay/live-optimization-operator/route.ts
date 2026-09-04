@@ -540,6 +540,12 @@ export async function POST(request: Request) {
           result.phase === "outcome_unknown" ? "VERIFYING_DO_NOT_RETRY" :
             result.phase === "write_in_flight" ?
               "APPLYING_DO_NOT_DOUBLE_TAP" : "NOT_APPLIED",
+        operatorMessage: verified
+          ? "Cambio confirmado ✓"
+          : verifying
+            ? "Estamos verificando el cambio. No vuelvas a pulsar."
+            : result.safeFailureMessage ??
+              "No se aplicó el cambio. El listing permanece sin cambios confirmados.",
         result,
         postActionReadbackPass: verified,
         currentValuePreconditionMatch:

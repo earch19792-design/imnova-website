@@ -75,6 +75,25 @@ type ReadResult = {
   attempts?: number
 }
 
+export type EbayListingManagementModelV1 =
+  | "INVENTORY_API_MANAGED"
+  | "TRADING_MANAGED"
+  | "MANAGEMENT_MODEL_UNPROVEN"
+
+export type EbayListingManagementEvidenceV1 = Readonly<{
+  managementModel: EbayListingManagementModelV1
+  managementEvidenceSource: string
+  inventoryHttpStatus: number
+  offersHttpStatus: number
+  exactPublishedOfferCount: number
+  inventoryItemPresent: boolean
+  inventoryItemAuthoritativelyAbsent: boolean
+  offersReadComplete: boolean
+  groupedInventoryItem: boolean
+  inventoryEvidenceDigest: `sha256:${string}` | null
+  inventoryItemPayload: JsonRecord | null
+}>
+
 type CachedAuthentication = {
   token: string
   expiresAt: number
@@ -109,6 +128,23 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord
     : {}
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as JsonRecord)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value) ?? "null"
+}
+
+function evidenceDigest(value: unknown): `sha256:${string}` {
+  return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`
 }
 
 function safeBody(value: JsonRecord) {
@@ -792,6 +828,212 @@ async function preflightSkuCollisionWithToken(
   }
 }
 
+function normalizedListingId(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim() : ""
+  return /^\d{9,20}$/.test(normalized) ? normalized : ""
+}
+
+function offerListingId(value: JsonRecord) {
+  return normalizedListingId(value.listingId)
+    || normalizedListingId(record(value.listing).listingId)
+}
+
+function completeOfferCollection(result: ReadResult) {
+  if (!result.ok || !Array.isArray(result.body.offers)) return false
+  const offers = result.body.offers
+  const total = Number(result.body.total)
+  const size = Number(result.body.size)
+  return Number.isInteger(total) && total === offers.length
+    && (!Number.isFinite(size) || (Number.isInteger(size) && size === offers.length))
+}
+
+/**
+ * Classifies the listing management model only from authoritative Inventory
+ * API evidence. A positive classification requires the exact published Offer
+ * to point at the active Trading Item ID. Trading is selected only when both
+ * the Inventory Item and all Offers for the exact SKU are proven absent.
+ */
+export function classifyEbayListingManagementModelEvidenceV1(input: {
+  sku: string
+  itemId: string
+  inventory: ReadResult
+  offers: ReadResult
+}): EbayListingManagementEvidenceV1 {
+  const sku = input.sku.trim()
+  const itemId = normalizedListingId(input.itemId)
+  const inventoryAbsent = isInventoryAbsenceResponse(input.inventory)
+  const offersComplete = completeOfferCollection(input.offers)
+  const inventoryPayload = input.inventory.ok ? record(input.inventory.body) : null
+  const returnedSku = inventoryPayload && typeof inventoryPayload.sku === "string"
+    ? inventoryPayload.sku.trim() : ""
+  const inventoryItemPresent = Boolean(inventoryPayload && returnedSku === sku)
+  const groupedInventoryItem = Boolean(inventoryPayload && (
+    (Array.isArray(inventoryPayload.groupIds) && inventoryPayload.groupIds.length > 0)
+    || (Array.isArray(inventoryPayload.inventoryItemGroupKeys)
+      && inventoryPayload.inventoryItemGroupKeys.length > 0)
+  ))
+  const offers = offersComplete
+    ? (input.offers.body.offers as unknown[]).map(record) : []
+  const exactPublishedOffers = offers.filter((offer) =>
+    String(offer.sku ?? "").trim() === sku
+    && String(offer.marketplaceId ?? "").trim().toUpperCase() === "EBAY_US"
+    && String(offer.status ?? "").trim().toUpperCase() === "PUBLISHED"
+    && offerListingId(offer) === itemId)
+  const otherPublishedOffers = offers.filter((offer) =>
+    String(offer.sku ?? "").trim() === sku
+    && String(offer.marketplaceId ?? "").trim().toUpperCase() === "EBAY_US"
+    && String(offer.status ?? "").trim().toUpperCase() === "PUBLISHED"
+    && offerListingId(offer) !== itemId)
+  const exactInventoryManaged = inventoryItemPresent
+    && !groupedInventoryItem
+    && offersComplete
+    && exactPublishedOffers.length === 1
+    && otherPublishedOffers.length === 0
+  const exactTradingManaged = inventoryAbsent
+    && offersComplete
+    && offers.length === 0
+  const managementModel: EbayListingManagementModelV1 = exactInventoryManaged
+    ? "INVENTORY_API_MANAGED"
+    : exactTradingManaged
+      ? "TRADING_MANAGED"
+      : "MANAGEMENT_MODEL_UNPROVEN"
+  return Object.freeze({
+    managementModel,
+    managementEvidenceSource: exactInventoryManaged
+      ? "EBAY_INVENTORY_GET_ITEM_PLUS_EXACT_PUBLISHED_OFFER"
+      : exactTradingManaged
+        ? "EBAY_INVENTORY_AUTHORITATIVE_ABSENCE_PLUS_EMPTY_OFFER_COLLECTION"
+        : groupedInventoryItem
+          ? "EBAY_INVENTORY_GROUPED_ITEM_REQUIRES_SEPARATE_AUTHORITY"
+          : "EBAY_INVENTORY_MANAGEMENT_RELATIONSHIP_UNPROVEN",
+    inventoryHttpStatus: input.inventory.status,
+    offersHttpStatus: input.offers.status,
+    exactPublishedOfferCount: exactPublishedOffers.length,
+    inventoryItemPresent,
+    inventoryItemAuthoritativelyAbsent: inventoryAbsent,
+    offersReadComplete: offersComplete,
+    groupedInventoryItem,
+    inventoryEvidenceDigest: inventoryItemPresent
+      ? evidenceDigest(inventoryPayload) : null,
+    inventoryItemPayload: inventoryItemPresent ? inventoryPayload : null,
+  })
+}
+
+async function listingManagementEvidenceWithToken(
+  config: GatewayConfig,
+  token: string,
+  input: { sku: string; itemId: string },
+  fetchImpl: typeof fetch,
+) {
+  const inventoryUrl = new URL(
+    `/sell/inventory/v1/inventory_item/${encodeURIComponent(input.sku)}`,
+    config.apiOrigin,
+  )
+  const offersUrl = new URL("/sell/inventory/v1/offer", config.apiOrigin)
+  offersUrl.searchParams.set("sku", input.sku)
+  offersUrl.searchParams.set("limit", "100")
+  const [inventory, offers] = await Promise.all([
+    preflightReadWithRetry(config, token, inventoryUrl, fetchImpl),
+    preflightReadWithRetry(config, token, offersUrl, fetchImpl),
+  ])
+  return classifyEbayListingManagementModelEvidenceV1({
+    sku: input.sku,
+    itemId: input.itemId,
+    inventory,
+    offers,
+  })
+}
+
+export async function prepareEbayActiveListingTitleExecutorV1(input: {
+  sku: string
+  itemId: string
+  accountKey: string
+}, fetchImpl: typeof fetch = fetch) {
+  const sku = input.sku.trim()
+  const itemId = normalizedListingId(input.itemId)
+  if (!sku || sku.length > 50 || !itemId) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_IDENTITY_INVALID")
+  }
+  const config = getEbayDraftOnlyGatewayConfig()
+  if (config.target !== "PRODUCTION") {
+    throw new Error("EBAY_LISTING_MANAGEMENT_PRODUCTION_TARGET_REQUIRED")
+  }
+  const authenticated = await authenticatedToken(config, fetchImpl, false, true)
+  if (!input.accountKey.endsWith(`:${authenticated.actualFingerprint}`)) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_ACCOUNT_MISMATCH")
+  }
+  return listingManagementEvidenceWithToken(
+    config,
+    authenticated.token,
+    { sku, itemId },
+    fetchImpl,
+  )
+}
+
+const INVENTORY_ITEM_WRITABLE_FIELDS = [
+  "availability",
+  "condition",
+  "conditionDescription",
+  "conditionDescriptors",
+  "packageWeightAndSize",
+  "product",
+] as const
+const INVENTORY_ITEM_READ_ONLY_FIELDS = new Set([
+  "sku",
+  "locale",
+  "groupIds",
+  "inventoryItemGroupKeys",
+])
+
+export function buildEbayInventoryManagedTitleReplacementV1(input: {
+  sku: string
+  currentTitle: string
+  targetTitle: string
+  inventoryItemPayload: JsonRecord
+  expectedEvidenceDigest: string
+}) {
+  const payload = record(input.inventoryItemPayload)
+  const returnedSku = String(payload.sku ?? "").trim()
+  const unknownFields = Object.keys(payload).filter((key) =>
+    !INVENTORY_ITEM_READ_ONLY_FIELDS.has(key)
+    && !(INVENTORY_ITEM_WRITABLE_FIELDS as readonly string[]).includes(key))
+  const product = record(payload.product)
+  const currentTitle = String(product.title ?? "").normalize("NFKC").trim()
+  const targetTitle = input.targetTitle.normalize("NFKC").trim()
+  const grouped = (Array.isArray(payload.groupIds) && payload.groupIds.length > 0)
+    || (Array.isArray(payload.inventoryItemGroupKeys)
+      && payload.inventoryItemGroupKeys.length > 0)
+  if (returnedSku !== input.sku || currentTitle !== input.currentTitle
+    || !targetTitle || targetTitle.length > 80 || grouped
+    || unknownFields.length > 0
+    || evidenceDigest(payload) !== input.expectedEvidenceDigest) {
+    throw new Error("EBAY_INVENTORY_TITLE_REPLACEMENT_PRECONDITION_FAILED")
+  }
+  const replacement = Object.fromEntries(
+    INVENTORY_ITEM_WRITABLE_FIELDS
+      .filter((key) => Object.prototype.hasOwnProperty.call(payload, key))
+      .map((key) => [key, JSON.parse(JSON.stringify(payload[key]))]),
+  ) as JsonRecord
+  replacement.product = {
+    ...record(replacement.product),
+    title: targetTitle,
+  }
+  const preservedBefore: JsonRecord = {
+    ...payload,
+    product: { ...product, title: "__TITLE__" },
+  }
+  for (const key of INVENTORY_ITEM_READ_ONLY_FIELDS) delete preservedBefore[key]
+  const preservedAfter = { ...replacement,
+    product: { ...record(replacement.product), title: "__TITLE__" } }
+  if (canonicalJson(preservedBefore) !== canonicalJson(preservedAfter)) {
+    throw new Error("EBAY_INVENTORY_TITLE_REPLACEMENT_PRESERVATION_FAILED")
+  }
+  return Object.freeze({
+    payload: replacement,
+    nonAuthorizedFieldsPreserved: true as const,
+  })
+}
+
 function containsExpected(actual: unknown, expected: unknown): boolean {
   if (Array.isArray(expected)) {
     if (expected.length === 0) return true
@@ -1333,6 +1575,54 @@ export async function createOrReplaceEbayDraftInventoryItem(
     }
   }
   return result
+}
+
+export async function executeEbayInventoryManagedTitleMutationV1(input: {
+  sku: string
+  itemId: string
+  accountKey: string
+  currentTitle: string
+  targetTitle: string
+  inventoryItemPayload: JsonRecord
+  inventoryEvidenceDigest: string
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  if (config.target !== "PRODUCTION" || !normalizedListingId(input.itemId)
+    || !input.sku.trim() || input.sku.trim().length > 50) {
+    throw new Error("EBAY_INVENTORY_TITLE_MUTATION_SCOPE_INVALID")
+  }
+  const authenticated = await authenticatedToken(config, fetchImpl, true, true)
+  if (!input.accountKey.endsWith(`:${authenticated.actualFingerprint}`)) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_ACCOUNT_MISMATCH")
+  }
+  const replacement = buildEbayInventoryManagedTitleReplacementV1({
+    sku: input.sku,
+    currentTitle: input.currentTitle,
+    targetTitle: input.targetTitle,
+    inventoryItemPayload: input.inventoryItemPayload,
+    expectedEvidenceDigest: input.inventoryEvidenceDigest,
+  })
+  const url = new URL(
+    `/sell/inventory/v1/inventory_item/${encodeURIComponent(input.sku)}`,
+    config.apiOrigin,
+  )
+  const result = await write(
+    config,
+    authenticated.token,
+    url,
+    "PUT",
+    replacement.payload,
+    fetchImpl,
+  )
+  const errors = Array.isArray(result.body.errors)
+    ? result.body.errors.map(record) : []
+  const errorId = String(errors[0]?.errorId ?? "").trim()
+  return {
+    ...result,
+    operation: "CREATE_OR_REPLACE_INVENTORY_ITEM" as const,
+    errorId: /^\d{1,20}$/.test(errorId) ? errorId : "",
+    nonAuthorizedFieldsPreserved: replacement.nonAuthorizedFieldsPreserved,
+  }
 }
 
 export async function createEbayUnpublishedOffer(

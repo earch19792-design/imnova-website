@@ -3,6 +3,12 @@ import { createHash, randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
+  buildEbayInventoryManagedTitleReplacementV1,
+  executeEbayInventoryManagedTitleMutationV1,
+  prepareEbayActiveListingTitleExecutorV1,
+  type EbayListingManagementEvidenceV1,
+} from "./ebay-draft-only-gateway"
+import {
   getEbayTradingReadOnlyAccessToken,
   tradingXmlContainer,
   tradingXmlTagValue,
@@ -183,7 +189,12 @@ async function readOfficialSnapshot(input: {
   return snapshot
 }
 
-function snapshotRecord(snapshot: OfficialSnapshot, targetTitle: string, fingerprint: string) {
+function snapshotRecord(
+  snapshot: OfficialSnapshot,
+  targetTitle: string,
+  fingerprint: string,
+  management?: EbayListingManagementEvidenceV1 | null,
+) {
   return {
     version: SNAPSHOT_VERSION,
     itemId: snapshot.itemId,
@@ -197,7 +208,30 @@ function snapshotRecord(snapshot: OfficialSnapshot, targetTitle: string, fingerp
     targetTitleHash: sha256(targetTitle),
     titleMatchesTarget: snapshot.title === targetTitle,
     observedAt: snapshot.observedAt,
+    listingManagementModel: management?.managementModel ?? null,
+    managementEvidenceSource: management?.managementEvidenceSource ?? null,
+    executorOperation: management?.managementModel === "INVENTORY_API_MANAGED"
+      ? "CREATE_OR_REPLACE_INVENTORY_ITEM"
+      : management?.managementModel === "TRADING_MANAGED"
+        ? "REVISE_FIXED_PRICE_ITEM"
+        : null,
   }
+}
+
+export function safeActiveListingTitleFailureMessage(code: string) {
+  if (code === "EBAY_ACTIVE_TITLE_REVISION_REJECTED_21919474") {
+    return "eBay rechazó esta vía porque el listing se administra con Inventory. No se aplicó el cambio."
+  }
+  if (code === "EBAY_ACTIVE_TITLE_REVISION_MANAGEMENT_MODEL_UNPROVEN") {
+    return "Seller OS no pudo demostrar de forma segura cómo administra eBay este listing. No se aplicó el cambio."
+  }
+  if (code.startsWith("EBAY_ACTIVE_TITLE_REVISION_REJECTED_")) {
+    return "eBay rechazó el cambio. No se aplicó el cambio."
+  }
+  if (code === REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED) {
+    return "La autorización ya no es válida porque el título actual cambió. No se aplicó ningún cambio."
+  }
+  return "No se pudo aplicar el cambio. El listing permanece sin cambios confirmados."
 }
 
 function aspect(packageData: JsonRecord, name: string) {
@@ -258,6 +292,7 @@ async function executionByTarget(
 function publicResult(row: JsonRecord, messageCode: string) {
   const preflight = record(row.preflight_snapshot)
   const authorizedCurrentTitle = text(row.authorized_current_title, 80)
+  const lastErrorCode = text(row.last_error_code, 180)
   return {
     executionId: uuid(row.id),
     phase: text(row.phase, 60),
@@ -271,8 +306,16 @@ function publicResult(row: JsonRecord, messageCode: string) {
     currentValuePreconditionMatch: authorizedCurrentTitle
       ? text(preflight.observedTitle, 80) === authorizedCurrentTitle : null,
     authorizationInvalidated: row.phase === "terminal_failure" &&
-      text(row.last_error_code, 180) ===
+      lastErrorCode ===
         REMOTE_OPERATOR_CANARY_AUTHORIZATION_INVALIDATED,
+    listingManagementModel: text(preflight.listingManagementModel, 80)
+      || "MANAGEMENT_MODEL_UNPROVEN",
+    managementEvidenceSource: text(preflight.managementEvidenceSource, 160)
+      || null,
+    executorOperation: text(preflight.executorOperation, 80) || null,
+    safeFailureCode: lastErrorCode || null,
+    safeFailureMessage: row.phase === "terminal_failure"
+      ? safeActiveListingTitleFailureMessage(lastErrorCode) : null,
     unknownResultAutoRetry: false as const,
     messageCode,
   }
@@ -456,6 +499,26 @@ async function invalidateRemoteOperatorAuthorization(input: {
   return record(data)
 }
 
+async function failBeforeMarketplaceWrite(input: {
+  supabase: SupabaseClient
+  row: JsonRecord
+  actorId: string
+  snapshot: JsonRecord
+  code: string
+}) {
+  const { data, error } = await input.supabase
+    .from("ebay_active_listing_title_revision_executions")
+    .update({ phase: "terminal_failure", preflight_snapshot: input.snapshot,
+      last_error_code: input.code, claim_token: null, lease_expires_at: null,
+      updated_at: new Date().toISOString() })
+    .eq("id", input.row.id).eq("actor_user_id", input.actorId)
+    .eq("phase", "preview_ready").eq("ebay_write_attempt_count", 0)
+    .eq("ebay_write_dispatched", false).select("*").maybeSingle()
+  if (error) throw new Error("EBAY_ACTIVE_TITLE_REVISION_FAILURE_RECORD_FAILED")
+  if (!data) throw new Error("EBAY_ACTIVE_TITLE_REVISION_NOT_CLAIMED")
+  return record(data)
+}
+
 async function markUnknown(input: {
   supabase: SupabaseClient
   row: JsonRecord
@@ -523,7 +586,8 @@ export async function applyPreparedVerifiedActiveListingTitle(input: {
   const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
   const before = await readOfficialSnapshot({ accessToken, itemId: ebayItemId,
     expectedSku, accountKey: input.accountKey, fetchImpl })
-  const beforeRecord = snapshotRecord(before, targetTitle, text(row.account_fingerprint, 64))
+  const beforeRecord = snapshotRecord(before, targetTitle,
+    text(row.account_fingerprint, 64))
   if (remoteOperatorCanary && row.phase === "preview_ready" &&
       expectedCurrentTitle && before.title !== expectedCurrentTitle) {
     await invalidateRemoteOperatorAuthorization({ supabase: input.supabase,
@@ -549,6 +613,65 @@ export async function applyPreparedVerifiedActiveListingTitle(input: {
       code: "EBAY_ACTIVE_TITLE_REVISION_RECONCILIATION_PENDING", snapshot: beforeRecord })
     return publicResult(row, "EBAY_ACTIVE_TITLE_REVISION_OUTCOME_UNKNOWN")
   }
+  let management: EbayListingManagementEvidenceV1
+  try {
+    management = await prepareEbayActiveListingTitleExecutorV1({
+      sku: expectedSku,
+      itemId: ebayItemId,
+      accountKey: input.accountKey,
+    }, fetchImpl)
+  } catch {
+    management = Object.freeze({
+      managementModel: "MANAGEMENT_MODEL_UNPROVEN",
+      managementEvidenceSource: "EBAY_INVENTORY_MANAGEMENT_READ_UNAVAILABLE",
+      inventoryHttpStatus: 0,
+      offersHttpStatus: 0,
+      exactPublishedOfferCount: 0,
+      inventoryItemPresent: false,
+      inventoryItemAuthoritativelyAbsent: false,
+      offersReadComplete: false,
+      groupedInventoryItem: false,
+      inventoryEvidenceDigest: null,
+      inventoryItemPayload: null,
+    })
+  }
+  let executorPayloadSafe = management.managementModel !==
+    "INVENTORY_API_MANAGED"
+  if (management.managementModel === "INVENTORY_API_MANAGED") {
+    try {
+      buildEbayInventoryManagedTitleReplacementV1({
+        sku: expectedSku,
+        currentTitle: before.title,
+        targetTitle,
+        inventoryItemPayload: management.inventoryItemPayload ?? {},
+        expectedEvidenceDigest: management.inventoryEvidenceDigest ?? "",
+      })
+      executorPayloadSafe = true
+    } catch {
+      executorPayloadSafe = false
+    }
+  }
+  if (!executorPayloadSafe) {
+    management = Object.freeze({
+      ...management,
+      managementModel: "MANAGEMENT_MODEL_UNPROVEN",
+      managementEvidenceSource:
+        "EBAY_INVENTORY_FULL_REPLACE_PRESERVATION_UNPROVEN",
+    })
+  }
+  const routedBeforeRecord = snapshotRecord(before, targetTitle,
+    text(row.account_fingerprint, 64), management)
+  if (management.managementModel === "MANAGEMENT_MODEL_UNPROVEN" ||
+      !executorPayloadSafe) {
+    row = await failBeforeMarketplaceWrite({
+      supabase: input.supabase,
+      row,
+      actorId,
+      snapshot: routedBeforeRecord,
+      code: "EBAY_ACTIVE_TITLE_REVISION_MANAGEMENT_MODEL_UNPROVEN",
+    })
+    return publicResult(row, "EBAY_ACTIVE_TITLE_REVISION_TERMINAL_FAILURE")
+  }
   const claimToken = randomUUID()
   const now = new Date()
   const { data: claimed, error: claimError } = await input.supabase
@@ -556,7 +679,7 @@ export async function applyPreparedVerifiedActiveListingTitle(input: {
     .update({ phase: "write_in_flight", ebay_write_attempt_count: 1,
       ebay_write_dispatched: true, claim_token: claimToken,
       lease_expires_at: new Date(now.getTime() + 120_000).toISOString(),
-      preflight_snapshot: beforeRecord, write_started_at: now.toISOString(),
+      preflight_snapshot: routedBeforeRecord, write_started_at: now.toISOString(),
       last_error_code: null, updated_at: now.toISOString() })
     .eq("id", row.id).eq("actor_user_id", actorId).eq("phase", "preview_ready")
     .eq("ebay_write_attempt_count", 0).select("*").maybeSingle()
@@ -568,17 +691,46 @@ export async function applyPreparedVerifiedActiveListingTitle(input: {
   row = record(claimed)
   let writeStatus: number | null = null
   try {
-    const write = await tradingCall({ callName: "ReviseFixedPriceItem", accessToken,
+    const inventoryManaged = management.managementModel ===
+      "INVENTORY_API_MANAGED"
+    const inventoryWrite = inventoryManaged
+      ? await executeEbayInventoryManagedTitleMutationV1({
+        sku: expectedSku,
+        itemId: ebayItemId,
+        accountKey: input.accountKey,
+        currentTitle: before.title,
+        targetTitle,
+        inventoryItemPayload: management.inventoryItemPayload ?? {},
+        inventoryEvidenceDigest: management.inventoryEvidenceDigest ?? "",
+      }, fetchImpl)
+      : null
+    const tradingWrite = inventoryManaged ? null : await tradingCall({
+      callName: "ReviseFixedPriceItem",
+      accessToken,
       body: reviseVerifiedTitleRequestXml(ebayItemId, targetTitle),
-      fetchImpl, timeoutMs: WRITE_TIMEOUT_MS })
-    writeStatus = write.response.status
-    const ack = text(tradingXmlTagValue(write.xml, "Ack"), 20)
-    if (!write.response.ok || !responseAccepted(write.xml)) {
-      const ebayCode = text(tradingXmlTagValue(write.xml, "ErrorCode"), 20)
+      fetchImpl,
+      timeoutMs: WRITE_TIMEOUT_MS,
+    })
+    writeStatus = inventoryWrite?.status ?? tradingWrite?.response.status ?? null
+    const ack = inventoryWrite?.ok
+      ? "Success"
+      : tradingWrite
+        ? text(tradingXmlTagValue(tradingWrite.xml, "Ack"), 20)
+        : ""
+    const writeAccepted = inventoryWrite
+      ? inventoryWrite.ok
+      : Boolean(tradingWrite?.response.ok && responseAccepted(tradingWrite.xml))
+    if (!writeAccepted) {
+      const ebayCode = inventoryWrite?.errorId
+        || (tradingWrite
+          ? text(tradingXmlTagValue(tradingWrite.xml, "ErrorCode"), 20)
+          : "")
       const code = /^\d{1,20}$/.test(ebayCode)
         ? `EBAY_ACTIVE_TITLE_REVISION_REJECTED_${ebayCode}`
         : "EBAY_ACTIVE_TITLE_REVISION_WRITE_RESPONSE_UNKNOWN"
-      const unknown = write.response.status >= 500 || !ack
+      const unknown = inventoryWrite
+        ? !inventoryWrite.outcomeKnown
+        : Boolean((tradingWrite?.response.status ?? 0) >= 500 || !ack)
       if (!unknown) {
         const failure = await input.supabase
           .from("ebay_active_listing_title_revision_executions")

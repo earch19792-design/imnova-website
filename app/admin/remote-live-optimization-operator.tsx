@@ -419,6 +419,11 @@ function SafeMutationCanaryPanel({ listing, canApply, canAuthorize,
     </ol>}
     {activeCanary.authorizationInvalidated &&
       <p className="mt-4 rounded-xl bg-[#f7e9de] p-3 text-sm font-semibold leading-6 text-[#704d3c]">La autorización ya no es válida porque el título actual cambió. No se aplicó ningún cambio.</p>}
+    {activeCanary.ownerApprovalStatus === "WRITE_FAILED" &&
+      <p className="mt-4 rounded-xl bg-[#f7e9de] p-3 text-sm font-semibold leading-6 text-[#704d3c]">
+        {activeCanary.failureMessage ??
+          "eBay rechazó el cambio. No se aplicó ningún cambio."}
+      </p>}
     {activeCanary.ownerApprovalStatus === "AUTHORIZED" && !canApply &&
       <p className="mt-4 text-sm font-semibold leading-6 text-[#3f574f]">Autorizada para una única acción de Mayel.</p>}
     {canAuthorize && activeCanary.ownerApprovalStatus ===
