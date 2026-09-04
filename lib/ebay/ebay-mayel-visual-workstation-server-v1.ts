@@ -8,6 +8,7 @@ import {
   buildMayelChatGptVisualPromptV1,
   buildMayelProductEvidencePackV1,
   buildMayelVisualManifestV1,
+  deriveMayelVisualPromptSnapshotV1,
   MAYEL_CHATGPT_VISUAL_PROMPT_VERSION,
   MAYEL_PRODUCT_EVIDENCE_PACK_VERSION,
   MAYEL_VISUAL_OUTPUT_ROLES,
@@ -141,10 +142,12 @@ async function existingOpenTask(input: {
 
 function canonicalPromptForTask(task: JsonRecord) {
   const evidence = record(task.evidence_pack)
-  const prompt = buildMayelChatGptVisualPromptV1(
-    evidence as MayelProductEvidencePackV1,
-  )
-  return { evidence, prompt }
+  const snapshot = deriveMayelVisualPromptSnapshotV1({
+    evidencePack: evidence as MayelProductEvidencePackV1,
+    storedContractVersion: task.prompt_contract_version,
+    storedText: task.prompt_text, storedDigest: task.prompt_digest,
+  })
+  return { evidence, ...snapshot }
 }
 
 async function reconcileCanonicalPrompt(input: {
@@ -153,10 +156,8 @@ async function reconcileCanonicalPrompt(input: {
   actorUserId: string
   task: JsonRecord
 }) {
-  const { prompt } = canonicalPromptForTask(input.task)
-  if (input.task.prompt_contract_version === prompt.contractVersion &&
-      input.task.prompt_text === prompt.text &&
-      input.task.prompt_digest === prompt.digest) return input.task
+  const { prompt, storedMatchesCanonical } = canonicalPromptForTask(input.task)
+  if (storedMatchesCanonical) return input.task
   if (input.task.status !== "PROMPT_READY") {
     throw new Error("MAYEL_VISUAL_PROMPT_RECONCILIATION_REVIEW_REQUIRED")
   }
@@ -612,10 +613,9 @@ export async function readMayelVisualWorkstationV1(input: {
       }
       outputs.push({ ...output, previewUrl, previewExpiresInSeconds })
     }
-    const { evidence, prompt: promptContract } = canonicalPromptForTask(task)
-    if (task.prompt_contract_version !== promptContract.contractVersion ||
-        task.prompt_text !== promptContract.text ||
-        task.prompt_digest !== promptContract.digest) {
+    const { evidence, prompt: promptContract, storedMatchesCanonical } =
+      canonicalPromptForTask(task)
+    if (!storedMatchesCanonical) {
       throw new Error("MAYEL_VISUAL_PROMPT_RECONCILIATION_REQUIRED")
     }
     const sourceImages = []

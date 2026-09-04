@@ -336,6 +336,19 @@ export function buildMayelChatGptVisualPromptV1(
     textAiCallCount: 0, imageApiCallCount: 0 })
 }
 
+export function deriveMayelVisualPromptSnapshotV1(input: {
+  evidencePack: MayelProductEvidencePackV1
+  storedContractVersion: unknown
+  storedText: unknown
+  storedDigest: unknown
+}) {
+  const prompt = buildMayelChatGptVisualPromptV1(input.evidencePack)
+  const storedMatchesCanonical =
+    input.storedContractVersion === prompt.contractVersion &&
+    input.storedText === prompt.text && input.storedDigest === prompt.digest
+  return Object.freeze({ prompt, storedMatchesCanonical })
+}
+
 export type MayelApprovedVisualAssetV1 = Readonly<{
   assetId: string
   role: MayelVisualOutputRole
