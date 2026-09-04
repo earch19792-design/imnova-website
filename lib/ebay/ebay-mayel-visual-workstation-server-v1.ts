@@ -316,6 +316,40 @@ async function taskForActor(input: { supabase: SupabaseClient
   return data as JsonRecord
 }
 
+async function recoverableMayelVisualAsset(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  taskId: string
+  role: MayelVisualOutputRole
+  outputSha256: string
+}) {
+  const { data, error } = await input.supabase
+    .from("ebay_listing_image_assets").select("*")
+    .eq("mayel_visual_task_id", input.taskId)
+    .eq("account_key", input.accountKey)
+    .in("status", ["pending_review", "approved"])
+  if (error) return null
+  const asset = (data ?? []).find((row) =>
+    row.mayel_output_role === input.role ||
+    row.output_sha256 === input.outputSha256)
+  if (!asset || asset.listing_package_id !== null) return null
+  const bucket = asset.status === "approved" ? PUBLIC_BUCKET : STAGING_BUCKET
+  const path = text(asset.status === "approved"
+    ? asset.published_storage_path : asset.output_storage_path, 1000)
+  if (!path) return null
+  const splitAt = path.lastIndexOf("/")
+  if (splitAt < 1 || splitAt === path.length - 1) return null
+  const folder = path.slice(0, splitAt)
+  const filename = path.slice(splitAt + 1)
+  const listed = await input.supabase.storage.from(bucket).list(folder, {
+    limit: 10, search: filename,
+  })
+  if (listed.error || !listed.data.some((entry) => entry.name === filename)) {
+    return null
+  }
+  return asset
+}
+
 export async function uploadMayelVisualOutputV1(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -398,7 +432,7 @@ export async function uploadMayelVisualOutputV1(input: {
   const { data: asset, error: assetError } = await input.supabase
     .from("ebay_listing_image_assets").insert({ id: assetId,
       created_by: input.actorUserId, opportunity_id: task.opportunity_id,
-      listing_package_id: task.listing_package_id,
+      listing_package_id: null,
       account_key: input.accountKey, candidate_key: task.candidate_key,
       asset_role: roleMap[input.role], status: "pending_review",
       source_kind: "owned_upload", source_url: null,
@@ -432,12 +466,16 @@ export async function uploadMayelVisualOutputV1(input: {
     }).select("*").single()
   normalized.output.fill(0)
   if (assetError || !asset) {
+    const durableDuplicate = assetError?.code === "23505"
+      ? await recoverableMayelVisualAsset({ supabase: input.supabase,
+        accountKey: input.accountKey, taskId: input.taskId, role: input.role,
+        outputSha256: normalized.outputSha256 }) : null
     await Promise.all([
       input.supabase.storage.from(SOURCE_BUCKET).remove([sourcePath]),
       input.supabase.storage.from(STAGING_BUCKET).remove([stagingPath]),
     ])
-    throw new Error(assetError?.code === "23505"
-      ? "MAYEL_VISUAL_DUPLICATE_ROLE_OR_HASH" :
+    throw new Error(durableDuplicate
+      ? "MAYEL_VISUAL_OUTPUT_ALREADY_RECEIVED" :
         "MAYEL_VISUAL_ASSET_PERSIST_FAILED")
   }
   const { error: taskError } = await input.supabase

@@ -46,7 +46,7 @@ function safeOperatorMessage(error: unknown) {
     "MAYEL_VISUAL_STAGING_UPLOAD_FAILED"].includes(code)) {
     return "No se pudo guardar el archivo en cuarentena. No quedó un archivo parcial; puedes volver a intentarlo."
   }
-  if (code === "MAYEL_VISUAL_DUPLICATE_ROLE_OR_HASH") {
+  if (code === "MAYEL_VISUAL_OUTPUT_ALREADY_RECEIVED") {
     return "Esta imagen o este tipo de imagen ya fue recibido para la tarea. Actualiza la pantalla para revisarlo."
   }
   if (code === "MAYEL_VISUAL_OUTPUT_LIMIT_REACHED") {
