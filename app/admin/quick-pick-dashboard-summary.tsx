@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
+import { startSellerOsVisibilityAwarePollingV1 } from
+  "@/lib/seller-os-visibility-aware-polling-v1"
 
 type Summary = Readonly<{
   inProgress: number
@@ -35,11 +37,16 @@ export function QuickPickDashboardSummary() {
   }, [])
   useEffect(() => {
     let active = true
-    load().catch(() => { if (active) setState("UNAVAILABLE") })
-    const timer = window.setInterval(() => {
-      if (active) load().catch(() => undefined)
-    }, 10_000)
-    return () => { active = false; window.clearInterval(timer) }
+    const polling = startSellerOsVisibilityAwarePollingV1({
+      task: async () => {
+        try {
+          await load()
+        } catch {
+          if (active) setState("UNAVAILABLE")
+        }
+      },
+    })
+    return () => { active = false; polling.stop() }
   }, [load])
   return <a href="/admin/ebay/quick-pick"
     className="block min-w-0 rounded-3xl border border-cyan-200/30 bg-cyan-200/[0.08] p-5 transition active:scale-[0.99] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">

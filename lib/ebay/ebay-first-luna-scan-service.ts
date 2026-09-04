@@ -59,7 +59,7 @@ import { buildSellerOsDashboardOpportunityAuthorityV1 } from
   "./seller-os-dashboard-opportunity-authority-v1"
 
 const SCAN_BATCH_SIZE = 2
-const QUEUE_LIMIT = 100
+const QUEUE_LIMIT = 250
 export const EBAY_LUNA_SCAN_STRATEGY = "priority_first"
 const ALL_SCAN_LANES: SellerScanLane[] = ["protection", "event", "hot", "baseline", "coverage"]
 
@@ -1048,18 +1048,13 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
       .order("created_at", { ascending: false })
       .limit(40)
     : Promise.resolve({ data: [], error: null })
-  const [runs, queue, events, activeRisks, total, ready, review, watchlist, holds] = await Promise.all([
+  const [runs, queue, events, activeRisks] = await Promise.all([
     supabase.from("ebay_luna_scan_runs").select("*").order("started_at", { ascending: false }).limit(5),
-    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,supplier_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
+    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,supplier_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at", { count: "exact" }).order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
     supabase.from("ebay_luna_opportunity_queue_events").select("*,ebay_luna_opportunity_queue(product_title,supplier_sku)").order("created_at", { ascending: false }).limit(40),
     activeRisksQuery,
-    supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }),
-    supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }).eq("queue_status", "ready"),
-    supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }).eq("queue_status", "review"),
-    supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }).eq("queue_status", "watchlist"),
-    supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }).in("queue_status", ["hold", "rejected"]),
   ])
-  const firstError = runs.error ?? queue.error ?? events.error ?? activeRisks.error ?? total.error ?? ready.error ?? review.error ?? watchlist.error ?? holds.error
+  const firstError = runs.error ?? queue.error ?? events.error ?? activeRisks.error
   if (firstError) throw new Error("EBAY_LUNA_QUEUE_DASHBOARD_READ_FAILED")
   const [{ data: quotaStates, error: quotaError }, { data: quotaEvents, error: quotaEventError }] = await Promise.all([
     supabase.from("ebay_api_quota_states")
@@ -1195,12 +1190,13 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
     events: events.data ?? [],
     activeListingRisks: scopedActiveRisks,
     summary: {
-      total: total.count ?? rows.length,
-      ready: ready.count ?? rows.filter((row) => row.queue_status === "ready").length,
-      review: review.count ?? rows.filter((row) => row.queue_status === "review").length,
-      watchlist: watchlist.count ?? rows.filter((row) => row.queue_status === "watchlist").length,
-      supplierHolds: holds.count ?? rows.filter((row) => row.queue_status === "hold" || row.queue_status === "rejected").length,
+      total: queue.count ?? rows.length,
+      ready: rows.filter((row) => row.queue_status === "ready").length,
+      review: rows.filter((row) => row.queue_status === "review").length,
+      watchlist: rows.filter((row) => row.queue_status === "watchlist").length,
+      supplierHolds: rows.filter((row) => row.queue_status === "hold" || row.queue_status === "rejected").length,
       activeListingRisks: scopedActiveRisks.length,
+      scopeComplete: (queue.count ?? rows.length) <= rows.length,
     },
     safety: {
       ebayReadOnly: true,

@@ -44,6 +44,8 @@ import {
   type EbayPipelineFocusCandidate,
 } from "@/components/admin/ebay-winner-pipeline-panel"
 import sellerCommandCenterMvp from "../../tools/fixtures/ebay-market-radar-seller-command-center-mvp-v1.json"
+import { startSellerOsVisibilityAwarePollingV1 } from
+  "@/lib/seller-os-visibility-aware-polling-v1"
 import catalogCoverageAudit from "../../tools/fixtures/ebay-luna-portex-catalog-coverage-audit-v1.json"
 
 type MarketRadarApiResponse = {
@@ -6939,18 +6941,11 @@ export function MarketRadarPanel({
     ])
 
   useEffect(() => {
-    loadDashboard()
-
-    const interval =
-      window.setInterval(
-        () => {
-          loadDashboard()
-        },
-        60 * 1000
-      )
-
-    return () =>
-      window.clearInterval(interval)
+    const polling = startSellerOsVisibilityAwarePollingV1({
+      task: async () => { await loadDashboard() },
+      intervalMs: 60 * 1000,
+    })
+    return () => polling.stop()
   }, [loadDashboard])
 
   const rankingCounts =

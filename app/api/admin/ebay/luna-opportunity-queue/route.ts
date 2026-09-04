@@ -13,6 +13,8 @@ import {
   recordEbayFirstLunaScanFailure,
   startEbayFirstLunaScan,
 } from "@/lib/ebay/ebay-first-luna-scan-service"
+import { getSellerOsDashboardQueueReadModelV1 } from
+  "@/lib/ebay/seller-os-dashboard-queue-read-model-v1"
 import { getEbayReadonlyRateLimitMetadata } from "@/lib/ebay/ebay-readonly-rate-limit"
 
 function record(value: unknown): Record<string, unknown> {
@@ -70,7 +72,12 @@ export async function GET(req: Request) {
   const unauthorized = await requireAdmin(req)
   if (unauthorized) return unauthorized
   try {
-    const dashboard = await getEbayFirstLunaQueueDashboard(getSupabaseAdminClient())
+    const supabase = getSupabaseAdminClient()
+    const ownerDashboardSummary = new URL(req.url).searchParams.get(
+      "ownerDashboardSummary") === "1"
+    const dashboard = ownerDashboardSummary
+      ? await getSellerOsDashboardQueueReadModelV1(supabase)
+      : await getEbayFirstLunaQueueDashboard(supabase)
     return NextResponse.json({ success: true, dashboard })
   } catch (error) {
     return NextResponse.json({ success: false, error: safeError(error) }, { status: 502 })

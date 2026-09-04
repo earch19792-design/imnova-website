@@ -19,6 +19,11 @@ export type SellerOsDashboardQueueAuthorityRowV1 = Readonly<{
   queue_status?: unknown
   decision?: unknown
   assessment?: unknown
+  dashboard_is_quick_pick?: unknown
+  dashboard_is_radar_candidate?: unknown
+  dashboard_radar_family_id?: unknown
+  dashboard_radar_luna_sku?: unknown
+  dashboard_quick_pick_operation_id?: unknown
 }>
 
 type LiveMatch = Readonly<{ ebayItemIds: readonly string[] }>
@@ -61,16 +66,28 @@ function number(value: unknown) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
-function quickPickAssessment(value: unknown) {
-  return Object.keys(record(record(value).lunaQuickPickOperationV1)).length > 0
+function quickPickAssessment(row: SellerOsDashboardQueueAuthorityRowV1) {
+  return row.dashboard_is_quick_pick === true ||
+    Object.keys(record(record(row.assessment).lunaQuickPickOperationV1)).length > 0
 }
 
-function radarAssessment(value: unknown) {
-  return Object.keys(record(record(value).radarFactoryCandidateV1)).length > 0
+function radarAssessment(row: SellerOsDashboardQueueAuthorityRowV1) {
+  return row.dashboard_is_radar_candidate === true ||
+    Object.keys(record(record(row.assessment).radarFactoryCandidateV1)).length > 0
 }
 
 function radarHandoff(value: unknown) {
-  const marker = record(record(value).radarToQuickPickHandoffV1)
+  const projected = record(value)
+  const projectedFamilyId = text(projected.dashboard_radar_family_id, 140)
+  const projectedLunaSku = text(projected.dashboard_radar_luna_sku, 160)
+  const projectedOperationId = text(
+    projected.dashboard_quick_pick_operation_id, 100)
+  if (projectedFamilyId && projectedLunaSku && projectedOperationId) {
+    return Object.freeze({ familyId: projectedFamilyId,
+      lunaSku: projectedLunaSku, quickPickOperationId: projectedOperationId })
+  }
+  const marker = record(record(projected.assessment)
+    .radarToQuickPickHandoffV1)
   const familyId = text(marker.radarFamilyId, 140)
   const lunaSku = text(marker.lunaSku, 160)
   const quickPickOperationId = text(marker.quickPickOperationId, 100)
@@ -95,7 +112,7 @@ function classifyQueueRow(row: SellerOsDashboardQueueAuthorityRowV1,
   const queueStatus = text(row.queue_status, 80)
   if (queueStatus === "ready" && decision &&
       OWNER_REVIEW_DECISIONS.has(decision)) return "READY" as const
-  if (radarAssessment(row.assessment)) return "RADAR_SIGNAL" as const
+  if (radarAssessment(row)) return "RADAR_SIGNAL" as const
   if (decision === "DIRECTED_LUNA_PACK_INTAKE") return "LEGACY" as const
   return "UNPROVEN" as const
 }
@@ -133,7 +150,7 @@ function projectQueueRow(row: SellerOsDashboardQueueAuthorityRowV1,
     lunaVariantId: text(row.supplier_variant_id, 100),
     queueStatus: text(row.queue_status, 80),
     decision: text(row.decision, 120),
-    quickPick: quickPickAssessment(row.assessment),
+    quickPick: quickPickAssessment(row),
     classification: classifyQueueRow(row, alreadyLive),
     alreadyLiveExactProduct: alreadyLive,
     ebayItemIds,
@@ -205,7 +222,7 @@ export function buildSellerOsDashboardOpportunityAuthorityV1(input: Readonly<{
     ? readyQueueRows.filter((row) => row.classification === "READY") : []
   const alreadyLive = projected.filter((row) => row.alreadyLiveExactProduct)
   const handoffByFamily = new Map(input.queueRows.flatMap((row) => {
-    const handoff = radarHandoff(row.assessment)
+    const handoff = radarHandoff(row)
     return handoff ? [[handoff.familyId, handoff] as const] : []
   }))
   const radarSignals = input.radarReadStatus === "AVAILABLE"

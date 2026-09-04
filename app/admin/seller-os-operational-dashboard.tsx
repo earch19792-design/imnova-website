@@ -4,6 +4,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from
   "react"
 
 import { supabase } from "@/lib/supabase"
+import { startSellerOsVisibilityAwarePollingV1 } from
+  "@/lib/seller-os-visibility-aware-polling-v1"
 import { QUICK_PICK_OWNER_STAGE_CATALOG_V1 } from
   "@/lib/ebay/seller-os-quick-pick-owner-read-model-v1"
 import { mergeOwnerRuntimeQuickPickCards, parseOwnerRuntimeQuickPickCard,
@@ -992,7 +994,9 @@ export function SellerOsOperationalDashboard() {
         adminRequest(
           "/api/admin/ebay/commercial-monitor?dashboardHealthOnly=1",
         ),
-        adminRequest("/api/admin/ebay/luna-opportunity-queue"),
+        adminRequest(
+          "/api/admin/ebay/luna-opportunity-queue?ownerDashboardSummary=1",
+        ),
       ])
 
     const commercialPayload = commercialResult.status === "fulfilled"
@@ -1129,12 +1133,10 @@ export function SellerOsOperationalDashboard() {
   }, [adminRequest])
 
   useEffect(() => {
-    let active = true
-    void load().catch(() => undefined)
-    const timer = window.setInterval(() => {
-      if (active) void load().catch(() => undefined)
-    }, 15_000)
-    return () => { active = false; window.clearInterval(timer) }
+    const polling = startSellerOsVisibilityAwarePollingV1({
+      task: () => load(),
+    })
+    return () => polling.stop()
   }, [load])
 
   async function submitQuickPick(event: FormEvent<HTMLFormElement>) {
