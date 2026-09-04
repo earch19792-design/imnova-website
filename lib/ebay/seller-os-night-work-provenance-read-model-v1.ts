@@ -294,6 +294,10 @@ export function buildSellerOsNightWorkProvenanceReadModelV1(input: Readonly<{
     const id = validUuid(card.opportunityId)
     return id ? [[id, card] as const] : []
   }))
+  const authorityByCandidateKey = new Map(input.authorityRows.flatMap((row) => {
+    const candidateKey = text(row.candidate_key, 160)
+    return candidateKey ? [[candidateKey, row] as const] : []
+  }))
   const historical = Object.freeze(rows(summary.outcomes).flatMap((outcome) => {
     const operationId = validUuid(outcome.opportunityId)
     const row = operationId ? authorityById.get(operationId) : undefined
@@ -339,7 +343,12 @@ export function buildSellerOsNightWorkProvenanceReadModelV1(input: Readonly<{
       currentAction: actionForState(state, card),
     })]
   }))
-  const selectedReceipt = input.receipts[0]
+  const selectedManualReceipt = input.receipts.find((receipt) =>
+    receipt.candidateKeys.some((candidateKey) => {
+      const row = authorityByCandidateKey.get(candidateKey)
+      return row && validManualBatch(row, input.receipts)?.batchId ===
+        receipt.batchId
+    }))
   const radarResolved = historical.filter((entry) =>
     entry.resolutionSource === "RADAR_NIGHT_ENRICHMENT")
   const otherResolved = historical.filter((entry) =>
@@ -354,9 +363,10 @@ export function buildSellerOsNightWorkProvenanceReadModelV1(input: Readonly<{
     }),
     currentOperations,
     morningSummary: Object.freeze({
-      linksReceived: Object.freeze({ value: selectedReceipt?.rawInputCount ?? null,
-        authority: selectedReceipt
-          ? "LATEST_DURABLE_QUICK_PICK_BATCH_RECEIPT" : "UNPROVEN" }),
+      linksReceived: Object.freeze({
+        value: selectedManualReceipt?.rawInputCount ?? null,
+        authority: selectedManualReceipt
+          ? "LATEST_DURABLE_MANUAL_LUNA_BATCH_RECEIPT" : "UNPROVEN" }),
       processedDuringDay: Object.freeze({ value: null,
         authority: "UNPROVEN_NO_DURABLE_PROCESSOR_DISCRIMINATOR" }),
       processedAtNight: Object.freeze({ value: historical.length,
