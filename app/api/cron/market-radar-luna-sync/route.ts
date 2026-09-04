@@ -16,11 +16,8 @@ import { deliverSellerWhatsAppAlerts } from "@/lib/ebay/ebay-seller-whatsapp-ale
 import { getSellerWhatsAppGatewayConfiguration } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
 import { runSellerOsDemandFirstBroadNetNightlyV1 } from
   "@/lib/ebay/ebay-demand-first-broad-net-orchestrator-v1"
-import {
-  collectRadarRevenueFactoryCandidateBatchV1,
-  ensureRadarCandidateEconomicsPreflightsV1,
-  materializeRadarRevenueFactoryCandidateBatchV1,
-} from "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
+import { runRadarLunaQuickPickHandoffCycleV1 } from
+  "@/lib/ebay/ebay-radar-luna-quick-pick-handoff-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { getEbayTaxonomyListingIntelligence } from
@@ -60,6 +57,29 @@ export async function GET(req: Request) {
         error: "LONGITUDINAL_RADAR_CERTIFICATION_FAILED" }, { status: 502 })
     }
   }
+  const radarToQuickPickCertification = new URL(req.url).searchParams.get(
+    "radarToQuickPickCertification",
+  ) === "1"
+  if (radarToQuickPickCertification) {
+    try {
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw new Error("RADAR_TO_QUICK_PICK_ACCOUNT_SCOPE_REQUIRED")
+      const radarToQuickPick = await runRadarLunaQuickPickHandoffCycleV1({
+        supabase, accountKey, mode: "CERTIFICATION",
+        taxonomyReader: getEbayTaxonomyListingIntelligence,
+        productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
+      })
+      return NextResponse.json({ success: true, radarToQuickPick,
+        automation: { stage: "RADAR_TO_LUNA_TO_QUICK_PICK_CERTIFICATION",
+          schedulerRuntimePathReused: true,
+          elapsedMs: Date.now() - startedAt } })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ""
+      return NextResponse.json({ success: false,
+        error: /^[A-Z][A-Z0-9_]{2,119}$/.test(message) ? message :
+          "RADAR_TO_QUICK_PICK_CERTIFICATION_FAILED" }, { status: 502 })
+    }
+  }
   let automationRunId = ""
   try {
     const automationRun = await createSellerAutomationRun(supabase, {
@@ -81,60 +101,24 @@ export async function GET(req: Request) {
     const broadNet = await runSellerOsDemandFirstBroadNetNightlyV1({
       supabase, accountKey,
     })
-    let factory
+    let radarToQuickPick
     try {
-      const initialCandidateBatch = await collectRadarRevenueFactoryCandidateBatchV1({
-        supabase, accountKey, targetCandidates: 100,
-      })
-      const economicsPreflight = await ensureRadarCandidateEconomicsPreflightsV1({
-        supabase, accountKey, batch: initialCandidateBatch,
-      })
-      const candidateBatch = economicsPreflight.created > 0 ||
-          economicsPreflight.reused > 0
-        ? await collectRadarRevenueFactoryCandidateBatchV1({
-            supabase, accountKey, targetCandidates: 100,
-          })
-        : initialCandidateBatch
-      const materialized = await materializeRadarRevenueFactoryCandidateBatchV1({
-        supabase, accountKey, batch: candidateBatch,
+      radarToQuickPick = await runRadarLunaQuickPickHandoffCycleV1({
+        supabase, accountKey, mode: "SCHEDULED",
         taxonomyReader: getEbayTaxonomyListingIntelligence,
         productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
       })
-      factory = {
-        ...materialized,
-        economicsPreflightAttempted: economicsPreflight.attempted,
-        economicsPreflightCreated: economicsPreflight.created,
-        economicsPreflightReused: economicsPreflight.reused,
-        parkedEconomics: economicsPreflight.parkedEconomics +
-          materialized.outcomes.filter((outcome) =>
-            outcome.status === "PARKED_ECONOMICS").length,
-        economicsPreflightOutcomes: economicsPreflight.outcomes,
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : ""
       const reasonCode = /^[A-Z][A-Z0-9_]{2,119}$/.test(message)
-        ? message : "NIGHT_RADAR_FACTORY_CONNECTION_FAILED"
-      factory = {
-        contractVersion: "NIGHT_RADAR_TO_GENERAL_FACTORY_CONNECTION_V1",
-        authority: "SELLER_OS_DETERMINISTIC_FACTORY",
-        targetSpecificAllowlistUsed: false,
-        familiesEvaluated: 0,
-        lunaProductsEvaluated: 0,
-        deterministicallyRejected: 0,
-        factoryCandidatesCreated: 0,
-        factoryCandidatesReused: 0,
-        productTruthReady: 0,
-        demandReady: 0,
-        economicsReady: 0,
-        listingPackageReady: 0,
-        listingReady: 0,
-        parked: 0,
-        exceptions: 1,
-        humanClicksRequired: 0,
-        outcomes: [{ status: "EXCEPTION", reasonCode }],
-        dollarCheck: { triggered: false, candidates: [] },
-        safety: { marketplaceWrites: 0, publishCalls: 0,
-          newEbayOffers: 0, withdrawCalls: 0 },
+        ? message : "RADAR_TO_QUICK_PICK_HANDOFF_FAILED"
+      radarToQuickPick = {
+        contractVersion: "RADAR_LUNA_QUICK_PICK_HANDOFF_V1",
+        status: "RETRYABLE_FAILURE", reasonCode,
+        quickPickHandoffCreated: false,
+        futureRadarToLunaRequiresCodex: false,
+        futureRadarToQuickPickRequiresCodex: false,
+        marketplaceWrites: 0, listingPublications: 0,
       }
     }
     let quickPickOvernightEnrichment
@@ -189,7 +173,7 @@ export async function GET(req: Request) {
       radarRefreshExecuted: true,
       longitudinalRadar,
       freshFamilyObservationsCreated: broadNet.freshObservationsCreated,
-      factory,
+      radarToQuickPick,
       quickPickOvernightEnrichment,
       taskReconciliation,
       protection,
@@ -205,15 +189,15 @@ export async function GET(req: Request) {
       sync,
       longitudinalRadar,
       broadNet,
-      factory,
+      radarToQuickPick,
       quickPickOvernightEnrichment,
       taskReconciliation,
       protection,
       whatsapp,
       automation: {
-        stage: "NIGHT_RADAR_TO_GENERAL_FACTORY",
-        nextStage: factory.listingReady > 0
-          ? "DOLLAR_CHECK_LISTING_READY" : "EBAY_LUNA_PRIORITY_SCAN",
+        stage: "RADAR_TO_LUNA_TO_QUICK_PICK",
+        nextStage: radarToQuickPick.quickPickHandoffCreated
+          ? "QUICK_PICK_GOLDEN_PATH" : "EBAY_LUNA_PRIORITY_SCAN",
         radarRefreshExecuted: true,
         freshFamilyObservationsCreated: broadNet.freshObservationsCreated,
         elapsedMs: Date.now() - startedAt,

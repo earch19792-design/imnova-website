@@ -64,6 +64,9 @@ type RadarSignal = Readonly<{
     median: number | null; maximum: number | null }>
   evidenceObservedAt: string | null
   enrichmentNextStage: string
+  lunaDiscoveryStatus: string | null
+  bestLunaSku: string | null
+  quickPickOperationId: string | null
 }>
 
 type QueueClassification = Readonly<{ READY: number; RADAR_SIGNAL: number;
@@ -217,7 +220,10 @@ function parseRadarSignals(value: unknown) {
         maximum: availableMetric(rawPrice.maximum) },
       evidenceObservedAt: nullableText(item.evidenceObservedAt, 48),
       enrichmentNextStage: nullableText(item.enrichmentNextStage, 180) ??
-        "WAITING_NEXT_BOUNDED_ENRICHMENT" }]
+        "WAITING_NEXT_BOUNDED_ENRICHMENT",
+      lunaDiscoveryStatus: nullableText(item.lunaDiscoveryStatus, 80),
+      bestLunaSku: nullableText(item.bestLunaSku, 160),
+      quickPickOperationId: nullableText(item.quickPickOperationId, 100) }]
   })
 }
 
@@ -1175,6 +1181,10 @@ export function SellerOsOperationalDashboard() {
                   usd(signal.commercialPriceBand.maximum ??
                     signal.commercialPriceBand.minimum)}`} · siguiente:
                 {" "}{signal.enrichmentNextStage.replaceAll("_", " ")}</span>
+              {signal.lunaDiscoveryStatus === "HANDED_TO_QUICK_PICK" &&
+                <span className="block text-emerald-100/75">
+                  Candidato Luna {signal.bestLunaSku ?? "seleccionado"} enviado a Quick Pick
+                </span>}
               {signal.evidenceObservedAt && <span className="block text-white/40">
                 Evidencia observada: {new Date(signal.evidenceObservedAt)
                   .toLocaleString("es-NI")}

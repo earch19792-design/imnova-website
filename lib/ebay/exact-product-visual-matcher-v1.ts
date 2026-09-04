@@ -8,6 +8,9 @@ export const EXACT_PRODUCT_VISUAL_MATCHER_CONSUMERS = Object.freeze([
   "QUICK_PICK", "RESEARCH", "NIGHT_RADAR", "LIVE_OPTIMIZATION",
 ] as const)
 
+export type SharedProductIdentityClassV1 =
+  "EXACT" | "STRONG" | "FAMILY" | "UNPROVEN" | "REJECTED"
+
 type JsonRecord = Record<string, unknown>
 type MatchSignal = "MATCH" | "COMPATIBLE" | "UNPROVEN" | "CONFLICT"
 type VisualSignal = "HIGH" | "MEDIUM" | "LOW" | "UNPROVEN"
@@ -354,6 +357,73 @@ export function resolveExactProductVisualMatchesV1(input: Readonly<{
       candidateVisibleBrandText: evaluation?.candidateVisibleBrandText ?? null,
     })
   }))
+}
+
+/**
+ * Cheap, reusable identity projection for discovery callers that do not yet
+ * have a marketplace image pair. It intentionally lives beside the shared
+ * visual matcher: a later visual evaluation can strengthen this result, but
+ * Radar does not get a parallel identity authority.
+ */
+export function resolveSharedProductIdentityMatchV1(input: Readonly<{
+  targetPhrases: readonly unknown[]
+  targetIdentifiers?: readonly unknown[]
+  targetModel?: unknown
+  targetBrand?: unknown
+  candidateTitle: unknown
+  candidateIdentifiers?: readonly unknown[]
+  candidateModel?: unknown
+  candidateBrand?: unknown
+  materialConflicts?: readonly unknown[]
+}>) {
+  const targetPhrases = unique(input.targetPhrases, 40)
+  const targetIdentifiers = unique(input.targetIdentifiers ?? [], 20)
+  const candidateIdentifiers = unique(input.candidateIdentifiers ?? [], 20)
+  const candidateTitle = text(input.candidateTitle, 800) ?? ""
+  const conflicts = unique(input.materialConflicts ?? [], 20)
+  const identifierExact = targetIdentifiers.some((left) =>
+    candidateIdentifiers.some((right) => exactComparable(left, right)))
+  const modelExact = exactComparable(input.targetModel, input.candidateModel)
+    || targetPhrases.some((phrase) => exactComparable(
+      text(input.candidateModel, 160), phrase))
+  const brandConflict = Boolean(text(input.targetBrand, 160)
+    && text(input.candidateBrand, 160)
+    && !exactComparable(input.targetBrand, input.candidateBrand))
+  if (brandConflict) conflicts.push("BRAND_CONFLICT")
+  const candidateNormalized = normalized(candidateTitle)
+  const exactPhrase = targetPhrases.some((phrase) => {
+    const value = normalized(phrase)
+    return value.split(" ").filter(Boolean).length >= 3
+      && ` ${candidateNormalized} `.includes(` ${value} `)
+  })
+  const phraseScores = targetPhrases.map((phrase) => overlap(
+    String(phrase), candidateTitle)).sort((left, right) => right - left)
+  const bestPhraseOverlap = phraseScores[0] ?? 0
+  const aggregateTarget = targetPhrases.join(" ")
+  const aggregateOverlap = overlap(aggregateTarget, candidateTitle)
+  const strongSemanticSupport = exactPhrase
+    || bestPhraseOverlap >= .72
+    || (bestPhraseOverlap >= .58 && aggregateOverlap >= .34)
+  const familySupport = bestPhraseOverlap >= .28 || aggregateOverlap >= .2
+  const classification: SharedProductIdentityClassV1 = conflicts.length
+    ? "REJECTED"
+    : identifierExact || modelExact && exactComparable(
+      input.targetBrand, input.candidateBrand)
+      ? "EXACT"
+      : strongSemanticSupport ? "STRONG"
+        : familySupport ? "FAMILY" : "UNPROVEN"
+  return Object.freeze({
+    contractVersion: EXACT_PRODUCT_VISUAL_MATCHER_V1,
+    classification,
+    identifierExact,
+    modelExact,
+    exactPhrase,
+    bestPhraseOverlap: Number(bestPhraseOverlap.toFixed(4)),
+    aggregateOverlap: Number(aggregateOverlap.toFixed(4)),
+    materialConflicts: Object.freeze([...conflicts]),
+    visualEvidenceUsed: false as const,
+    factInvented: false as const,
+  })
 }
 
 const responseSchema = {
