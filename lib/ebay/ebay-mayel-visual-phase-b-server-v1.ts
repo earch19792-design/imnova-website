@@ -13,6 +13,7 @@ import {
 import { getEbayTradingReadOnlyAccessToken } from
   "./ebay-manual-listing-trading-readonly"
 import {
+  buildMayelVisualPhaseBRebaseV1,
   buildMayelVisualPhaseBPlanV1,
   ebayOfficialImageSetDigestV1,
 } from "./ebay-mayel-visual-phase-b-v1"
@@ -109,22 +110,27 @@ async function loadContext(input: {
   }
   const [{ data: active, error: activeError },
     { data: assets, error: assetsError },
-    { data: execution, error: executionError }] = await Promise.all([
+    { data: execution, error: executionError },
+    { data: anyExecution, error: anyExecutionError }] = await Promise.all([
     input.supabase.from("ebay_active_listings")
       .select("id,ebay_item_id,ebay_sku,title,listing_status,raw_payload")
       .eq("id", task.active_listing_id).eq("ebay_item_id", task.ebay_item_id)
       .maybeSingle(),
     input.supabase.from("ebay_listing_image_assets")
-      .select("id,status,mayel_approval_status,owner_approval_status,mayel_output_role,output_sha256,public_url,published_storage_path")
+      .select("id,status,mayel_approval_status,owner_approval_status,mayel_output_role,output_sha256,public_url,published_storage_path,product_truth_digest,source_image_set_digest")
       .eq("mayel_visual_task_id", task.id).eq("account_key", input.accountKey)
       .eq("status", "approved").eq("mayel_approval_status", "APPROVED"),
     input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
       .select("*").eq("visual_task_id", task.id)
       .eq("visual_manifest_digest", task.visual_manifest_digest)
       .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
+      .select("id,visual_manifest_digest,phase,marketplace_write_count")
+      .eq("visual_task_id", task.id)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ])
   if (activeError || !active || active.listing_status !== "active"
-    || assetsError || executionError) {
+    || assetsError || executionError || anyExecutionError) {
     throw new Error("MAYEL_VISUAL_PHASE_B_DURABLE_CONTEXT_INVALID")
   }
   const sku = text(active.ebay_sku, 50)
@@ -156,6 +162,17 @@ async function loadContext(input: {
     approvedAssets: assets ?? [],
     canonicalPublicAssetUrlAllowed: canonicalAssetUrlAllowed,
   })
+  const rebase = buildMayelVisualPhaseBRebaseV1({
+    visualTaskId: String(task.id),
+    ebayItemId: String(task.ebay_item_id),
+    visualManifest: task.visual_manifest,
+    visualManifestDigest: task.visual_manifest_digest,
+    taskProductTruthDigest: task.product_truth_digest,
+    taskSourceImageSetDigest: task.source_image_set_digest,
+    currentOfficialImageUrls,
+    approvedAssets: assets ?? [],
+    canonicalPublicAssetUrlAllowed: canonicalAssetUrlAllowed,
+  })
   const managementReady = management.managementModel === "INVENTORY_API_MANAGED"
   const managementBlocker = management.managementModel === "TRADING_MANAGED"
     ? "MAYEL_VISUAL_TRADING_EXECUTOR_EXPLICITLY_GATED_SINGLE_WRITE_CONTRACT"
@@ -163,8 +180,9 @@ async function loadContext(input: {
       ? "MAYEL_VISUAL_MANAGEMENT_MODEL_UNPROVEN" : null
   return { task: task as JsonRecord, active: active as JsonRecord,
     assets: (assets ?? []) as JsonRecord[], execution: execution as JsonRecord | null,
+    anyExecution: anyExecution as JsonRecord | null,
     official, currentOfficialImageUrls, plan, management, sku,
-    managementReady, managementBlocker }
+    managementReady, managementBlocker, rebase }
 }
 
 function publicExecution(value: JsonRecord | null) {
@@ -215,6 +233,22 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     marketplace: "EBAY_US",
     managementModel: context.management.managementModel,
     managementModelAuthority: context.management.managementEvidenceSource,
+    managementDiagnostics: {
+      inventoryHttpStatus: context.management.inventoryHttpStatus,
+      offersHttpStatus: context.management.offersHttpStatus,
+      inventoryItemPresent: context.management.inventoryItemPresent,
+      offersReadComplete: context.management.offersReadComplete,
+      exactPublishedOfferCount: context.management.exactPublishedOfferCount,
+      groupedInventoryItem: context.management.groupedInventoryItem,
+    },
+    safeRebaseAvailable: context.plan.blocker ===
+      "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
+      && context.rebase.safe
+      && context.management.managementModel !== "MANAGEMENT_MODEL_UNPROVEN"
+      && !context.anyExecution,
+    mayelAssetPreserved: context.rebase.mayelAssetPreserved,
+    mayelReworkRequired: context.rebase.mayelReworkRequired,
+    rebaseBlocker: context.rebase.blocker,
     ownerCtaAvailable: context.plan.ready && context.managementReady
       && !context.execution,
     blocker: context.plan.blocker ?? context.managementBlocker,
@@ -225,6 +259,86 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
       localFileDirectToEbay: false, autoPublish: false,
       ownerApprovalRequired: true },
   }
+}
+
+export async function rebaseMayelVisualPhaseBPreviewV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  taskId: string
+  expectedVisualManifestDigest: string
+  fetchImpl?: FetchLike
+}) {
+  if (!uuid(input.taskId)
+    || !/^sha256:[0-9a-f]{64}$/.test(input.expectedVisualManifestDigest)) {
+    throw new Error("MAYEL_VISUAL_REBASE_REQUEST_INVALID")
+  }
+  const context = await loadContext({ ...input, fetchImpl: input.fetchImpl ?? fetch })
+  if (context.anyExecution) {
+    throw new Error("MAYEL_VISUAL_REBASE_OWNER_AUTHORIZATION_EXISTS")
+  }
+  if (context.task.visual_manifest_digest !== input.expectedVisualManifestDigest) {
+    throw new Error("MAYEL_VISUAL_REBASE_STALE_PREVIEW")
+  }
+  if (context.management.managementModel === "MANAGEMENT_MODEL_UNPROVEN") {
+    throw new Error("MAYEL_VISUAL_MANAGEMENT_MODEL_UNPROVEN")
+  }
+  if (context.plan.blocker !==
+      "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
+      || !context.rebase.safe || !context.rebase.manifest
+      || !context.rebase.visualManifestDigest) {
+    throw new Error(context.rebase.blocker ??
+      "MAYEL_VISUAL_REBASE_NOT_SAFE")
+  }
+  const oldManifestId = uuid(context.task.visual_manifest_id)
+  const oldDigest = String(context.task.visual_manifest_digest)
+  const { data: updated, error } = await input.supabase
+    .from("ebay_mayel_visual_tasks_v1")
+    .update({
+      current_image_set: context.currentOfficialImageUrls,
+      visual_manifest: context.rebase.manifest,
+      visual_manifest_digest: context.rebase.visualManifestDigest,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.taskId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("status", "OWNER_PREVIEW_READY")
+    .eq("visual_manifest_digest", oldDigest)
+    .eq("product_truth_digest", String(context.task.product_truth_digest))
+    .eq("source_image_set_digest", String(context.task.source_image_set_digest))
+    .select("id,visual_manifest_id,visual_manifest_digest,visual_manifest,current_image_set,product_truth_digest,source_image_set_digest")
+    .maybeSingle()
+  if (error || !updated) {
+    throw new Error("MAYEL_VISUAL_REBASE_PERSISTENCE_CONFLICT")
+  }
+  const persistedManifest = record(updated.visual_manifest)
+  if (updated.visual_manifest_digest !== context.rebase.visualManifestDigest
+    || persistedManifest.visualManifestDigest !==
+      context.rebase.visualManifestDigest
+    || updated.product_truth_digest !== context.task.product_truth_digest
+    || updated.source_image_set_digest !== context.task.source_image_set_digest
+    || JSON.stringify(updated.current_image_set) !==
+      JSON.stringify(context.currentOfficialImageUrls)
+    || uuid(updated.visual_manifest_id) === oldManifestId) {
+    throw new Error("MAYEL_VISUAL_REBASE_DURABLE_READBACK_FAILED")
+  }
+  return Object.freeze({
+    safeRebaseApplied: true,
+    visualTaskId: input.taskId,
+    oldVisualManifestDigest: oldDigest,
+    newVisualManifestDigest: context.rebase.visualManifestDigest,
+    oldVisualManifestId: oldManifestId,
+    newVisualManifestId: uuid(updated.visual_manifest_id),
+    currentOfficialImageSetDigest:
+      context.rebase.currentOfficialImageSetDigest,
+    currentOfficialImageCount: context.currentOfficialImageUrls.length,
+    managementModel: context.management.managementModel,
+    mayelAssetPreserved: true,
+    mayelReuploadRequired: false,
+    chatGptRegenerationRequired: false,
+    mayelReapprovalRequired: false,
+    mainImagePreserved: context.rebase.mainImagePreserved,
+    marketplaceWrites: 0,
+  })
 }
 
 async function updateExecution(input: { supabase: SupabaseClient

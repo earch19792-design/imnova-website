@@ -16,6 +16,7 @@ import {
   applyMayelVisualManifestToEbayV1,
   MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION,
   readMayelVisualPhaseBPreviewV1,
+  rebaseMayelVisualPhaseBPreviewV1,
 } from "@/lib/ebay/ebay-mayel-visual-phase-b-server-v1"
 import { MAYEL_VISUAL_OUTPUT_ROLES } from
   "@/lib/ebay/ebay-mayel-visual-workstation-v1"
@@ -90,6 +91,16 @@ function safeOperatorMessage(error: unknown) {
   }
   if (code === "MAYEL_VISUAL_MANAGEMENT_MODEL_UNPROVEN") {
     return "Seller OS no pudo demostrar cómo se administra este listing. No se realizó ningún cambio."
+  }
+  if (["MAYEL_VISUAL_REBASE_EVIDENCE_BINDING_CONFLICT",
+    "MAYEL_VISUAL_REBASE_ASSET_ALREADY_OFFICIAL",
+    "MAYEL_VISUAL_REBASE_OFFICIAL_IMAGE_SET_INVALID",
+    "MAYEL_VISUAL_REBASE_OWNER_AUTHORIZATION_EXISTS",
+    "MAYEL_VISUAL_REBASE_STALE_PREVIEW",
+    "MAYEL_VISUAL_REBASE_NOT_SAFE",
+    "MAYEL_VISUAL_REBASE_PERSISTENCE_CONFLICT",
+    "MAYEL_VISUAL_REBASE_DURABLE_READBACK_FAILED"].includes(code)) {
+    return "La vista previa cambió y no puede actualizarse automáticamente con seguridad. La imagen aprobada por Mayel permanece intacta."
   }
   if (code ===
       "MAYEL_VISUAL_TRADING_EXECUTOR_EXPLICITLY_GATED_SINGLE_WRITE_CONTRACT") {
@@ -213,6 +224,23 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null) as
       Record<string, unknown> | null
     const action = typeof body?.action === "string" ? body.action : ""
+    if (action === "REBASE_VISUAL_MANIFEST") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
+      const taskId = uuid(body?.visualTaskId)
+      const expectedDigest = typeof body?.expectedVisualManifestDigest ===
+        "string" ? body.expectedVisualManifestDigest.trim() : ""
+      if (!taskId || !/^sha256:[0-9a-f]{64}$/.test(expectedDigest)) {
+        return json({ success: false,
+          error: "MAYEL_VISUAL_REBASE_REQUEST_INVALID" }, 400)
+      }
+      const rebase = await rebaseMayelVisualPhaseBPreviewV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(), taskId,
+        expectedVisualManifestDigest: expectedDigest,
+      })
+      return json({ success: true, outcome: "OWNER_PREVIEW_SAFE_REBASED",
+        rebase, marketplaceWrites: 0 })
+    }
     if (action === "APPLY_VISUAL_MANIFEST") {
       if (!ownerRole) return json({ success: false,
         error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)

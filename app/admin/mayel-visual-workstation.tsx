@@ -59,6 +59,11 @@ type VisualTask = {
     account?: string
     marketplace?: string
     managementModel?: string
+    managementModelAuthority?: string
+    safeRebaseAvailable?: boolean
+    mayelAssetPreserved?: boolean
+    mayelReworkRequired?: boolean
+    rebaseBlocker?: string | null
     ownerCtaAvailable?: boolean
     blocker?: string | null
     execution?: { executionId?: string; phase?: string;
@@ -318,6 +323,23 @@ function OwnerPreview({ task, canOwnerAuthorize, busy, onDone }: {
         "No se pudo ejecutar la actualización autorizada.")
     }
   }
+  async function rebasePreview() {
+    const digest = phaseB?.visualManifestDigest ?? task.visualManifestDigest
+    if (!phaseB?.safeRebaseAvailable || !digest) return
+    setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "REBASE_VISUAL_MANIFEST",
+          visualTaskId: task.visualTaskId,
+          expectedVisualManifestDigest: digest }),
+      })
+      await onDone()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No se pudo actualizar la vista previa con el estado vigente de eBay.")
+    }
+  }
   const phase = phaseB?.execution?.phase
   const applied = phaseB?.execution?.appliedAndOfficiallyVerified === true
   return <section className="rounded-2xl border border-[#74866d]/35 bg-[#f4f7f1] p-5">
@@ -351,6 +373,14 @@ function OwnerPreview({ task, canOwnerAuthorize, busy, onDone }: {
       className="mt-4 min-h-12 w-full rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">
       Autorizar actualización de imágenes
     </button>}
+    {canOwnerAuthorize && !phase && phaseB?.safeRebaseAvailable &&
+      <button type="button" disabled={busy}
+        onClick={() => void rebasePreview()}
+        className="mt-3 min-h-12 w-full rounded-xl border border-[#1d5961] bg-white px-4 text-sm font-semibold text-[#1d5961] disabled:opacity-40">
+        Actualizar vista previa con las imágenes vigentes de eBay
+      </button>}
+    {canOwnerAuthorize && !phase && phaseB?.mayelAssetPreserved &&
+      <p className="mt-2 text-xs text-[#617159]">La imagen aprobada por Mayel permanece conservada; no requiere volver a subirla ni aprobarla.</p>}
     {phase && <p className={`mt-4 rounded-xl p-3 text-sm font-semibold ${applied ? "bg-[#e3ebe1] text-[#425143]" : "bg-[#f7e9de] text-[#704d3c]"}`}>
       {applied ? "Imágenes aplicadas y verificadas oficialmente ✓" :
         `Estado de la actualización: ${phase.replaceAll("_", " ")}`}

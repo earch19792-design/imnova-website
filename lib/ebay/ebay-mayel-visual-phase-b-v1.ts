@@ -1,4 +1,8 @@
-import { mayelVisualDigestV1 } from "./ebay-mayel-visual-workstation-v1"
+import {
+  buildMayelVisualManifestV1,
+  MAYEL_VISUAL_OUTPUT_ROLES,
+  mayelVisualDigestV1,
+} from "./ebay-mayel-visual-workstation-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -48,6 +52,17 @@ export type MayelVisualPhaseBPlanV1 = Readonly<{
   fieldsToChange: readonly ["IMAGES_ONLY"]
   capacityExceeded: boolean
   imageCount: number
+}>
+
+export type MayelVisualPhaseBRebaseV1 = Readonly<{
+  safe: boolean
+  blocker: string | null
+  manifest: Readonly<Record<string, unknown>> | null
+  visualManifestDigest: string | null
+  currentOfficialImageSetDigest: string
+  mayelAssetPreserved: boolean
+  mayelReworkRequired: boolean
+  mainImagePreserved: boolean
 }>
 
 export function buildMayelVisualPhaseBPlanV1(input: {
@@ -146,6 +161,112 @@ export function buildMayelVisualPhaseBPlanV1(input: {
     capacityExceeded,
     imageCount: proposedUrls.length,
   })
+}
+
+/**
+ * Rebuilds only the material Phase B manifest over a fresh official image set.
+ * The approved Mayel assets and both evidence digests must remain bound to the
+ * exact Phase A task. This never authorizes or executes a marketplace write.
+ */
+export function buildMayelVisualPhaseBRebaseV1(input: {
+  visualTaskId: string
+  ebayItemId: string
+  visualManifest: unknown
+  visualManifestDigest: unknown
+  taskProductTruthDigest: unknown
+  taskSourceImageSetDigest: unknown
+  currentOfficialImageUrls: readonly string[]
+  approvedAssets: readonly unknown[]
+  canonicalPublicAssetUrlAllowed: (url: string) => boolean
+}): MayelVisualPhaseBRebaseV1 {
+  const manifest = record(input.visualManifest)
+  const oldCurrent = [manifest.currentMainImage,
+    ...(Array.isArray(manifest.currentSecondaryImages)
+      ? manifest.currentSecondaryImages : [])]
+    .map(exactHttpsUrl).filter((url): url is string => Boolean(url))
+  const oldPlan = buildMayelVisualPhaseBPlanV1({
+    visualTaskId: input.visualTaskId,
+    ebayItemId: input.ebayItemId,
+    visualManifest: input.visualManifest,
+    visualManifestDigest: input.visualManifestDigest,
+    currentOfficialImageUrls: oldCurrent,
+    approvedAssets: input.approvedAssets,
+    canonicalPublicAssetUrlAllowed: input.canonicalPublicAssetUrlAllowed,
+  })
+  const currentOfficial = input.currentOfficialImageUrls
+    .map(exactHttpsUrl).filter((url): url is string => Boolean(url))
+  const currentDigest = ebayOfficialImageSetDigestV1(currentOfficial)
+  const taskProductTruthDigest = typeof input.taskProductTruthDigest === "string"
+    ? input.taskProductTruthDigest.trim() : ""
+  const taskSourceImageSetDigest = typeof input.taskSourceImageSetDigest === "string"
+    ? input.taskSourceImageSetDigest.trim() : ""
+  const evidenceBound = /^sha256:[0-9a-f]{64}$/.test(taskProductTruthDigest)
+    && /^sha256:[0-9a-f]{64}$/.test(taskSourceImageSetDigest)
+    && manifest.productTruthDigest === taskProductTruthDigest
+    && manifest.sourceImageSetDigest === taskSourceImageSetDigest
+  const approvedAssets = input.approvedAssets.flatMap((value) => {
+    const asset = record(value)
+    const id = uuid(asset.id)
+    const role = typeof asset.mayel_output_role === "string"
+      ? asset.mayel_output_role : typeof asset.role === "string" ? asset.role : ""
+    const outputSha256 = sha(asset.output_sha256 ?? asset.outputSha256)
+    const publicUrl = exactHttpsUrl(asset.public_url ?? asset.publicUrl)
+    const bound = asset.product_truth_digest === taskProductTruthDigest
+      && asset.source_image_set_digest === taskSourceImageSetDigest
+    return id && outputSha256 && publicUrl && bound
+      && asset.status === "approved"
+      && asset.mayel_approval_status === "APPROVED"
+      && asset.owner_approval_status === "PENDING"
+      && MAYEL_VISUAL_OUTPUT_ROLES.includes(role as never)
+      && input.canonicalPublicAssetUrlAllowed(publicUrl)
+      ? [{ assetId: id, role: role as (typeof MAYEL_VISUAL_OUTPUT_ROLES)[number],
+        outputSha256, publicUrl }] : []
+  })
+  let blocker: string | null = null
+  if (!oldPlan.ready) blocker = oldPlan.blocker
+  else if (!evidenceBound || approvedAssets.length !== input.approvedAssets.length
+    || approvedAssets.length < 1) {
+    blocker = "MAYEL_VISUAL_REBASE_EVIDENCE_BINDING_CONFLICT"
+  } else if (!currentOfficial.length
+    || currentOfficial.length !== input.currentOfficialImageUrls.length
+    || new Set(currentOfficial).size !== currentOfficial.length) {
+    blocker = "MAYEL_VISUAL_REBASE_OFFICIAL_IMAGE_SET_INVALID"
+  } else if (approvedAssets.some((asset) =>
+    currentOfficial.includes(asset.publicUrl))) {
+    blocker = "MAYEL_VISUAL_REBASE_ASSET_ALREADY_OFFICIAL"
+  }
+  if (blocker) return Object.freeze({ safe: false, blocker, manifest: null,
+    visualManifestDigest: null, currentOfficialImageSetDigest: currentDigest,
+    mayelAssetPreserved: approvedAssets.length === input.approvedAssets.length,
+    mayelReworkRequired: blocker ===
+      "MAYEL_VISUAL_REBASE_EVIDENCE_BINDING_CONFLICT",
+    mainImagePreserved: false })
+  const rebasedManifest = buildMayelVisualManifestV1({
+    visualTaskId: input.visualTaskId,
+    ebayItemId: input.ebayItemId,
+    currentImages: currentOfficial,
+    assets: approvedAssets,
+    productTruthDigest: taskProductTruthDigest,
+    sourceImageSetDigest: taskSourceImageSetDigest,
+  })
+  const rebasedPlan = buildMayelVisualPhaseBPlanV1({
+    visualTaskId: input.visualTaskId,
+    ebayItemId: input.ebayItemId,
+    visualManifest: rebasedManifest,
+    visualManifestDigest: rebasedManifest.visualManifestDigest,
+    currentOfficialImageUrls: currentOfficial,
+    approvedAssets: input.approvedAssets,
+    canonicalPublicAssetUrlAllowed: input.canonicalPublicAssetUrlAllowed,
+  })
+  return Object.freeze({ safe: rebasedPlan.ready,
+    blocker: rebasedPlan.blocker,
+    manifest: rebasedPlan.ready ? rebasedManifest : null,
+    visualManifestDigest: rebasedPlan.ready
+      ? rebasedManifest.visualManifestDigest : null,
+    currentOfficialImageSetDigest: currentDigest,
+    mayelAssetPreserved: true,
+    mayelReworkRequired: false,
+    mainImagePreserved: rebasedPlan.ready && !rebasedPlan.mainImageChanged })
 }
 
 export const MAYEL_VISUAL_PHASE_B_STATES = Object.freeze([

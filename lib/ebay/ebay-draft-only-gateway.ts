@@ -839,10 +839,16 @@ function offerListingId(value: JsonRecord) {
 }
 
 function completeOfferCollection(result: ReadResult) {
-  if (!result.ok || !Array.isArray(result.body.offers)) return false
-  const offers = result.body.offers
+  if (!result.ok) return false
   const total = Number(result.body.total)
   const size = Number(result.body.size)
+  // eBay's zero-result envelope may omit `offers` entirely while explicitly
+  // returning total=0 and size=0. That is an authoritative empty collection,
+  // not a response-shape failure.
+  if (!Array.isArray(result.body.offers)) {
+    return result.body.offers === undefined && total === 0 && size === 0
+  }
+  const offers = result.body.offers
   return Number.isInteger(total) && total === offers.length
     && (!Number.isFinite(size) || (Number.isInteger(size) && size === offers.length))
 }
@@ -872,7 +878,7 @@ export function classifyEbayListingManagementModelEvidenceV1(input: {
     || (Array.isArray(inventoryPayload.inventoryItemGroupKeys)
       && inventoryPayload.inventoryItemGroupKeys.length > 0)
   ))
-  const offers = offersComplete
+  const offers = offersComplete && Array.isArray(input.offers.body.offers)
     ? (input.offers.body.offers as unknown[]).map(record) : []
   const exactPublishedOffers = offers.filter((offer) =>
     String(offer.sku ?? "").trim() === sku
