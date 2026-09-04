@@ -80,6 +80,27 @@ function candidateId(familyId: string, productId: string,
   })).digest("hex")}`
 }
 
+function exactFrontierSourceForCandidate(
+  sources: readonly JsonRecord[],
+  expectedCandidateId: string,
+  identity: Readonly<{
+    lunaProductId: string
+    lunaVariantId: string
+    supplierSku: string
+  }>,
+) {
+  return sources.find((outer) => {
+    const frontier = record(outer.frontier)
+    const familyId = text(frontier.familyId, 120)
+    return Boolean(familyId) &&
+      frontier.lunaProductId === identity.lunaProductId &&
+      frontier.lunaVariantId === identity.lunaVariantId &&
+      frontier.lunaSku === identity.supplierSku &&
+      candidateId(familyId!, identity.lunaProductId, identity.lunaVariantId,
+        identity.supplierSku) === expectedCandidateId
+  })
+}
+
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical)
   if (value && typeof value === "object") {
@@ -698,12 +719,12 @@ export async function persistLunaProductPageOosV1(input: Readonly<{
       p_family_ids: null, p_limit: 100,
     })
   if (latest.error) throw new Error("LUNA_PRODUCT_PAGE_OOS_AUTHORITY_READ_FAILED")
-  const source = records(record(latest.data).frontiers).find((outer) => {
-    const frontier = record(outer.frontier)
-    return frontier.lunaProductId === observation.lunaProductId &&
-      frontier.lunaVariantId === observation.lunaVariantId &&
-      frontier.lunaSku === observation.supplierSku
-  })
+  const source = exactFrontierSourceForCandidate(
+    records(record(latest.data).frontiers), observation.candidateId, {
+      lunaProductId: observation.lunaProductId,
+      lunaVariantId: observation.lunaVariantId,
+      supplierSku: observation.supplierSku,
+    })
   const snapshotDigest = text(source?.snapshotDigest, 80)
   if (!source || !snapshotDigest || !SHA256.test(snapshotDigest)) {
     throw new Error("LUNA_PRODUCT_PAGE_OOS_AUTHORITY_MISMATCH")
@@ -903,12 +924,9 @@ export async function persistLunaChromeShippingCaptureV1(input: Readonly<{
   if (latestResult.error) {
     throw new Error("LUNA_SHIPPING_EXTENSION_CANDIDATE_EVIDENCE_READ_FAILED")
   }
-  const source = records(record(latestResult.data).frontiers).find((outer) => {
-    const frontier = record(outer.frontier)
-    return frontier.lunaProductId === authority.identity.lunaProductId &&
-      frontier.lunaVariantId === authority.identity.lunaVariantId &&
-      frontier.lunaSku === authority.identity.supplierSku
-  })
+  const source = exactFrontierSourceForCandidate(
+    records(record(latestResult.data).frontiers), input.capture.candidateId,
+    authority.identity)
   const snapshotDigest = text(source?.snapshotDigest, 80)
   if (!source || !snapshotDigest || !SHA256.test(snapshotDigest)) {
     throw new Error("LUNA_SHIPPING_CAPTURE_SESSION_REPLAYED")
