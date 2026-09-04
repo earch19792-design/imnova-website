@@ -7,6 +7,7 @@ import {
   ClipboardList,
   History,
   Home,
+  ImagePlus,
   LogOut,
   Radio,
   RefreshCw,
@@ -22,10 +23,11 @@ import { signOutAdmin } from "@/lib/admin-auth"
 import { remoteLiveOperatorDisplayNameFromUser } from
   "@/lib/remote-live-operator-identity"
 import { supabase } from "@/lib/supabase"
+import { MayelVisualWorkstation } from "@/app/admin/mayel-visual-workstation"
 
 type ReadState = "LOADING" | "STABLE" | "RETRYING"
 type OperatorView = "HOME" | "TASKS" | "LIVE" | "SUGGESTIONS" |
-  "RESULTS" | "HISTORY" | "HELP"
+  "VISUAL" | "RESULTS" | "HISTORY" | "HELP"
 type ActionStage = "IDLE" | "APPLYING" | "VERIFYING" | "CONFIRMED" |
   "UNKNOWN"
 
@@ -41,6 +43,7 @@ const navigation = Object.freeze([
   { key: "TASKS" as const, label: "Mis tareas", icon: ClipboardList },
   { key: "LIVE" as const, label: "Listings LIVE", icon: Radio },
   { key: "SUGGESTIONS" as const, label: "Mejoras sugeridas", icon: Sparkles },
+  { key: "VISUAL" as const, label: "Estación visual", icon: ImagePlus },
   { key: "RESULTS" as const, label: "Resultados", icon: ChartNoAxesCombined },
   { key: "HISTORY" as const, label: "Historial", icon: History },
   { key: "HELP" as const, label: "Ayuda", icon: CircleHelp },
@@ -927,6 +930,9 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
             <div className="mt-6"><ListingCollection listings={suggestedListings}
               canAct={canAct} onRefresh={load} /></div>
           </section>}
+
+          {view === "VISUAL" && <MayelVisualWorkstation
+            canOperate={canAct} />}
 
           {view === "RESULTS" && <>
             <SalesChart dashboard={dashboard} />

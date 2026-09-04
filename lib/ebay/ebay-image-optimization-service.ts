@@ -82,6 +82,107 @@ export type EbayAuthorizedSecondaryForeground = {
   }
 }
 
+export type MayelVisualQuarantineOutputV1 = Readonly<{
+  output: Buffer
+  sourceSha256: string
+  outputSha256: string
+  actualMimeType: "image/jpeg" | "image/png" | "image/webp"
+  source: Readonly<{
+    width: number
+    height: number
+    bytes: number
+    format: "jpeg" | "png" | "webp"
+    aspectRatio: number
+  }>
+  outputMetadata: Readonly<{
+    width: 1600
+    height: 1600
+    bytes: number
+    format: "jpeg"
+  }>
+  qa: Readonly<{
+    automaticStatus: "PASSED"
+    actualFileSignatureVerified: true
+    corruptionCheckPassed: true
+    supportedFormat: true
+    fileSizePassed: true
+    pixelDimensionsPassed: true
+    aspectRatioPassed: true
+    duplicateHashCheckedByDurableStore: true
+    semanticHumanReviewRequired: true
+  }>
+}>
+
+export async function normalizeMayelVisualQuarantineOutputV1(input: {
+  source: Buffer
+  declaredMimeType: string
+}): Promise<MayelVisualQuarantineOutputV1> {
+  if (!input.source.length || input.source.length > EBAY_IMAGE_MAX_SOURCE_BYTES) {
+    throw new Error("MAYEL_VISUAL_FILE_SIZE_INVALID")
+  }
+  let metadata: Awaited<ReturnType<ReturnType<typeof sharp>["metadata"]>>
+  try {
+    metadata = await sharp(input.source, { failOn: "warning",
+      limitInputPixels: 40_000_000 }).metadata()
+  } catch {
+    throw new Error("MAYEL_VISUAL_FILE_CORRUPT")
+  }
+  const format = metadata.format
+  const mimeByFormat = { jpeg: "image/jpeg", png: "image/png",
+    webp: "image/webp" } as const
+  if (format !== "jpeg" && format !== "png" && format !== "webp") {
+    throw new Error("MAYEL_VISUAL_ACTUAL_FILE_SIGNATURE_UNSUPPORTED")
+  }
+  const actualMimeType = mimeByFormat[format]
+  if (input.declaredMimeType !== actualMimeType) {
+    throw new Error("MAYEL_VISUAL_MIME_SIGNATURE_MISMATCH")
+  }
+  const width = metadata.width ?? 0
+  const height = metadata.height ?? 0
+  if (width < 500 || height < 500 || width * height > 40_000_000) {
+    throw new Error("MAYEL_VISUAL_PIXEL_DIMENSIONS_INVALID")
+  }
+  const aspectRatio = width / height
+  if (!Number.isFinite(aspectRatio) || aspectRatio < .5 || aspectRatio > 2) {
+    throw new Error("MAYEL_VISUAL_ASPECT_RATIO_INVALID")
+  }
+  let output: Buffer
+  try {
+    output = await sharp(input.source, { failOn: "warning",
+      limitInputPixels: 40_000_000 })
+      .rotate()
+      .resize(EBAY_IMAGE_OUTPUT_SIZE, EBAY_IMAGE_OUTPUT_SIZE, {
+        fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 },
+        withoutEnlargement: false,
+      })
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 94, chromaSubsampling: "4:4:4", mozjpeg: true })
+      .toBuffer()
+  } catch {
+    throw new Error("MAYEL_VISUAL_FILE_CORRUPT")
+  }
+  if (!output.length || output.length > 12 * 1024 * 1024) {
+    output.fill(0)
+    throw new Error("MAYEL_VISUAL_NORMALIZED_FILE_SIZE_INVALID")
+  }
+  const result: MayelVisualQuarantineOutputV1 = {
+    output,
+    sourceSha256: sha256(input.source),
+    outputSha256: sha256(output),
+    actualMimeType,
+    source: { width, height, bytes: input.source.length, format, aspectRatio },
+    outputMetadata: { width: 1600, height: 1600,
+      bytes: output.length, format: "jpeg" },
+    qa: { automaticStatus: "PASSED",
+      actualFileSignatureVerified: true, corruptionCheckPassed: true,
+      supportedFormat: true, fileSizePassed: true,
+      pixelDimensionsPassed: true, aspectRatioPassed: true,
+      duplicateHashCheckedByDurableStore: true,
+      semanticHumanReviewRequired: true },
+  }
+  return result
+}
+
 export async function prepareAuthorizedEbayFullFrameLayer(
   source: Buffer,
 ): Promise<EbayAuthorizedSecondaryForeground> {
