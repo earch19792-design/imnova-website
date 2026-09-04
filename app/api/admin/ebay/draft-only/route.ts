@@ -403,21 +403,27 @@ async function readExactUnpublishedPublicationState(input: {
           Number(skuState.inventoryHttpStatus ?? 0),
           Number(skuState.offersHttpStatus ?? 0),
         ),
-    errorClass: !inventory.safe
-      ? inventory.errorClass
-      : !offer.safe
-        ? offer.errorClass
-        : "OFFER_STATE_MISMATCH",
-    retryable: !inventory.safe
-      ? inventory.retryable
-      : !offer.safe
-        ? offer.retryable
-        : false,
-    safeNextAction: !inventory.safe
-      ? inventory.safeNextAction
-      : !offer.safe
-        ? offer.safeNextAction
-        : "STOP_AND_REVIEW",
+    errorClass: safe
+      ? null
+      : !inventory.safe
+        ? inventory.errorClass
+        : !offer.safe
+          ? offer.errorClass
+          : "OFFER_STATE_MISMATCH",
+    retryable: safe
+      ? false
+      : !inventory.safe
+        ? inventory.retryable
+        : !offer.safe
+          ? offer.retryable
+          : false,
+    safeNextAction: safe
+      ? "OWNER_ACTION_REQUIRED_TO_CONTINUE"
+      : !inventory.safe
+        ? inventory.safeNextAction
+        : !offer.safe
+          ? offer.safeNextAction
+          : "STOP_AND_REVIEW",
   }
 }
 
