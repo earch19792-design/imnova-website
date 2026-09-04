@@ -60,6 +60,7 @@ type QuickPickCard = {
   unresolvedRequiredAspects: string[]
   conditionReady: boolean | null
   automaticResolutionExhausted: boolean
+  fullLunaBrandEvidenceReviewPending: boolean
   exactUnresolvedFields: string[]
   ownerResidualActions: Array<{ productField: string
     bestProposal: string | null; proposalEvidence: string
@@ -176,6 +177,7 @@ export default function LunaQuickPickPage() {
   const [factDrafts, setFactDrafts] = useState<Record<string, string>>({})
   const [factBusy, setFactBusy] = useState<Record<string, boolean>>({})
   const [factFeedback, setFactFeedback] = useState<Record<string, string>>({})
+  const [continuingResolution, setContinuingResolution] = useState(false)
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -243,6 +245,7 @@ export default function LunaQuickPickPage() {
       requiredItemSpecificsSatisfied: null,
       requiredItemSpecificsReady: null, unresolvedRequiredAspects: [],
       conditionReady: null, automaticResolutionExhausted: false,
+      fullLunaBrandEvidenceReviewPending: false,
       exactUnresolvedFields: [], ownerResidualActions: [],
       ownerTruePublicationBlockers: [], ownerCapturedFacts: [],
       postPublishEnrichmentOpportunities: [],
@@ -293,6 +296,24 @@ export default function LunaQuickPickPage() {
     if (!urls.length) return
     setInput("")
     await processLinks(urls)
+  }
+
+  async function continueAutomaticResolution() {
+    if (!receipt?.batchId || continuingResolution) return
+    setContinuingResolution(true)
+    setError("")
+    try {
+      await request("/api/admin/ebay/luna-quick-pick", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "REHYDRATE",
+          batchId: receipt.batchId }),
+      })
+      await loadReadModel()
+    } catch {
+      setError("No pudimos continuar la resolución automática. Ningún listing fue modificado.")
+    } finally {
+      setContinuingResolution(false)
+    }
   }
 
   async function chooseVariant(card: QuickPickCard, variantId: string) {
@@ -368,6 +389,8 @@ export default function LunaQuickPickPage() {
         String(right.sourceSku ?? ""))), [cards])
   const ownerLastMileFactCount = ownerLastMileCards.reduce((total, card) =>
     total + card.ownerTruePublicationBlockers.length, 0)
+  const fullLunaReviewPending = cards.some((card) =>
+    card.fullLunaBrandEvidenceReviewPending === true && card.aiCallCount < 1)
 
   return <main className="min-h-screen bg-[#080b11] px-4 pb-28 pt-6 text-white">
     <div className="mx-auto max-w-5xl space-y-5">
@@ -414,6 +437,13 @@ export default function LunaQuickPickPage() {
           className="mt-3 min-h-11 rounded-xl border border-white/20 px-4 text-sm font-black disabled:opacity-40">
           {rehydrating ? "Actualizando…" : "Actualizar estado"}
         </button>
+        {receipt?.batchId && fullLunaReviewPending && <button type="button"
+          onClick={() => void continueAutomaticResolution()}
+          disabled={continuingResolution || rehydrating}
+          className="ml-2 mt-3 min-h-11 rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">
+          {continuingResolution ? "Continuando resolución…" :
+            "Continuar resolución automática"}
+        </button>}
       </section>}
 
       {rehydrating && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4 text-sm text-cyan-50">Recuperando tus Quick Picks guardados…</p>}
