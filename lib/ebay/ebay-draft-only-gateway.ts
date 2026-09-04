@@ -944,7 +944,7 @@ async function listingManagementEvidenceWithToken(
   })
 }
 
-export async function prepareEbayActiveListingTitleExecutorV1(input: {
+export async function prepareEbayActiveListingManagementExecutorV1(input: {
   sku: string
   itemId: string
   accountKey: string
@@ -969,6 +969,9 @@ export async function prepareEbayActiveListingTitleExecutorV1(input: {
     fetchImpl,
   )
 }
+
+export const prepareEbayActiveListingTitleExecutorV1 =
+  prepareEbayActiveListingManagementExecutorV1
 
 const INVENTORY_ITEM_WRITABLE_FIELDS = [
   "availability",
@@ -1032,6 +1035,58 @@ export function buildEbayInventoryManagedTitleReplacementV1(input: {
     payload: replacement,
     nonAuthorizedFieldsPreserved: true as const,
   })
+}
+
+export function buildEbayInventoryManagedImageReplacementV1(input: {
+  sku: string
+  targetImageUrls: readonly string[]
+  inventoryItemPayload: JsonRecord
+  expectedEvidenceDigest: string
+}) {
+  const payload = record(input.inventoryItemPayload)
+  const returnedSku = String(payload.sku ?? "").trim()
+  const unknownFields = Object.keys(payload).filter((key) =>
+    !INVENTORY_ITEM_READ_ONLY_FIELDS.has(key)
+    && !(INVENTORY_ITEM_WRITABLE_FIELDS as readonly string[]).includes(key))
+  const product = record(payload.product)
+  const targetImageUrls = input.targetImageUrls.map((value) => value.trim())
+  const grouped = (Array.isArray(payload.groupIds) && payload.groupIds.length > 0)
+    || (Array.isArray(payload.inventoryItemGroupKeys)
+      && payload.inventoryItemGroupKeys.length > 0)
+  if (returnedSku !== input.sku || grouped || unknownFields.length > 0
+    || evidenceDigest(payload) !== input.expectedEvidenceDigest
+    || targetImageUrls.length < 1 || targetImageUrls.length > 24
+    || new Set(targetImageUrls).size !== targetImageUrls.length
+    || targetImageUrls.some((value) => {
+      try {
+        const url = new URL(value)
+        return url.protocol !== "https:" || Boolean(url.username || url.password)
+      } catch { return true }
+    })) {
+    throw new Error("EBAY_INVENTORY_IMAGE_REPLACEMENT_PRECONDITION_FAILED")
+  }
+  const replacement = Object.fromEntries(
+    INVENTORY_ITEM_WRITABLE_FIELDS
+      .filter((key) => Object.prototype.hasOwnProperty.call(payload, key))
+      .map((key) => [key, JSON.parse(JSON.stringify(payload[key]))]),
+  ) as JsonRecord
+  replacement.product = {
+    ...record(replacement.product),
+    imageUrls: [...targetImageUrls],
+  }
+  const preservedBefore: JsonRecord = {
+    ...payload,
+    product: { ...product, imageUrls: ["__AUTHORIZED_IMAGE_SET__"] },
+  }
+  for (const key of INVENTORY_ITEM_READ_ONLY_FIELDS) delete preservedBefore[key]
+  const preservedAfter = { ...replacement,
+    product: { ...record(replacement.product),
+      imageUrls: ["__AUTHORIZED_IMAGE_SET__"] } }
+  if (canonicalJson(preservedBefore) !== canonicalJson(preservedAfter)) {
+    throw new Error("EBAY_INVENTORY_IMAGE_REPLACEMENT_PRESERVATION_FAILED")
+  }
+  return Object.freeze({ payload: replacement,
+    nonAuthorizedFieldsPreserved: true as const })
 }
 
 function containsExpected(actual: unknown, expected: unknown): boolean {
@@ -1622,6 +1677,47 @@ export async function executeEbayInventoryManagedTitleMutationV1(input: {
     operation: "CREATE_OR_REPLACE_INVENTORY_ITEM" as const,
     errorId: /^\d{1,20}$/.test(errorId) ? errorId : "",
     nonAuthorizedFieldsPreserved: replacement.nonAuthorizedFieldsPreserved,
+  }
+}
+
+export async function executeEbayInventoryManagedImageMutationV1(input: {
+  sku: string
+  itemId: string
+  accountKey: string
+  targetImageUrls: readonly string[]
+  inventoryItemPayload: JsonRecord
+  inventoryEvidenceDigest: string
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  if (config.target !== "PRODUCTION" || !normalizedListingId(input.itemId)
+    || !input.sku.trim() || input.sku.trim().length > 50) {
+    throw new Error("EBAY_INVENTORY_IMAGE_MUTATION_SCOPE_INVALID")
+  }
+  const authenticated = await authenticatedToken(config, fetchImpl, true, true)
+  if (!input.accountKey.endsWith(`:${authenticated.actualFingerprint}`)) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_ACCOUNT_MISMATCH")
+  }
+  const replacement = buildEbayInventoryManagedImageReplacementV1({
+    sku: input.sku,
+    targetImageUrls: input.targetImageUrls,
+    inventoryItemPayload: input.inventoryItemPayload,
+    expectedEvidenceDigest: input.inventoryEvidenceDigest,
+  })
+  const url = new URL(
+    `/sell/inventory/v1/inventory_item/${encodeURIComponent(input.sku)}`,
+    config.apiOrigin,
+  )
+  const result = await write(config, authenticated.token, url, "PUT",
+    replacement.payload, fetchImpl)
+  const errors = Array.isArray(result.body.errors)
+    ? result.body.errors.map(record) : []
+  const errorId = String(errors[0]?.errorId ?? "").trim()
+  return {
+    ...result,
+    operation: "CREATE_OR_REPLACE_INVENTORY_ITEM" as const,
+    errorId: /^\d{1,20}$/.test(errorId) ? errorId : "",
+    nonAuthorizedFieldsPreserved: replacement.nonAuthorizedFieldsPreserved,
+    replacementPayload: replacement.payload,
   }
 }
 

@@ -365,7 +365,7 @@ export function buildMayelVisualManifestV1(input: {
   sourceImageSetDigest: string
 }) {
   const currentImages = [...new Set(input.currentImages.filter((url) =>
-    /^https:\/\//.test(url)))].slice(0, 24)
+    /^https:\/\//.test(url)))]
   const roleRank = new Map(MAYEL_VISUAL_OUTPUT_ROLES.map((role, index) =>
     [role, index]))
   const assets = [...input.assets].sort((left, right) =>
@@ -383,7 +383,9 @@ export function buildMayelVisualManifestV1(input: {
       role: "CURRENT_SECONDARY" as const,
       assetId: null, outputSha256: null, publicUrl,
     })),
-  ].slice(0, 24)
+  ]
+  const officialImageCapacity = 24
+  const capacityExceeded = proposedOrderedImages.length > officialImageCapacity
   const material = {
     contractVersion: MAYEL_VISUAL_MANIFEST_VERSION,
     visualTaskId: input.visualTaskId,
@@ -395,6 +397,9 @@ export function buildMayelVisualManifestV1(input: {
     sourceImageSetDigest: input.sourceImageSetDigest,
     currentMainImagePreserved: true,
     separateExplicitOwnerApprovalRequiredForMainImage: true,
+    officialImageCapacity,
+    capacityExceeded,
+    ownerDecisionRequiredBeforeAuthorization: capacityExceeded,
     fieldsToChange: ["IMAGES_ONLY"],
   }
   return Object.freeze({ ...material,

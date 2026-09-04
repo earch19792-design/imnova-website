@@ -28,7 +28,7 @@ const SNAPSHOT_VERSION = "EBAY_ACTIVE_LISTING_IMAGE_SNAPSHOT_V1"
 type JsonRecord = Record<string, unknown>
 type FetchLike = typeof fetch
 
-type OfficialListingSnapshot = {
+export type OfficialListingSnapshot = {
   authenticatedUserId: string
   sellerUserId: string
   itemId: string
@@ -197,7 +197,7 @@ function revisePicturesRequestXml(
   return { response, xml: await response.text() }
 }
 
-async function readOfficialListingSnapshot(input: {
+export async function readOfficialActiveListingImageSnapshotV1(input: {
   accessToken: string
   itemId: string
   expectedSku: string
@@ -392,10 +392,11 @@ async function normalizedPixels(bytes: Buffer) {
 async function perceptuallySame(
   expectedUrl: string,
   observedUrl: string,
+  expectedKind: "approved" | "ebay",
   fetchImpl: FetchLike,
 ) {
   const [expectedBytes, observedBytes] = await Promise.all([
-    fetchImage({ url: expectedUrl, expectedKind: "approved", fetchImpl }),
+    fetchImage({ url: expectedUrl, expectedKind, fetchImpl }),
     fetchImage({ url: observedUrl, expectedKind: "ebay", fetchImpl }),
   ])
   try {
@@ -436,7 +437,36 @@ async function verifyApprovedImages(
     !snapshot.pictureUrls.every(ebayPictureUrl)
   ) return { verified: false, method: "NO_MATCH" }
   const matches = await Promise.all(snapshot.pictureUrls.map((observedUrl, index) =>
-    perceptuallySame(approvedUrls[index], observedUrl, fetchImpl)))
+    perceptuallySame(approvedUrls[index], observedUrl, "approved", fetchImpl)))
+  return matches.every(Boolean)
+    ? { verified: true, method: "PERCEPTUAL_EPS" }
+    : { verified: false, method: "NO_MATCH" }
+}
+
+export async function verifyOfficialOrderedImageSetV1(
+  snapshot: OfficialListingSnapshot,
+  expectedUrls: readonly string[],
+  fetchImpl: FetchLike = fetch,
+): Promise<ImageVerification> {
+  const expected = [...expectedUrls]
+  if (expected.length < 1 || expected.length > 24
+    || new Set(expected).size !== expected.length) {
+    return { verified: false, method: "NO_MATCH" }
+  }
+  if (sameUrls(snapshot.externalPictureUrls, expected)) {
+    return { verified: true, method: "EXACT_EXTERNAL_URLS" }
+  }
+  if (sameUrls(snapshot.pictureUrls, expected)) {
+    return { verified: true, method: "EXACT_PICTURE_URLS" }
+  }
+  if (snapshot.pictureUrls.length !== expected.length
+    || !snapshot.pictureUrls.every(ebayPictureUrl)
+    || !expected.every((url) => approvedStorageUrl(url) || ebayPictureUrl(url))) {
+    return { verified: false, method: "NO_MATCH" }
+  }
+  const matches = await Promise.all(snapshot.pictureUrls.map((observed, index) =>
+    perceptuallySame(expected[index], observed,
+      approvedStorageUrl(expected[index]) ? "approved" : "ebay", fetchImpl)))
   return matches.every(Boolean)
     ? { verified: true, method: "PERCEPTUAL_EPS" }
     : { verified: false, method: "NO_MATCH" }
@@ -598,7 +628,7 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
   }
 
   const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
-  const officialBefore = await readOfficialListingSnapshot({
+  const officialBefore = await readOfficialActiveListingImageSnapshotV1({
     accessToken,
     itemId: ebayItemId,
     expectedSku,
@@ -745,7 +775,7 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
   }
 
   try {
-    const officialAfter = await readOfficialListingSnapshot({
+    const officialAfter = await readOfficialActiveListingImageSnapshotV1({
       accessToken,
       itemId: ebayItemId,
       expectedSku,

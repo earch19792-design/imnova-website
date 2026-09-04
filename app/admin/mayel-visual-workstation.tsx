@@ -42,6 +42,28 @@ type VisualTask = {
   outputs: VisualOutput[]
   visualManifest: Record<string, unknown> | null
   visualManifestDigest: string | null
+  phaseB?: {
+    visualManifestId?: string | null
+    visualManifestDigest?: string | null
+    ownerAuthorizationDigest?: string | null
+    currentOfficialImageSetDigest?: string | null
+    currentImages?: string[]
+    currentMainImage?: string | null
+    currentSecondaryImages?: string[]
+    newMayelSecondaryImages?: string[]
+    proposedFinalImages?: string[]
+    finalOrder?: { position: number; url: string; role: string }[]
+    fieldsToChange?: string[]
+    mainImageProtected?: boolean
+    mainImageChanged?: boolean
+    account?: string
+    marketplace?: string
+    managementModel?: string
+    ownerCtaAvailable?: boolean
+    blocker?: string | null
+    execution?: { executionId?: string; phase?: string;
+      marketplaceWriteCount?: number; appliedAndOfficiallyVerified?: boolean } | null
+  }
 }
 
 const labels: Record<VisualRole, string> = {
@@ -261,8 +283,15 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
   </section>
 }
 
-function OwnerPreview({ task }: { task: VisualTask }) {
+function OwnerPreview({ task, canOwnerAuthorize, busy, onDone }: {
+  task: VisualTask
+  canOwnerAuthorize: boolean
+  busy: boolean
+  onDone: () => Promise<void>
+}) {
+  const [message, setMessage] = useState("")
   if (!task.visualManifest) return null
+  const phaseB = task.phaseB
   const proposed = Array.isArray(task.visualManifest.proposedOrderedImages)
     ? task.visualManifest.proposedOrderedImages as Record<string, unknown>[] : []
   const factEntries = ["productType", "brand", "color", "materialsProven",
@@ -272,9 +301,29 @@ function OwnerPreview({ task }: { task: VisualTask }) {
         ? task.evidencePack[key] as unknown[] : []
       return values.length ? [`${key}: ${values.join(" · ")}`] : []
     })
+  async function authorize() {
+    if (!phaseB?.ownerCtaAvailable || !phaseB.visualManifestDigest) return
+    setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "APPLY_VISUAL_MANIFEST",
+          visualTaskId: task.visualTaskId,
+          visualManifestDigest: phaseB.visualManifestDigest,
+          confirmation: "AUTORIZAR ACTUALIZACION DE IMAGENES" }),
+      })
+      await onDone()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No se pudo ejecutar la actualización autorizada.")
+    }
+  }
+  const phase = phaseB?.execution?.phase
+  const applied = phaseB?.execution?.appliedAndOfficiallyVerified === true
   return <section className="rounded-2xl border border-[#74866d]/35 bg-[#f4f7f1] p-5">
-    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Vista previa del owner · sin escritura</p>
+    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Vista previa del owner · publicación activa</p>
     <h4 className="mt-2 font-serif text-xl font-semibold">Imágenes actuales y propuesta</h4>
+    <p className="mt-2 text-sm text-[#5f645e]">Item {task.ebayItemId} · {task.productTitle}</p>
     <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. La imagen principal actual permanece protegida.</p>
     <p className="mt-2 text-xs text-[#617159]">Control de calidad de Mayel: {task.outputs.filter((output) => output.status === "approved").length} aprobada(s) · aprobación del owner pendiente.</p>
     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{proposed.map((entry, index) =>
@@ -284,18 +333,38 @@ function OwnerPreview({ task }: { task: VisualTask }) {
           className="aspect-square w-full rounded-lg object-contain" />
         <figcaption className="mt-2 text-[10px] font-semibold text-[#617159]">{index === 0 ? "Principal actual · preservada" : labels[entry.role as VisualRole] ?? "Secundaria actual"}</figcaption>
       </figure>)}</div>
-    <p className="mt-4 break-all text-[10px] text-[#777a73]">Manifest: {task.visualManifestDigest}</p>
+    <div className="mt-4 grid gap-2 rounded-xl bg-white p-3 text-xs text-[#5f645e] sm:grid-cols-2">
+      <p>Cuenta: {phaseB?.account ?? "Cuenta eBay vinculada"}</p>
+      <p>Marketplace: {phaseB?.marketplace ?? "EBAY_US"}</p>
+      <p>Modelo de gestión: {phaseB?.managementModel ?? "Por verificar"}</p>
+      <p>Imagen principal protegida: {phaseB?.mainImageProtected === false ? "No" : "Sí"}</p>
+    </div>
+    <p className="mt-4 break-all text-[10px] text-[#777a73]">Manifest: {phaseB?.visualManifestDigest ?? task.visualManifestDigest}</p>
     {factEntries.length > 0 && <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
       <summary className="cursor-pointer font-semibold">Verdad certificada del producto utilizada</summary>
       <ul className="mt-2 space-y-1">{factEntries.map((entry) =>
         <li key={entry}>{entry}</li>)}</ul>
     </details>}
-    <p className="mt-2 text-xs font-semibold text-[#704d3c]">Fase A: no existe CTA hacia eBay.</p>
+    {canOwnerAuthorize && !phase && <button type="button"
+      disabled={busy || phaseB?.ownerCtaAvailable !== true}
+      onClick={() => void authorize()}
+      className="mt-4 min-h-12 w-full rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">
+      Autorizar actualización de imágenes
+    </button>}
+    {phase && <p className={`mt-4 rounded-xl p-3 text-sm font-semibold ${applied ? "bg-[#e3ebe1] text-[#425143]" : "bg-[#f7e9de] text-[#704d3c]"}`}>
+      {applied ? "Imágenes aplicadas y verificadas oficialmente ✓" :
+        `Estado de la actualización: ${phase.replaceAll("_", " ")}`}
+    </p>}
+    {canOwnerAuthorize && !phaseB?.ownerCtaAvailable && !phase &&
+      <p className="mt-3 text-xs font-semibold text-[#704d3c]">La actualización permanece bloqueada de forma segura: {phaseB?.blocker ?? "preflight no disponible"}.</p>}
+    {!canOwnerAuthorize && <p className="mt-2 text-xs font-semibold text-[#704d3c]">Mayel prepara y aprueba los recursos. La decisión final pertenece al owner.</p>}
+    {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
   </section>
 }
 
-export function MayelVisualWorkstation({ canOperate }: {
+export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }: {
   canOperate: boolean
+  canOwnerAuthorize?: boolean
 }) {
   const [tasks, setTasks] = useState<VisualTask[]>([])
   const [busy, setBusy] = useState(true)
@@ -349,7 +418,7 @@ export function MayelVisualWorkstation({ canOperate }: {
     <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
       <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">ChatGPT manual</span>
       <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">Cero API de imágenes</span>
-      <span className="rounded-full bg-[#f7e9de] px-3 py-2 text-[#704d3c]">Cero cambios en eBay</span>
+      <span className="rounded-full bg-[#f7e9de] px-3 py-2 text-[#704d3c]">eBay sólo con autorización owner</span>
     </div>
     {message && <p className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]">{message}</p>}
     {!busy && !tasks.length && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7">
@@ -393,7 +462,8 @@ export function MayelVisualWorkstation({ canOperate }: {
           <HumanQa key={output.id} task={task} output={output} busy={busy}
             onDone={refresh} />)}</div>
       </section>}
-      <div className="mt-6"><OwnerPreview task={task} /></div>
+      <div className="mt-6"><OwnerPreview task={task}
+        canOwnerAuthorize={canOwnerAuthorize} busy={busy} onDone={refresh} /></div>
       <details className="mt-5 rounded-xl border border-[#e0d9ce] p-3 text-xs text-[#6f736c]">
         <summary className="cursor-pointer py-2 font-semibold">Provenance técnica</summary>
         <p className="mt-2 break-all">Visual Task ID: {task.visualTaskId}</p>
@@ -404,7 +474,7 @@ export function MayelVisualWorkstation({ canOperate }: {
     </article>)}</div>
     {busy && <p className="mt-6 rounded-2xl border border-[#d9d1c4] bg-[#fffdf8] p-6 text-sm text-[#6f736c]">Preparando la estación visual…</p>}
     <footer className="mt-7 rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-xs leading-5 text-[#704d3c]">
-      Fase A termina en la vista previa del owner. La imagen principal sigue protegida y esta estación no puede escribir en eBay.
+      La imagen principal sigue protegida. La Fase B sólo puede cambiar imágenes después de una autorización owner exacta y de una lectura oficial concordante.
     </footer>
   </section>
 }

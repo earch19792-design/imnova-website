@@ -12,6 +12,11 @@ import {
   reviewMayelVisualOutputV1,
   uploadMayelVisualOutputV1,
 } from "@/lib/ebay/ebay-mayel-visual-workstation-server-v1"
+import {
+  applyMayelVisualManifestToEbayV1,
+  MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION,
+  readMayelVisualPhaseBPreviewV1,
+} from "@/lib/ebay/ebay-mayel-visual-phase-b-server-v1"
 import { MAYEL_VISUAL_OUTPUT_ROLES } from
   "@/lib/ebay/ebay-mayel-visual-workstation-v1"
 import { getEbaySellerAccountScopeConfiguration } from
@@ -76,6 +81,23 @@ function safeOperatorMessage(error: unknown) {
   if (code === "MAYEL_VISUAL_APPROVAL_COMPENSATION_FAILED") {
     return "No pudimos confirmar un estado íntegro de la aprobación. Actualiza la pantalla antes de realizar otra acción."
   }
+  if (code === "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED" ||
+      code === "MAYEL_VISUAL_PHASE_B_PREFLIGHT_DRIFT") {
+    return "Las imágenes oficiales cambiaron después de la vista previa. La autorización anterior no puede usarse."
+  }
+  if (code === "MAYEL_VISUAL_IMAGE_CAPACITY_DECISION_REQUIRED") {
+    return "La propuesta supera la capacidad de imágenes de eBay. Revisa qué imágenes conservar antes de autorizar."
+  }
+  if (code === "MAYEL_VISUAL_MANAGEMENT_MODEL_UNPROVEN") {
+    return "Seller OS no pudo demostrar cómo se administra este listing. No se realizó ningún cambio."
+  }
+  if (code ===
+      "MAYEL_VISUAL_TRADING_EXECUTOR_EXPLICITLY_GATED_SINGLE_WRITE_CONTRACT") {
+    return "Este listing requiere una ruta de imágenes que todavía no cumple el contrato de una sola escritura. No se realizó ningún cambio."
+  }
+  if (/MAYEL_VISUAL_PHASE_B_(?:OFFICIAL_READBACK|READBACK)/.test(code)) {
+    return "eBay recibió la solicitud, pero Seller OS todavía no pudo verificar el conjunto final de imágenes. No se repetirá la escritura automáticamente."
+  }
   return "No pudimos completar esta acción visual. No se cambió ningún listing."
 }
 
@@ -108,7 +130,7 @@ function accountKey() {
 function json(payload: Record<string, unknown>, status = 200) {
   return NextResponse.json(payload, { status,
     headers: { "Cache-Control": "private, no-store",
-      "X-Seller-OS-Mayel-Visual-Phase": "A_NO_EBAY_WRITES" } })
+      "X-Seller-OS-Mayel-Visual-Phase": "B_OWNER_GATED" } })
 }
 
 export async function GET(request: Request) {
@@ -122,9 +144,24 @@ export async function GET(request: Request) {
       supabase: getSupabaseAdminClient(), accountKey: accountKey(),
       actorUserId: auth.userId,
       ownerView: auth.accessRole === SELLER_OS_ACCESS_ROLES.owner })
-    return json({ success: true, workstation,
+    const supabase = getSupabaseAdminClient()
+    const ownerView = auth.accessRole === SELLER_OS_ACCESS_ROLES.owner
+    const tasks = ownerView ? await Promise.all(workstation.tasks.map(async (task) => {
+      if (task.status !== "OWNER_PREVIEW_READY") return task
+      try {
+        const phaseB = await readMayelVisualPhaseBPreviewV1({
+          supabase, accountKey: accountKey(), taskId: task.visualTaskId,
+        })
+        return { ...task, phaseB }
+      } catch (error) {
+        return { ...task, phaseB: { ownerCtaAvailable: false,
+          blocker: safeCode(error), marketplaceWritesOnGet: 0 } }
+      }
+    })) : workstation.tasks
+    return json({ success: true, workstation: { ...workstation, tasks },
       accessRole: auth.accessRole,
-      phase: "A", marketplaceWrites: 0, openAiImageApiCalls: 0 })
+      phase: "B_OWNER_GATED", marketplaceWrites: 0,
+      openAiImageApiCalls: 0 })
   } catch (error) {
     return json({ success: false, error: safeCode(error),
       operatorMessage: "No pudimos cargar la estación visual. No se cambió ningún listing.",
@@ -138,13 +175,14 @@ export async function POST(request: Request) {
     error: "MAYEL_VISUAL_WORKSTATION_FORBIDDEN" }, 403)
   if (boundaryBlocked(request)) return json({ success: false,
     error: "MAYEL_VISUAL_WORKSTATION_DEDICATED_PREPROD_ONLY" }, 403)
-  const mayelRole = auth.accessRole ===
-    SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator
-  if (!mayelRole) return json({ success: false,
-    error: "MAYEL_VISUAL_OPERATOR_AUTHORITY_REQUIRED" }, 403)
   const contentType = request.headers.get("content-type") ?? ""
   try {
+    const mayelRole = auth.accessRole ===
+      SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator
+    const ownerRole = auth.accessRole === SELLER_OS_ACCESS_ROLES.owner
     if (contentType.startsWith("multipart/form-data")) {
+      if (!mayelRole) return json({ success: false,
+        error: "MAYEL_VISUAL_OPERATOR_AUTHORITY_REQUIRED" }, 403)
       const form = await request.formData()
       const action = form.get("action")
       const taskId = uuid(form.get("visualTaskId"))
@@ -175,6 +213,28 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null) as
       Record<string, unknown> | null
     const action = typeof body?.action === "string" ? body.action : ""
+    if (action === "APPLY_VISUAL_MANIFEST") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
+      const taskId = uuid(body?.visualTaskId)
+      const digest = typeof body?.visualManifestDigest === "string"
+        ? body.visualManifestDigest.trim() : ""
+      if (!taskId || !/^sha256:[0-9a-f]{64}$/.test(digest)
+        || body?.confirmation !== MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_VISUAL_PHASE_B_OWNER_AUTHORIZATION_INVALID" }, 400)
+      }
+      const execution = await applyMayelVisualManifestToEbayV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId, taskId, visualManifestDigest: digest,
+        confirmation: MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION,
+      })
+      return json({ success: true, outcome: execution?.finalState
+        ?? execution?.phase ?? "OWNER_APPROVED", execution,
+        marketplaceWrites: execution?.marketplaceWriteCount ?? 0 })
+    }
+    if (!mayelRole) return json({ success: false,
+      error: "MAYEL_VISUAL_OPERATOR_AUTHORITY_REQUIRED" }, 403)
     if (action === "ENSURE_NEXT_TASK") {
       const result = await ensureMayelVisualTaskV1({
         supabase: getSupabaseAdminClient(), accountKey: accountKey(),

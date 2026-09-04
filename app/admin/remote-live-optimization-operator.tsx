@@ -932,7 +932,7 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
           </section>}
 
           {view === "VISUAL" && <MayelVisualWorkstation
-            canOperate={canAct} />}
+            canOperate={canAct} canOwnerAuthorize={embeddedForOwner} />}
 
           {view === "RESULTS" && <>
             <SalesChart dashboard={dashboard} />
