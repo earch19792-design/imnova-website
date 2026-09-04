@@ -398,7 +398,8 @@ export async function uploadMayelVisualOutputV1(input: {
   const { data: asset, error: assetError } = await input.supabase
     .from("ebay_listing_image_assets").insert({ id: assetId,
       created_by: input.actorUserId, opportunity_id: task.opportunity_id,
-      listing_package_id: null, candidate_key: task.candidate_key,
+      listing_package_id: task.listing_package_id,
+      account_key: input.accountKey, candidate_key: task.candidate_key,
       asset_role: roleMap[input.role], status: "pending_review",
       source_kind: "owned_upload", source_url: null,
       source_storage_path: sourcePath, output_storage_path: stagingPath,

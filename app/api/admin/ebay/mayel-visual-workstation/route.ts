@@ -26,6 +26,39 @@ function safeCode(error: unknown) {
     ? code : "MAYEL_VISUAL_WORKSTATION_REQUEST_FAILED"
 }
 
+function safeOperatorMessage(error: unknown) {
+  const code = safeCode(error)
+  if (["MAYEL_VISUAL_UPLOAD_CONTRACT_INVALID",
+    "MAYEL_VISUAL_MIME_SIGNATURE_MISMATCH",
+    "MAYEL_VISUAL_ACTUAL_FILE_SIGNATURE_UNSUPPORTED",
+    "MAYEL_VISUAL_FILE_SIZE_INVALID",
+    "MAYEL_VISUAL_NORMALIZED_FILE_SIZE_INVALID",
+    "MAYEL_VISUAL_PIXEL_DIMENSIONS_INVALID",
+    "MAYEL_VISUAL_ASPECT_RATIO_INVALID",
+    "MAYEL_VISUAL_FILE_CORRUPT"].includes(code)) {
+    return "El archivo no es compatible con la Estación visual. Revisa el formato, el tamaño y que la imagen pueda abrirse."
+  }
+  if (["MAYEL_VISUAL_TASK_NOT_AVAILABLE",
+    "MAYEL_VISUAL_SLOT_BLOCKED_MISSING_EVIDENCE"].includes(code)) {
+    return "La tarea visual ya no está vigente para este archivo. Actualiza la pantalla antes de volver a intentarlo."
+  }
+  if (["MAYEL_VISUAL_QUARANTINE_UPLOAD_FAILED",
+    "MAYEL_VISUAL_STAGING_UPLOAD_FAILED"].includes(code)) {
+    return "No se pudo guardar el archivo en cuarentena. No quedó un archivo parcial; puedes volver a intentarlo."
+  }
+  if (code === "MAYEL_VISUAL_DUPLICATE_ROLE_OR_HASH") {
+    return "Esta imagen o este tipo de imagen ya fue recibido para la tarea. Actualiza la pantalla para revisarlo."
+  }
+  if (code === "MAYEL_VISUAL_OUTPUT_LIMIT_REACHED") {
+    return "La tarea ya tiene el máximo de seis imágenes. Revisa las imágenes recibidas antes de continuar."
+  }
+  if (["MAYEL_VISUAL_ASSET_PERSIST_FAILED",
+    "MAYEL_VISUAL_TASK_STATE_UPDATE_FAILED"].includes(code)) {
+    return "El archivo llegó a cuarentena, pero no pudimos guardar su registro. No quedó un archivo parcial; puedes volver a intentarlo."
+  }
+  return "No pudimos completar esta acción visual. No se cambió ningún listing."
+}
+
 function uuid(value: unknown) {
   return typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -163,9 +196,11 @@ export async function POST(request: Request) {
     return json({ success: false,
       error: "MAYEL_VISUAL_ACTION_INVALID" }, 400)
   } catch (error) {
-    return json({ success: false, error: safeCode(error),
-      operatorMessage:
-        "No pudimos completar esta acción visual. No se cambió ningún listing.",
+    const errorCode = safeCode(error)
+    console.warn("MAYEL_VISUAL_ACTION_FAILED", { errorCode,
+      marketplaceWrites: 0 })
+    return json({ success: false, error: errorCode,
+      operatorMessage: safeOperatorMessage(error),
       marketplaceWrites: 0 }, 409)
   }
 }
