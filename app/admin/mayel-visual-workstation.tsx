@@ -60,7 +60,20 @@ type VisualTask = {
     marketplace?: string
     managementModel?: string
     managementModelAuthority?: string
+    managementDiagnostics?: {
+      inventoryHttpStatus?: number
+      offersHttpStatus?: number
+      inventoryItemPresent?: boolean
+      inventoryItemAuthoritativelyAbsent?: boolean
+      offersReadComplete?: boolean
+      exactPublishedOfferCount?: number
+      groupedInventoryItem?: boolean
+    }
     safeRebaseAvailable?: boolean
+    rebaseEligible?: boolean
+    imageSetChangeClassification?: string
+    currentOfficialImageCount?: number
+    manifestBoundImageCount?: number
     mayelAssetPreserved?: boolean
     mayelReworkRequired?: boolean
     rebaseBlocker?: string | null
@@ -361,6 +374,21 @@ function OwnerPreview({ task, canOwnerAuthorize, busy, onDone }: {
       <p>Modelo de gestión: {phaseB?.managementModel ?? "Por verificar"}</p>
       <p>Imagen principal protegida: {phaseB?.mainImageProtected === false ? "No" : "Sí"}</p>
     </div>
+    {phaseB?.managementModel === "MANAGEMENT_MODEL_UNPROVEN" &&
+      <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
+        <summary className="cursor-pointer font-semibold">Por qué el modelo de gestión sigue pendiente</summary>
+        <div className="mt-2 grid gap-1 sm:grid-cols-2">
+          <p>Inventory Item: {phaseB.managementDiagnostics?.inventoryItemPresent
+            ? "encontrado" : phaseB.managementDiagnostics?.inventoryItemAuthoritativelyAbsent
+              ? "ausencia confirmada" : "lectura no concluyente"}</p>
+          <p>Inventory HTTP: {phaseB.managementDiagnostics?.inventoryHttpStatus ?? "sin lectura"}</p>
+          <p>Offers: {phaseB.managementDiagnostics?.offersReadComplete
+            ? "lectura completa" : "lectura no concluyente"}</p>
+          <p>Offers HTTP: {phaseB.managementDiagnostics?.offersHttpStatus ?? "sin lectura"}</p>
+          <p>Offer publicado exacto: {phaseB.managementDiagnostics?.exactPublishedOfferCount ?? 0}</p>
+          <p>Grupo de variantes: {phaseB.managementDiagnostics?.groupedInventoryItem ? "sí" : "no"}</p>
+        </div>
+      </details>}
     <p className="mt-4 break-all text-[10px] text-[#777a73]">Manifest: {phaseB?.visualManifestDigest ?? task.visualManifestDigest}</p>
     {factEntries.length > 0 && <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
       <summary className="cursor-pointer font-semibold">Verdad certificada del producto utilizada</summary>

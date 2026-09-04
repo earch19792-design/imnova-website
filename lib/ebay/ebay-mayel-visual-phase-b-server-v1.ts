@@ -208,7 +208,11 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
   fetchImpl?: FetchLike
 }) {
   const context = await loadContext({ ...input, fetchImpl: input.fetchImpl ?? fetch })
-  return {
+  const safeRebaseAvailable = context.plan.blocker ===
+    "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
+    && context.rebase.safe
+    && !context.anyExecution
+  const preview = {
     contractVersion: "MAYEL_VISUAL_WORKSTATION_PHASE_B_V1",
     visualManifestId: uuid(context.task.visual_manifest_id),
     visualManifestDigest: context.plan.visualManifestDigest,
@@ -237,15 +241,23 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
       inventoryHttpStatus: context.management.inventoryHttpStatus,
       offersHttpStatus: context.management.offersHttpStatus,
       inventoryItemPresent: context.management.inventoryItemPresent,
+      inventoryItemAuthoritativelyAbsent:
+        context.management.inventoryItemAuthoritativelyAbsent,
       offersReadComplete: context.management.offersReadComplete,
       exactPublishedOfferCount: context.management.exactPublishedOfferCount,
       groupedInventoryItem: context.management.groupedInventoryItem,
     },
-    safeRebaseAvailable: context.plan.blocker ===
+    safeRebaseAvailable,
+    rebaseEligible: context.plan.blocker ===
       "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
-      && context.rebase.safe
-      && context.management.managementModel !== "MANAGEMENT_MODEL_UNPROVEN"
       && !context.anyExecution,
+    imageSetChangeClassification: context.rebase.safe
+      ? "SAFE_REBASE" : "MATERIAL_CONFLICT",
+    currentOfficialImageCount: context.currentOfficialImageUrls.length,
+    manifestBoundImageCount: [record(context.task.visual_manifest).currentMainImage,
+      ...(Array.isArray(record(context.task.visual_manifest).currentSecondaryImages)
+        ? record(context.task.visual_manifest).currentSecondaryImages as unknown[]
+        : [])].filter(Boolean).length,
     mayelAssetPreserved: context.rebase.mayelAssetPreserved,
     mayelReworkRequired: context.rebase.mayelReworkRequired,
     rebaseBlocker: context.rebase.blocker,
@@ -259,6 +271,27 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
       localFileDirectToEbay: false, autoPublish: false,
       ownerApprovalRequired: true },
   }
+  console.info("MAYEL_VISUAL_PHASE_B_READ_MODEL_V1", {
+    visualTaskId: context.task.id,
+    ebayItemId: context.task.ebay_item_id,
+    managementModel: context.management.managementModel,
+    managementEvidenceSource: context.management.managementEvidenceSource,
+    inventoryHttpStatus: context.management.inventoryHttpStatus,
+    offersHttpStatus: context.management.offersHttpStatus,
+    inventoryItemPresent: context.management.inventoryItemPresent,
+    inventoryItemAuthoritativelyAbsent:
+      context.management.inventoryItemAuthoritativelyAbsent,
+    offersReadComplete: context.management.offersReadComplete,
+    exactPublishedOfferCount: context.management.exactPublishedOfferCount,
+    groupedInventoryItem: context.management.groupedInventoryItem,
+    planBlocker: context.plan.blocker,
+    safeRebaseAvailable,
+    rebaseBlocker: context.rebase.blocker,
+    currentOfficialImageCount: context.currentOfficialImageUrls.length,
+    manifestBoundImageCount: preview.manifestBoundImageCount,
+    marketplaceWrites: 0,
+  })
+  return preview
 }
 
 export async function rebaseMayelVisualPhaseBPreviewV1(input: {
@@ -278,9 +311,6 @@ export async function rebaseMayelVisualPhaseBPreviewV1(input: {
   }
   if (context.task.visual_manifest_digest !== input.expectedVisualManifestDigest) {
     throw new Error("MAYEL_VISUAL_REBASE_STALE_PREVIEW")
-  }
-  if (context.management.managementModel === "MANAGEMENT_MODEL_UNPROVEN") {
-    throw new Error("MAYEL_VISUAL_MANAGEMENT_MODEL_UNPROVEN")
   }
   if (context.plan.blocker !==
       "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
