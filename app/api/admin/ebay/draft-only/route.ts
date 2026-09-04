@@ -68,6 +68,7 @@ import {
   assertOneClickControlledPublicationIntentV1,
   bindOneClickControlledPublicationIntentV1,
   classifyAuthenticatedPublicationRecoveryV1,
+  classifyCrossApprovalExistingUnpublishedOfferV1,
   classifyExactDraftOnlyPublicationSelfLineageV1,
   EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
   EBAY_ONE_CLICK_PUBLICATION_LABEL,
@@ -1212,6 +1213,145 @@ async function loadExactDraftOnlyPublicationSelfLineage(
   }
 }
 
+async function loadCrossApprovalExistingUnpublishedOfferAuthorityV1(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  currentApproval: JsonRecord | null
+  expected: ExactDraftOnlyPublicationExpectedV1
+  verifyOfficial: boolean
+}) {
+  const currentApprovalId = uuid(input.currentApproval?.id)
+  if (!currentApprovalId) return null
+  const { data: executions, error: executionError } = await input.supabase
+    .from("ebay_draft_only_execution_ledger")
+    .select("id,approval_id,actor_user_id,listing_package_id,opportunity_id,request_hash,target,account_fingerprint,sku,phase,offer_id,completed_at,sanitized_result,created_at")
+    .eq("actor_user_id", input.expected.actorUserId)
+    .eq("listing_package_id", input.expected.listingPackageId)
+    .eq("opportunity_id", input.expected.opportunityId)
+    .eq("target", input.expected.target)
+    .eq("account_fingerprint", input.expected.accountFingerprint)
+    .eq("sku", input.expected.sku)
+    .eq("phase", "completed")
+    .neq("approval_id", currentApprovalId)
+    .not("offer_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(5)
+  if (executionError) {
+    throw new Error("EBAY_CROSS_APPROVAL_EXECUTION_READ_FAILED")
+  }
+  const approvalIds = (executions ?? [])
+    .map((execution) => uuid(execution.approval_id))
+    .filter((value): value is string => Boolean(value))
+  if (!approvalIds.length) return null
+  const { data: approvals, error: approvalError } = await input.supabase
+    .from("ebay_draft_only_approvals")
+    .select("*")
+    .in("id", approvalIds)
+  if (approvalError) {
+    throw new Error("EBAY_CROSS_APPROVAL_AUTHORIZATION_READ_FAILED")
+  }
+  const candidates = (executions ?? []).map((execution) => {
+    const priorApproval = (approvals ?? []).find((approval) =>
+      text(approval.id) === text(execution.approval_id)) as JsonRecord | undefined
+    const classification = classifyCrossApprovalExistingUnpublishedOfferV1({
+      currentApproval: input.currentApproval,
+      priorApproval: priorApproval ?? null,
+      priorExecution: execution as JsonRecord,
+      expected: input.expected,
+    })
+    return {
+      classification,
+      priorApproval: priorApproval ?? null,
+      priorExecution: execution as JsonRecord,
+    }
+  }).filter((candidate) => candidate.classification.exact)
+  if (!candidates.length) return null
+  const offerIds = [...new Set(candidates.map((candidate) =>
+    candidate.classification.offerId).filter(Boolean))]
+  if (offerIds.length !== 1) {
+    throw new Error("EBAY_CROSS_APPROVAL_MULTIPLE_OFFERS_CONFLICT")
+  }
+  const candidate = candidates[0]
+  if (!input.verifyOfficial) return { ...candidate, official: null }
+  const currentPayload = record(input.currentApproval?.approved_payload)
+  const currentOfferPayload = record(currentPayload.offerPayload)
+  const offerId = text(candidate.classification.offerId)
+  try {
+    const [inventory, offer, skuState] = await Promise.all([
+      verifyEbayDraftInventoryItem(
+        input.expected.sku,
+        record(currentPayload.inventoryItemPayload),
+      ),
+      verifyEbayUnpublishedOffer(
+        offerId,
+        input.expected.sku,
+        text(currentOfferPayload.marketplaceId),
+        currentOfferPayload,
+      ),
+      inspectEbayDraftSkuState(input.expected.sku),
+    ])
+    const safe = inventory.safe === true
+      && offer.safe === true
+      && text(offer.offerId) === offerId
+      && text(offer.status) === "UNPUBLISHED"
+      && offer.listingPresent === false
+      && skuState.inventoryExists === true
+      && skuState.offerCount === 1
+    return {
+      ...candidate,
+      official: {
+        safe,
+        inventoryHttpStatus: inventory.httpStatus,
+        inventoryMatches: inventory.safe === true,
+        offerHttpStatus: offer.httpStatus,
+        offerMatches: offer.safe === true,
+        offerStatus: text(offer.status) || "UNPROVEN",
+        listingPresent: offer.listingPresent === true,
+        offerCount: skuState.offerCount,
+        blocker: safe ? null : inventory.blocker || offer.blocker
+          || skuState.blocker || "EBAY_CROSS_APPROVAL_OFFICIAL_READBACK_MISMATCH",
+        marketplaceWrites: 0,
+      },
+    }
+  } catch (readError) {
+    return {
+      ...candidate,
+      official: {
+        safe: false,
+        inventoryHttpStatus: 0,
+        inventoryMatches: false,
+        offerHttpStatus: 0,
+        offerMatches: false,
+        offerStatus: "UNPROVEN",
+        listingPresent: false,
+        offerCount: null,
+        blocker: errorCode(readError),
+        marketplaceWrites: 0,
+      },
+    }
+  }
+}
+
+function crossApprovalCollisionSelfLineageV1(input: {
+  current: ExactDraftOnlyPublicationSelfLineageV1
+  authority: Awaited<ReturnType<
+    typeof loadCrossApprovalExistingUnpublishedOfferAuthorityV1
+  >>
+}) {
+  if (
+    input.authority?.classification.exact !== true
+    || input.authority.official?.safe !== true
+  ) return input.current
+  return {
+    exact: true,
+    reasonCode: "SELF_LINEAGE_EXISTING_UNPUBLISHED_OFFER",
+    excludeApprovalId:
+      input.authority.classification.currentApprovalId,
+    excludeApprovalIds:
+      input.authority.classification.excludeApprovalIds,
+    rearmedAwaitingHumanPublication: false,
+  } satisfies ExactDraftOnlyPublicationSelfLineageV1
+}
+
 type ExactDraftOnlyPublicationExpectedV1 = Parameters<
   typeof classifyExactDraftOnlyPublicationSelfLineageV1
 >[0]["expected"]
@@ -1444,11 +1584,15 @@ async function loadPackageContext(
     .eq("sku", collisionSku || "__missing__")
     .neq("phase", "terminal_failure")
     .limit(1)
-  if (selfLineage?.exact && selfLineage.excludeApprovalId) {
-    ledgerQuery = ledgerQuery.neq(
-      "approval_id",
-      selfLineage.excludeApprovalId,
-    )
+  if (selfLineage?.exact) {
+    const excludedApprovalIds = selfLineage.excludeApprovalIds?.length
+      ? selfLineage.excludeApprovalIds
+      : selfLineage.excludeApprovalId
+        ? [selfLineage.excludeApprovalId]
+        : []
+    for (const approvalId of excludedApprovalIds) {
+      ledgerQuery = ledgerQuery.neq("approval_id", approvalId)
+    }
   }
   const [
     ebaySkuResult,
@@ -1733,13 +1877,30 @@ async function loadLivePackageTaxonomy(listingPackage: JsonRecord) {
   return getEbayTaxonomyListingIntelligence(title, categoryId || null)
 }
 
-function jsonError(error: unknown, status = 502, blockers?: string[]) {
+function canonicalDraftOnlyErrorHttpStatus(error: unknown) {
+  const code = errorCode(error)
+  if (
+    code.includes("PACKAGE_CHANGED")
+    || code.includes("CANDIDATE_CHANGED")
+    || code.includes("AUTHORIZATION_CONFLICT")
+    || code.includes("SKU_COLLISION")
+    || code.includes("EXECUTION_COLLISION")
+    || code.includes("DUPLICATE_DETECTED")
+    || code.includes("MARKETPLACE_PAYLOAD_CHANGED")
+    || code.includes("REAPPROVAL_REQUIRED")
+    || code.includes("STATE_CONFLICT")
+  ) return 409
+  if (code.includes("RATE_LIMIT")) return 429
+  return 502
+}
+
+function jsonError(error: unknown, status?: number, blockers?: string[]) {
   return NextResponse.json({
     success: false,
     error: errorCode(error),
     ...(blockers ? { blockers } : {}),
     safety: { target: responseTarget(), canPublish: false },
-  }, { status })
+  }, { status: status ?? canonicalDraftOnlyErrorHttpStatus(error) })
 }
 
 function oneClickPrewriteError(
@@ -1871,8 +2032,17 @@ export async function GET(req: Request) {
       })
     const correctedPackageRetryHistory =
       correctedRetryCollisionAuthority.history
-    const collisionSelfLineage =
-      correctedRetryCollisionAuthority.collisionSelfLineage
+    const crossApprovalExistingOffer =
+      await loadCrossApprovalExistingUnpublishedOfferAuthorityV1({
+        supabase,
+        currentApproval: latestApproval as JsonRecord | null,
+        expected: expectedSelfLineage,
+        verifyOfficial: true,
+      })
+    const collisionSelfLineage = crossApprovalCollisionSelfLineageV1({
+      current: correctedRetryCollisionAuthority.collisionSelfLineage,
+      authority: crossApprovalExistingOffer,
+    })
     const initialContext = await loadPackageContext(
       supabase,
       packageId,
@@ -2176,6 +2346,23 @@ export async function GET(req: Request) {
       correctedPackageOfficialReadback,
       correctedPackageIdentifierPreflight,
       correctedPackageSafeRetry,
+      crossApprovalExistingOffer: crossApprovalExistingOffer ? {
+        status: crossApprovalExistingOffer.official?.safe === true
+          ? "UNPUBLISHED_VERIFIED"
+          : "BLOCKED",
+        reasonCode: crossApprovalExistingOffer.classification.reasonCode,
+        priorExecutionId:
+          crossApprovalExistingOffer.classification.priorExecutionId,
+        existingOfferId: crossApprovalExistingOffer.classification.offerId,
+        marketplacePayloadsEqual:
+          crossApprovalExistingOffer.classification.marketplacePayloadsEqual,
+        officialReadback: crossApprovalExistingOffer.official,
+        reuseExistingOffer:
+          crossApprovalExistingOffer.official?.safe === true,
+        createInventoryItem: false,
+        createOffer: false,
+        publishOffer: false,
+      } : null,
       preflight: canonicalFreshPreflight,
       runtime,
       controlledPublication: {
@@ -3749,9 +3936,26 @@ async function executeDraft(body: JsonRecord, actor: string) {
       currentApproval: approval as JsonRecord,
       currentExecution: existing as JsonRecord | null,
     })
+  const crossApprovalExistingOffer =
+    await loadCrossApprovalExistingUnpublishedOfferAuthorityV1({
+      supabase,
+      currentApproval: approval as JsonRecord,
+      expected: {
+        actorUserId: actor,
+        listingPackageId: text(approval.listing_package_id),
+        opportunityId: text(approval.opportunity_id),
+        candidateKey: text(approval.candidate_key),
+        target,
+        accountFingerprint: fingerprint,
+        sku,
+      },
+      verifyOfficial: true,
+    })
   const correctedRetryHistory = correctedRetryCollisionAuthority.history
-  const collisionSelfLineage =
-    correctedRetryCollisionAuthority.collisionSelfLineage
+  const collisionSelfLineage = crossApprovalCollisionSelfLineageV1({
+    current: correctedRetryCollisionAuthority.collisionSelfLineage,
+    authority: crossApprovalExistingOffer,
+  })
   let context = await loadPackageContext(
     supabase,
     approval.listing_package_id,
@@ -3920,6 +4124,83 @@ async function executeDraft(body: JsonRecord, actor: string) {
       new Error(dependencyPreflight.blocker ?? "EBAY_DRAFT_DEPENDENCIES_PREFLIGHT_UNAVAILABLE"),
       unavailable ? 503 : 409,
     )
+  }
+
+  if (
+    crossApprovalExistingOffer?.classification.exact === true
+    && crossApprovalExistingOffer.official?.safe === true
+  ) {
+    const readbackDigest = `sha256:${hashEbayDraftOnlyPayload({
+      sku,
+      offerId: crossApprovalExistingOffer.classification.offerId,
+      inventoryHttpStatus:
+        crossApprovalExistingOffer.official.inventoryHttpStatus,
+      inventoryMatches:
+        crossApprovalExistingOffer.official.inventoryMatches,
+      offerHttpStatus: crossApprovalExistingOffer.official.offerHttpStatus,
+      offerMatches: crossApprovalExistingOffer.official.offerMatches,
+      offerStatus: crossApprovalExistingOffer.official.offerStatus,
+      listingPresent: crossApprovalExistingOffer.official.listingPresent,
+      offerCount: crossApprovalExistingOffer.official.offerCount,
+    })}`
+    const { data: reconciled, error: reconciliationError } = await supabase
+      .rpc("reconcile_ebay_cross_approval_unpublished_offer_v1", {
+        p_current_approval_id: approvalId,
+        p_prior_execution_id:
+          crossApprovalExistingOffer.classification.priorExecutionId,
+        p_actor_user_id: actor,
+        p_idempotency_key: executionKey,
+        p_request_hash: currentHash,
+        p_sku: sku,
+        p_offer_id: crossApprovalExistingOffer.classification.offerId,
+        p_inventory_http_status:
+          crossApprovalExistingOffer.official.inventoryHttpStatus,
+        p_offer_http_status:
+          crossApprovalExistingOffer.official.offerHttpStatus,
+        p_offer_status: crossApprovalExistingOffer.official.offerStatus,
+        p_official_readback_digest: readbackDigest,
+        p_target: target,
+        p_account_fingerprint: fingerprint,
+      })
+      .single()
+    if (reconciliationError || !reconciled) {
+      return jsonError(new Error(databaseExceptionCode(
+        reconciliationError,
+        "EBAY_CROSS_APPROVAL_UNPUBLISHED_RECONCILIATION_FAILED",
+      )), 409)
+    }
+    return NextResponse.json({
+      success: true,
+      reconciled: true,
+      execution: reconciled,
+      draft: {
+        offerId: crossApprovalExistingOffer.classification.offerId,
+        sku,
+        verification:
+          "UNPUBLISHED_VERIFIED_AFTER_CROSS_APPROVAL_RESUME",
+        verifiedAt: record(reconciled).completed_at ??
+          new Date().toISOString(),
+        target,
+      },
+      crossApprovalExistingOffer: {
+        status: "UNPUBLISHED_VERIFIED",
+        priorExecutionId:
+          crossApprovalExistingOffer.classification.priorExecutionId,
+        existingOfferId:
+          crossApprovalExistingOffer.classification.offerId,
+        marketplacePayloadsEqual: true,
+        currentOwnerAuthorizationConsumed: true,
+      },
+      safety: {
+        currentOwnerAuthorizationUsed: true,
+        priorOwnerAuthorizationUsed: false,
+        inventoryItemCreated: false,
+        offerCreated: false,
+        publishOfferCalled: false,
+        marketplaceWrites: 0,
+        canPublish: false,
+      },
+    })
   }
 
   let correctedPackageSafeRetry: ReturnType<

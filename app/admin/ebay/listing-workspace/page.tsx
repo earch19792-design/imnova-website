@@ -2150,6 +2150,10 @@ function ListingWorkspacePageContent() {
                 candidateKey,
               )
               setDraftState((current) => ({ ...current, ...draft }))
+              // A successful canonical read owns the current header. Prior
+              // transport/business errors remain available only in their
+              // explicitly correlated history and must not shadow readiness.
+              setError("")
               setCanonicalReadinessLoadState("ready")
               setCanonicalReadinessLoadError("")
             } catch (draftError) {

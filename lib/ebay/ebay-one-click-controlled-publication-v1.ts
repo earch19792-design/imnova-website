@@ -180,6 +180,7 @@ export type ExactDraftOnlyPublicationSelfLineageV1 = Readonly<{
   exact: boolean
   reasonCode: string
   excludeApprovalId: string | null
+  excludeApprovalIds?: readonly string[]
   rearmedAwaitingHumanPublication: boolean
 }>
 
@@ -188,14 +189,138 @@ function selfLineageResult(
   reasonCode: string,
   approvalId: string | null = null,
   rearmedAwaitingHumanPublication = false,
+  additionalApprovalIds: readonly string[] = [],
 ): ExactDraftOnlyPublicationSelfLineageV1 {
+  const excludeApprovalIds = exact
+    ? [...new Set([approvalId, ...additionalApprovalIds].filter(
+      (value): value is string => Boolean(value),
+    ))]
+    : []
   return Object.freeze({
     exact,
     reasonCode,
     excludeApprovalId: exact ? approvalId : null,
+    excludeApprovalIds: Object.freeze(excludeApprovalIds),
     rearmedAwaitingHumanPublication:
       exact && rearmedAwaitingHumanPublication,
   })
+}
+
+export type CrossApprovalExistingUnpublishedOfferV1 = Readonly<{
+  exact: boolean
+  reasonCode: string
+  currentApprovalId: string | null
+  priorApprovalId: string | null
+  priorExecutionId: string | null
+  offerId: string | null
+  excludeApprovalIds: readonly string[]
+  marketplacePayloadsEqual: boolean
+}>
+
+/**
+ * Recognizes an eBay Inventory Item + UNPUBLISHED Offer created by an older
+ * approval as belonging to the exact current package. The old authorization
+ * is lineage evidence only: it never authorizes the current continuation.
+ */
+export function classifyCrossApprovalExistingUnpublishedOfferV1(input: Readonly<{
+  currentApproval?: JsonRecord | null
+  priorApproval?: JsonRecord | null
+  priorExecution?: JsonRecord | null
+  expected: Readonly<{
+    actorUserId: string
+    listingPackageId: string
+    opportunityId: string
+    candidateKey: string
+    target: string
+    accountFingerprint: string
+    sku: string
+  }>
+}>): CrossApprovalExistingUnpublishedOfferV1 {
+  const current = record(input.currentApproval)
+  const prior = record(input.priorApproval)
+  const execution = record(input.priorExecution)
+  const expected = input.expected
+  const currentApprovalId = text(current.id) || null
+  const priorApprovalId = text(prior.id) || null
+  const priorExecutionId = text(execution.id) || null
+  const offerId = text(execution.offer_id) || null
+  const result = (
+    exact: boolean,
+    reasonCode: string,
+    marketplacePayloadsEqual = false,
+  ): CrossApprovalExistingUnpublishedOfferV1 => Object.freeze({
+    exact,
+    reasonCode,
+    currentApprovalId,
+    priorApprovalId,
+    priorExecutionId,
+    offerId,
+    excludeApprovalIds: Object.freeze(exact
+      ? [currentApprovalId, priorApprovalId].filter(
+        (value): value is string => Boolean(value),
+      ) : []),
+    marketplacePayloadsEqual,
+  })
+  if (!currentApprovalId || !priorApprovalId || !priorExecutionId || !offerId) {
+    return result(false, "CROSS_APPROVAL_LINEAGE_INCOMPLETE")
+  }
+  if (currentApprovalId === priorApprovalId) {
+    return result(false, "CROSS_APPROVAL_DISTINCT_APPROVAL_REQUIRED")
+  }
+  if (
+    current.status !== "approved"
+    || Boolean(current.consumed_at)
+    || Boolean(current.revoked_at)
+    || !Number.isFinite(Date.parse(text(current.expires_at)))
+    || Date.parse(text(current.expires_at)) <= Date.now()
+  ) return result(false, "CURRENT_OWNER_AUTHORIZATION_NOT_ACTIVE")
+  if (
+    prior.status !== "consumed"
+    || !text(prior.consumed_at)
+    || Boolean(prior.revoked_at)
+    || execution.phase !== "completed"
+    || text(execution.approval_id) !== priorApprovalId
+    || text(execution.request_hash) !== text(prior.payload_hash)
+  ) return result(false, "PRIOR_UNPUBLISHED_EXECUTION_NOT_DURABLE")
+  const exactIdentity = [current, prior].every((approval) =>
+    text(approval.actor_user_id) === expected.actorUserId
+    && text(approval.listing_package_id) === expected.listingPackageId
+    && text(approval.opportunity_id) === expected.opportunityId
+    && text(approval.candidate_key) === expected.candidateKey
+    && text(approval.target) === expected.target
+    && text(approval.account_fingerprint) === expected.accountFingerprint)
+    && text(execution.actor_user_id) === expected.actorUserId
+    && text(execution.listing_package_id) === expected.listingPackageId
+    && text(execution.opportunity_id) === expected.opportunityId
+    && text(execution.target) === expected.target
+    && text(execution.account_fingerprint) === expected.accountFingerprint
+    && text(execution.sku) === expected.sku
+  if (!exactIdentity) return result(false, "CROSS_APPROVAL_IDENTITY_MISMATCH")
+  const currentPayload = record(current.approved_payload)
+  const priorPayload = record(prior.approved_payload)
+  const currentOffer = record(currentPayload.offerPayload)
+  const priorOffer = record(priorPayload.offerPayload)
+  if (
+    text(currentPayload.sku) !== expected.sku
+    || text(currentOffer.sku) !== expected.sku
+    || text(priorPayload.sku) !== expected.sku
+    || text(priorOffer.sku) !== expected.sku
+    || text(currentOffer.marketplaceId) !== "EBAY_US"
+    || text(priorOffer.marketplaceId) !== "EBAY_US"
+  ) return result(false, "CROSS_APPROVAL_SKU_MISMATCH")
+  const marketplacePayloadsEqual =
+    hashEbayDraftOnlyPayload(currentPayload.inventoryItemPayload) ===
+      hashEbayDraftOnlyPayload(priorPayload.inventoryItemPayload)
+    && hashEbayDraftOnlyPayload(currentPayload.offerPayload) ===
+      hashEbayDraftOnlyPayload(priorPayload.offerPayload)
+  if (!marketplacePayloadsEqual) {
+    return result(false, "CROSS_APPROVAL_MARKETPLACE_PAYLOAD_CHANGED")
+  }
+  return result(
+    true,
+    "SELF_LINEAGE_EXISTING_UNPUBLISHED_OFFER",
+    true,
+  )
 }
 
 /**
@@ -281,8 +406,29 @@ export function classifyExactDraftOnlyPublicationSelfLineageV1(
   if (!text(execution.offer_id)) {
     return selfLineageResult(false, "SELF_LINEAGE_COMPLETED_OFFER_REQUIRED")
   }
+  const crossApprovalResume = record(
+    record(execution.sanitized_result).crossApprovalSameLineageResumeV1,
+  )
+  const priorApprovalId = text(crossApprovalResume.priorApprovalId)
+  const crossApprovalResumeValid =
+    crossApprovalResume.officialReadbackVerified === true
+    && crossApprovalResume.marketplaceWrites === 0
+    && crossApprovalResume.inventoryItemCreated === false
+    && crossApprovalResume.offerCreated === false
+    && text(crossApprovalResume.currentApprovalId) === approvalId
+    && text(crossApprovalResume.currentExecutionId) === executionId
+    && text(crossApprovalResume.existingOfferId) === text(execution.offer_id)
+    && Boolean(priorApprovalId)
   if (!text(publication.id)) {
-    return selfLineageResult(true, "EXACT_EXECUTION_SELF_LINEAGE", approvalId)
+    return selfLineageResult(
+      true,
+      crossApprovalResumeValid
+        ? "SELF_LINEAGE_EXISTING_UNPUBLISHED_OFFER"
+        : "EXACT_EXECUTION_SELF_LINEAGE",
+      approvalId,
+      false,
+      crossApprovalResumeValid ? [priorApprovalId] : [],
+    )
   }
   if (
     text(publication.draft_execution_id) !== executionId
@@ -323,6 +469,7 @@ export function classifyExactDraftOnlyPublicationSelfLineageV1(
       : "EXACT_OFFER_SELF_LINEAGE",
     approvalId,
     rearmed,
+    crossApprovalResumeValid ? [priorApprovalId] : [],
   )
 }
 
