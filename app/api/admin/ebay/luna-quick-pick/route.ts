@@ -31,6 +31,9 @@ import { resolveQuickPickCanonicalPublishHandoffV1 } from
   "@/lib/ebay/ebay-quick-pick-canonical-publish-handoff-v1"
 import { readLatestQuickPickRadarOvernightEnrichmentV1 } from
   "@/lib/ebay/ebay-quick-pick-radar-overnight-enrichment-v1"
+import { buildSellerOsNightWorkProvenanceReadModelV1,
+  readNightWorkProvenanceAuthorityRowsV1 } from
+  "@/lib/ebay/seller-os-night-work-provenance-read-model-v1"
 import { loadFinalListingReviewPublicationGate } from
   "@/lib/ebay/final-listing-review-publication-gate"
 import { ensureAutomaticLunaSupplierImagesV1 } from
@@ -228,6 +231,23 @@ export async function GET(req: Request) {
       globalQueueCards: explicitCandidateScope
         ? selectedDurableCards : globalDurableCards,
       explicitCandidateScope })
+    const overnightOutcomes = Array.isArray(record(overnightEnrichment).outcomes)
+      ? record(overnightEnrichment).outcomes as unknown[] : []
+    const provenanceOperationIds = [...new Set([
+      ...readModel.globalQueue.cards.flatMap((card) =>
+        card.opportunityId ? [card.opportunityId] : []),
+      ...overnightOutcomes.flatMap((value) => {
+        const operationId = uuid(record(value).opportunityId)
+        return operationId ? [operationId] : []
+      }),
+    ])]
+    const provenanceRows = await readNightWorkProvenanceAuthorityRowsV1({
+      supabase, operationIds: provenanceOperationIds,
+    })
+    const nightWorkProvenance = buildSellerOsNightWorkProvenanceReadModelV1({
+      authorityRows: provenanceRows, receipts,
+      currentCards: readModel.globalQueue.cards, overnightEnrichment,
+    })
     const progress = readModel.globalQueue.cards
     const ownerLastMileCards = progress.filter((card) =>
       card.ownerTruePublicationBlockers.length > 0)
@@ -257,6 +277,7 @@ export async function GET(req: Request) {
       receipt: receipts[0] ?? null, receipts,
       ownerLastMileCanary,
       readModel,
+      nightWorkProvenance,
       readOnly: true,
       continuationExecuted: false,
       overnightEnrichment,

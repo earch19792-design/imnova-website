@@ -9,7 +9,8 @@ import { QUICK_PICK_OWNER_STAGE_CATALOG_V1 } from
 import { mergeOwnerRuntimeQuickPickCards, parseOwnerRuntimeQuickPickCard,
   parseOwnerRuntimeQuickPickReceipt, useAdminOwnerRuntime,
   type OwnerRuntimeQuickPickCard, type OwnerRuntimeQuickPickReceipt,
-  type OwnerRuntimeQuickPickStageState } from
+  type OwnerRuntimeQuickPickStageState, type OwnerRuntimeNightWorkOrigin,
+  type OwnerRuntimeNightWorkProvenance } from
   "./admin-owner-runtime-provider"
 
 type CompactStatus = "READY" | "WORKING" | "WAITING" | "DEGRADED" |
@@ -463,6 +464,91 @@ function quickPickCommercialLabel(card: OwnerRuntimeQuickPickCard) {
   if (card.state === "RUNNING") return "Procesando ahora"
   if (card.state === "WAITING") return "En espera"
   return "Bloqueado"
+}
+
+function ownerCurrentStateLabel(value: string) {
+  if (value === "MARKET_TEST_READY") {
+    return "Prueba de mercado lista para revisar"
+  }
+  if (value === "LISTING_READY") return "Listing listo para revisar"
+  if (value === "OWNER_FACT_REQUIRED") return "Falta un dato obligatorio"
+  if (value === "WAITING_FOR_SHIPPING_WORKER") {
+    return "Esperando cálculo de envío"
+  }
+  if (value === "WAITING_FOR_EBAY_CAPABILITY") return "Esperando a eBay"
+  if (value === "PARKED_ECONOMICS") return "Economics no viable"
+  if (value === "LIVE") return "Publicado y monitoreado"
+  return value.replaceAll("_", " ")
+}
+
+function nightEnrichmentLabel(value: string) {
+  if (value === "RADAR_NIGHT_ENRICHMENT") return "Radar de noche"
+  if (value === "LUNA_FULL_EVIDENCE") return "Evidencia completa de Luna"
+  if (value === "MARKETPLACE_COMPARABLE_ENRICHMENT") {
+    return "Comparables del marketplace"
+  }
+  if (value === "NO_NEW_EVIDENCE") return "Sin evidencia nueva"
+  if (value === "OTHER_PROVEN_ENRICHMENT") return "Otra fuente demostrada"
+  return "No demostrado"
+}
+
+function nightResolutionLabel(value: string) {
+  if (value === "RADAR_NIGHT_ENRICHMENT") {
+    return "Enriquecimiento nocturno de Radar"
+  }
+  if (value === "LUNA_FULL_EVIDENCE_RESOLVER") {
+    return "Evidencia completa del producto Luna"
+  }
+  if (value === "OWNER_LUNA_POLICY") return "Política owner para Luna"
+  if (value === "QUICK_PICK_RUNTIME") return "Runtime de Quick Pick"
+  if (value === "OWNER_EXPLICIT_FACT") return "Dato explícito del owner"
+  if (value === "EBAY_CAPABILITY_BECAME_AVAILABLE") {
+    return "Capability oficial de eBay"
+  }
+  if (value === "OTHER_PROVEN_SYSTEM_RESOLUTION") {
+    return "Otro resolver demostrado de Seller OS"
+  }
+  if (value === "NOT_RESOLVED") return "No resuelto"
+  return "No demostrado"
+}
+
+function nightOriginLabel(origin: OwnerRuntimeNightWorkOrigin,
+  radarSignals: readonly RadarSignal[]) {
+  if (origin.classification === "MANUAL_LUNA_BATCH") {
+    return `Links Luna${origin.batchReference
+      ? ` · Batch ${origin.batchReference}` : ""}`
+  }
+  if (origin.classification === "RADAR_HANDOFF") {
+    const family = radarSignals.find((entry) =>
+      entry.familyId === origin.radarFamilyId)?.family
+    return `Radar · ${family ?? "Opportunity/Family durable"}`
+  }
+  return "No demostrado"
+}
+
+function processorLabel(value: string) {
+  if (value === "NIGHT_WORK") return "Trabajo nocturno"
+  if (value === "QUICK_PICK_RUNTIME") return "Quick Pick"
+  return "No demostrado"
+}
+
+function QuickPickProvenanceLine({ operationId, provenance, radarSignals }:
+  Readonly<{ operationId: string | null;
+    provenance: OwnerRuntimeNightWorkProvenance | null;
+    radarSignals: readonly RadarSignal[] }>) {
+  const operation = operationId ? provenance?.currentOperations.find(
+    (entry) => entry.operationId === operationId) : null
+  if (!operation) return null
+  return <div data-quick-pick-provenance
+    className="mt-2 rounded-lg border border-white/10 bg-black/15 px-2 py-1.5 text-[11px] text-white/55">
+    <span className="block">Origen: <strong>{nightOriginLabel(
+      operation.origin, radarSignals)}</strong></span>
+    {operation.origin.classification === "RADAR_HANDOFF" && <span
+      className="block">Radar → Luna match: <strong>{
+        operation.origin.identityClass}</strong> · Handoff: <strong>Quick Pick</strong></span>}
+    <span className="block">Processor actual: <strong>{processorLabel(
+      operation.processor)}</strong></span>
+  </div>
 }
 
 function quickPickBlockerLabel(value: string | null) {
@@ -1293,41 +1379,51 @@ export function SellerOsOperationalDashboard() {
           className="mt-3 rounded-2xl border border-violet-200/15 bg-violet-200/[0.05] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-black uppercase tracking-[0.16em] text-violet-100/75">Trabajo nocturno · snapshot histórico</h3>
-            {ownerRuntime.overnightEnrichment?.observedAt && <span
+            {ownerRuntime.nightWorkProvenance?.observedAt && <span
               className="text-[10px] font-bold text-white/40">
-              Estado observado a las {shortTimestamp(ownerRuntime.overnightEnrichment.observedAt)}
+              Estado observado a las {shortTimestamp(
+                ownerRuntime.nightWorkProvenance.observedAt)}
             </span>}
           </div>
-          {ownerRuntime.overnightEnrichment ? <>
+          {ownerRuntime.nightWorkProvenance ? <>
             <p className="mt-2 text-xs leading-5 text-white/65">
-              {ownerRuntime.overnightEnrichment.enrichedCount} enriquecidos · {ownerRuntime.overnightEnrichment.readyAfterCount} listos · {ownerRuntime.overnightEnrichment.ownerConfirmationRequiredCount} necesitan confirmación · {ownerRuntime.overnightEnrichment.ownerFactRequiredCount} necesitan un dato
+              {ownerRuntime.nightWorkProvenance.morningSummary.processedAtNight} procesados de noche · {ownerRuntime.nightWorkProvenance.morningSummary.radarEnrichedCount} enriquecidos por Radar · {ownerRuntime.nightWorkProvenance.morningSummary.noNewRadarEvidenceCount} sin evidencia nueva de Radar · {ownerRuntime.nightWorkProvenance.morningSummary.ownerFactsRemainingCount} con dato owner pendiente · {ownerRuntime.nightWorkProvenance.morningSummary.marketTestReadyCount} listos para prueba de mercado
             </p>
-            {ownerRuntime.overnightEnrichment.outcomes.length > 0 && <ul
+            {ownerRuntime.nightWorkProvenance.outcomes.length > 0 && <ul
               className="mt-2 space-y-1.5">
-              {ownerRuntime.overnightEnrichment.outcomes.map((outcome,
-                index) => <li
-                key={`${outcome.sourceSku ?? "quick-pick"}-${index}`}
+              {ownerRuntime.nightWorkProvenance.outcomes.map((outcome) => <li
+                key={outcome.operationId}
                 className="rounded-xl bg-black/20 px-2.5 py-2 text-xs text-white/60">
                 <strong className="text-white/80">{outcome.productTitle ??
                   outcome.sourceSku ?? "Producto Luna"}</strong>
-                <span className="ml-1">Snapshot: {outcome.beforeStatus} → {outcome.afterStatus}</span>
-                {quickPickCards.find((card) => card.sourceSku &&
-                  card.sourceSku === outcome.sourceSku) && <span className="block font-bold text-cyan-100/75">
-                  Estado actual: {quickPickCommercialLabel(quickPickCards.find(
-                    (card) => card.sourceSku === outcome.sourceSku) as
-                      OwnerRuntimeQuickPickCard)}
-                </span>}
-                {outcome.fieldsResolvedOvernight.length > 0 && <span>
-                  {` · resuelto: ${outcome.fieldsResolvedOvernight.join(", ")}`}
-                </span>}
-                {outcome.demandEvidenceAdded && <span> · nueva evidencia de demanda</span>}
-                {outcome.listingIntelligenceUpdated && <span> · listing actualizado</span>}
-                {outcome.ownerActionRequired === "CONFIRM" && <span> · confirmar</span>}
-                {outcome.ownerActionRequired === "ENTER_FACT" && <span> · introducir dato</span>}
+                <span className="mt-1 block">Origen: <strong>{nightOriginLabel(
+                  outcome.origin, snapshot.radarSignals)}</strong></span>
+                <span className="block">Procesado/avanzado por: <strong>{processorLabel(
+                  outcome.processor)}</strong></span>
+                <span className="block">Estado histórico: {outcome.blockerBefore} → {outcome.blockerAfter}</span>
+                {outcome.persistentBlockingFields.length > 0 && <span
+                  className="block">Blocker antes/después: {outcome.persistentBlockingFields.join(", ")}</span>}
+                <span className="block">Enriquecimiento nocturno: <strong>{nightEnrichmentLabel(
+                  outcome.enrichmentSource)}</strong></span>
+                <span className="block">Resolución en ese momento: <strong>{nightResolutionLabel(
+                  outcome.resolutionSource)}</strong></span>
+                <span className="block">Acción en ese momento: {outcome.historicalAction}</span>
+                {outcome.currentResolutions.length > 0 && <span
+                  className="block">Resuelto después por: {outcome.currentResolutions.map(
+                    (resolution) => `${resolution.specificName}: ${
+                      nightResolutionLabel(resolution.resolutionSource)}`)
+                    .join(" · ")}</span>}
+                <span className="block font-bold text-cyan-100/75">
+                  Estado actual: {ownerCurrentStateLabel(
+                    outcome.currentCanonicalState)}
+                </span>
+                <span className="block font-bold text-cyan-100/75">
+                  Acción actual: {outcome.currentAction}
+                </span>
               </li>)}
             </ul>}
           </> : <p className="mt-2 text-xs leading-5 text-white/50">
-            La segunda pasada aparecerá aquí después del próximo Night Radar. Los productos listos durante el día no esperan a la noche.
+            El snapshot aparecerá después del próximo ciclo nocturno. Los productos listos durante el día no esperan a la noche.
           </p>}
         </section>
         <div className="mt-3 space-y-2" data-quick-pick-inline-operation-view>
@@ -1343,6 +1439,9 @@ export function SellerOsOperationalDashboard() {
                 <p className="truncate text-sm font-black">{card.title ?? "Producto Luna"}</p>
                 <p className="mt-1 truncate text-xs text-white/50">{card.sourceSku ?? "Identificando…"} · {quickPickCommercialLabel(card)}</p>
                 <p className="mt-1 text-xs text-white/65">Etapa: <strong>{quickPickStageLabel(card)}</strong></p>
+                <QuickPickProvenanceLine operationId={card.opportunityId}
+                  provenance={ownerRuntime.nightWorkProvenance}
+                  radarSignals={snapshot.radarSignals} />
                 {ownerVisibleQuickPickBlockers(card).length > 0 && <ul
                   data-quick-pick-commercial-blockers
                   className="mt-1 space-y-1 text-xs font-bold text-amber-100">

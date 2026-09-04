@@ -83,6 +83,64 @@ export type OwnerRuntimeQuickPickOvernightSummary = Readonly<{
   }>[]
 }>
 
+export type OwnerRuntimeNightWorkOrigin = Readonly<{
+  classification: "MANUAL_LUNA_BATCH" | "RADAR_HANDOFF" |
+    "OTHER_PROVEN_ORIGIN" | "UNPROVEN"
+  label: string
+  batchReference: string | null
+  opportunityCaseId: string | null
+  radarFamilyId: string | null
+  radarObservationId: string | null
+  identityClass: string | null
+}>
+
+export type OwnerRuntimeNightWorkProvenance = Readonly<{
+  observedAt: string | null
+  outcomes: readonly Readonly<{
+    operationId: string
+    sourceSku: string | null
+    productTitle: string | null
+    origin: OwnerRuntimeNightWorkOrigin
+    processor: string
+    enrichmentSource: string
+    resolutionSource: string
+    fieldsResolvedDuringSnapshot: readonly string[]
+    blockerBefore: string
+    blockerAfter: string
+    persistentBlockingFields: readonly string[]
+    historicalAction: string
+    currentCanonicalState: string
+    currentAction: string
+    currentResolutions: readonly Readonly<{
+      specificName: string
+      resolvedValue: string | null
+      resolutionSource: string
+      sourceAuthority: string | null
+    }>[]
+    factInvented: boolean
+  }>[]
+  currentOperations: readonly Readonly<{
+    operationId: string
+    sourceSku: string | null
+    productTitle: string | null
+    origin: OwnerRuntimeNightWorkOrigin
+    processor: string
+    currentCanonicalState: string
+    currentAction: string
+  }>[]
+  morningSummary: Readonly<{
+    linksReceived: number | null
+    processedDuringDay: number | null
+    processedAtNight: number
+    radarEnrichedCount: number
+    noNewRadarEvidenceCount: number
+    blockersResolvedByRadarCount: number
+    blockersResolvedByOtherSystemCount: number
+    ownerFactsRemainingCount: number
+    marketTestReadyCount: number
+  }>
+}>
+
 export type OwnerRuntimeQuickPickReceipt = Readonly<{
   batchId: string
   ownerReference: string
@@ -102,6 +160,7 @@ type OwnerRuntimeContextValue = Readonly<{
   quickPickReadState: OwnerRuntimeQuickPickReadState
   quickPickReconciliationActive: boolean
   overnightEnrichment: OwnerRuntimeQuickPickOvernightSummary | null
+  nightWorkProvenance: OwnerRuntimeNightWorkProvenance | null
   refreshQuickPicks: () => Promise<void>
 }>
 
@@ -128,6 +187,7 @@ const OwnerRuntimeContext = createContext<OwnerRuntimeContextValue>({
   quickPickReadState: "REFRESHING",
   quickPickReconciliationActive: false,
   overnightEnrichment: null,
+  nightWorkProvenance: null,
   refreshQuickPicks: async () => undefined,
 })
 
@@ -274,6 +334,106 @@ export function parseOwnerRuntimeQuickPickOvernightSummary(value: unknown):
     outcomes })
 }
 
+function parseNightWorkOrigin(value: unknown): OwnerRuntimeNightWorkOrigin {
+  const item = record(value)
+  const candidate = String(item.classification ?? "UNPROVEN")
+  const classification = new Set(["MANUAL_LUNA_BATCH", "RADAR_HANDOFF",
+    "OTHER_PROVEN_ORIGIN", "UNPROVEN"]).has(candidate)
+    ? candidate as OwnerRuntimeNightWorkOrigin["classification"] : "UNPROVEN"
+  return Object.freeze({ classification,
+    label: nullableText(item.label, 120) ?? (classification === "RADAR_HANDOFF"
+      ? "Radar" : classification === "MANUAL_LUNA_BATCH"
+        ? "Links Luna" : "No demostrado"),
+    batchReference: nullableText(item.batchReference, 60),
+    opportunityCaseId: nullableText(item.opportunityCaseId, 160),
+    radarFamilyId: nullableText(item.radarFamilyId, 180),
+    radarObservationId: nullableText(item.radarObservationId, 180),
+    identityClass: nullableText(item.identityClass, 20) })
+}
+
+export function parseOwnerRuntimeNightWorkProvenance(value: unknown):
+  OwnerRuntimeNightWorkProvenance | null {
+  const item = record(value)
+  if (item.contractVersion !==
+      "SELLER_OS_NIGHT_WORK_PROVENANCE_READ_MODEL_V1") return null
+  const snapshot = record(item.historicalSnapshot)
+  const outcomes = Object.freeze((Array.isArray(snapshot.outcomes)
+    ? snapshot.outcomes : []).flatMap((value) => {
+    const outcome = record(value)
+    const operationId = nullableText(outcome.operationId, 100)
+    const blockerBefore = nullableText(outcome.blockerBefore, 160)
+    const blockerAfter = nullableText(outcome.blockerAfter, 160)
+    const currentState = nullableText(outcome.currentCanonicalState, 160)
+    const currentAction = nullableText(outcome.currentAction, 300)
+    if (!operationId || !blockerBefore || !blockerAfter || !currentState ||
+        !currentAction) return []
+    const resolutions = Object.freeze((Array.isArray(
+      outcome.currentResolutions) ? outcome.currentResolutions : [])
+      .flatMap((value) => {
+        const resolution = record(value)
+        const specificName = nullableText(resolution.specificName, 120)
+        const resolutionSource = nullableText(
+          resolution.resolutionSource, 160)
+        if (!specificName || !resolutionSource) return []
+        return [Object.freeze({ specificName,
+          resolvedValue: nullableText(resolution.resolvedValue, 300),
+          resolutionSource,
+          sourceAuthority: nullableText(resolution.sourceAuthority, 180) })]
+      }))
+    return [Object.freeze({ operationId,
+      sourceSku: nullableText(outcome.sourceSku, 160),
+      productTitle: nullableText(outcome.productTitle, 400),
+      origin: parseNightWorkOrigin(outcome.origin),
+      processor: nullableText(outcome.processor, 80) ?? "UNPROVEN",
+      enrichmentSource: nullableText(outcome.enrichmentSource, 120) ??
+        "UNPROVEN",
+      resolutionSource: nullableText(outcome.resolutionSource, 120) ??
+        "UNPROVEN",
+      fieldsResolvedDuringSnapshot: boundedTextList(
+        outcome.fieldsResolvedDuringSnapshot),
+      blockerBefore, blockerAfter,
+      persistentBlockingFields: boundedTextList(
+        outcome.persistentBlockingFields),
+      historicalAction: nullableText(outcome.historicalAction, 300) ??
+        "Ninguna",
+      currentCanonicalState: currentState, currentAction,
+      currentResolutions: resolutions,
+      factInvented: outcome.factInvented === true })]
+  }))
+  const currentOperations = Object.freeze((Array.isArray(item.currentOperations)
+    ? item.currentOperations : []).flatMap((value) => {
+    const operation = record(value)
+    const operationId = nullableText(operation.operationId, 100)
+    const state = nullableText(operation.currentCanonicalState, 160)
+    const action = nullableText(operation.currentAction, 300)
+    if (!operationId || !state || !action) return []
+    return [Object.freeze({ operationId,
+      sourceSku: nullableText(operation.sourceSku, 160),
+      productTitle: nullableText(operation.productTitle, 400),
+      origin: parseNightWorkOrigin(operation.origin),
+      processor: nullableText(operation.processor, 80) ?? "UNPROVEN",
+      currentCanonicalState: state, currentAction: action })]
+  }))
+  const morning = record(item.morningSummary)
+  const metric = (name: string) => nullableCount(morning[name]) ?? 0
+  return Object.freeze({ observedAt: nullableText(snapshot.observedAt, 80),
+    outcomes, currentOperations,
+    morningSummary: Object.freeze({
+      linksReceived: nullableCount(record(morning.linksReceived).value),
+      processedDuringDay:
+        nullableCount(record(morning.processedDuringDay).value),
+      processedAtNight:
+        nullableCount(record(morning.processedAtNight).value) ?? 0,
+      radarEnrichedCount: metric("radarEnrichedCount"),
+      noNewRadarEvidenceCount: metric("noNewRadarEvidenceCount"),
+      blockersResolvedByRadarCount: metric("blockersResolvedByRadarCount"),
+      blockersResolvedByOtherSystemCount:
+        metric("blockersResolvedByOtherSystemCount"),
+      ownerFactsRemainingCount: metric("ownerFactsRemainingCount"),
+      marketTestReadyCount: metric("marketTestReadyCount"),
+    }) })
+}
+
 export function mergeOwnerRuntimeQuickPickCards(
   ...collections: readonly (readonly OwnerRuntimeQuickPickCard[])[]) {
   return mergeSellerOsQuickPickPresentationV1(...collections)
@@ -341,6 +501,8 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
     useState(false)
   const [overnightEnrichment, setOvernightEnrichment] =
     useState<OwnerRuntimeQuickPickOvernightSummary | null>(null)
+  const [nightWorkProvenance, setNightWorkProvenance] =
+    useState<OwnerRuntimeNightWorkProvenance | null>(null)
   const quickPickRequest = useRef<Promise<void> | null>(null)
   const runtimeEnabled = runtimeRouteEligible && adminSessionReady
 
@@ -398,6 +560,8 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
         const overnight = parseOwnerRuntimeQuickPickOvernightSummary(
           payload.overnightEnrichment)
         if (overnight) setOvernightEnrichment(overnight)
+        setNightWorkProvenance(parseOwnerRuntimeNightWorkProvenance(
+          payload.nightWorkProvenance))
         setQuickPickAvailable(true)
         setQuickPickReadState("STABLE")
       } catch (error) {
@@ -421,12 +585,12 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
   const value = useMemo(() => ({ lunaWorker, quickPick, quickPickCards,
     quickPickReceipt, quickPickCurrentBatch, quickPickAvailable,
     quickPickReadState,
-    quickPickReconciliationActive, overnightEnrichment,
+    quickPickReconciliationActive, overnightEnrichment, nightWorkProvenance,
     refreshQuickPicks: reconcileQuickPicks }),
   [lunaWorker, quickPick, quickPickCards, quickPickReceipt,
     quickPickCurrentBatch,
     quickPickAvailable, quickPickReadState, quickPickReconciliationActive,
-    overnightEnrichment, reconcileQuickPicks])
+    overnightEnrichment, nightWorkProvenance, reconcileQuickPicks])
 
   return <OwnerRuntimeContext.Provider value={value}>
     {runtimeEnabled ? <LunaShippingCaptureControlPlane runtimeOnly
