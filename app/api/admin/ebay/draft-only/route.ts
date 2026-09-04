@@ -72,6 +72,7 @@ import {
   EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
   EBAY_ONE_CLICK_PUBLICATION_LABEL,
   EBAY_ONE_CLICK_PUBLICATION_SURFACE,
+  ownerAuthorizationPackageDigestV1,
   type ExactDraftOnlyPublicationSelfLineageV1,
   validateExactRearmedPublicationMaterialV1,
   validateOneClickControlledPublicationIntentV1,
@@ -2031,6 +2032,13 @@ export async function GET(req: Request) {
     const quickPickAuthorization = record(
       context.quickPickPublicationAuthorization,
     )
+    const ownerPackageDigest = ownerAuthorizationPackageDigestV1(
+      context.listingPackage,
+    )
+    const quickPickDigestBound =
+      !Object.keys(quickPickAuthorization).length
+      || text(quickPickAuthorization.packageDigest) ===
+        ownerPackageDigest.digest
     const correctedPackageIdentifierPreflight =
       correctedPackageRetryHistory
         ? await readCategoryProductIdentifierPreflight(readiness.payload)
@@ -2171,12 +2179,24 @@ export async function GET(req: Request) {
       preflight: canonicalFreshPreflight,
       runtime,
       controlledPublication: {
-        eligible: oneClickEligible,
+        eligible: oneClickEligible && ownerPackageDigest.valid
+          && quickPickDigestBound,
         authorized: oneClickValidation?.valid === true,
-        blocker: oneClickValidation?.blocker ?? null,
+        blocker: !ownerPackageDigest.valid || !quickPickDigestBound
+          ? "EBAY_OWNER_AUTHORIZATION_PACKAGE_DIGEST_UNBOUND"
+          : oneClickValidation?.blocker ?? null,
         version: oneClickValidation?.valid
           ? EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
           : null,
+        candidateKey: expectedCandidateKey,
+        listingPackageId: packageId,
+        canonicalPackageDigest: ownerPackageDigest.valid
+          ? ownerPackageDigest.digest : null,
+        ownerAuthorizationDigest: ownerPackageDigest.valid
+          && quickPickDigestBound ? ownerPackageDigest.digest : null,
+        packageDigestSource: ownerPackageDigest.source,
+        candidateKeyRemainsDistinct: expectedCandidateKey !==
+          ownerPackageDigest.digest,
         ...oneClickPublicationRequirements(oneClickEligible),
       },
       approvalRequirements: {
@@ -2938,6 +2958,7 @@ async function refreshOneClickSmartStockingSource(
 async function approveDraft(body: JsonRecord, actor: string) {
   const packageId = uuid(body.packageId)
   const approvalKey = idempotencyKey(body.idempotencyKey)
+  const submittedPackageDigest = text(body.packageDigest)
   if (!packageId || !approvalKey) return jsonError(new Error("EBAY_DRAFT_ONLY_APPROVAL_INPUT_INVALID"), 400)
   const runtime = ebayDraftOnlyRuntimeStatus()
   const target = runtime.target
@@ -2966,6 +2987,12 @@ async function approveDraft(body: JsonRecord, actor: string) {
         : "EBAY_DRAFT_ONLY_EXPLICIT_APPROVAL_REQUIRED",
     ), 409)
   }
+  if (
+    oneClickRequested
+    && !/^sha256:[0-9a-f]{64}$/.test(submittedPackageDigest)
+  ) return jsonError(new Error(
+    "EBAY_ONE_CLICK_PUBLICATION_PACKAGE_DIGEST_MISMATCH",
+  ), 409)
   let requestedConfiguration = record(body.draftConfiguration)
   const supabase = getSupabaseAdminClient()
   let context: Awaited<ReturnType<typeof loadPackageContext>>
@@ -2973,6 +3000,7 @@ async function approveDraft(body: JsonRecord, actor: string) {
     typeof loadExactDraftOnlyPublicationSelfLineage
   >> | null = null
   let oneClickFreshness: JsonRecord | null = null
+  let canonicalOwnerAuthorizationDigest: string | null = null
   const oneClickCorrelation = (
     payload?: JsonRecord,
     authorizationId?: string | null,
@@ -3021,6 +3049,15 @@ async function approveDraft(body: JsonRecord, actor: string) {
       if (packageError || !exactPackage) {
         throw new Error("EBAY_ONE_CLICK_EXACT_PACKAGE_NOT_FOUND")
       }
+      const initialOwnerPackageDigest = ownerAuthorizationPackageDigestV1(
+        exactPackage as JsonRecord,
+      )
+      if (
+        !initialOwnerPackageDigest.valid
+        || submittedPackageDigest !== initialOwnerPackageDigest.digest
+      ) throw new Error(
+        "EBAY_ONE_CLICK_PUBLICATION_PACKAGE_DIGEST_MISMATCH",
+      )
       const exactOpportunityId = uuid(exactPackage.opportunity_id)
       const exactCandidateKey = text(exactPackage.candidate_key)
       const { data: exactOpportunity, error: opportunityError } =
@@ -3091,6 +3128,22 @@ async function approveDraft(body: JsonRecord, actor: string) {
       ) throw new Error(
         "EBAY_ONE_CLICK_PUBLICATION_SMART_STOCKING_AUTHORITY_REQUIRED",
       )
+      const refreshedOwnerPackageDigest = ownerAuthorizationPackageDigestV1(
+        context.listingPackage,
+      )
+      const quickPickAuthorization = record(
+        context.quickPickPublicationAuthorization,
+      )
+      if (
+        !refreshedOwnerPackageDigest.valid
+        || submittedPackageDigest !== refreshedOwnerPackageDigest.digest
+        || (Object.keys(quickPickAuthorization).length > 0
+          && text(quickPickAuthorization.packageDigest) !==
+            refreshedOwnerPackageDigest.digest)
+      ) throw new Error(
+        "EBAY_ONE_CLICK_PUBLICATION_PACKAGE_DIGEST_MISMATCH",
+      )
+      canonicalOwnerAuthorizationDigest = refreshedOwnerPackageDigest.digest
 
       const requestedPolicies = record(
         requestedConfiguration.businessPolicies,
@@ -3266,6 +3319,8 @@ async function approveDraft(body: JsonRecord, actor: string) {
           "REARMED_EXACT_SELF_LINEAGE_CURRENT_HUMAN_CLICK",
         reusesExistingHumanApproval: true,
         newHumanApprovalCreated: false,
+        canonicalPackageDigest: canonicalOwnerAuthorizationDigest,
+        ownerAuthorizationDigest: canonicalOwnerAuthorizationDigest,
         ...oneClickPublicationRequirements(true),
       },
       rearmedSelfLineageAuthorization: {
@@ -3327,6 +3382,10 @@ async function approveDraft(body: JsonRecord, actor: string) {
           version: oneClickRequested
             ? EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
             : null,
+          ...(oneClickRequested ? {
+            canonicalPackageDigest: canonicalOwnerAuthorizationDigest,
+            ownerAuthorizationDigest: canonicalOwnerAuthorizationDigest,
+          } : {}),
           ...oneClickPublicationRequirements(oneClickRequested),
         },
         ...(oneClickRequested ? {
@@ -3363,6 +3422,10 @@ async function approveDraft(body: JsonRecord, actor: string) {
       version: oneClickRequested
         ? EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
         : null,
+      ...(oneClickRequested ? {
+        canonicalPackageDigest: canonicalOwnerAuthorizationDigest,
+        ownerAuthorizationDigest: canonicalOwnerAuthorizationDigest,
+      } : {}),
       ...oneClickPublicationRequirements(oneClickRequested),
     },
     ...(oneClickRequested ? {

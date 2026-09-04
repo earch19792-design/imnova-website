@@ -23,6 +23,48 @@ function sha256(value: unknown) {
   return `sha256:${hashEbayDraftOnlyPayload(value)}`
 }
 
+function validSha256(value: unknown) {
+  return /^sha256:[0-9a-f]{64}$/.test(text(value))
+}
+
+/**
+ * Owner authorization binds to the exact material publication package.
+ * Quick Pick owns a narrower, stable material digest which deliberately
+ * excludes lifecycle/read-model metadata. Other publisher sources retain the
+ * pre-existing durable package-data digest contract.
+ *
+ * A malformed Quick Pick binding never falls back to another digest: that
+ * would silently change the object the owner is authorizing.
+ */
+export function ownerAuthorizationPackageDigestV1(
+  listingPackageValue: JsonRecord | null | undefined,
+) {
+  const listingPackage = record(listingPackageValue)
+  const packageData = record(listingPackage.package_data)
+  const quickPickPackage = record(packageData.quickPickMarketTestPackageV1)
+  if (Object.keys(quickPickPackage).length > 0) {
+    const binding = record(quickPickPackage.authorizationBinding)
+    const canonicalDigest = text(quickPickPackage.packageDigest)
+    const bindingDigest = text(binding.packageDigest)
+    const valid = quickPickPackage.contractVersion ===
+        "QUICK_PICK_MARKET_TEST_PACKAGE_AND_REMOTE_OWNER_REVIEW_V1"
+      && binding.contractVersion === "QUICK_PICK_MATERIAL_PACKAGE_DIGEST_V1"
+      && validSha256(canonicalDigest)
+      && canonicalDigest === bindingDigest
+    return Object.freeze({
+      digest: valid ? canonicalDigest : "",
+      source: "QUICK_PICK_MATERIAL_PACKAGE_DIGEST_V1" as const,
+      valid,
+    })
+  }
+  const digest = sha256(packageData)
+  return Object.freeze({
+    digest,
+    source: "DURABLE_PACKAGE_DATA_DIGEST_V1" as const,
+    valid: validSha256(digest),
+  })
+}
+
 function basePayload(value: JsonRecord) {
   const base = { ...value }
   delete base.controlledPublicationIntent
@@ -55,9 +97,9 @@ function exactIntent(input: {
   const policies = record(offer.listingPolicies)
   const images = imageUrls(payload)
   const currentListingPackage = record(input.listingPackage)
-  const durablePackageData = Object.keys(currentListingPackage).length
-    ? record(currentListingPackage.package_data)
-    : packageData
+  const ownerPackageDigest = Object.keys(currentListingPackage).length
+    ? ownerAuthorizationPackageDigestV1(currentListingPackage).digest
+    : sha256(packageData)
   const intent: JsonRecord = {
     version: EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
     authorityClass: "EXPLICIT_SINGLE_HUMAN_COMMERCIAL_INTENT",
@@ -69,7 +111,7 @@ function exactIntent(input: {
     unattendedPublicationAllowed: false,
     actorUserId: input.actorUserId,
     listingPackageId: text(listingPackage.id),
-    packageDigest: sha256(durablePackageData),
+    packageDigest: ownerPackageDigest,
     approvedDraftPayloadDigest: sha256(payload),
     opportunityId: text(sourceEvidence.opportunityId),
     candidateKey: text(listingPackage.candidateKey),
@@ -607,10 +649,14 @@ export function validateOneClickControlledPublicationIntentV1(input: {
     }
   }
   const listingPackage = record(input.listingPackage)
+  const currentOwnerPackageDigest = Object.keys(listingPackage).length
+    ? ownerAuthorizationPackageDigestV1(listingPackage)
+    : null
   if (Object.keys(listingPackage).length && (
     text(intent.listingPackageId) !== text(listingPackage.id)
     || text(intent.candidateKey) !== text(listingPackage.candidate_key)
-    || text(intent.packageDigest) !== sha256(record(listingPackage.package_data))
+    || currentOwnerPackageDigest?.valid !== true
+    || text(intent.packageDigest) !== currentOwnerPackageDigest.digest
   )) {
     return {
       valid: false,

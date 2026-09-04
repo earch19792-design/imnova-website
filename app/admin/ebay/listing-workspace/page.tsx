@@ -245,6 +245,12 @@ type DraftState = {
     finalMachinePreflightRequired?: boolean
     unpublishedOfferMachineValidationRequired?: boolean
     activeReadbackRequired?: boolean
+    candidateKey?: string | null
+    listingPackageId?: string | null
+    canonicalPackageDigest?: string | null
+    ownerAuthorizationDigest?: string | null
+    packageDigestSource?: string | null
+    candidateKeyRemainsDistinct?: boolean
   }
   authenticatedPublicationRecovery?: {
     version: "AUTHENTICATED_ONE_CLICK_RECOVERY_V1"
@@ -2621,6 +2627,16 @@ function ListingWorkspacePageContent() {
     draftState.approvalRequirements?.singleHumanPublicationEligible === true
     || draftState.controlledPublication?.eligible === true
   )
+  const canonicalOwnerAuthorizationDigest = String(
+    draftState.controlledPublication?.ownerAuthorizationDigest ?? "",
+  )
+  const canonicalPackageDigest = String(
+    draftState.controlledPublication?.canonicalPackageDigest ?? "",
+  )
+  const ownerAuthorizationDigestBound =
+    /^sha256:[0-9a-f]{64}$/.test(canonicalOwnerAuthorizationDigest)
+    && canonicalOwnerAuthorizationDigest === canonicalPackageDigest
+    && canonicalOwnerAuthorizationDigest !== opportunity?.candidate_key
   const expectedApprovalPhrase = draftState.approvalRequirements?.exactPhrase
     ?? (productionTarget
       ? "CREAR DRAFT NO PUBLICADO EN PRODUCCIÓN"
@@ -2660,6 +2676,7 @@ function ListingWorkspacePageContent() {
     || !draftState.runtime?.enabled
     || !draftState.runtime?.configured
     || !productionTarget
+    || !ownerAuthorizationDigestBound
     || (publicationPhase === "terminal_failure"
       && !correctedPackageSafeRetryReady)
   const controlledPublicationCtaLabel = publicationAutomationBusy
@@ -2677,6 +2694,8 @@ function ListingWorkspacePageContent() {
     : !quickPickCanonicalMode &&
         (!referenceGuidedAttemptId || !finalReviewRecord.previewHash)
       ? "La firma visual final todavía no terminó de enlazarse."
+      : singleHumanPublicationEligible && !ownerAuthorizationDigestBound
+        ? "El digest canónico del package no está ligado a la autorización owner."
       : publicationPhase === "terminal_failure"
           && !correctedPackageSafeRetryReady
         ? "La publicación quedó detenida para evitar un duplicado; primero debe verificarse el resultado existente."
@@ -3926,6 +3945,7 @@ function ListingWorkspacePageContent() {
         const authorized = await draftRequest({
           action: "approve",
           packageId: listingPackage.id,
+          packageDigest: canonicalOwnerAuthorizationDigest,
           idempotencyKey: oneClickPublicationApprovalKey.current,
           authorizationMode: "SELLER_OS_ONE_CLICK_CONTROLLED_PUBLICATION_V1",
           authorizationSurface:
@@ -5388,11 +5408,11 @@ function ListingWorkspacePageContent() {
             {!singleHumanPublicationEligible && <button type="button" disabled={draftBusy} onClick={() => void validateDraft()} className="min-h-13 w-full rounded-2xl border border-cyan-200/35 px-4 font-black text-cyan-50 disabled:opacity-50">{draftBusy ? "Validando…" : "Validar draft seguro"}</button>}
             {draftState.readiness && listingReadyUi.blockerDetails.length > 0 && <div data-canonical-ui-blockers role="alert" className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3"><strong>{canonicalUiBlockers.length} bloqueos canónicos</strong><ul className="mt-2 space-y-2 text-xs text-amber-50">{listingReadyUi.blockerDetails.map((blocker) => <li key={blocker.reasonCode} className="rounded-xl bg-black/20 p-2"><code className="font-black">{blocker.reasonCode}</code><p className="mt-1">{blocker.explanation}</p><p className="mt-1"><strong>resolution_action:</strong> {blocker.resolutionAction}</p></li>)}</ul></div>}
             {singleHumanPublicationEligible && <div data-one-click-controlled-publication className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-4">
-              <div><p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Una autorización humana · todas las puertas internas</p><h3 className="mt-1 text-lg font-black">Publicación controlada de {opportunity?.candidate_key}</h3><p className="mt-2 text-sm leading-6 text-rose-50/75">Este clic queda ligado al candidate, package, digest, cuenta, marketplace, precio, cantidad, policies e imágenes exactos. Cualquier diferencia invalida la continuación y detiene la publicación.</p></div>
-              <dl className="grid gap-2 text-xs sm:grid-cols-2"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Package</dt><dd className="break-all font-black">{listingPackage.id}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Marketplace / cuenta</dt><dd className="font-black">{marketplaceAccountLabel}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Precio / cantidad</dt><dd className="font-black">USD {Number(form.pricing.targetPrice ?? 0).toFixed(2)} · {effectiveDraftQuantity}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Policies</dt><dd className="break-all font-black">{draftConfiguration.fulfillmentPolicyId || "pendiente"} · {draftConfiguration.paymentPolicyId || "pendiente"} · {draftConfiguration.returnPolicyId || "pendiente"}</dd></div></dl>
+              <div><p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Una autorización humana · todas las puertas internas</p><h3 data-owner-publication-displayed-digest={canonicalOwnerAuthorizationDigest} className="mt-1 break-all text-lg font-black">Publicación controlada de {canonicalOwnerAuthorizationDigest || "digest canónico no disponible"}</h3><p className="mt-2 text-sm leading-6 text-rose-50/75">Este clic queda ligado al candidate, package, digest, cuenta, marketplace, precio, cantidad, policies e imágenes exactos. Cualquier diferencia invalida la continuación y detiene la publicación.</p></div>
+              <dl className="grid gap-2 text-xs sm:grid-cols-2"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Package</dt><dd className="break-all font-black">{listingPackage.id}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Digest canónico</dt><dd className="break-all font-black">{canonicalOwnerAuthorizationDigest || "no disponible"}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Candidate</dt><dd className="break-all font-black">{opportunity?.candidate_key}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Marketplace / cuenta</dt><dd className="font-black">{marketplaceAccountLabel}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Precio / cantidad</dt><dd className="font-black">USD {Number(form.pricing.targetPrice ?? 0).toFixed(2)} · {effectiveDraftQuantity}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Policies</dt><dd className="break-all font-black">{draftConfiguration.fulfillmentPolicyId || "pendiente"} · {draftConfiguration.paymentPolicyId || "pendiente"} · {draftConfiguration.returnPolicyId || "pendiente"}</dd></div></dl>
               {currentWorkspaceHeaderSafeRetry && <div data-corrected-package-safe-retry className="rounded-xl border border-emerald-200/35 bg-emerald-200/[0.09] p-3 text-emerald-50"><strong>LISTO PARA REINTENTO SEGURO</strong><p className="mt-2 text-sm">Intento anterior: falló por UPC requerido · <strong>RESUELTO</strong></p><ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><li>UPC {canonicalUpc || "confirmado"} ✓</li><li>Category Policy ✓</li><li>Package confirmado ✓</li><li>Offer UNPUBLISHED ✓</li></ul><p className="mt-2 text-xs text-emerald-50/70">El próximo clic actualizará el mismo Inventory SKU, verificará el UPC por GET y reutilizará el mismo Offer. No creará otro Offer.</p></div>}
               <PublicationLaunchVisualizer phase={publicationVisualizerPhase} busy={publicationAutomationBusy} failed={publicationAutomationFailed} elapsedSeconds={publicationAutomationElapsed} productImageUrl={publicationProductImageUrl} status={publicationAutomationStep} />
-              {publicationPhase === "monitor_registered" ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p></div> : <button type="button" disabled={singleHumanPublicationButtonDisabled} onClick={() => void publishSmartStockingWithSingleAuthorization()} className="min-h-16 w-full rounded-2xl bg-rose-200 px-4 text-lg font-black text-black disabled:opacity-40">{controlledPublicationCtaLabel}</button>}
+              {publicationPhase === "monitor_registered" ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p></div> : <button type="button" disabled={singleHumanPublicationButtonDisabled} data-owner-authorization-digest={canonicalOwnerAuthorizationDigest} onClick={() => void publishSmartStockingWithSingleAuthorization()} className="min-h-16 w-full rounded-2xl bg-rose-200 px-4 text-lg font-black text-black disabled:opacity-40">{controlledPublicationCtaLabel}</button>}
               <p className="text-xs leading-5 text-rose-50/65">Cada etapa requiere una acción explícita: primero se crea y verifica el Offer UNPUBLISHED; después se prepara el preview; sólo un clic posterior puede ejecutar publish one-shot. Recargar o volver a esta pantalla nunca continúa una escritura.</p>
               {executionCompleted && !draftState.publication && draftState.unpublishedReadback?.safe === true && <div data-current-unpublished-readback className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Draft no publicado validado ahora ✓</strong><p className="mt-1 text-xs">El Inventory Item y el Offer {draftState.execution?.offer_id} coinciden con el package autorizado. Actualizar esta pantalla sólo repite lecturas.</p></div>}
               {executionCompleted && !draftState.publication && draftState.unpublishedReadback && draftState.unpublishedReadback.safe !== true && <div data-current-unpublished-readback-error className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-amber-50"><strong>No se pudo validar el draft no publicado</strong><p className="mt-1 text-xs">{draftState.unpublishedReadback.errorClass === "EBAY_UPSTREAM_READ_FAILURE" ? "eBay temporalmente no respondió. No se creó otro Offer." : draftState.unpublishedReadback.errorClass === "INVENTORY_ITEM_MISMATCH" || draftState.unpublishedReadback.errorClass === "OFFER_PAYLOAD_MISMATCH" ? "El contenido oficial no coincide con el package autorizado. No se creó otro Offer." : "Seller OS detuvo la continuación para revisión. No se creó otro Offer."}</p></div>}
