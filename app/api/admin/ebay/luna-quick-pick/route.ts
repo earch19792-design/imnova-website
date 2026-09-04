@@ -226,15 +226,13 @@ export async function GET(req: Request) {
     const selectedBatchCards = explicitCandidateScope
       ? selectedDurableCards
       : mergeProgress(selectedReceipt?.cards ?? [], selectedDurableCards)
-    const readModel = buildQuickPickOwnerReadModelV1({ receipts,
-      selectedBatchCards,
-      globalQueueCards: explicitCandidateScope
-        ? selectedDurableCards : globalDurableCards,
-      explicitCandidateScope })
     const overnightOutcomes = Array.isArray(record(overnightEnrichment).outcomes)
       ? record(overnightEnrichment).outcomes as unknown[] : []
-    const provenanceOperationIds = [...new Set([
-      ...readModel.globalQueue.cards.flatMap((card) =>
+    const authorityOperationIds = [...new Set([
+      ...selectedBatchCards.flatMap((card) =>
+        card.opportunityId ? [card.opportunityId] : []),
+      ...(explicitCandidateScope
+        ? selectedDurableCards : globalDurableCards).flatMap((card) =>
         card.opportunityId ? [card.opportunityId] : []),
       ...overnightOutcomes.flatMap((value) => {
         const operationId = uuid(record(value).opportunityId)
@@ -242,8 +240,13 @@ export async function GET(req: Request) {
       }),
     ])]
     const provenanceRows = await readNightWorkProvenanceAuthorityRowsV1({
-      supabase, operationIds: provenanceOperationIds,
+      supabase, operationIds: authorityOperationIds,
     })
+    const readModel = buildQuickPickOwnerReadModelV1({ receipts,
+      selectedBatchCards,
+      globalQueueCards: explicitCandidateScope
+        ? selectedDurableCards : globalDurableCards,
+      explicitCandidateScope, authorityRows: provenanceRows })
     const nightWorkProvenance = buildSellerOsNightWorkProvenanceReadModelV1({
       authorityRows: provenanceRows, receipts,
       currentCards: readModel.globalQueue.cards, overnightEnrichment,

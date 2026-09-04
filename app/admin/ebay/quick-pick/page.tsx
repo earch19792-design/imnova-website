@@ -9,7 +9,7 @@ import { QUICK_PICK_OWNER_STAGE_CATALOG_V1 } from
   "@/lib/ebay/seller-os-quick-pick-owner-read-model-v1"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 
-type StageState = "WAITING" | "RUNNING" | "PASS" | "BLOCKED"
+type StageState = "WAITING" | "RUNNING" | "PASS" | "BLOCKED" | "CONTINUES"
 type QuickPickReceipt = {
   batchId: string
   ownerReference: string
@@ -105,6 +105,9 @@ type QuickPickCard = {
   rehydrated: boolean
   updatedAt: string | null
   stages: Record<string, StageState>
+  demandSemantics?: { origin: "RADAR_HANDOFF" | "OTHER_OR_MANUAL"
+    familyDemand: string; exactProductDemand: string
+    demandGateContinued: boolean; route: "MARKET_TEST" | "STANDARD" }
   dollarCheck: Record<string, unknown> | null
   elapsedMs: number
 }
@@ -130,6 +133,7 @@ function stateTone(state: QuickPickCard["state"]) {
 
 function stageIcon(state: StageState | undefined) {
   if (state === "PASS") return "✅"
+  if (state === "CONTINUES") return "→"
   if (state === "RUNNING") return "…"
   if (state === "BLOCKED") return "⚠️"
   return "○"
@@ -519,6 +523,17 @@ export default function LunaQuickPickPage() {
             <h2 className="mt-1 font-black">{card.title ?? "Producto Luna"}</h2>
           </div><span className="rounded-full border border-white/20 px-3 py-1 text-xs font-black">{card.state}</span></div>
 
+          {card.demandSemantics?.demandGateContinued && <div
+            data-quick-pick-demand-semantics
+            className="mt-3 rounded-xl border border-violet-200/20 bg-violet-200/[0.06] p-2 text-sm text-violet-50/80">
+            {card.demandSemantics.origin === "RADAR_HANDOFF" && <span
+              className="block">Demanda de la familia: <strong>{
+                card.demandSemantics.familyDemand}</strong></span>}
+            <span className="block">Demanda del producto exacto: <strong>
+              aún no comprobada</strong></span>
+            <span className="block">Ruta: <strong>Prueba de mercado</strong></span>
+          </div>}
+
           {card.variantSelectionRequired && <div className="mt-4 rounded-2xl border border-amber-200/30 bg-black/20 p-3">
             <strong>Elige la variante exacta</strong>
             <div className="mt-2 grid gap-2">{card.variants.map((variant) =>
@@ -536,8 +551,8 @@ export default function LunaQuickPickPage() {
               ? "PASS" : card.stages[key]
             const displayedLabel = key === "LISTING_READY" &&
               card.marketTestReady ? "Listo para decisión owner" : label
-            return <li key={key} className={`flex items-center gap-2 rounded-xl px-2 py-1.5 ${displayedState === "RUNNING" ? "bg-cyan-200/[0.08] text-cyan-50" : displayedState === "BLOCKED" ? "text-amber-100" : "text-white/65"}`}>
-              <span aria-hidden="true">{stageIcon(displayedState)}</span><span>{displayedLabel}</span>
+            return <li key={key} className={`flex items-center gap-2 rounded-xl px-2 py-1.5 ${displayedState === "RUNNING" ? "bg-cyan-200/[0.08] text-cyan-50" : displayedState === "CONTINUES" ? "bg-violet-200/[0.08] text-violet-50" : displayedState === "BLOCKED" ? "text-amber-100" : "text-white/65"}`}>
+              <span aria-hidden="true">{stageIcon(displayedState)}</span><span>{displayedLabel}{displayedState === "CONTINUES" ? " — CONTINÚA" : ""}</span>
             </li>
           })}</ol>
 

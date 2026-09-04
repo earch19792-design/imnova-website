@@ -22,7 +22,7 @@ export type OwnerRuntimeQuickPickSummary = Readonly<{
 }>
 
 export type OwnerRuntimeQuickPickStageState = "WAITING" | "RUNNING" |
-  "PASS" | "BLOCKED"
+  "PASS" | "BLOCKED" | "CONTINUES"
 export type OwnerRuntimeQuickPickReadState = "REFRESHING" | "STABLE" |
   "READ_FAILED"
 
@@ -62,6 +62,18 @@ export type OwnerRuntimeQuickPickCard = Readonly<{
   overnightEnrichmentPending: boolean
   overnightEnrichmentStatus: string | null
   overnightEnrichmentLastRunAt: string | null
+  demandSemantics: Readonly<{
+    origin: "RADAR_HANDOFF" | "OTHER_OR_MANUAL"
+    familyDemand: string
+    exactProductDemand: string
+    demandGateContinued: boolean
+    route: "MARKET_TEST" | "STANDARD"
+    presentationState: OwnerRuntimeQuickPickStageState
+    familyDemandAuthority: string
+    exactDemandAuthority: string
+    demandGateAuthority: string
+  }>
+  falseBlockedStagesSuppressed: readonly string[]
   stages: Readonly<Record<string, OwnerRuntimeQuickPickStageState>>
 }>
 
@@ -223,7 +235,8 @@ function boundedTextList(value: unknown, maximumItems = 20,
 function stageState(value: unknown): OwnerRuntimeQuickPickStageState {
   const normalized = String(value ?? "WAITING").toUpperCase()
   return new Set<OwnerRuntimeQuickPickStageState>(["WAITING", "RUNNING",
-    "PASS", "BLOCKED"]).has(normalized as OwnerRuntimeQuickPickStageState)
+    "PASS", "BLOCKED", "CONTINUES"]).has(
+      normalized as OwnerRuntimeQuickPickStageState)
     ? normalized as OwnerRuntimeQuickPickStageState : "WAITING"
 }
 
@@ -253,6 +266,7 @@ export function parseOwnerRuntimeQuickPickCard(value: unknown):
   const stages = Object.fromEntries(Object.entries(rawStages).map(
     ([key, state]) => [key, stageState(state)]))
   const state = String(item.state ?? "WAITING").toUpperCase()
+  const demand = record(item.demandSemantics)
   return Object.freeze({ sourceUrl,
     canonicalUrl: nullableText(item.canonicalUrl, 2_000),
     sourceSku: nullableText(item.sourceSku, 160),
@@ -298,6 +312,24 @@ export function parseOwnerRuntimeQuickPickCard(value: unknown):
       nullableText(item.overnightEnrichmentStatus, 120),
     overnightEnrichmentLastRunAt:
       nullableText(item.overnightEnrichmentLastRunAt, 80),
+    demandSemantics: Object.freeze({
+      origin: demand.origin === "RADAR_HANDOFF"
+        ? "RADAR_HANDOFF" : "OTHER_OR_MANUAL",
+      familyDemand: nullableText(demand.familyDemand, 40) ?? "UNPROVEN",
+      exactProductDemand: nullableText(demand.exactProductDemand, 40) ??
+        "UNPROVEN",
+      demandGateContinued: demand.demandGateContinued === true,
+      route: demand.route === "MARKET_TEST" ? "MARKET_TEST" : "STANDARD",
+      presentationState: stageState(demand.presentationState),
+      familyDemandAuthority: nullableText(demand.familyDemandAuthority, 160)
+        ?? "UNPROVEN",
+      exactDemandAuthority: nullableText(demand.exactDemandAuthority, 160)
+        ?? "UNPROVEN",
+      demandGateAuthority: nullableText(demand.demandGateAuthority, 160)
+        ?? "UNPROVEN",
+    }),
+    falseBlockedStagesSuppressed:
+      boundedTextList(item.falseBlockedStagesSuppressed),
     stages: Object.freeze(stages) })
 }
 

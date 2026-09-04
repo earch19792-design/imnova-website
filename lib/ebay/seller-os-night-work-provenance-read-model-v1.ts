@@ -23,7 +23,9 @@ export type NightWorkProvenanceAuthorityRowV1 = Readonly<{
   updated_at?: unknown
 }>
 
-type CurrentCard = LunaQuickPickCardV1 & Readonly<{
+type CurrentCard = Omit<LunaQuickPickCardV1, "stages"> & Readonly<{
+  stages: Readonly<Record<string, "WAITING" | "RUNNING" | "PASS" |
+    "BLOCKED" | "CONTINUES">>
   processingLifecycle?: "ACTIVE" | "COMPLETED"
   commercialStage?: string
 }>

@@ -68,6 +68,7 @@ type RadarSignal = Readonly<{
   lunaDiscoveryStatus: string | null
   bestLunaSku: string | null
   quickPickOperationId: string | null
+  automaticReviewRuntime: Readonly<{ status: string; authority: string }>
 }>
 
 type QueueClassification = Readonly<{ READY: number; RADAR_SIGNAL: number;
@@ -224,7 +225,13 @@ function parseRadarSignals(value: unknown) {
         "WAITING_NEXT_BOUNDED_ENRICHMENT",
       lunaDiscoveryStatus: nullableText(item.lunaDiscoveryStatus, 80),
       bestLunaSku: nullableText(item.bestLunaSku, 160),
-      quickPickOperationId: nullableText(item.quickPickOperationId, 100) }]
+      quickPickOperationId: nullableText(item.quickPickOperationId, 100),
+      automaticReviewRuntime: {
+        status: nullableText(record(item.automaticReviewRuntime).status, 80) ??
+          "INACTIVE_OR_UNPROVEN",
+        authority: nullableText(record(item.automaticReviewRuntime).authority,
+          180) ?? "UNPROVEN",
+      } }]
   })
 }
 
@@ -434,9 +441,20 @@ function workerDetail(status: WorkerStatus, reasonCode: string) {
 
 function quickPickStageTone(state: OwnerRuntimeQuickPickStageState) {
   if (state === "PASS") return "bg-emerald-200/15 text-emerald-50"
+  if (state === "CONTINUES") return "bg-violet-200/15 text-violet-50"
   if (state === "RUNNING") return "bg-cyan-200/15 text-cyan-50"
   if (state === "BLOCKED") return "bg-amber-200/15 text-amber-50"
   return "bg-white/[0.04] text-white/45"
+}
+
+function quickPickStageStateLabel(state: OwnerRuntimeQuickPickStageState) {
+  return state === "CONTINUES" ? "CONTINÚA" : state
+}
+
+function familyDemandOwnerLabel(value: string) {
+  if (value === "PROVEN") return "Demanda familiar comprobada"
+  if (value === "SUPPORTED") return "Demanda familiar respaldada"
+  return "Demanda familiar aún no comprobada"
 }
 
 function quickPickStageLabel(card: OwnerRuntimeQuickPickCard) {
@@ -1267,6 +1285,9 @@ export function SellerOsOperationalDashboard() {
                   usd(signal.commercialPriceBand.maximum ??
                     signal.commercialPriceBand.minimum)}`} · siguiente:
                 {" "}{signal.enrichmentNextStage.replaceAll("_", " ")}</span>
+              <span className="block">Revisión automática Radar: <strong>{
+                signal.automaticReviewRuntime.status === "ACTIVE"
+                  ? "Activa" : "No comprobada"}</strong></span>
               {signal.lunaDiscoveryStatus === "HANDED_TO_QUICK_PICK" &&
                 <span className="block text-emerald-100/75">
                   Candidato Luna {signal.bestLunaSku ?? "seleccionado"} enviado a Quick Pick
@@ -1442,6 +1463,15 @@ export function SellerOsOperationalDashboard() {
                 <QuickPickProvenanceLine operationId={card.opportunityId}
                   provenance={ownerRuntime.nightWorkProvenance}
                   radarSignals={snapshot.radarSignals} />
+                {card.demandSemantics.demandGateContinued && <div
+                  data-quick-pick-demand-semantics
+                  className="mt-2 rounded-lg border border-violet-200/15 bg-violet-200/[0.05] px-2 py-1.5 text-[11px] text-violet-50/75">
+                  {card.demandSemantics.origin === "RADAR_HANDOFF" && <span
+                    className="block">{familyDemandOwnerLabel(
+                      card.demandSemantics.familyDemand)}</span>}
+                  <span className="block">Demanda exacta aún no comprobada</span>
+                  <span className="block font-bold">Seller OS continúa como prueba de mercado</span>
+                </div>}
                 {ownerVisibleQuickPickBlockers(card).length > 0 && <ul
                   data-quick-pick-commercial-blockers
                   className="mt-1 space-y-1 text-xs font-bold text-amber-100">
@@ -1458,7 +1488,7 @@ export function SellerOsOperationalDashboard() {
                 </p>}
                 {card.overnightEnrichmentPending && <p
                   className="mt-2 text-xs font-bold text-violet-100">
-                  Segunda pasada nocturna pendiente · no retrasa una resolución diurna
+                  Enriquecimiento nocturno adicional pendiente · no es la razón de espera
                 </p>}
               </div>
               <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${quickPickStageTone(card.state === "READY" ? "PASS" : card.state)}`}>{card.state}</span>
@@ -1468,7 +1498,8 @@ export function SellerOsOperationalDashboard() {
                 const state = card.stages[key] ?? "WAITING"
                 return <li key={key}
                   className={`flex min-h-9 items-center justify-between gap-2 rounded-xl px-2.5 text-xs ${quickPickStageTone(state)}`}>
-                  <span>{label}</span><strong>{state}</strong>
+                  <span>{label}</span><strong>{quickPickStageStateLabel(
+                    state)}</strong>
                 </li>
               })}
             </ol>

@@ -86,7 +86,24 @@ function unavailable(reason = "PERSISTED_MARKET_OBSERVATION_SERIES_UNAVAILABLE")
   })
 }
 
-function projectFamily(value: unknown) {
+function globalRuntimeAuthority(root: JsonRecord) {
+  const contract = text(root.longitudinalRuntimeContractVersion, 120)
+  const trigger = text(root.schedulerTrigger, 120)
+  const active = contract === "SELLER_OS_LONGITUDINAL_RADAR_RUNTIME_V1" &&
+    trigger === "VERCEL_CRON_MARKET_RADAR_LUNA_SYNC" &&
+    root.schedulerEnabled === true
+  return Object.freeze({
+    status: active ? "ACTIVE" as const : "UNPROVEN" as const,
+    authority: active
+      ? "SELLER_OS_LONGITUDINAL_RADAR_RUNTIME_V1" as const
+      : "UNPROVEN" as const,
+    trigger,
+    globallyEnabled: active,
+  })
+}
+
+function projectFamily(value: unknown,
+  automaticReviewRuntime: ReturnType<typeof globalRuntimeAuthority>) {
   const family = record(value)
   const observations = array(family.observationSeries).map(record)
   const current = observations[0]
@@ -174,7 +191,18 @@ function projectFamily(value: unknown) {
       lastEvaluatedAt: text(monitor.lastEvaluatedAt, 48),
       monitorPolicyVersion: text(monitor.monitorPolicyVersion, 120),
       schedulerEnabled: monitor.schedulerEnabled === true,
+      schedulerEnabledAuthority:
+        "STORED_PER_ENROLLMENT_ELIGIBILITY_DIAGNOSTIC" as const,
     }) : null,
+    automaticReviewRuntime: Object.freeze({ ...automaticReviewRuntime,
+      effectiveState: automaticReviewRuntime.status === "ACTIVE" &&
+        text(monitor?.status, 80) === "ENROLLED" &&
+        monitor?.schedulerEnabled === true
+        ? "ACTIVE" as const : "INACTIVE_OR_UNPROVEN" as const,
+      ownerPresentationAuthority:
+        "GLOBAL_RUNTIME_PLUS_CURRENT_ENROLLMENT_ELIGIBILITY" as const,
+      legacyEnrollmentFieldUsedAloneAsOwnerAuthority: false as const,
+    }),
     currentObservation: Object.freeze({
       observationId: currentObservationId,
       observationWindowStart: text(current.observationWindowStart, 48),
@@ -217,7 +245,9 @@ export function buildSellerOsLongitudinalOpportunityRadarV1(
   const root = record(payload)
   if (root.status !== "AVAILABLE") return unavailable()
   const maximum = safeLimit(limit)
-  const entries = array(root.families).map(projectFamily).filter(
+  const automaticReviewRuntime = globalRuntimeAuthority(root)
+  const entries = array(root.families).map((family) => projectFamily(
+    family, automaticReviewRuntime)).filter(
     (entry): entry is NonNullable<ReturnType<typeof projectFamily>> =>
       entry !== null,
   ).slice(0, maximum)
@@ -233,6 +263,7 @@ export function buildSellerOsLongitudinalOpportunityRadarV1(
     soldMomentumClaimed: false,
     longitudinalMomentumAvailable: entries.some((entry) =>
       entry.longitudinalMomentumAvailable),
+    automaticReviewRuntime,
     bounded: true,
     limit: maximum,
     phase7Authority: "FUTURE_CANONICAL_AUTHORITY" as const,
@@ -294,6 +325,7 @@ export function buildSellerOsLongitudinalOpportunityCaseV1(
     longitudinalMomentumAvailable: entry.longitudinalMomentumAvailable,
     competitionState: entry.competitionState,
     monitorEnrollment: entry.monitorEnrollment,
+    automaticReviewRuntime: entry.automaticReviewRuntime,
     nextReviewCondition: entry.nextReviewCondition,
     demandEvidenceDigest: entry.demandEvidenceDigest,
     evidenceFreshness: entry.evidenceFreshness,

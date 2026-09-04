@@ -39,6 +39,7 @@ export type SellerOsDashboardRadarSignalInputV1 = Readonly<{
   evidenceObservedAt?: unknown
   nextReviewCondition?: unknown
   monitorStatus?: unknown
+  automaticReviewRuntime?: unknown
 }>
 
 function record(value: unknown): JsonRecord {
@@ -156,6 +157,7 @@ function projectRadarSignal(value: SellerOsDashboardRadarSignalInputV1) {
   const commercial = record(value.commercialComparableCluster)
   const commercialPrice = record(value.commercialPriceBand)
   const commercialAvailable = commercial.status === "AVAILABLE"
+  const automaticRuntime = record(value.automaticReviewRuntime)
   return Object.freeze({ familyId, family: familyName, demandClass,
     soldComparableCount: number(value.soldComparableCount),
     soldQuantityEvidence: number(value.soldQuantityEvidence),
@@ -176,6 +178,13 @@ function projectRadarSignal(value: SellerOsDashboardRadarSignalInputV1) {
     enrichmentNextStage: text(value.nextReviewCondition, 160) ??
       "WAITING_NEXT_BOUNDED_ENRICHMENT",
     monitorStatus: text(value.monitorStatus, 80),
+    automaticReviewRuntime: Object.freeze({
+      status: automaticRuntime.effectiveState === "ACTIVE"
+        ? "ACTIVE" as const : "INACTIVE_OR_UNPROVEN" as const,
+      authority: text(automaticRuntime.ownerPresentationAuthority, 160) ??
+        "UNPROVEN",
+      legacyEnrollmentFieldUsedAloneAsOwnerAuthority: false as const,
+    }),
   })
 }
 

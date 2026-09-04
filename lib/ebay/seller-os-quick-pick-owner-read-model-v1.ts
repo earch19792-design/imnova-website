@@ -18,11 +18,22 @@ export const QUICK_PICK_OWNER_STAGE_CATALOG_V1 = Object.freeze([
   ["LISTING_READY", "Listo para decisión owner"],
 ] as const)
 
-type StageState = "WAITING" | "RUNNING" | "PASS" | "BLOCKED"
+type StageState = "WAITING" | "RUNNING" | "PASS" | "BLOCKED" |
+  "CONTINUES"
+
+type StateAuthorityRow = Readonly<{
+  id?: unknown
+  assessment?: unknown
+}>
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : {}
+}
+
+function text(value: unknown, maximum = 200) {
+  return typeof value === "string" && value.trim()
+    ? value.normalize("NFKC").trim().slice(0, maximum) : null
 }
 
 export async function readRecentDurableQuickPickCandidateKeysV1(input:
@@ -67,6 +78,150 @@ function normalizedStages(card: LunaQuickPickCardV1) {
   )) as Readonly<Record<string, StageState>>
 }
 
+const STAGE_INDEX = new Map<string, number>(QUICK_PICK_OWNER_STAGE_CATALOG_V1.map(
+  ([stage], index) => [stage, index] as const))
+
+function stateAuthority(card: LunaQuickPickCardV1,
+  rows: readonly StateAuthorityRow[]) {
+  const row = rows.find((candidate) => String(candidate.id ?? "") ===
+    card.opportunityId)
+  const assessment = record(row?.assessment)
+  const handoff = record(assessment.radarToQuickPickHandoffV1)
+  const validHandoff = handoff.contractVersion ===
+      "RADAR_LUNA_QUICK_PICK_HANDOFF_V1" &&
+    handoff.quickPickOperationId === card.opportunityId
+  return Object.freeze({
+    handoff: validHandoff ? handoff : {},
+    minimum: record(assessment.minimumTruthfulListingReadinessV1),
+    marketTest: record(assessment.quickPickMarketTestReviewV1),
+    shipping: record(assessment.radarAutomaticLunaShippingContinuationV1),
+  })
+}
+
+function familyDemand(value: unknown) {
+  const normalized = text(value, 80)?.replace("FAMILY_DEMAND_", "")
+  return new Set(["PROVEN", "SUPPORTED", "UNPROVEN", "UNAVAILABLE"])
+    .has(normalized ?? "") ? normalized : "UNPROVEN"
+}
+
+function canonicalCurrentStage(card: LunaQuickPickCardV1,
+  authority: ReturnType<typeof stateAuthority>) {
+  const source = `${card.disposition} ${card.lastStage} ${
+    authority.handoff.quickPickFinalState ?? ""} ${
+    authority.shipping.shippingJobStatus ?? ""}`.toUpperCase()
+  if (card.marketTestReady || ownerPublicationDecisionReady(card) ||
+      card.state === "READY") return "LISTING_READY"
+  if (source.includes("SHIPPING")) return "SHIPPING"
+  if (source.includes("OWNER_FACT") || card.ownerResidualActions.length > 0 ||
+      card.ownerTruePublicationBlockers.length > 0) return "REQUIRED_SPECIFICS"
+  if (source.includes("ECONOMICS")) return "ECONOMICS"
+  if (source.includes("EBAY_CAPABILITY") ||
+      source.includes("MARKETPLACE_READINESS")) return "MARKETPLACE_READINESS"
+  const activeStage = QUICK_PICK_OWNER_STAGE_CATALOG_V1.find(([stage]) =>
+    card.stages?.[stage] === "RUNNING")?.[0]
+  if (activeStage) return activeStage
+  return STAGE_INDEX.has(card.lastStage) ? card.lastStage : "IDENTITY"
+}
+
+function trueBlockerStage(card: LunaQuickPickCardV1,
+  authority: ReturnType<typeof stateAuthority>) {
+  if (card.marketTestReady || ownerPublicationDecisionReady(card) ||
+      card.state === "READY") return null
+  if (card.alreadyLive || card.exactBlockers.some((value) =>
+    /ALREADY_LIVE|PROVEN_DUPLICATE/.test(value))) return "DUPLICATE"
+  if (card.demandNegativeEvidencePresent || card.exactBlockers.some((value) =>
+    /NEGATIVE_DEMAND|DEMAND_NEGATIVE/.test(value))) return "DEMAND"
+  if (card.ownerTruePublicationBlockers.length > 0 ||
+      card.ownerResidualActions.length > 0 ||
+      card.exactBlockers.some((value) => value.startsWith(
+        "BLOCKED_REQUIRED_FACT"))) return "REQUIRED_SPECIFICS"
+  const source = `${card.disposition} ${card.exactBlocker ?? ""} ${
+    card.exactBlockers.join(" ")} ${
+    authority.handoff.quickPickFinalState ?? ""}`.toUpperCase()
+  if (source.includes("PARKED_ECONOMICS") ||
+      source.includes("ECONOMICS_BELOW")) return "ECONOMICS"
+  if (source.includes("STOCK_FAILURE") || source.includes("STOCK_UNSAFE")) {
+    return "STOCK"
+  }
+  if (source.includes("IDENTITY_CONFLICT")) return "IDENTITY"
+  if (source.includes("WAITING_FOR_EBAY_CAPABILITY") ||
+      source.includes("CAPABILITY_REQUIRED_AND_UNAVAILABLE")) {
+    return "MARKETPLACE_READINESS"
+  }
+  return card.state === "BLOCKED" && STAGE_INDEX.has(card.lastStage)
+    ? card.lastStage : null
+}
+
+function demandSemantics(card: LunaQuickPickCardV1,
+  authority: ReturnType<typeof stateAuthority>, currentStage: string) {
+  const handoff = authority.handoff
+  const minimumGate = text(record(authority.minimum.gateStates).demand, 80)
+  const familyStatus = familyDemand(handoff.familyDemandStatus ??
+    card.familyDemandStatus)
+  const exactClaimed = authority.minimum.demandProven === true ||
+    authority.marketTest.exactProductDemandClaimed === true
+  const exactStatus = exactClaimed ? "PROVEN" as const : "UNPROVEN" as const
+  const progressedPastDemand = (STAGE_INDEX.get(currentStage) ?? 0) >
+    (STAGE_INDEX.get("DEMAND") ?? 0)
+  const gateContinued = !card.demandNegativeEvidencePresent && !exactClaimed &&
+    (card.marketTestPathEligible || card.marketTestReady ||
+      minimumGate === "UNPROVEN_MARKET_TEST_ALLOWED" ||
+      handoff.exactDemandStatus === "UNPROVEN" && progressedPastDemand)
+  const radarOrigin = Object.keys(handoff).length > 0
+  return Object.freeze({
+    origin: radarOrigin ? "RADAR_HANDOFF" as const : "OTHER_OR_MANUAL" as const,
+    familyDemand: familyStatus,
+    exactProductDemand: exactStatus,
+    demandGateContinued: gateContinued,
+    route: gateContinued ? "MARKET_TEST" as const : "STANDARD" as const,
+    presentationState: card.demandNegativeEvidencePresent
+      ? "BLOCKED" as const : gateContinued ? "CONTINUES" as const
+        : exactClaimed ? "PASS" as const : "WAITING" as const,
+    familyDemandAuthority: radarOrigin
+      ? "RADAR_LUNA_QUICK_PICK_HANDOFF_V1" as const
+      : card.familyDemandStatus
+        ? "QUICK_PICK_CURRENT_MARKET_PROJECTION" as const
+        : "UNPROVEN" as const,
+    exactDemandAuthority: radarOrigin
+      ? "RADAR_HANDOFF_EXACT_DEMAND_STATUS" as const
+      : minimumGate ? "MINIMUM_TRUTHFUL_LISTING_READINESS_V1" as const
+        : "QUICK_PICK_CURRENT_STAGE_PROGRESSION" as const,
+    demandGateAuthority: gateContinued
+      ? minimumGate === "UNPROVEN_MARKET_TEST_ALLOWED"
+        ? "MINIMUM_TRUTHFUL_LISTING_READINESS_V1" as const
+        : "CURRENT_CANONICAL_STAGE_AFTER_DEMAND" as const
+      : "CURRENT_QUICK_PICK_GATE_STATE" as const,
+  })
+}
+
+function reconcileStages(card: LunaQuickPickCardV1,
+  authority: ReturnType<typeof stateAuthority>) {
+  const historical = normalizedStages(card)
+  const currentStage = canonicalCurrentStage(card, authority)
+  const blockerStage = trueBlockerStage(card, authority)
+  const demand = demandSemantics(card, authority, currentStage)
+  const terminalReady = card.marketTestReady ||
+    ownerPublicationDecisionReady(card) || card.state === "READY"
+  const stopStage = blockerStage ?? currentStage
+  const stopIndex = STAGE_INDEX.get(stopStage) ?? 0
+  const stages = Object.fromEntries(QUICK_PICK_OWNER_STAGE_CATALOG_V1.map(
+    ([stage], index) => {
+      if (stage === "DEMAND" && demand.presentationState === "CONTINUES") {
+        return [stage, "CONTINUES"]
+      }
+      if (terminalReady) return [stage, "PASS"]
+      if (index < stopIndex) return [stage, "PASS"]
+      if (index > stopIndex) return [stage, "WAITING"]
+      if (blockerStage === stage) return [stage, "BLOCKED"]
+      return [stage, historical[stage] === "RUNNING" ? "RUNNING" : "WAITING"]
+    })) as Record<string, StageState>
+  const falseBlockedSuppressed = Object.keys(historical).filter((stage) =>
+    historical[stage] === "BLOCKED" && stages[stage] !== "BLOCKED")
+  return Object.freeze({ stages: Object.freeze(stages), historical,
+    currentStage, blockerStage, demand,
+    falseBlockedSuppressed: Object.freeze(falseBlockedSuppressed) })
+}
+
 function ownerPublicationDecisionReady(card: LunaQuickPickCardV1) {
   const listingReview = card.listingReview &&
     typeof card.listingReview === "object" ? card.listingReview as
@@ -78,27 +233,49 @@ function ownerPublicationDecisionReady(card: LunaQuickPickCardV1) {
   return handoff.ownerPublicationDecisionReady === true
 }
 
-export function projectQuickPickOwnerCardV1(card: LunaQuickPickCardV1) {
-  const stages = normalizedStages(card)
+export function projectQuickPickOwnerCardV1(card: LunaQuickPickCardV1,
+  authorityRows: readonly StateAuthorityRow[] = []) {
+  const authority = stateAuthority(card, authorityRows)
+  const reconciled = reconcileStages(card, authority)
+  const stages = reconciled.stages
+  const technicalHistoricalBlockers = Object.freeze([...card.exactBlockers])
+  const currentBlockers = reconciled.blockerStage ? technicalHistoricalBlockers
+    : Object.freeze([])
+  const semanticFields = Object.freeze({
+    familyDemandStatus: Object.keys(authority.handoff).length
+      ? `FAMILY_DEMAND_${reconciled.demand.familyDemand}` as
+        LunaQuickPickCardV1["familyDemandStatus"]
+      : card.familyDemandStatus,
+    marketTestPathEligible: card.marketTestPathEligible ||
+      reconciled.demand.demandGateContinued,
+    demandSemantics: reconciled.demand,
+    currentStageAuthority: "CURRENT_DURABLE_QUICK_PICK_OPERATION" as const,
+    trueBlockerAuthority: "CURRENT_CANONICAL_BLOCKER_NOT_RAW_STAGE_DEFAULT" as const,
+    stageEvaluationAuthority:
+      "CURRENT_STAGE_PLUS_DURABLE_GATE_MARKERS" as const,
+    technicalHistoricalStages: reconciled.historical,
+    technicalHistoricalBlockers,
+    falseBlockedStagesSuppressed: reconciled.falseBlockedSuppressed,
+    exactBlocker: currentBlockers[0] ?? null,
+    exactBlockers: currentBlockers,
+  })
   if (card.marketTestReady || ownerPublicationDecisionReady(card)) {
-    return Object.freeze({ ...card, state: "READY" as const,
+    return Object.freeze({ ...card, ...semanticFields, state: "READY" as const,
       lastStage: "MARKET_TEST_READY",
       disposition: "MARKET_TEST_READY",
-      exactBlocker: null,
-      exactBlockers: Object.freeze([]),
-      stages: Object.freeze({ ...stages, LISTING_READY: "PASS" as const }),
+      exactBlocker: null, exactBlockers: Object.freeze([]), stages,
       processingLifecycle: "COMPLETED" as const,
       commercialStage: "MARKET_TEST_READY" as const })
   }
   if (card.state === "READY") {
-    return Object.freeze({ ...card, disposition: "LISTING_READY",
-      stages,
+    return Object.freeze({ ...card, ...semanticFields,
+      disposition: "LISTING_READY", stages,
       processingLifecycle: "COMPLETED" as const,
       commercialStage: "LISTING_READY" as const })
   }
   const processingActive = card.state === "RUNNING" &&
     Object.values(stages).some((state) => state === "RUNNING")
-  return Object.freeze({ ...card,
+  return Object.freeze({ ...card, ...semanticFields,
     state: card.state === "RUNNING" && !processingActive
       ? "WAITING" as const : card.state,
     disposition: card.state === "RUNNING" && !processingActive
@@ -127,13 +304,14 @@ export function buildQuickPickOwnerReadModelV1(input: Readonly<{
   selectedBatchCards: readonly LunaQuickPickCardV1[]
   globalQueueCards: readonly LunaQuickPickCardV1[]
   explicitCandidateScope: boolean
+  authorityRows?: readonly StateAuthorityRow[]
 }>) {
   const selectedReceipt = input.explicitCandidateScope
     ? null : input.receipts[0] ?? null
   const selectedBatchCards = Object.freeze(input.selectedBatchCards.map(
-    projectQuickPickOwnerCardV1))
+    (card) => projectQuickPickOwnerCardV1(card, input.authorityRows)))
   const globalQueueCards = Object.freeze(input.globalQueueCards.map(
-    projectQuickPickOwnerCardV1))
+    (card) => projectQuickPickOwnerCardV1(card, input.authorityRows)))
   const historicalReceipts = Object.freeze((selectedReceipt
     ? input.receipts.slice(1) : input.receipts).map((receipt) => Object.freeze({
       batchId: receipt.batchId,
