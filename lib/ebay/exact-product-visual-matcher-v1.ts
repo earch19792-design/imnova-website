@@ -396,15 +396,21 @@ export function resolveSharedProductIdentityMatchV1(input: Readonly<{
     return value.split(" ").filter(Boolean).length >= 3
       && ` ${candidateNormalized} `.includes(` ${value} `)
   })
-  const phraseScores = targetPhrases.map((phrase) => overlap(
-    String(phrase), candidateTitle)).sort((left, right) => right - left)
-  const bestPhraseOverlap = phraseScores[0] ?? 0
+  const phraseScores = targetPhrases.map((phrase) => ({
+    conceptCount: new Set(concepts(phrase)).size,
+    score: overlap(String(phrase), candidateTitle),
+  }))
+  const bestPhraseOverlap = phraseScores
+    .filter((entry) => entry.conceptCount >= 3)
+    .map((entry) => entry.score).sort((left, right) => right - left)[0] ?? 0
+  const broadPhraseOverlap = phraseScores.map((entry) => entry.score)
+    .sort((left, right) => right - left)[0] ?? 0
   const aggregateTarget = targetPhrases.join(" ")
   const aggregateOverlap = overlap(aggregateTarget, candidateTitle)
   const strongSemanticSupport = exactPhrase
     || bestPhraseOverlap >= .72
     || (bestPhraseOverlap >= .58 && aggregateOverlap >= .34)
-  const familySupport = bestPhraseOverlap >= .28 || aggregateOverlap >= .2
+  const familySupport = broadPhraseOverlap >= .28 || aggregateOverlap >= .2
   const classification: SharedProductIdentityClassV1 = conflicts.length
     ? "REJECTED"
     : identifierExact || modelExact && exactComparable(

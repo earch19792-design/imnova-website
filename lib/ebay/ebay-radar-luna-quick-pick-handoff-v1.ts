@@ -91,6 +91,7 @@ function text(value: unknown, maximum = 500) {
 }
 
 function finite(value: unknown) {
+  if (value == null || value === "") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
