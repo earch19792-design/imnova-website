@@ -178,6 +178,7 @@ export default function LunaQuickPickPage() {
   const [factBusy, setFactBusy] = useState<Record<string, boolean>>({})
   const [factFeedback, setFactFeedback] = useState<Record<string, string>>({})
   const [continuingResolution, setContinuingResolution] = useState(false)
+  const [continuationFeedback, setContinuationFeedback] = useState("")
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -302,12 +303,18 @@ export default function LunaQuickPickPage() {
     if (!receipt?.batchId || continuingResolution) return
     setContinuingResolution(true)
     setError("")
+    setContinuationFeedback("")
     try {
-      await request("/api/admin/ebay/luna-quick-pick", {
+      const payload = await request("/api/admin/ebay/luna-quick-pick", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "REHYDRATE",
+        body: JSON.stringify({ action: "CONTINUE_FULL_LUNA_EVIDENCE",
           batchId: receipt.batchId }),
       })
+      const runtimeExecution = record(payload.runtimeExecution)
+      const completed = Number(runtimeExecution.continuationCompletedCount ?? 0)
+      setContinuationFeedback(completed > 0
+        ? `Resolución automática completada para ${completed} productos.`
+        : "La solicitud fue recibida; no había productos elegibles sin ejecutar.")
       await loadReadModel()
     } catch {
       setError("No pudimos continuar la resolución automática. Ningún listing fue modificado.")
@@ -444,6 +451,8 @@ export default function LunaQuickPickPage() {
           {continuingResolution ? "Continuando resolución…" :
             "Continuar resolución automática"}
         </button>}
+        {continuationFeedback && <p aria-live="polite"
+          className="mt-3 text-sm text-cyan-50">{continuationFeedback}</p>}
       </section>}
 
       {rehydrating && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4 text-sm text-cyan-50">Recuperando tus Quick Picks guardados…</p>}

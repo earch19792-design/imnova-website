@@ -361,6 +361,65 @@ export async function POST(req: Request) {
           inventoryItemRecreations: 0,
           customerProductionTouched: false } })
     }
+    if (body.action === "CONTINUE_FULL_LUNA_EVIDENCE") {
+      const batchId = typeof body.batchId === "string" ? body.batchId : null
+      if (!batchId) return response({ success: false,
+        error: "LUNA_QUICK_PICK_BATCH_ID_REQUIRED" }, 400)
+      const supabase = getSupabaseAdminClient()
+      const rehydration = await readLunaQuickPickBatchRehydrationV1({
+        supabase, batchId,
+      })
+      const storedCandidateKeys = [...new Set(
+        rehydration.storedCards.flatMap((card) =>
+          card.candidateKey ? [card.candidateKey] : []),
+      )]
+      const before = await readLunaQuickPickProgressV1({
+        supabase, accountKey, candidateKeys: storedCandidateKeys,
+        includeRecent: false,
+      })
+      const eligibleCandidateKeys = before.flatMap((card) =>
+        card.candidateKey
+        && card.fullLunaBrandEvidenceReviewPending
+        && card.aiCallCount < 1
+        && card.stages.SHIPPING === "PASS"
+        && card.stages.ECONOMICS === "PASS"
+        && card.stages.PRODUCT_TRUTH === "PASS"
+        && !card.alreadyLive
+          ? [card.candidateKey] : [])
+      const postShippingContinuation =
+        await continueLunaQuickPickPostShippingRuntimeV1({
+          supabase, accountKey, candidateKeys: eligibleCandidateKeys,
+          scopeMode: "EXACT_REQUEST",
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+          productIdentifierPolicyReader:
+            preflightEbayCategoryProductIdentifiers,
+        })
+      const after = await readLunaQuickPickProgressV1({
+        supabase, accountKey, candidateKeys: storedCandidateKeys,
+        includeRecent: false,
+      })
+      const continuationResult = record(
+        postShippingContinuation.requiredSpecificsContinuation)
+      return response({ success: true,
+        runtimeExecution: {
+          batchFound: true,
+          eligibleCandidateCount: eligibleCandidateKeys.length,
+          continuationStarted: Number(continuationResult.claimed ?? 0) > 0,
+          continuationCompletedCount: Number(
+            continuationResult.productsEvaluated ?? 0),
+          state: Number(continuationResult.claimed ?? 0) > 0
+            ? "COMPLETED" : "NO_ELIGIBLE_OR_ALREADY_CONSUMED",
+        },
+        progress: after,
+        postShippingContinuation,
+        requiredSpecificsContinuation:
+          postShippingContinuation.requiredSpecificsContinuation,
+        minimumReadinessContinuation:
+          postShippingContinuation.minimumReadinessContinuation,
+        safety: { marketplaceWrites: 0, listingPublications: 0,
+          listingMutations: 0, canPublish: false,
+          customerProductionTouched: false } })
+    }
     if (!auth.userId) return response({ success: false,
       error: "LUNA_QUICK_PICK_ADMIN_REQUIRED" }, 403)
     if (body.action === "OWNER_REVIEW") {

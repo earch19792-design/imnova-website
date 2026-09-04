@@ -86,6 +86,7 @@ export async function continueLunaQuickPickPostShippingRuntimeV1(
     supabase: SupabaseClient
     accountKey: string
     candidateKeys: readonly string[]
+    scopeMode?: "DURABLE_BATCH" | "EXACT_REQUEST"
     taxonomyReader: RadarMarketplaceTaxonomyReaderV1
     productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
     dependencies?: Readonly<{
@@ -109,10 +110,12 @@ export async function continueLunaQuickPickPostShippingRuntimeV1(
     overnightDependency: false as const,
     marketplaceWrites: 0 as const,
   })
-  const scope = await (input.dependencies?.readBatchScope ??
-    readDurableBatchScopeV1)({
-    supabase: input.supabase, candidateKeys: requestedKeys,
-  })
+  const scope = input.scopeMode === "EXACT_REQUEST"
+    ? requestedKeys
+    : await (input.dependencies?.readBatchScope ??
+      readDurableBatchScopeV1)({
+      supabase: input.supabase, candidateKeys: requestedKeys,
+    })
   const scopedCandidateKeys = [...new Set(scope.flatMap((value) => {
     const key = candidateKey(value)
     return key ? [key] : []
@@ -136,6 +139,7 @@ export async function continueLunaQuickPickPostShippingRuntimeV1(
   })
   return Object.freeze({
     contractVersion: QUICK_PICK_POST_SHIPPING_CONTINUATION_V1,
+    scopeMode: input.scopeMode ?? "DURABLE_BATCH",
     requestedCandidateCount: requestedKeys.length,
     scopedCandidateCount: scopedCandidateKeys.length,
     requiredSpecificsContinuation,
