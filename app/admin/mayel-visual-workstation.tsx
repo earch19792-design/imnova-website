@@ -47,7 +47,7 @@ type VisualTask = {
 const labels: Record<VisualRole, string> = {
   DETAIL: "Detalle", PACKAGE_CONTENTS: "Contenido del paquete",
   DIMENSIONS: "Dimensiones", PRIMARY_BENEFIT: "Beneficio principal",
-  LIFESTYLE: "Estilo de vida", HUMAN_USE: "Uso por una persona",
+  LIFESTYLE: "Lifestyle / contexto aspiracional", HUMAN_USE: "Uso humano",
 }
 
 const rejectionReasons = [
@@ -111,7 +111,7 @@ function HumanQa({ task, output, busy, onDone }: {
     ["noUnauthorizedText", "No agrega texto no autorizado"],
     ["roleMatchesOutput", `Sí corresponde a: ${labels[output.mayel_output_role]}`],
     ...(output.mayel_output_role === "DIMENSIONS" ? [[
-      "dimensionTextMatchesProductTruth", "Las dimensiones coinciden con Product Truth",
+      "dimensionTextMatchesProductTruth", "Las dimensiones coinciden con la verdad certificada del producto",
     ]] : []),
   ] as string[][], [output.mayel_output_role])
   const [checks, setChecks] = useState<Record<string, boolean>>({})
@@ -178,7 +178,7 @@ function HumanQa({ task, output, busy, onDone }: {
       </div>
       {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
     </div>}
-    {output.status === "approved" && <p className="mt-4 rounded-xl bg-[#e3ebe1] p-3 text-sm font-semibold text-[#425143]">QA aprobado por Mayel · asset canónico creado ✓</p>}
+    {output.status === "approved" && <p className="mt-4 rounded-xl bg-[#e3ebe1] p-3 text-sm font-semibold text-[#425143]">Control de calidad aprobado por Mayel · recurso canónico creado ✓</p>}
     {output.status === "rejected" && <p className="mt-4 rounded-xl bg-[#f7e9de] p-3 text-sm font-semibold text-[#704d3c]">Resultado rechazado</p>}
   </article>
 }
@@ -273,20 +273,20 @@ function OwnerPreview({ task }: { task: VisualTask }) {
       return values.length ? [`${key}: ${values.join(" · ")}`] : []
     })
   return <section className="rounded-2xl border border-[#74866d]/35 bg-[#f4f7f1] p-5">
-    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Vista previa owner · sin escritura</p>
+    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Vista previa del owner · sin escritura</p>
     <h4 className="mt-2 font-serif text-xl font-semibold">Imágenes actuales y propuesta</h4>
     <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. La imagen principal actual permanece protegida.</p>
-    <p className="mt-2 text-xs text-[#617159]">QA de Mayel: {task.outputs.filter((output) => output.status === "approved").length} aprobada(s) · aprobación owner pendiente.</p>
+    <p className="mt-2 text-xs text-[#617159]">Control de calidad de Mayel: {task.outputs.filter((output) => output.status === "approved").length} aprobada(s) · aprobación del owner pendiente.</p>
     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{proposed.map((entry, index) =>
       <figure key={`${entry.assetId ?? "current"}-${index}`}
         className="rounded-xl border border-[#d6dfd1] bg-white p-2">
-        <img src={String(entry.publicUrl ?? "")} alt="Imagen propuesta para revisión owner"
+        <img src={String(entry.publicUrl ?? "")} alt="Imagen propuesta para revisión del owner"
           className="aspect-square w-full rounded-lg object-contain" />
         <figcaption className="mt-2 text-[10px] font-semibold text-[#617159]">{index === 0 ? "Principal actual · preservada" : labels[entry.role as VisualRole] ?? "Secundaria actual"}</figcaption>
       </figure>)}</div>
     <p className="mt-4 break-all text-[10px] text-[#777a73]">Manifest: {task.visualManifestDigest}</p>
     {factEntries.length > 0 && <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
-      <summary className="cursor-pointer font-semibold">Product Truth usado</summary>
+      <summary className="cursor-pointer font-semibold">Verdad certificada del producto utilizada</summary>
       <ul className="mt-2 space-y-1">{factEntries.map((entry) =>
         <li key={entry}>{entry}</li>)}</ul>
     </details>}
@@ -354,8 +354,8 @@ export function MayelVisualWorkstation({ canOperate }: {
     {message && <p className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]">{message}</p>}
     {!busy && !tasks.length && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7">
       <h3 className="font-serif text-2xl font-semibold">No hay una oportunidad visual lista</h3>
-      <p className="mt-2 text-sm leading-6 text-[#64675f]">Seller OS no fabricará una tarea. Aparecerá aquí cuando un listing LIVE tenga identidad, Product Truth, imágenes autorizadas y una oportunidad visual demostrada.</p>
-      {canaryAvailable === false && <p className="mt-3 text-xs font-semibold text-[#74866d]">Canary Fase A no disponible por ahora.</p>}
+      <p className="mt-2 text-sm leading-6 text-[#64675f]">Seller OS no fabricará una tarea. Aparecerá aquí cuando una publicación activa tenga identidad, verdad del producto, imágenes autorizadas y una oportunidad visual demostrada.</p>
+      {canaryAvailable === false && <p className="mt-3 text-xs font-semibold text-[#74866d]">Prueba física de Fase A no disponible por ahora.</p>}
     </div>}
     <div className="mt-6 space-y-7">{tasks.map((task) => <article
       key={task.visualTaskId}
@@ -363,14 +363,19 @@ export function MayelVisualWorkstation({ canOperate }: {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#74866d]">Tarea visual · {task.sku}</p>
           <h3 className="mt-2 font-serif text-2xl font-semibold">{task.productTitle}</h3>
-          <p className="mt-1 text-xs text-[#777a73]">Listing {task.ebayItemId}</p></div>
-        <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{task.status === "OWNER_PREVIEW_READY" ? "Lista para preview owner" : "Trabajo de Mayel"}</span>
+          <p className="mt-1 text-xs text-[#777a73]">Publicación eBay {task.ebayItemId}</p></div>
+        <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{task.status === "OWNER_PREVIEW_READY" ? "Lista para vista previa del owner" : "Trabajo de Mayel"}</span>
       </div>
       <div className="mt-6"><SourceGallery task={task} /></div>
       {canOperate && <section className="mt-6 rounded-2xl bg-[#26312d] p-5 text-white">
         <div className="flex items-start gap-3"><Clipboard className="mt-1 h-5 w-5 shrink-0 text-[#acd2ca]" />
           <div><h4 className="font-semibold">Prompt individual listo para copiar</h4>
-            <p className="mt-1 text-sm leading-6 text-white/70">Abre una conversación nueva en ChatGPT para este producto. Carga todas las imágenes fuente y pega este prompt.</p></div></div>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-6 text-white/70">
+              <li>Abre una conversación nueva en ChatGPT para este producto.</li>
+              <li>Carga únicamente las imágenes fuente proporcionadas por Seller OS.</li>
+              <li>Copia y pega este prompt completo.</li>
+              <li>Compara cada resultado contra las imágenes originales antes de aprobarlo.</li>
+            </ol></div></div>
         <pre className="mt-4 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-black/20 p-4 text-xs leading-5 text-white/85">{task.prompt}</pre>
         <button type="button" onClick={() => void navigator.clipboard.writeText(task.prompt)}
           className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-[#26312d]"><Clipboard className="h-4 w-4" />Copiar prompt</button>
@@ -383,7 +388,7 @@ export function MayelVisualWorkstation({ canOperate }: {
         onDone={refresh} /></div>}
       {task.outputs.length > 0 && <section className="mt-7">
         <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-[#1d5961]" />
-          <h4 className="font-semibold">QA y revisión de Mayel</h4></div>
+          <h4 className="font-semibold">Control de calidad y revisión de Mayel</h4></div>
         <div className="mt-4 space-y-4">{task.outputs.map((output) =>
           <HumanQa key={output.id} task={task} output={output} busy={busy}
             onDone={refresh} />)}</div>
@@ -399,7 +404,7 @@ export function MayelVisualWorkstation({ canOperate }: {
     </article>)}</div>
     {busy && <p className="mt-6 rounded-2xl border border-[#d9d1c4] bg-[#fffdf8] p-6 text-sm text-[#6f736c]">Preparando la estación visual…</p>}
     <footer className="mt-7 rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-xs leading-5 text-[#704d3c]">
-      Fase A termina en preview owner. La imagen principal sigue protegida y esta estación no puede escribir en eBay.
+      Fase A termina en la vista previa del owner. La imagen principal sigue protegida y esta estación no puede escribir en eBay.
     </footer>
   </section>
 }

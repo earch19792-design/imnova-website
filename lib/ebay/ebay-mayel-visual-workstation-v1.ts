@@ -249,42 +249,71 @@ export function buildMayelChatGptVisualPromptV1(
               "proven use case" })
   })
   const facts = (label: string, values: readonly string[]) =>
-    `${label}: ${values.length ? values.join(" | ") : "UNPROVEN — do not infer"}`
+    `${label}: ${values.length ? values.join(" | ") :
+      "NO DEMOSTRADO — no inferir"}`
+  const roleLabel: Record<MayelVisualOutputRole, string> = {
+    DETAIL: "DETALLE",
+    PACKAGE_CONTENTS: "CONTENIDO DEL PAQUETE",
+    DIMENSIONS: "DIMENSIONES",
+    PRIMARY_BENEFIT: "BENEFICIO PRINCIPAL",
+    LIFESTYLE: "LIFESTYLE / CONTEXTO ASPIRACIONAL",
+    HUMAN_USE: "USO HUMANO",
+  }
+  const localizedClaim = (claim: string) => {
+    if (claim === "No medical, cosmetic, safety, performance, or comparative claim unless it is listed above as proven.") {
+      return "No agregues afirmaciones médicas, cosméticas, de seguridad, rendimiento o comparación salvo que aparezcan arriba como demostradas."
+    }
+    if (claim === "Do not add accessories, parts, dimensions, materials, logos, or functions that are not proven above.") {
+      return "No agregues accesorios, piezas, dimensiones, materiales, logos ni funciones que no estén demostrados arriba."
+    }
+    return claim.replace(/: UNPROVEN$/u, ": NO DEMOSTRADO")
+  }
   const textValue = [
     "MAYEL_CHATGPT_VISUAL_PROMPT_V1",
-    "Work on exactly ONE product in this new ChatGPT conversation.",
-    "Use every original source image uploaded for EACH generation as the product authority.",
-    "Never use a previously generated image as the only product authority.",
+    "Actúa como director de arte especializado en fotografía comercial para e-commerce.",
+    "Trabaja con exactamente UN producto en esta conversación nueva de ChatGPT.",
+    "Mantén el producto exactamente igual a las imágenes fuente.",
+    "Usa todas las imágenes fuente originales cargadas como autoridad del producto en CADA generación.",
+    "Nunca uses una imagen generada anteriormente como única autoridad del producto.",
+    "Antes de generar cualquier imagen, valida qué slots cuentan con evidencia suficiente.",
+    "Genera una imagen por vez y espera aprobación antes de continuar.",
     "",
-    `Product: ${pack.productTitle}`,
+    `Producto: ${pack.productTitle}`,
     `Seller OS SKU: ${pack.sku}`,
-    `Category: ${pack.category ?? "UNPROVEN"}`,
-    facts("Type", pack.productType),
-    facts("Brand", pack.brand),
+    `Categoría: ${pack.category ?? "NO DEMOSTRADA"}`,
+    facts("Tipo", pack.productType),
+    facts("Marca", pack.brand),
     facts("Color", pack.color),
-    facts("Materials", pack.materialsProven),
-    facts("Package contents", pack.packageContentsProven),
-    facts("Pack quantity", pack.quantityOrPackCount),
-    facts("Dimensions", pack.dimensionsProven),
-    facts("Allowed benefits", pack.allowedProductBenefits),
-    facts("Allowed use cases", pack.allowedUseCases),
+    facts("Materiales", pack.materialsProven),
+    facts("Contenido del paquete", pack.packageContentsProven),
+    facts("Cantidad o número de piezas", pack.quantityOrPackCount),
+    facts("Dimensiones", pack.dimensionsProven),
+    facts("Beneficios permitidos", pack.allowedProductBenefits),
+    facts("Casos de uso permitidos", pack.allowedUseCases),
     "",
-    "PRODUCT LOCK — mandatory:",
-    "- Preserve the exact photographed product; do not redraw or redesign it.",
-    "- Do not change color, shape, visible logos, variant, or part count.",
-    "- Do not invent accessories, package contents, dimensions, materials, functions, or claims.",
-    "- Do not use competitor images or competitor-branded elements.",
-    "- Do not add text unless the requested slot explicitly needs proven text.",
-    "- If required evidence is missing, do not generate that slot.",
+    "BLOQUEO DE FIDELIDAD DEL PRODUCTO — obligatorio:",
+    "- Conserva exactamente el producto fotografiado; no lo redibujes ni lo rediseñes.",
+    "- No cambies el color, la forma, los logos visibles, la variante ni la cantidad de piezas.",
+    "- No inventes accesorios, contenido del paquete, medidas, materiales, funciones ni beneficios.",
+    "- No uses imágenes de competidores ni elementos con marcas de competidores.",
+    "- No agregues texto salvo que el slot solicitado necesite explícitamente texto demostrado.",
     "",
-    "Create only the READY secondary-image slots below, one output file per slot:",
+    "VALIDACIÓN DE EVIDENCIA:",
+    "- Genera únicamente los slots marcados como LISTO.",
+    "- Si falta la evidencia requerida, no generes ese slot.",
+    "- Que algo parezca probable no significa que esté demostrado.",
+    "",
+    "Crea únicamente las imágenes secundarias LISTAS indicadas a continuación, un archivo por slot:",
     ...slots.map((slot, index) =>
-      `${String(index + 1).padStart(2, "0")}_${slot.role}: ${slot.status}`),
+      `${String(index + 1).padStart(2, "0")}_${slot.role} — ${roleLabel[slot.role]}: ${
+        slot.status === "READY" ? "LISTO" :
+          "BLOQUEADO: FALTA EVIDENCIA"}`),
     "",
-    "Prohibited or unproven:",
-    ...pack.prohibitedOrUnprovenClaims.map((claim) => `- ${claim}`),
+    "Prohibido o no demostrado:",
+    ...pack.prohibitedOrUnprovenClaims.map((claim) =>
+      `- ${localizedClaim(claim)}`),
     "",
-    "Keep the current main image unchanged. These outputs are secondary images for human review in Seller OS.",
+    "Mantén sin cambios la imagen principal actual. Estos resultados son imágenes secundarias para revisión humana en Seller OS.",
   ].join("\n")
   return Object.freeze({ contractVersion: MAYEL_CHATGPT_VISUAL_PROMPT_VERSION,
     text: textValue, digest: mayelVisualDigestV1(textValue), slots,
