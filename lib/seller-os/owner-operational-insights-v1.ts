@@ -229,27 +229,31 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
   const categoryWindows = [1, 7, 30, 90].map(buildCategoryWindow)
   const allCategoryWindow = buildCategoryWindow(3650)
 
-  const [radarRunRead, radarReceiptRead, radarSchedulerRead,
-    radarDispatchRead, opportunityRead] = await Promise.all([
-    input.supabase.from("seller_os_daily_dollar_radar_runs")
+  // Radar authority is intentionally acquired sequentially. Concurrent fanout
+  // against the recovered database previously produced false UNKNOWN states.
+  const radarRunRead = await input.supabase
+    .from("seller_os_daily_dollar_radar_runs")
       .select("run_id,status,queue_entry_count,families_evaluated,demand_proven_count,demand_supported_count,luna_match_count,last_error_code,failure_stage,started_at,completed_at")
       .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
-      .order("started_at", { ascending: false }).limit(1).maybeSingle(),
-    input.supabase.from("seller_os_daily_dollar_radar_run_receipts")
+      .order("started_at", { ascending: false }).limit(1).maybeSingle()
+  const radarReceiptRead = await input.supabase
+    .from("seller_os_daily_dollar_radar_run_receipts")
       .select("receipt_id,event_type,run_status,failure_stage,families_evaluated,demand_proven_count,demand_supported_count,luna_match_count,morning_queue_count,recorded_at")
-      .order("recorded_at", { ascending: false }).limit(1).maybeSingle(),
-    input.supabase.from("seller_os_post_runtime_scheduler_v1")
+      .order("recorded_at", { ascending: false }).limit(1).maybeSingle()
+  const radarSchedulerRead = await input.supabase
+    .from("seller_os_post_runtime_scheduler_v1")
       .select("lane,schedule,dispatch_window_seconds,enabled,updated_at")
-      .eq("lane", "DAILY_DOLLAR_RADAR_AUTOPILOT").maybeSingle(),
-    input.supabase.from("seller_os_post_runtime_dispatch_receipts_v1")
+      .eq("lane", "DAILY_DOLLAR_RADAR_AUTOPILOT").maybeSingle()
+  const radarDispatchRead = await input.supabase
+    .from("seller_os_post_runtime_dispatch_receipts_v1")
       .select("dispatch_slot,status,requested_at")
       .eq("lane", "DAILY_DOLLAR_RADAR_AUTOPILOT")
-      .order("requested_at", { ascending: false }).limit(1).maybeSingle(),
-    input.supabase.from("seller_os_market_opportunity_cases")
+      .order("requested_at", { ascending: false }).limit(1).maybeSingle()
+  const opportunityRead = await input.supabase
+    .from("seller_os_market_opportunity_cases")
       .select("opportunity_case_id,family_name,status,updated_at")
       .eq("status", "MONITORING").order("updated_at", { ascending: false })
-      .limit(100),
-  ])
+      .limit(100)
   const radarRun = record(radarRunRead.data)
   const radarReceipt = record(radarReceiptRead.data)
   const radarScheduler = record(radarSchedulerRead.data)
@@ -318,7 +322,8 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
       ].filter((value): value is string => Boolean(value))) }),
     categories: Object.freeze({ status: !orderSourceAvailable ||
       registryRead.error || packagesRead.error ? "UNAVAILABLE" as const
-      : allCategoryWindow.unmappedCount > 0
+      : freshness === "STALE" ? "STALE" as const
+        : allCategoryWindow.unmappedCount > 0
         ? "PARTIAL" as const : "AVAILABLE" as const,
       source: "OFFICIAL_EBAY_ORDERS_PLUS_CANONICAL_LISTING_CATEGORY" as const,
       windows: Object.freeze(categoryWindows),
