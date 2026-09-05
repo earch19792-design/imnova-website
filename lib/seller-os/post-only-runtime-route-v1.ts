@@ -39,11 +39,14 @@ export async function sellerOsPostRuntimeAuthorizedV1(input: Readonly<{
   return !verification.error && verification.data === true
 }
 
-export function sellerOsPostOnlyGetResponseV1() {
+export function sellerOsPostOnlyGetResponseV1(
+  diagnostic?: Readonly<Record<string, unknown>>,
+) {
   return NextResponse.json({
     success: false,
     error: "POST_REQUIRED_FOR_RUNTIME_EXECUTION",
     contractVersion: SELLER_OS_POST_ONLY_RUNTIME_ROUTE_V1,
+    ...(diagnostic ? { diagnostic } : {}),
     safety: {
       getBusinessMutations: 0,
       executorInvoked: false,

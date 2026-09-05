@@ -4,6 +4,8 @@ export const maxDuration = 300
 
 import { NextResponse } from "next/server"
 
+import { getEbayDraftWriteEnvironmentBoundary } from
+  "@/lib/ebay/environment-boundaries"
 import { sellerOsPostOnlyGetResponseV1 } from
   "@/lib/seller-os/post-only-runtime-route-v1"
 
@@ -44,5 +46,17 @@ export async function POST(request: Request) {
 }
 
 export function GET() {
-  return sellerOsPostOnlyGetResponseV1()
+  const boundary = getEbayDraftWriteEnvironmentBoundary()
+  return sellerOsPostOnlyGetResponseV1({
+    boundaryClassification: boundary.productionDedicatedPreprodBound
+      ? "SELLER_OS_DEDICATED_PREPROD" : "BLOCKED",
+    branchMatches: boundary.branchMatches,
+    environmentAllowed: boundary.environmentAllowed,
+    productionDedicatedPreprodBound:
+      boundary.productionDedicatedPreprodBound,
+    target: boundary.target,
+    targetEnabled: boundary.targetEnabled,
+    writeAllowed: boundary.writeAllowed,
+    valuesDisplayed: false,
+  })
 }
