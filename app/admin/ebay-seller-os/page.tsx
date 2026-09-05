@@ -78,7 +78,7 @@ const operationLinks = [
 export default function EbaySellerOsHubPage() {
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6 xl:pl-[248px]">
-      <SellerOsDesktopNavigation active="orders" />
+      <SellerOsDesktopNavigation active="sales" />
       <section className="mx-auto max-w-7xl space-y-4">
         <header className="rounded-3xl border border-white/10 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-5 sm:p-7">
           <div className="flex flex-wrap items-center justify-between gap-3"><a href="/admin" className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">← Inicio</a><span className="rounded-full border border-emerald-200/25 bg-emerald-200/[0.07] px-3 py-2 text-[11px] font-black text-emerald-50">MODO SEGURO</span></div>
@@ -123,7 +123,7 @@ export default function EbaySellerOsHubPage() {
         <aside className="rounded-3xl border border-white/10 bg-white/[0.035] p-4"><h2 className="font-black">Regla de seguridad</h2><p className="mt-2 text-sm leading-6 text-white/60">Los análisis, revisiones y paquetes internos pueden automatizarse. Crear o activar una publicación en eBay requiere una autorización separada y revisión humana.</p></aside>
       </section>
 
-      <SellerOsMobileNav active="orders" />
+      <SellerOsMobileNav active="sales" />
     </main>
   )
 }

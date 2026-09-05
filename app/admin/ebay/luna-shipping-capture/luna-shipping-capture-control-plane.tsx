@@ -62,7 +62,7 @@ export type LunaShippingOwnerWorkerSnapshot = Readonly<{
   canonicalBindingReady: boolean
   canonicalDestinationBound: boolean
   eligiblePendingJobCount: number | null
-  autoClaimEnabled: true
+  autoClaimEnabled: boolean
 }>
 
 function dashboardWorkerStatus(connected: boolean, running: boolean,
@@ -501,6 +501,7 @@ export function LunaShippingCaptureControlPlane({
   const [canonicalDestinationMatch, setCanonicalDestinationMatch] = useState(false)
   const [canonicalBindingStatusReady, setCanonicalBindingStatusReady] =
     useState(false)
+  const [autoClaimEnabled, setAutoClaimEnabled] = useState(runtimeOnly)
   const [canonicalDestinationMismatch, setCanonicalDestinationMismatch] =
     useState(false)
   const [bindingStorageDiagnostic, setBindingStorageDiagnostic] =
@@ -530,6 +531,9 @@ export function LunaShippingCaptureControlPlane({
     let index = 0
     let mode: "CANARY" | "AUTO" | "LIVE" = "CANARY"
     const params = new URLSearchParams(window.location.search)
+    const productionRuntimeAuthorized = runtimeOnly ||
+      params.get("bridgeOnly") === "1"
+    setAutoClaimEnabled(productionRuntimeAuthorized)
     const requestedLiveTarget = {
       ebayItemId: params.get("ebayItemId")?.trim() ?? "",
       lunaProductId: params.get("lunaProductId")?.trim() ?? "",
@@ -884,7 +888,8 @@ export function LunaShippingCaptureControlPlane({
 
     const scheduleProductionAcquisition = (delayMs =
       DISCOVERY_RETRY_INTERVAL_MS) => {
-      if (hasExactLiveTarget || !active || busy || discoveryRetryTimer !== null) {
+      if (!productionRuntimeAuthorized || hasExactLiveTarget || !active || busy ||
+          discoveryRetryTimer !== null) {
         return
       }
       discoveryRetryTimer = window.setTimeout(() => {
@@ -894,7 +899,8 @@ export function LunaShippingCaptureControlPlane({
     }
 
     const attemptProductionAcquisition = () => {
-      if (hasExactLiveTarget || !active || discoveryInFlight || busy) {
+      if (!productionRuntimeAuthorized || hasExactLiveTarget || !active ||
+          discoveryInFlight || busy) {
         return
       }
       if (!extensionReady || !canonicalBindingStatusRead ||
@@ -1965,7 +1971,7 @@ export function LunaShippingCaptureControlPlane({
       bindDestinationRef.current = null
       port?.disconnect()
     }
-  }, [])
+  }, [runtimeOnly])
 
   useEffect(() => {
     const workerSnapshot: LunaShippingOwnerWorkerSnapshot = {
@@ -1978,18 +1984,18 @@ export function LunaShippingCaptureControlPlane({
       canonicalBindingReady: canonicalBindingStatusReady,
       canonicalDestinationBound,
       eligiblePendingJobCount,
-      autoClaimEnabled: true,
+      autoClaimEnabled,
     }
     onWorkerSnapshot?.(workerSnapshot)
     if (window.parent === window) return
     window.parent.postMessage({
       type: "SELLER_OS_LUNA_WORKER_STATUS_V1",
       ...workerSnapshot,
-      autoClaimEnabled: true,
+      autoClaimEnabled,
     }, window.location.origin)
   }, [canonicalBindingStatusReady, canonicalDestinationBound,
     canonicalDestinationMismatch, connected, eligiblePendingJobCount, error,
-    onWorkerSnapshot, running, status])
+    autoClaimEnabled, onWorkerSnapshot, running, status])
 
   const newestTrace = liveTraceEvents.at(-1) ?? null
   const lastSuccessfulTrace = [...liveTraceEvents].reverse()

@@ -3,6 +3,8 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
 import { NextResponse } from "next/server"
+import { sellerOsPostOnlyGetResponseV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 import {
   createSellerAutomationRun,
@@ -97,7 +99,7 @@ function configuration() {
   }
 }
 
-export async function GET(req: Request) {
+export async function POST(req: Request) {
   if (!commercialPreviewCronAuthorized(req)) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
@@ -641,4 +643,8 @@ export async function GET(req: Request) {
       },
     }, { status: code === "TARGETED_ACTIVE_LISTING_LUNA_MONITOR_PREVIEW_ONLY" ? 403 : 502 })
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }

@@ -41,6 +41,8 @@ import { captureLiveListingShippingEvidenceV1,
   LiveListingShippingEvidenceCaptureErrorV1 } from
   "@/lib/ebay/ebay-live-listing-shipping-evidence-server-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
+import { readLatestSellerOsOperationalIntegrityV1 } from
+  "@/lib/seller-os/operational-integrity-ledger-v1"
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -86,9 +88,24 @@ export async function GET(req: Request) {
   if (!auth.ok) return NextResponse.json({ success: false, error: auth.error ?? "admin_forbidden" },
     { status: auth.status || 403 })
   const current = capabilities()
+  const account = getEbaySellerAccountScopeConfiguration()
+  const supabase = getSupabaseAdminClient()
+  const [integrityResult, schedulerResult] = await Promise.allSettled([
+    account.accountKey ? readLatestSellerOsOperationalIntegrityV1({
+      supabase, accountKey: account.accountKey,
+    }) : Promise.reject(new Error("ACCOUNT_SCOPE_REQUIRED")),
+    supabase.rpc("get_seller_os_post_runtime_status_v1"),
+  ])
+  const operationalIntegrity = integrityResult.status === "fulfilled"
+    ? integrityResult.value : null
+  const runtimeScheduler = schedulerResult.status === "fulfilled" &&
+      !schedulerResult.value.error
+    ? schedulerResult.value.data : null
   return NextResponse.json({
     success: true,
     capabilities: current,
+    operationalIntegrity,
+    runtimeScheduler,
     templates: WHATSAPP_TEMPLATE_DEFINITIONS_V1,
     readiness: assessProductCaseOperationalReadinessV1({
       marketResearchReady: true, supplierCaptureReady: true, supplierIdentityReady: false,

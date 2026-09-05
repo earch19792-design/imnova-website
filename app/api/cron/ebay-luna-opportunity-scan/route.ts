@@ -18,6 +18,9 @@ import {
   collectOwnEbayPerformanceForLearning,
 } from "@/lib/ebay/ebay-category-performance-learning"
 import { reverifyManualEbayListingsReadonly } from "@/lib/ebay/ebay-manual-listing-service"
+import { sellerOsPostOnlyGetResponseV1,
+  sellerOsPostRuntimeAuthorizedV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 const CRON_MAX_CANDIDATES = 5
 const CRON_TIME_BUDGET_MS = 45_000
@@ -31,11 +34,13 @@ function authorized(req: Request) {
   return Boolean(secret && req.headers.get("authorization") === `Bearer ${secret}`)
 }
 
-export async function GET(req: Request) {
-  if (!authorized(req)) {
+export async function POST(req: Request) {
+  const supabase = getSupabaseAdminClient()
+  if (!authorized(req) && !await sellerOsPostRuntimeAuthorizedV1({
+    request: req, supabase,
+  })) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
-  const supabase = getSupabaseAdminClient()
   let runId = ""
   const startedAt = Date.now()
   const workDeadlineAt = startedAt + CRON_TIME_BUDGET_MS
@@ -133,4 +138,8 @@ export async function GET(req: Request) {
     if (runId) await recordEbayFirstLunaScanFailure(supabase, runId, error).catch(() => undefined)
     return NextResponse.json({ success: false, error: "EBAY_LUNA_SCHEDULED_SCAN_FAILED" }, { status: 502 })
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }

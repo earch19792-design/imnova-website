@@ -124,6 +124,10 @@ test("active listing identity is offer and account aware, not item-id unique", (
 })
 
 test("cron cadence preserves priority while respecting the serverless budget", () => {
+  const scheduler = readFileSync(
+    "supabase/migrations/20260905090044_seller_os_post_only_runtime_dispatch_v1.sql",
+    "utf8",
+  )
   assert.match(scanCron, /CRON_MAX_CANDIDATES = 5/)
   assert.match(scanCron, /CRON_TIME_BUDGET_MS = 45_000/)
   assert.match(scanCron, /reconcileSellerScanTasks/)
@@ -132,13 +136,15 @@ test("cron cadence preserves priority while respecting the serverless budget", (
   assert.match(lunaCron, /reconcileSellerScanTasks/)
   assert.match(lunaCron, /limit: 300/)
   assert.match(lunaCron, /finishSellerAutomationRun/)
-  assert.deepEqual(vercel.crons, [
-    { path: "/api/cron/quick-pick-runtime-recovery",
-      schedule: "20 7 * * *" },
-    { path: "/api/cron/market-radar-luna-sync", schedule: "0 9 * * *" },
-    { path: "/api/cron/ebay-luna-opportunity-scan", schedule: "17 9 * * *" },
-    { path: "/api/cron/daily-dollar-radar-autopilot", schedule: "0 9 * * *" },
-  ])
+  assert.equal("crons" in vercel, false)
+  for (const [lane, path, schedule] of [
+    ["QUICK_PICK_RUNTIME_RECOVERY", "quick-pick-runtime-recovery", "20 7"],
+    ["MARKET_RADAR_LUNA_SYNC", "market-radar-luna-sync", "0 9"],
+    ["EBAY_LUNA_OPPORTUNITY_SCAN", "ebay-luna-opportunity-scan", "17 9"],
+    ["DAILY_DOLLAR_RADAR_AUTOPILOT", "daily-dollar-radar-autopilot", "0 9"],
+  ]) assert.match(scheduler,
+    new RegExp(`${lane}[\\s\\S]*${path}[\\s\\S]*${schedule.replace(" ", " ")} \\* \\* \\*`))
+  assert.match(scheduler, /net\.http_post\(/)
   assert.match(scanService, /productionSchedule: "17 9 \* \* \*"/)
   assert.match(scanService, /lunaProductionSchedule: "0 9 \* \* \*"/)
   assert.doesNotMatch(scanService, /productionSchedule: "\*\/15 \* \* \* \*"/)

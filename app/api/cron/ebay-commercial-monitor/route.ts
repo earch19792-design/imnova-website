@@ -5,6 +5,8 @@ export const maxDuration = 60
 import { randomUUID } from "node:crypto"
 
 import { NextResponse } from "next/server"
+import { sellerOsPostOnlyGetResponseV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 import {
   getCommercialMonitorScheduleConfiguration,
@@ -46,7 +48,7 @@ function safeCode(error: unknown) {
   return /^[A-Z0-9_]+$/.test(value) ? value : "COMMERCIAL_MONITOR_CRON_FAILED"
 }
 
-export async function GET(req: Request) {
+export async function POST(req: Request) {
   if (!commercialPreviewCronAuthorized(req)) return NextResponse.json(
     { success: false, error: "CRON_UNAUTHORIZED" },
     { status: 401 },
@@ -339,4 +341,8 @@ export async function GET(req: Request) {
       { status: code === "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED" ? 423 : 502 },
     )
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }

@@ -375,7 +375,7 @@ export function CommercialMonitorReadonlyClient() {
           </details>
         </div>
       </>}
-      <SellerOsMobileNav active="monitor" hideOnDesktop />
+      <SellerOsMobileNav active="live" hideOnDesktop />
     </main>
   )
 }

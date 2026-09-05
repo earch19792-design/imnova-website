@@ -1767,7 +1767,7 @@ export default function EbayMobileReviewPage() {
         </footer>
       </section>
       <SellerOsMobileNav
-        active={view === "blocked" ? "inventory" : "opportunities"}
+        active={view === "blocked" ? "stockguard" : "opportunities"}
         onNavigate={(destination) => {
           if (destination === "opportunities") { setView("opportunities"); return true }
           if (hasReviewInProgress && !confirmReviewReset()) return true

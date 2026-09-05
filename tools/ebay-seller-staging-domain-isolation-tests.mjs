@@ -94,9 +94,12 @@ test("unauthorized admin pages redirect server-side with a safe internal return 
 test("canonical navigation has intent-based areas and one source", () => {
   const navigation = read("lib/seller-os/navigation.ts")
   const mobile = read("app/admin/ebay/components/seller-os-mobile-nav.tsx")
-  const ids = [...navigation.matchAll(/id: "(monitor|quick-pick|listings|opportunities|experiments|inventory|orders|decisions|learning|system-status)"/g)].map((match) => match[1])
-  assert.deepEqual(ids, ["monitor", "quick-pick", "opportunities", "listings", "experiments", "inventory",
-    "orders", "decisions", "learning", "system-status"])
+  const ids = [...navigation.matchAll(/\{ id: "(home|publish|opportunities|live|sales|post-sale|mayel|stockguard|administration|experiments)"/g)].map((match) => match[1])
+  assert.deepEqual(ids, ["home", "publish", "opportunities", "live",
+    "sales", "post-sale", "mayel", "stockguard", "administration",
+    "experiments"])
+  assert.doesNotMatch(navigation, /label: "Quick Pick"/)
+  assert.match(navigation, /label: "Preparar productos"/)
   assert.match(mobile, /SELLER_OS_MOBILE_NAVIGATION\.map/)
   assert.match(navigation, /objective:/)
   assert.doesNotMatch(mobile, /const destinations|Comunidad|Idea Lab|Productos IMNOVA|Product Development/)
@@ -207,8 +210,10 @@ test("route and bundle surface regress downward", () => {
   // Intelligence reader and the private MCP bridge.
   // to the previously isolated Seller OS surface. The explicitly temporary
   // seller reauthorization gate may add one paired page/API while present.
+  // Operational IA adds four deliberate canonical pages: Listing Quality,
+  // Sales, Postventa and Mayel. Their old routes/runtimes remain intact.
   assert.ok(
-    countNamed("app", "page.tsx") <= 23 + Number(temporarySellerOauthPage) +
+    countNamed("app", "page.tsx") <= 27 + Number(temporarySellerOauthPage) +
       Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
       Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage) +
       Number(lunaQuickPickPage),
@@ -236,8 +241,10 @@ test("route and bundle surface regress downward", () => {
   // -> one owner-only Listing Quality Report import route that persists only
   // normalized CURRENT-LIVE signals and performs no marketplace writes.
   // The old product/community domain remains at zero.
+  // The current isolated base also includes prior publisher recovery surfaces;
+  // this WO adds only the snapshot and POST-only integrity runtime endpoints.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 93 + Number(temporarySellerOauthApi) +
+    countNamed("app/api", "route.ts") <= 97 + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
       Number(lunaQuickPickApi),

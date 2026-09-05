@@ -11,6 +11,9 @@ import { runSellerOsDemandFirstBroadNetNightlyV1 } from
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { sellerOsPostOnlyGetResponseV1,
+  sellerOsPostRuntimeAuthorizedV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 function authorized(request: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
@@ -24,13 +27,15 @@ function safeFailureCode(error: unknown) {
     ? candidate : "DAILY_DOLLAR_RADAR_CRON_FAILED_CLOSED"
 }
 
-export async function GET(request: Request) {
-  if (!authorized(request)) {
+export async function POST(request: Request) {
+  const supabase = getSupabaseAdminClient()
+  if (!authorized(request) && !await sellerOsPostRuntimeAuthorizedV1({
+    request, supabase,
+  })) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" },
       { status: 401 })
   }
   try {
-    const supabase = getSupabaseAdminClient()
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) {
       return NextResponse.json({ success: false,
@@ -57,4 +62,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: false,
       error: safeFailureCode(error) }, { status: 503 })
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }

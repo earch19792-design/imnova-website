@@ -15,6 +15,9 @@ import { recoverInterruptedLunaQuickPickRuntimeV1 } from
 import { recoverFalseExactCategoryAuthorityRuntimeV1 } from
   "@/lib/ebay/ebay-category-authority-runtime-recovery-v1"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { sellerOsPostOnlyGetResponseV1,
+  sellerOsPostRuntimeAuthorizedV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 function authorized(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? ""
@@ -27,20 +30,23 @@ function authorized(req: Request) {
   )
 }
 
-export async function GET(req: Request) {
-  if (!authorized(req)) return NextResponse.json({ success: false,
+export async function POST(req: Request) {
+  const supabase = getSupabaseAdminClient()
+  if (!authorized(req) && !await sellerOsPostRuntimeAuthorizedV1({
+    request: req, supabase,
+  })) return NextResponse.json({ success: false,
     error: "CRON_UNAUTHORIZED" }, { status: 401 })
   const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
   if (!accountKey) return NextResponse.json({ success: false,
     error: "QUICK_PICK_RECOVERY_ACCOUNT_SCOPE_REQUIRED" }, { status: 500 })
   try {
     const interruptedClaims = await recoverInterruptedLunaQuickPickRuntimeV1({
-      supabase: getSupabaseAdminClient(), accountKey,
+      supabase, accountKey,
       taxonomyReader: getEbayTaxonomyListingIntelligence,
       productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
     })
     const categoryAuthority = await recoverFalseExactCategoryAuthorityRuntimeV1({
-      supabase: getSupabaseAdminClient(), accountKey,
+      supabase, accountKey,
       taxonomyReader: getEbayTaxonomyListingIntelligence,
       productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
     })
@@ -68,4 +74,8 @@ export async function GET(req: Request) {
       safety: { marketplaceWrites: 0, listingPublications: 0,
         manualFactInjection: 0, codexProductDecisions: 0 } }, { status: 503 })
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }

@@ -11,8 +11,10 @@ import {
   runMarketplaceFulfillmentRealReconciler,
 } from "@/lib/marketplace/fulfillment-v1b-service"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { sellerOsPostOnlyGetResponseV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
-export async function GET(req: Request) {
+export async function POST(req: Request) {
   if (!commercialPreviewCronAuthorized(req)) return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   try {
     const supabase = getSupabaseAdminClient()
@@ -26,6 +28,10 @@ export async function GET(req: Request) {
   } catch (error) {
     return NextResponse.json({ success: false, error: safeCode(error), safety: { secondPosts: 0, ebayWrites: 0, previewOnly: true } }, { status: 403 })
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }
 
 function safeCode(error: unknown) {

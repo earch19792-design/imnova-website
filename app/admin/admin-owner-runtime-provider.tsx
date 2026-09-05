@@ -11,8 +11,8 @@ import {
 } from "@/lib/seller-os-access-control"
 import { mergeSellerOsQuickPickPresentationV1 } from
   "@/lib/ebay/seller-os-quick-pick-presentation-v1"
-import { LunaShippingCaptureControlPlane, type LunaShippingOwnerWorkerSnapshot }
-  from "./ebay/luna-shipping-capture/luna-shipping-capture-control-plane"
+import type { LunaShippingOwnerWorkerSnapshot } from
+  "./ebay/luna-shipping-capture/luna-shipping-capture-control-plane"
 
 export type OwnerRuntimeQuickPickSummary = Readonly<{
   inProgress: number
@@ -187,7 +187,7 @@ const INITIAL_WORKER: LunaShippingOwnerWorkerSnapshot = Object.freeze({
   canonicalBindingReady: false,
   canonicalDestinationBound: false,
   eligiblePendingJobCount: null,
-  autoClaimEnabled: true,
+  autoClaimEnabled: false,
 })
 
 const OwnerRuntimeContext = createContext<OwnerRuntimeContextValue>({
@@ -518,8 +518,12 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
   const runtimeRouteEligible = !pathname.startsWith("/admin/login") &&
     !pathname.startsWith("/admin/ebay/luna-shipping-capture")
   const quickPickPageOwnsRead = pathname.startsWith("/admin/ebay/quick-pick")
+    || pathname === "/admin"
   const [adminSessionReady, setAdminSessionReady] = useState(false)
-  const [lunaWorker, setLunaWorker] = useState(INITIAL_WORKER)
+  // Luna Shipping owns its executor on the dedicated control route opened by
+  // the extension. The global owner shell must remain presentation-only:
+  // navigating or refreshing an admin page may never acquire commercial work.
+  const lunaWorker = INITIAL_WORKER
   const [quickPick, setQuickPick] = useState(EMPTY_SUMMARY)
   const [quickPickCards, setQuickPickCards] = useState<
     readonly OwnerRuntimeQuickPickCard[]>([])
@@ -626,8 +630,6 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
     overnightEnrichment, nightWorkProvenance, reconcileQuickPicks])
 
   return <OwnerRuntimeContext.Provider value={value}>
-    {runtimeEnabled ? <LunaShippingCaptureControlPlane runtimeOnly
-      onWorkerSnapshot={setLunaWorker} /> : null}
     {children}
   </OwnerRuntimeContext.Provider>
 }

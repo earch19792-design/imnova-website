@@ -471,7 +471,7 @@ export default function EbaySellerPerformancePage() {
           servidor, sin drafts, ofertas, publicaciones ni datos de competidores.
         </footer>
       </section>
-      <SellerOsMobileNav active="inventory" />
+      <SellerOsMobileNav active="live" />
     </main>
   )
 }

@@ -620,6 +620,9 @@ test("migration, performance route and scan enforce the conservative learning pa
     "utf8",
   )
   const vercel = readFileSync(new URL("../vercel.json", import.meta.url), "utf8")
+  const scheduler = readFileSync(new URL(
+    "../supabase/migrations/20260905090044_seller_os_post_only_runtime_dispatch_v1.sql",
+    import.meta.url), "utf8")
   const learningService = readFileSync(
     new URL("../lib/ebay/ebay-category-performance-learning.ts", import.meta.url),
     "utf8",
@@ -671,7 +674,8 @@ test("migration, performance route and scan enforce the conservative learning pa
   assert.match(scanCron, /remainingWorkMs\(\) < CRON_CANDIDATE_MINIMUM_REMAINING_MS/)
   assert.doesNotMatch(scanCron, /index > 0/)
   assert.doesNotMatch(vercel, /ebay-seller-performance-learning/)
-  assert.equal(JSON.parse(vercel).crons.length, 4)
-  assert.match(vercel,
-    /quick-pick-runtime-recovery[\s\S]*20 7 \* \* \*/)
+  assert.equal("crons" in JSON.parse(vercel), false)
+  assert.match(scheduler,
+    /QUICK_PICK_RUNTIME_RECOVERY[\s\S]*20 7 \* \* \*/)
+  assert.match(scheduler, /net\.http_post\(/)
 })

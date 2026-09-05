@@ -441,15 +441,6 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
     void (async () => {
       setBusy(true)
       try {
-        if (canOperate) {
-          const result = await visualRequest(
-            "/api/admin/ebay/mayel-visual-workstation", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "ENSURE_NEXT_TASK" }),
-            })
-          if (active) setCanaryAvailable(
-            result.phaseACanaryAvailable === true)
-        }
         await load()
       } catch (error) {
         if (active) setMessage(error instanceof Error ? error.message :
@@ -460,6 +451,26 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
     })()
     return () => { active = false }
   }, [canOperate, load])
+
+  async function acquireNextDelegatedTask() {
+    if (!canOperate || busy) return
+    setBusy(true)
+    setMessage("")
+    try {
+      const result = await visualRequest(
+        "/api/admin/ebay/mayel-visual-workstation", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "ENSURE_NEXT_TASK" }),
+        })
+      setCanaryAvailable(result.phaseACanaryAvailable === true)
+      await load()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No pudimos reclamar el siguiente trabajo delegado.")
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function refresh() {
     setBusy(true)
@@ -478,6 +489,12 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
       <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">Cero API de imágenes</span>
       <span className="rounded-full bg-[#f7e9de] px-3 py-2 text-[#704d3c]">eBay sólo con autorización owner</span>
     </div>
+    {canOperate && <button type="button"
+      onClick={() => void acquireNextDelegatedTask()} disabled={busy}
+      data-mayel-explicit-work-acquisition
+      className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">
+      Buscar siguiente trabajo delegado
+    </button>}
     {message && <p className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]">{message}</p>}
     {!busy && !tasks.length && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7">
       <h3 className="font-serif text-2xl font-semibold">No hay una oportunidad visual lista</h3>

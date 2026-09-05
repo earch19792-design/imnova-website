@@ -28,18 +28,23 @@ import { runQuickPickRadarOvernightEnrichmentV1 } from
   "@/lib/ebay/ebay-quick-pick-radar-overnight-enrichment-v1"
 import { runSellerOsLongitudinalRadarCycleV1 } from
   "@/lib/ebay/ebay-longitudinal-family-radar-runtime-v1"
+import { sellerOsPostOnlyGetResponseV1,
+  sellerOsPostRuntimeAuthorizedV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 function authorized(req: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
   return Boolean(secret && req.headers.get("authorization") === `Bearer ${secret}`)
 }
 
-export async function GET(req: Request) {
-  if (!authorized(req)) {
+export async function POST(req: Request) {
+  const supabase = getSupabaseAdminClient()
+  if (!authorized(req) && !await sellerOsPostRuntimeAuthorizedV1({
+    request: req, supabase,
+  })) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
   const startedAt = Date.now()
-  const supabase = getSupabaseAdminClient()
   const certificationOnly = new URL(req.url).searchParams.get(
     "longitudinalCertification",
   ) === "1"
@@ -216,4 +221,8 @@ export async function GET(req: Request) {
       { status: 502 },
     )
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }

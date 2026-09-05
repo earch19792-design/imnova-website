@@ -7,6 +7,7 @@ RECOVERY_URL="https://imnova-seller-os-preprod.vercel.app/api/cron/quick-pick-ru
 source "$RUNTIME_ENV"
 
 curl --fail-with-body --silent --show-error --max-time 310 \
+  --request POST \
   --header "x-seller-os-runtime-recovery-secret: ${SELLER_OS_CLOUD_READ_RELAY_SECRET}" \
   --output /dev/null \
   "$RECOVERY_URL"

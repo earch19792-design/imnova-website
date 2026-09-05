@@ -153,7 +153,9 @@ test("priority-first automation scans the strongest Radar signals before catalog
   const adminRoute = readFileSync(new URL("../app/api/admin/ebay/luna-opportunity-queue/route.ts", import.meta.url), "utf8")
   const cronRoute = readFileSync(new URL("../app/api/cron/ebay-luna-opportunity-scan/route.ts", import.meta.url), "utf8")
   const radarCronRoute = readFileSync(new URL("../app/api/cron/market-radar-luna-sync/route.ts", import.meta.url), "utf8")
-  const vercelConfig = readFileSync(new URL("../vercel.json", import.meta.url), "utf8")
+  const scheduler = readFileSync(new URL(
+    "../supabase/migrations/20260905090044_seller_os_post_only_runtime_dispatch_v1.sql",
+    import.meta.url), "utf8")
   assert.match(service, /EBAY_LUNA_SCAN_STRATEGY = "priority_first"/)
   const migration = readFileSync(new URL("../supabase/migrations/20260713022000_add_luna_seller_scan_priority.sql", import.meta.url), "utf8")
   const automationMigration = readFileSync(new URL("../supabase/migrations/20260713040000_create_ebay_seller_command_center_v2.sql", import.meta.url), "utf8")
@@ -172,9 +174,11 @@ test("priority-first automation scans the strongest Radar signals before catalog
   assert.match(cronRoute, /CRON_TIME_BUDGET_MS = 45_000/)
   assert.match(radarCronRoute, /runLunaPortexMarketRadarSync/)
   assert.match(radarCronRoute, /CRON_SECRET/)
-  assert.match(vercelConfig, /market-radar-luna-sync/)
-  assert.match(vercelConfig, /"schedule": "0 9 \* \* \*"/)
-  assert.match(vercelConfig, /"schedule": "17 9 \* \* \*"/)
+  assert.match(scheduler,
+    /MARKET_RADAR_LUNA_SYNC[\s\S]*0 9 \* \* \*/)
+  assert.match(scheduler,
+    /EBAY_LUNA_OPPORTUNITY_SCAN[\s\S]*17 9 \* \* \*/)
+  assert.match(scheduler, /net\.http_post\(/)
 })
 
 test("latest Luna variants use a maintained current-snapshot pointer", () => {

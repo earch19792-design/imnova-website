@@ -9,13 +9,15 @@ import {
 } from "@/lib/ebay/ebay-category-performance-learning"
 import { reverifyManualEbayListingsReadonly } from "@/lib/ebay/ebay-manual-listing-service"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { sellerOsPostOnlyGetResponseV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 function authorized(req: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
   return Boolean(secret && req.headers.get("authorization") === `Bearer ${secret}`)
 }
 
-export async function GET(req: Request) {
+export async function POST(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
@@ -82,4 +84,8 @@ export async function GET(req: Request) {
       },
     }, { status: 502 })
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }

@@ -407,13 +407,19 @@ test("constraint validation migration checks violations before VALIDATE", () => 
 test("active listing pilot route is manual, leased and not a new cron", () => {
   const route = readFileSync("app/api/admin/ebay/active-listings/sync/route.ts", "utf8")
   const vercel = readFileSync("vercel.json", "utf8")
+  const scheduler = readFileSync(
+    "supabase/migrations/20260905090044_seller_os_post_only_runtime_dispatch_v1.sql",
+    "utf8",
+  )
   assert.match(route, /claim_ebay_active_listing_sync_run/)
   assert.match(route, /last_success_at/)
   assert.match(route, /last_error_code/)
   assert.doesNotMatch(route, /CRON_SECRET/)
   assert.doesNotMatch(vercel, /active-listings\/sync/)
-  assert.match(vercel, /"schedule": "0 9 \* \* \*"/)
-  assert.match(vercel, /"schedule": "17 9 \* \* \*"/)
+  assert.doesNotMatch(scheduler, /active-listings\/sync/)
+  assert.match(scheduler, /MARKET_RADAR_LUNA_SYNC[\s\S]*0 9 \* \* \*/)
+  assert.match(scheduler,
+    /EBAY_LUNA_OPPORTUNITY_SCAN[\s\S]*17 9 \* \* \*/)
 })
 
 test("environment preflight returns enums only and never values", () => {

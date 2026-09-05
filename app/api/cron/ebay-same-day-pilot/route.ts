@@ -9,6 +9,8 @@ import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-a
 import { previewSameDayPilot, processSameDayPilotJobChain } from "@/lib/ebay/ebay-same-day-pilot-service"
 import { getListingImageFactoryConfiguration } from "@/lib/ebay/ebay-listing-image-factory"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { sellerOsPostOnlyGetResponseV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 function authorized(request: Request, validateOnly: boolean) {
   const providedHeaders = [
@@ -47,7 +49,7 @@ async function authorizedBySchedulerVault(
   return !error && data === true
 }
 
-export async function GET(req: Request) {
+export async function POST(req: Request) {
   try {
     const validationMode = new URL(req.url).searchParams.get("mode") === "validate"
     const supabase = getSupabaseAdminClient()
@@ -123,4 +125,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ success: false, error: code,
       safety: { secretsDisplayed: false, ebayWrites: 0, productionChanged: false } }, { status: 500 })
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }

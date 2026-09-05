@@ -30,8 +30,10 @@ const normalizeEstimateOnlyShippingMigration = readFileSync(
   "utf8",
 )
 
-test("mobile command center centralizes the five primary Seller OS intentions", () => {
-  for (const label of ["Hoy", "Quick Pick", "Oportunidades", "Listings", "Experimentos"]) {
+test("mobile command center uses the canonical Seller OS information architecture", () => {
+  for (const label of ["Inicio", "Publicar", "Preparar productos",
+    "Oportunidades", "Listings LIVE", "Ventas", "Postventa", "Mayel",
+    "StockGuard", "Administración", "Experimentos"]) {
     assert.match(canonicalNavigation, new RegExp(label))
   }
   assert.match(mobileNav, /SELLER_OS_MOBILE_NAVIGATION\.map/)

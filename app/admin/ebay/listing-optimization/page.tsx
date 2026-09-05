@@ -404,6 +404,6 @@ export default function EbayListingOptimizationCommandCenterPage() {
 
       <p className="rounded-2xl border border-white/10 bg-black/20 p-4 text-xs leading-5 text-white/45">Autoridad: Commercial Monitor + Current LIVE + StockGuard + Experiments + Quality Guidance. Admin auth sigue siendo obligatoria. No se exponen secretos, no se inicia OAuth y no existe una acción de publicación en esta pantalla.</p>
     </section>
-    <SellerOsMobileNav active="listings" />
+    <SellerOsMobileNav active="live" />
   </main>
 }

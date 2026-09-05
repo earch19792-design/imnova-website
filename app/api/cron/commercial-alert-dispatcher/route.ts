@@ -19,6 +19,8 @@ import { dispatchSellerOsBuyerThankYouV1 } from
 import { collectSellerOsBuyerThankYouStatusV1 } from
   "@/lib/ebay/ebay-seller-os-assistant-runtime"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { sellerOsPostOnlyGetResponseV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 function boundedInteger(value: string | undefined, fallback: number, minimum: number, maximum: number) {
   const parsed = Number(value)
@@ -98,7 +100,7 @@ async function deferNonUrgentWhatsappAlerts(
   return digestOutboxIds.length
 }
 
-export async function GET(req: Request) {
+export async function POST(req: Request) {
   if (!commercialPreviewCronAuthorized(req)) return NextResponse.json(
     {
       success: false,
@@ -272,4 +274,8 @@ export async function GET(req: Request) {
       { status: 502 },
     )
   }
+}
+
+export function GET() {
+  return sellerOsPostOnlyGetResponseV1()
 }
