@@ -160,7 +160,8 @@ export async function recoverQuickPickPublisherPackagesV1(input: Readonly<{
       .select("id,batch_authorization_id")
       .eq("package_id", listingPackageId)
       .in("status", ["AUTHORIZED", "CLAIMED", "RUNNING",
-        "FAILED_RETRY_SAFE"]).limit(1).maybeSingle()
+        "FAILED_RETRY_SAFE", "FAILED_BLOCKED",
+        "AMBIGUOUS_FAIL_CLOSED", "COMPLETED"]).limit(1).maybeSingle()
     if (activeAuthorization.error) {
       outcomes.push(Object.freeze({ listingPackageId,
         candidateKey: entry.projection.candidateKey, status: "FAILED",
@@ -172,7 +173,8 @@ export async function recoverQuickPickPublisherPackagesV1(input: Readonly<{
       const batchRead = await input.supabase.from(
         "seller_os_publisher_batch_authorizations_v1").select("id")
         .eq("id", activeAuthorization.data.batch_authorization_id)
-        .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL"])
+        .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL", "BLOCKED",
+          "COMPLETED"])
         .maybeSingle()
       if (batchRead.error) {
         outcomes.push(Object.freeze({ listingPackageId,

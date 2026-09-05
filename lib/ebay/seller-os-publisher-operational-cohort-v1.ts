@@ -133,7 +133,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
         { ascending: false }).limit(1).maybeSingle(),
     candidateIds.length ? input.supabase.from(
       "seller_os_publisher_batch_children_v1")
-      .select("id,batch_authorization_id,candidate_id,package_id,package_digest,status,stage,result,error_class,ebay_error_codes,mismatch_fields,retry_safety,duplicate_risk,official_readback_state,approval_id,execution_id,offer_id,item_id,marketplace_write_count,attempt_count,receipt_digest,updated_at")
+      .select("id,batch_authorization_id,candidate_id,package_id,package_digest,status,stage,result,error_class,ebay_error_codes,mismatch_fields,mismatch_classification,retry_safety,duplicate_risk,official_readback_state,approval_id,execution_id,offer_id,item_id,marketplace_write_count,attempt_count,receipt_digest,updated_at")
       .eq("marketplace_account_key", input.accountKey)
       .in("candidate_id", candidateIds).order("updated_at",
         { ascending: false }).limit(100) :

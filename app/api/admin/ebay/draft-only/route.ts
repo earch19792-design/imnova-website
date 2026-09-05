@@ -563,13 +563,23 @@ function unpublishedReadbackFailureResponse(readback: Awaited<ReturnType<
   typeof readExactUnpublishedPublicationState
 >>) {
   const status = readback.retryable ? 503 : 409
+  const publisherState = record(readback.publisherState)
   return NextResponse.json({
     success: false,
     error: readback.error,
     upstreamStatus: readback.upstreamStatus,
     errorClass: readback.errorClass,
+    stage: publisherState.stage,
+    ebayErrorIds: publisherState.ebayErrorIds,
+    mismatchFields: publisherState.mismatchFields,
+    mismatchClassification: publisherState.mismatchClassification,
     retryable: readback.retryable,
+    retrySafety: publisherState.retrySafety,
     safeNextAction: readback.safeNextAction,
+    offerId: publisherState.offerId,
+    itemId: publisherState.itemId,
+    officialCurrentState: publisherState.officialCurrentState,
+    ownerActionState: publisherState.ownerActionState,
     unpublishedReadback: readback,
     safety: {
       inventoryItemCreated: false,
@@ -1090,6 +1100,10 @@ async function loadFinalPublicationContext(
       candidateKey: text(listingPackage.candidate_key),
       listingPackageId: text(listingPackage.id),
     }) : null
+  const quickPickBatchAuthorized = text(record(
+    quickPickContext?.handoff.authorization,
+  ).commercialAuthorizationAuthority) ===
+    "SELLER_OS_PUBLISHER_BATCH_AUTHORIZATION_V1"
   if (!sameDayContext && !smartStockingContext && !quickPickContext) {
     throw new Error("EBAY_FINAL_PUBLICATION_SOURCE_BINDING_REQUIRED")
   }
@@ -1101,7 +1115,10 @@ async function loadFinalPublicationContext(
     || execution.target !== "PRODUCTION"
     || !accountKey
     || listingPackage.account_key !== accountKey
-    || listingPackage.status !== "approved"
+    || (listingPackage.status !== "approved" && !(
+      listingPackage.status === "ready_for_review" &&
+      quickPickBatchAuthorized
+    ))
     || (!quickPickContext && effectiveOpportunity.supplier_available !== true)
     || (!smartStockingContext && !quickPickContext &&
       Number(effectiveOpportunity.supplier_inventory_quantity) < 1)
@@ -2619,6 +2636,145 @@ async function persistPublisherBatchChildResult(input: Readonly<{
   return write.data as JsonRecord
 }
 
+function publisherBatchFailureDetails(payloadValue: unknown) {
+  const payload = record(payloadValue)
+  const publisherState = record(record(
+    payload.unpublishedReadback,
+  ).publisherState)
+  return Object.freeze({
+    stage: text(payload.stage) || text(publisherState.stage) || "PREFLIGHT",
+    ebayErrorIds: Array.isArray(payload.ebayErrorIds)
+      ? payload.ebayErrorIds
+      : Array.isArray(publisherState.ebayErrorIds)
+        ? publisherState.ebayErrorIds : [],
+    mismatchFields: Array.isArray(payload.mismatchFields)
+      ? payload.mismatchFields
+      : Array.isArray(publisherState.mismatchFields)
+        ? publisherState.mismatchFields : [],
+    mismatchClassification: Array.isArray(payload.mismatchClassification)
+      ? payload.mismatchClassification
+      : Array.isArray(publisherState.mismatchClassification)
+        ? publisherState.mismatchClassification : [],
+    retrySafety: text(payload.retrySafety)
+      || text(publisherState.retrySafety),
+    offerId: text(payload.offerId) || text(publisherState.offerId),
+    itemId: text(payload.itemId) || text(publisherState.itemId),
+    officialCurrentState: text(payload.officialCurrentState)
+      || text(publisherState.officialCurrentState),
+  })
+}
+
+async function reconcilePublisherBatchOfficialReadbacksV1(input: Readonly<{
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  batchId: string
+  accountKey: string
+  actor: string
+  workerId: string
+  maximum: number
+}>) {
+  const failedRead = await input.supabase.from(
+    "seller_os_publisher_batch_children_v1")
+    .select("id,package_id,candidate_id,error_class,receipt_digest,marketplace_write_count")
+    .eq("batch_authorization_id", input.batchId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("actor_user_id", input.actor)
+    .eq("status", "FAILED_BLOCKED")
+    .eq("error_class", "INVENTORY_ITEM_MISMATCH")
+    .gt("marketplace_write_count", 0)
+    .order("updated_at", { ascending: true })
+    .limit(input.maximum)
+  if (failedRead.error) throw new Error(
+    "SELLER_OS_PUBLISHER_READBACK_RECONCILIATION_READ_FAILED")
+  const outcomes: JsonRecord[] = []
+  for (const failed of rows(failedRead.data)) {
+    const receiptDigest = text(failed.receipt_digest)
+    if (!receiptDigest) continue
+    const claim = await input.supabase.from(
+      "seller_os_publisher_batch_children_v1").update({
+        status: "CLAIMED", stage: "OFFICIAL_READBACK_RECONCILIATION",
+        lease_owner: input.workerId,
+        lease_expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("id", failed.id).eq("status", "FAILED_BLOCKED")
+      .eq("receipt_digest", receiptDigest)
+      .select("id").maybeSingle()
+    if (claim.error || !claim.data) continue
+    let approval: JsonRecord = {}
+    let execution: JsonRecord = {}
+    try {
+      const approvalRead = await input.supabase.from(
+        "ebay_draft_only_approvals").select("*")
+        .eq("approval_idempotency_key", `batch-approval:${failed.id}`)
+        .eq("actor_user_id", input.actor)
+        .eq("listing_package_id", failed.package_id)
+        .eq("candidate_key", failed.candidate_id).maybeSingle()
+      if (approvalRead.error || !approvalRead.data) throw new Error(
+        "SELLER_OS_PUBLISHER_BATCH_APPROVAL_LINEAGE_NOT_FOUND")
+      approval = record(approvalRead.data)
+      const executionRead = await input.supabase.from(
+        "ebay_draft_only_execution_ledger").select("*")
+        .eq("approval_id", approval.id).maybeSingle()
+      if (executionRead.error || !executionRead.data) throw new Error(
+        "SELLER_OS_PUBLISHER_BATCH_EXECUTION_LINEAGE_NOT_FOUND")
+      execution = record(executionRead.data)
+      const offerId = text(execution.offer_id)
+      const sku = text(execution.sku)
+      if (execution.phase !== "completed" || !offerId || !sku) throw new Error(
+        "SELLER_OS_PUBLISHER_BATCH_EXECUTION_LINEAGE_INCOMPLETE")
+      const readback = await readExactUnpublishedPublicationState({
+        approvedPayload: record(approval.approved_payload), offerId, sku,
+      })
+      const publisherState = record(readback.publisherState)
+      const safe = readback.safe === true
+      const retryable = readback.retryable === true
+      outcomes.push(await persistPublisherBatchChildResult({
+        supabase: input.supabase, childId: text(failed.id),
+        workerId: input.workerId, values: {
+          status: safe || retryable ? "FAILED_RETRY_SAFE" : "FAILED_BLOCKED",
+          stage: text(publisherState.stage) || "OFFICIAL_INVENTORY_READBACK",
+          result: "FAILED", error_class: safe
+            ? "UNPUBLISHED_OFFER_VERIFIED_READY_TO_RESUME"
+            : text(readback.errorClass) || text(readback.error)
+              || "OFFER_READBACK_FAILURE",
+          ebay_error_codes: Array.isArray(publisherState.ebayErrorIds)
+            ? publisherState.ebayErrorIds : [],
+          mismatch_fields: Array.isArray(publisherState.mismatchFields)
+            ? publisherState.mismatchFields : [],
+          mismatch_classification: Array.isArray(
+            publisherState.mismatchClassification,
+          ) ? publisherState.mismatchClassification : [],
+          retry_safety: safe ? "SAME_LINEAGE_RESUME_SAFE"
+            : text(publisherState.retrySafety) || "ENGINEERING_REQUIRED",
+          approval_id: approval.id, execution_id: execution.id,
+          offer_id: offerId, item_id: null,
+          marketplace_write_count: Number(failed.marketplace_write_count),
+          duplicate_risk: Number(record(readback.idempotency)
+            .duplicateOfferCount) > 0 ? "UNPROVEN_FAIL_CLOSED" : "NONE_PROVEN",
+          official_readback_state: text(publisherState.officialCurrentState)
+            || "UNKNOWN",
+        },
+      }))
+    } catch (error) {
+      outcomes.push(await persistPublisherBatchChildResult({
+        supabase: input.supabase, childId: text(failed.id),
+        workerId: input.workerId, values: {
+          status: "FAILED_BLOCKED", stage: "OFFICIAL_READBACK_RECONCILIATION",
+          result: "FAILED", error_class: errorCode(error),
+          ebay_error_codes: [], mismatch_fields: [],
+          mismatch_classification: [], retry_safety: "ENGINEERING_REQUIRED",
+          approval_id: text(approval.id) || null,
+          execution_id: text(execution.id) || null,
+          offer_id: text(execution.offer_id) || null, item_id: null,
+          marketplace_write_count: Number(failed.marketplace_write_count),
+          duplicate_risk: "NONE_PROVEN",
+          official_readback_state: "UNPUBLISHED_UNPROVEN",
+        },
+      }))
+    }
+  }
+  return Object.freeze(outcomes)
+}
+
 async function resumeSellerOsPublisherBatchV1(input: Readonly<{
   batchId: string
   accountKey: string
@@ -2643,6 +2799,11 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
   let stopGlobal = false
   const maximumChildrenPerDispatch = Math.min(4,
     Number(batch.exact_member_count))
+  const reconciledReadbacks = await reconcilePublisherBatchOfficialReadbacksV1({
+    supabase, batchId: input.batchId, accountKey: input.accountKey,
+    actor, workerId, maximum: maximumChildrenPerDispatch,
+  })
+  results.push(...reconciledReadbacks)
   const failedPrewriteRead = await supabase.from(
     "seller_os_publisher_batch_children_v1")
     .select("id,candidate_id,package_id,package_digest,authorization_binding,status,stage,error_class,receipt_digest,marketplace_write_count,approval_id,execution_id,offer_id,item_id,attempt_count")
@@ -2701,6 +2862,8 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
     const candidate = current.get(text(child.candidate_id) ?? "")
     const binding = record(child.authorization_binding)
     let writeCount = Number(child.marketplace_write_count ?? 0)
+    let durableApproval: JsonRecord = {}
+    let durableExecution: JsonRecord = {}
     try {
       if (!candidate || candidate.packageId !== child.package_id
           || candidate.currentPackageDigest !== child.package_digest
@@ -2750,6 +2913,7 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
         new Error(text(approved.error) || "PUBLISHER_BATCH_APPROVAL_FAILED"),
         { publisherPayload: { ...approved, httpStatus: approve.status } })
       const approval = record(approved.approval)
+      durableApproval = approval
       const execute = await executeDraft({ action: "execute",
         approvalId: approval.id,
         idempotencyKey: `batch-execution:${approval.id}` }, actor)
@@ -2758,6 +2922,7 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
         new Error(text(executed.error) || "PUBLISHER_BATCH_EXECUTION_FAILED"),
         { publisherPayload: { ...executed, httpStatus: execute.status } })
       const execution = record(executed.execution)
+      durableExecution = execution
       const executionSafety = record(executed.safety)
       writeCount += Number(executionSafety.inventoryItemCreated === true)
         + Number(executionSafety.inventoryItemUpdated === true)
@@ -2805,6 +2970,7 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
       results.push(completed)
     } catch (error) {
       const payload = record(record(error).publisherPayload)
+      const failureDetails = publisherBatchFailureDetails(payload)
       const errorClass = text(payload.errorClass) || text(payload.error)
         || errorCode(error)
       const status = batchFailureStatus(payload)
@@ -2817,25 +2983,27 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
           errorClass)
       const failed = await persistPublisherBatchChildResult({ supabase,
         childId: text(child.id), workerId, values: {
-          status, stage: text(payload.stage) || "PREFLIGHT",
+          status, stage: failureDetails.stage,
           result: "FAILED", error_class: errorClass,
-          ebay_error_codes: Array.isArray(payload.ebayErrorIds)
-            ? payload.ebayErrorIds : [],
+          ebay_error_codes: failureDetails.ebayErrorIds,
           mismatch_fields: [...new Set([
-            ...(Array.isArray(payload.mismatchFields)
-              ? payload.mismatchFields : []),
+            ...failureDetails.mismatchFields,
             ...(Array.isArray(payload.blockers) ? payload.blockers : []),
           ].flatMap((value) => text(value)
             ? [String(value).slice(0, 240)] : []))].slice(0, 40),
-          retry_safety: text(payload.retrySafety)
+          mismatch_classification: failureDetails.mismatchClassification,
+          retry_safety: failureDetails.retrySafety
             || (status === "FAILED_RETRY_SAFE" ? "SAFE_TO_RETRY"
               : "ENGINEERING_REQUIRED"),
-          offer_id: text(payload.offerId) || null,
-          item_id: text(payload.itemId) || null,
+          approval_id: text(durableApproval.id) || null,
+          execution_id: text(durableExecution.id) || null,
+          offer_id: failureDetails.offerId
+            || text(durableExecution.offer_id) || null,
+          item_id: failureDetails.itemId || null,
           marketplace_write_count: writeCount,
           duplicate_risk: status === "AMBIGUOUS_FAIL_CLOSED"
             ? "UNPROVEN_FAIL_CLOSED" : "NONE_PROVEN",
-          official_readback_state: text(payload.officialCurrentState)
+          official_readback_state: failureDetails.officialCurrentState
             || "UNPUBLISHED_UNPROVEN",
         } })
       results.push(failed)
@@ -2866,6 +3034,7 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
   return Object.freeze({ batchId: input.batchId, status: batchStatus,
     childCount: statuses.length, completedCount, pendingCount,
     rearmedPrewriteChildCount: rearmedCount,
+    reconciledOfficialReadbackCount: reconciledReadbacks.length,
     runtimeResults: Object.freeze(results),
     sellerOsRuntimeAuthority: true as const,
     codexPublishDispatch: 0 as const })
@@ -3704,6 +3873,9 @@ async function approveDraft(body: JsonRecord, actor: string) {
   const fingerprint = runtime.accountFingerprint || ""
   const oneClickRequested = text(body.authorizationMode) ===
     EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
+  const batchAuthorizationRequested =
+    /^batch-approval:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(approvalKey)
   const explicitApprovalValid = oneClickRequested
     ? target === "PRODUCTION"
       && text(body.confirmation) === EBAY_ONE_CLICK_PUBLICATION_LABEL
@@ -3911,12 +4083,14 @@ async function approveDraft(body: JsonRecord, actor: string) {
       ) throw new Error(
         "EBAY_ONE_CLICK_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED",
       )
-      await saveVerifiedEbayAccountPolicyProfile({
-        supabase,
-        accountKey,
-        actorUserId: actor,
-        preflight: ebayPreflight,
-      })
+      if (!batchAuthorizationRequested) {
+        await saveVerifiedEbayAccountPolicyProfile({
+          supabase,
+          accountKey,
+          actorUserId: actor,
+          preflight: ebayPreflight,
+        })
+      }
       requestedConfiguration = {
         ...requestedConfiguration,
         merchantLocationKey: ebayPreflight.selection.merchantLocationKey,
@@ -4226,6 +4400,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
   if (existing?.phase === "completed") return NextResponse.json({
     success: true,
     idempotentReplay: true,
+    execution: existing,
     draft: {
       offerId: existing.offer_id,
       sku: existing.sku,
@@ -4862,6 +5037,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
   if (ledger.phase === "completed") return NextResponse.json({
     success: true,
     idempotentReplay: true,
+    execution: ledger,
     draft: {
       offerId: ledger.offer_id,
       sku: ledger.sku,

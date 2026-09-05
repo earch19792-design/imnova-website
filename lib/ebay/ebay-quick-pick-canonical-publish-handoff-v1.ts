@@ -100,7 +100,7 @@ Readonly<{
     .eq("package_id", input.listingPackageId)
     .eq("package_digest", input.packageDigest)
     .in("status", ["AUTHORIZED", "CLAIMED", "RUNNING",
-      "FAILED_RETRY_SAFE"])
+      "FAILED_RETRY_SAFE", "FAILED_BLOCKED", "AMBIGUOUS_FAIL_CLOSED"])
     .order("created_at", { ascending: false }).limit(2)
   if (childRead.error) throw new Error(
     "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_READ_FAILED")
@@ -115,7 +115,7 @@ Readonly<{
     .eq("id", child.batch_authorization_id)
     .eq("marketplace_account_key", input.accountKey)
     .eq("actor_user_id", input.actorUserId)
-    .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL"])
+    .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL", "BLOCKED"])
     .maybeSingle()
   if (batchRead.error) throw new Error(
     "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_READ_FAILED")
