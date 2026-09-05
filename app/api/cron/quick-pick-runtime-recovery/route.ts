@@ -42,6 +42,22 @@ export async function POST(req: Request) {
   if (!accountKey) return NextResponse.json({ success: false,
     error: "QUICK_PICK_RECOVERY_ACCOUNT_SCOPE_REQUIRED" }, { status: 500 })
   try {
+    if (req.headers.get("x-seller-os-runtime-lane") ===
+        "PUBLISHER_PREAUTHORIZATION_RECOVERY") {
+      const recovery = await recoverQuickPickPublisherPackagesV1({
+        supabase, accountKey,
+      })
+      return NextResponse.json({ success: recovery.status === "PASS",
+        recovery,
+        safety: { sellerOsRuntimeAuthority: true,
+          preAuthorizationPreparationOnly: true,
+          activeAuthorizedPackagesExcluded: true,
+          ownerAuthorizationCreatedCount: 0,
+          marketplaceWrites: 0, listingPublications: 0,
+          productDecisions: 0, categorySelections: 0,
+          publisherDispatches: 0 } },
+      { status: recovery.status === "PASS" ? 200 : 503 })
+    }
     const interruptedClaims = await recoverInterruptedLunaQuickPickRuntimeV1({
       supabase, accountKey,
       taxonomyReader: getEbayTaxonomyListingIntelligence,
