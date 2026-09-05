@@ -186,6 +186,7 @@ const INITIAL_WORKER: LunaShippingOwnerWorkerSnapshot = Object.freeze({
   connected: false,
   canonicalBindingReady: false,
   canonicalDestinationBound: false,
+  eligiblePendingJobCount: null,
   autoClaimEnabled: true,
 })
 

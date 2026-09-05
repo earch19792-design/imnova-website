@@ -436,7 +436,7 @@ export async function resolveLunaChromeShippingLiveListingJobV1(
   })
   return normalizeLunaChromeShippingJobV1({
     contractVersion: LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
-    ...session,
+    ...session, snapshotDigest: authority.snapshotDigest,
     identity: {
       candidateId: authority.captureScopeId,
       canonicalProductUrl: resolved.canonicalProductUrl,
@@ -478,6 +478,7 @@ export async function persistLunaChromeLiveListingShippingCaptureV1(
     contractVersion: LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
     captureSessionId: input.capture.captureSessionId,
     nonce: input.capture.nonce,
+    snapshotDigest: authority.snapshotDigest,
     identity: {
       candidateId: authority.captureScopeId,
       canonicalProductUrl: resolved.canonicalProductUrl,
@@ -650,7 +651,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
     })
     return normalizeLunaChromeShippingJobV1({
       contractVersion: LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
-      ...session,
+      ...session, snapshotDigest: exact.snapshotDigest,
       identity: {
         candidateId: exact.candidateId,
         canonicalProductUrl,
@@ -665,6 +666,72 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       productName,
     })
   }))
+}
+
+export type LunaChromeShippingJobAcquisitionV1 = Readonly<{
+  jobs: readonly LunaChromeShippingJobV1[]
+  eligiblePendingJobCount: number
+  claimedJobCount: number
+  leaseConflictCount: number
+  claimFailureCount: number
+}>
+
+export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  runtimeInstanceId: string
+  sessionSecret: string
+  now?: number
+}>): Promise<LunaChromeShippingJobAcquisitionV1> {
+  const eligible = await resolveLunaChromeShippingJobsV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    sessionSecret: input.sessionSecret, now: input.now,
+  })
+  const jobs: LunaChromeShippingJobV1[] = []
+  let leaseConflictCount = 0
+  let claimFailureCount = 0
+  for (const job of eligible) {
+    const claim = await input.supabase.rpc(
+      "claim_seller_os_luna_shipping_job_v1", {
+        p_account_key: input.accountKey,
+        p_candidate_id: job.identity.candidateId,
+        p_snapshot_digest: job.snapshotDigest,
+        p_runtime_instance_id: input.runtimeInstanceId,
+        p_capture_session_id: job.captureSessionId,
+      })
+    if (claim.error) {
+      claimFailureCount += 1
+      continue
+    }
+    const result = records(claim.data)[0]
+    if (result?.claimed === true) jobs.push(job)
+    else leaseConflictCount += 1
+  }
+  if (claimFailureCount > 0 && jobs.length === 0) {
+    throw new Error("LUNA_SHIPPING_JOB_CLAIM_AUTHORITY_UNAVAILABLE")
+  }
+  return Object.freeze({ jobs: Object.freeze(jobs),
+    eligiblePendingJobCount: eligible.length,
+    claimedJobCount: jobs.length, leaseConflictCount, claimFailureCount })
+}
+
+async function completeLunaChromeShippingJobClaimV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  candidateId: string
+  snapshotDigest: string
+  captureSessionId: string
+}>) {
+  try {
+    const completion = await input.supabase.rpc(
+      "complete_seller_os_luna_shipping_job_v1", {
+        p_account_key: input.accountKey,
+        p_candidate_id: input.candidateId,
+        p_snapshot_digest: input.snapshotDigest,
+        p_capture_session_id: input.captureSessionId,
+      })
+    return !completion.error && completion.data === true
+  } catch { return false }
 }
 
 const PRODUCT_PAGE_OOS_KEYS = Object.freeze([
@@ -787,6 +854,11 @@ export async function persistLunaProductPageOosV1(input: Readonly<{
       stored.productOosConfirmed !== true) {
     throw new Error("LUNA_PRODUCT_PAGE_OOS_DURABLE_READBACK_FAILED")
   }
+  const shippingClaimCompleted = await completeLunaChromeShippingJobClaimV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    candidateId: observation.candidateId, snapshotDigest,
+    captureSessionId: observation.captureSessionId,
+  })
   return Object.freeze({
     productPageStockStatus: "FRESH_OUT_OF_STOCK" as const,
     productOosConfirmed: true as const,
@@ -794,6 +866,7 @@ export async function persistLunaProductPageOosV1(input: Readonly<{
     stockEvidenceReconciled: true as const,
     durableWriteVerified: true as const,
     durableReadbackMatch: true as const,
+    shippingClaimCompleted,
     stockAuthority: "ebay_same_day_pilot_events" as const,
     lunaPurchases: 0 as const,
     marketplaceWrites: 0 as const,
@@ -993,10 +1066,16 @@ export async function persistLunaChromeShippingCaptureV1(input: Readonly<{
       canonicalProfileReadbackMatches
   })
   if (!matched) throw new Error("LUNA_SHIPPING_CAPTURE_DURABLE_READBACK_FAILED")
+  const shippingClaimCompleted = await completeLunaChromeShippingJobClaimV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    candidateId: input.capture.candidateId, snapshotDigest,
+    captureSessionId: input.capture.captureSessionId,
+  })
   return Object.freeze({
     capturePostAccepted: true as const,
     captureResultDurable: true as const,
     durableReadbackMatch: true as const,
+    shippingClaimCompleted,
     durableStore: "seller_os_profitability_frontier_snapshots" as const,
     productName: authority.productName,
     identity: authority.identity,

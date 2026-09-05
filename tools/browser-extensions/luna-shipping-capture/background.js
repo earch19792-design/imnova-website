@@ -442,12 +442,21 @@ function safeSellerSender(sender) {
 function exactLunaUrl(value) {
   try {
     const url = new URL(value)
+    const path = url.pathname.replace(/\/$/, "")
+    const encodedHandle = path.startsWith("/products/")
+      ? path.slice("/products/".length) : ""
+    let handle = ""
+    try { handle = decodeURIComponent(encodedHandle).normalize("NFKC") }
+    catch { return null }
+    const handleLength = Array.from(handle).length
     if (url.protocol !== "https:" ||
         !new Set(["lunaportex.com", "www.lunaportex.com"]).has(url.hostname) ||
-        !/^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/.test(url.pathname) ||
+        handleLength < 2 || handleLength > 255 ||
+        /[\u0000-\u0020\u007f/\\?#]/u.test(handle) ||
+        handle === "." || handle === ".." || /[A-Z]/.test(handle) ||
         url.username || url.password || url.port) return null
     url.hostname = "www.lunaportex.com"
-    url.pathname = url.pathname.replace(/\/$/, "")
+    url.pathname = `/products/${encodeURIComponent(handle)}`
     url.search = ""
     url.hash = ""
     return url
@@ -507,7 +516,8 @@ function jobValidationReason(value) {
   if (!("contractVersion" in job)) return "JOB_MISSING_FIELD:contractVersion"
   if (job.contractVersion !== CONTRACT) return "JOB_INVALID_CONTRACT_VERSION"
   for (const [field, owner] of [
-    ["captureSessionId", job], ["nonce", job], ["productName", job],
+    ["captureSessionId", job], ["nonce", job], ["snapshotDigest", job],
+    ["productName", job],
     ["salePriceUsd", job], ["supplierCostUsd", job],
     ["candidateId", identity], ["canonicalProductUrl", identity],
     ["lunaProductId", identity], ["lunaVariantId", identity],
@@ -518,6 +528,7 @@ function jobValidationReason(value) {
   ]) if (!(field in owner)) return `JOB_MISSING_FIELD:${
     owner === identity ? "identity." : owner === destination ? "destination." : ""}${field}`
   if (typeof job.captureSessionId !== "string" || typeof job.nonce !== "string" ||
+      typeof job.snapshotDigest !== "string" ||
       typeof job.productName !== "string" || typeof job.salePriceUsd !== "number" ||
       typeof job.supplierCostUsd !== "number") return "JOB_INVALID_TYPE:job"
   if (typeof identity.candidateId !== "string" ||
@@ -533,6 +544,9 @@ function jobValidationReason(value) {
       typeof destination.postalCode !== "string") return "JOB_INVALID_TYPE:destination"
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(job.captureSessionId)) return "JOB_INVALID_TYPE:captureSessionId"
+  if (!/^sha256:[0-9a-f]{64}$/.test(job.snapshotDigest)) {
+    return "JOB_INVALID_TYPE:snapshotDigest"
+  }
   if (!/^\d{13}\.[A-Za-z0-9_-]{43}$/.test(job.nonce)) {
     return "JOB_INVALID_TYPE:nonce"
   }
@@ -1420,6 +1434,7 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     shopAppContentScriptMatch: true,
     shopAppRuntimeAllowlist: true,
     shopAppCheckoutHostClassification: true,
+    unicodeProductHandleSupport: true,
     sellerOsOriginValidated: true,
   })
   return false

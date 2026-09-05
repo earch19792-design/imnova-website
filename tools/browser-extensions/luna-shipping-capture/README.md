@@ -19,6 +19,9 @@ candidatos secuencialmente. También puede recibir un único job transitorio de
 un listing CURRENT LIVE con identidad exacta; ese job no crea un candidate,
 package, opportunity ni profitability frontier.
 
+El handshake declara soporte explícito para handles Unicode de Shopify. Seller OS
+no adquiere jobs si el service worker cargado todavía no anuncia esa capacidad.
+
 ## Límite de seguridad
 
 - No solicita permisos de cookies, webRequest ni `<all_urls>`. El permiso

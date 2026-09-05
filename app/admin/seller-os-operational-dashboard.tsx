@@ -17,7 +17,8 @@ import { mergeOwnerRuntimeQuickPickCards, parseOwnerRuntimeQuickPickCard,
 
 type CompactStatus = "READY" | "WORKING" | "WAITING" | "DEGRADED" |
   "OFFLINE"
-type WorkerStatus = CompactStatus | "CONNECTING"
+type WorkerStatus = CompactStatus | "CONNECTING" | "WORKER_AVAILABLE" |
+  "WORK_PENDING" | "IDLE_NO_PENDING_WORK" | "BLOCKED"
 type DashboardReadState = "REFRESHING" | "STABLE" | "READ_RETRYING"
 type PostSaleStatus = "READY" | "ARMED" | "SUCCEEDED" | "WAITING" |
   "FAILED" | "MANUAL_REVIEW"
@@ -379,10 +380,13 @@ function normalizedStatus(value: unknown,
 }
 
 function tone(status: WorkerStatus) {
-  if (status === "READY") return "bg-emerald-300 text-emerald-950"
+  if (["READY", "WORKER_AVAILABLE", "IDLE_NO_PENDING_WORK"]
+      .includes(status)) return "bg-emerald-300 text-emerald-950"
   if (status === "WORKING") return "bg-cyan-300 text-cyan-950"
   if (status === "CONNECTING") return "bg-sky-200 text-sky-950"
-  if (status === "WAITING") return "bg-amber-200 text-amber-950"
+  if (["WAITING", "WORK_PENDING", "BLOCKED"].includes(status)) {
+    return "bg-amber-200 text-amber-950"
+  }
   if (status === "DEGRADED") return "bg-orange-300 text-orange-950"
   return "bg-rose-300 text-rose-950"
 }
@@ -431,12 +435,22 @@ function shortTimestamp(value: string | null) {
 }
 
 function workerDetail(status: WorkerStatus, reasonCode: string) {
-  if (status === "READY") return "Chrome owner conectado · sin trabajo pendiente"
+  if (status === "IDLE_NO_PENDING_WORK") {
+    return "Chrome owner disponible · cola autoritativa sin trabajo pendiente"
+  }
+  if (status === "WORKER_AVAILABLE") {
+    return "Chrome owner disponible · verificando trabajo elegible"
+  }
+  if (status === "WORK_PENDING") {
+    return "Hay trabajo de envío elegible pendiente de adquisición"
+  }
   if (status === "WORKING") return "Procesando una evidencia de envío"
   if (status === "CONNECTING") return "Conectando con Chrome owner…"
   if (reasonCode.includes("BIND") || reasonCode.includes("DESTINATION")) {
     return "Falta confirmar el perfil canónico de envío"
   }
+  if (status === "DEGRADED") return "Worker disponible con una falla reintentable"
+  if (status === "BLOCKED") return "Worker conectado pero bloqueado por una condición requerida"
   if (status === "OFFLINE") return "Extensión o Chrome owner no disponible"
   return "Esperando una condición requerida del worker"
 }

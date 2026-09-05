@@ -37,6 +37,7 @@ const PAGE_DISPATCH_COMMITTED =
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
+const DISCOVERY_RETRY_INTERVAL_MS = 30_000
 
 function finalCanaryStartEnabled(connected: boolean,
   canonicalBindingStatusReady: boolean, canonicalDestinationBound: boolean,
@@ -50,8 +51,9 @@ function canonicalBindControlVisible(connected: boolean,
   return connected && canonicalBindingStatusReady && !canonicalDestinationBound
 }
 
-export type LunaShippingOwnerWorkerStatus = "CONNECTING" | "READY" |
-  "WORKING" | "WAITING" | "OFFLINE"
+export type LunaShippingOwnerWorkerStatus = "CONNECTING" |
+  "WORKER_AVAILABLE" | "WORK_PENDING" | "WORKING" |
+  "IDLE_NO_PENDING_WORK" | "BLOCKED" | "DEGRADED" | "OFFLINE"
 
 export type LunaShippingOwnerWorkerSnapshot = Readonly<{
   status: LunaShippingOwnerWorkerStatus
@@ -59,18 +61,30 @@ export type LunaShippingOwnerWorkerSnapshot = Readonly<{
   connected: boolean
   canonicalBindingReady: boolean
   canonicalDestinationBound: boolean
+  eligiblePendingJobCount: number | null
   autoClaimEnabled: true
 }>
 
 function dashboardWorkerStatus(connected: boolean, running: boolean,
   canonicalBindingStatusReady: boolean, canonicalDestinationBound: boolean,
-  canonicalDestinationMismatch: boolean, status: string, error: string):
+  canonicalDestinationMismatch: boolean, status: string, error: string,
+  eligiblePendingJobCount: number | null):
   LunaShippingOwnerWorkerStatus {
   if (running) return "WORKING" as const
-  if (connected && canonicalBindingStatusReady && canonicalDestinationBound &&
-      !canonicalDestinationMismatch) return "READY" as const
+  const available = connected && canonicalBindingStatusReady &&
+    canonicalDestinationBound && !canonicalDestinationMismatch
+  if (available && (error || /FAIL|ERROR|UNAVAILABLE/.test(status))) {
+    return "DEGRADED" as const
+  }
+  if (available && eligiblePendingJobCount !== null &&
+      eligiblePendingJobCount > 0) return "WORK_PENDING" as const
+  if (available && eligiblePendingJobCount === 0 &&
+      status === "WORKER_IDLE_NO_ELIGIBLE_JOB") {
+    return "IDLE_NO_PENDING_WORK" as const
+  }
+  if (available) return "WORKER_AVAILABLE" as const
   if (connected) {
-    return "WAITING" as const
+    return "BLOCKED" as const
   }
   if (/CONNECT|PING|RECONNECT|INITIAL|START/.test(status) &&
       !/FAIL|ERROR|UNAVAILABLE|MISSING|DISCONNECT/.test(`${status}:${error}`)) {
@@ -454,6 +468,7 @@ function pingExtensionOnce(runtime: ChromeRuntime) {
             response?.shopAppContentScriptMatch !== true ||
             response?.shopAppRuntimeAllowlist !== true ||
             response?.shopAppCheckoutHostClassification !== true ||
+            response?.unicodeProductHandleSupport !== true ||
             response?.sellerOsOriginValidated !== true) {
           finish(new Error("LUNA_SHIPPING_EXTENSION_HANDSHAKE_INVALID"))
           return
@@ -477,6 +492,8 @@ export function LunaShippingCaptureControlPlane({
   const [error, setError] = useState("")
   const [connected, setConnected] = useState(false)
   const [running, setRunning] = useState(false)
+  const [eligiblePendingJobCount, setEligiblePendingJobCount] =
+    useState<number | null>(null)
   const [lastRuntimeState, setLastRuntimeState] = useState("NOT_STARTED")
   const [runtimeTrace, setRuntimeTrace] = useState<RuntimeTrace>(EMPTY_RUNTIME_TRACE)
   const [results, setResults] = useState<Result[]>([])
@@ -531,7 +548,9 @@ export function LunaShippingCaptureControlPlane({
     let canonicalDestinationBindingPresent = false
     let activeJobStatusReady = false
     let recoveredActiveJob: LunaChromeShippingJobV1 | null = null
-    let initialAutoClaimStarted = false
+    const runtimeInstanceId = crypto.randomUUID()
+    let discoveryInFlight = false
+    let discoveryRetryTimer: number | null = null
     let port: ExternalPort | null = null
     let lastProgressState = "NOT_STARTED"
     let pageHidden = false
@@ -833,16 +852,26 @@ export function LunaShippingCaptureControlPlane({
       if (hasExactLiveTarget) {
         throw new Error("LUNA_EXACT_LIVE_TARGET_GLOBAL_QUEUE_FORBIDDEN")
       }
-      const payload = await adminPost("resolve_jobs", { candidateIds })
+      const payload = await adminPost("resolve_jobs", { candidateIds,
+        ...(nextMode === "AUTO" ? { runtimeInstanceId } : {}) })
       const resolved = Array.isArray(payload.jobs) ? payload.jobs : []
+      const pendingCount = Number(
+        payload.acquisition?.eligiblePendingJobCount ?? resolved.length)
+      if (nextMode === "AUTO") {
+        setEligiblePendingJobCount(Number.isSafeInteger(pendingCount) &&
+          pendingCount >= 0 ? pendingCount : null)
+      }
       if (resolved.some((job: any) => job?.contractVersion !== CONTRACT)) {
         throw new Error("LUNA_SHIPPING_EXTENSION_JOB_UNAVAILABLE")
       }
       if (!resolved.length) {
         busy = false
         setRunning(false)
-        setStatus(nextMode === "AUTO" ? "WORKER_IDLE_NO_ELIGIBLE_JOB" : "PASS")
-        return
+        setError("")
+        setStatus(nextMode === "AUTO" && pendingCount > 0
+          ? "WORK_PENDING_LEASED_BY_RUNTIME"
+          : nextMode === "AUTO" ? "WORKER_IDLE_NO_ELIGIBLE_JOB" : "PASS")
+        return false
       }
       jobs = resolved
       index = 0
@@ -850,30 +879,61 @@ export function LunaShippingCaptureControlPlane({
       busy = true
       setRunning(true)
       sendCurrent()
+      return true
     }
 
-    const startInitialProductionClaim = () => {
-      if (hasExactLiveTarget || !active || initialAutoClaimStarted || !extensionReady ||
-          !canonicalBindingStatusRead || !canonicalDestinationBindingPresent ||
-          !activeJobStatusReady || busy || !port) {
+    const scheduleProductionAcquisition = (delayMs =
+      DISCOVERY_RETRY_INTERVAL_MS) => {
+      if (hasExactLiveTarget || !active || busy || discoveryRetryTimer !== null) {
         return
       }
-      initialAutoClaimStarted = true
+      discoveryRetryTimer = window.setTimeout(() => {
+        discoveryRetryTimer = null
+        attemptProductionAcquisition()
+      }, Math.max(0, delayMs))
+    }
+
+    const attemptProductionAcquisition = () => {
+      if (hasExactLiveTarget || !active || discoveryInFlight || busy) {
+        return
+      }
+      if (!extensionReady || !canonicalBindingStatusRead ||
+          !canonicalDestinationBindingPresent || !activeJobStatusReady || !port) {
+        scheduleProductionAcquisition()
+        return
+      }
+      if (discoveryRetryTimer !== null) {
+        window.clearTimeout(discoveryRetryTimer)
+        discoveryRetryTimer = null
+      }
       setError("")
       setStatus("PRODUCTION_WORKER_READY")
       if (recoveredActiveJob) {
         jobs = [recoveredActiveJob]
+        recoveredActiveJob = null
         index = 0
         mode = "AUTO"
         busy = true
         setRunning(true)
+        setEligiblePendingJobCount(1)
         setStatus("CAPTURING")
         setLastRuntimeState("PRODUCTION_JOB_CLAIMED")
         lastProgressState = "PRODUCTION_JOB_CLAIMED"
         return
       }
+      discoveryInFlight = true
       setStatus("INITIAL_AUTO_CLAIM_STARTED")
-      void loadJobs(undefined, "AUTO").catch(fail)
+      void loadJobs(undefined, "AUTO").then((found) => {
+        if (!found) scheduleProductionAcquisition()
+      }).catch((discoveryError) => {
+        if (!active) return
+        busy = false
+        setRunning(false)
+        setStatus("DISCOVERY_RETRY_SCHEDULED")
+        setError(discoveryError instanceof Error ? discoveryError.message
+          : "LUNA_SHIPPING_DISCOVERY_FAILED")
+        scheduleProductionAcquisition()
+      }).finally(() => { discoveryInFlight = false })
     }
 
     const beginCanary = () => {
@@ -1098,7 +1158,7 @@ export function LunaShippingCaptureControlPlane({
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationBound(canonicalDestinationBindingPresent)
           setCanonicalDestinationMismatch(false)
-          startInitialProductionClaim()
+          attemptProductionAcquisition()
           return
         }
         if (message?.type === "LUNA_CANONICAL_DESTINATION_STATUS") {
@@ -1121,7 +1181,7 @@ export function LunaShippingCaptureControlPlane({
             setStatus("CANONICAL_OPERATOR_BIND_REQUIRED")
             setError("")
           }
-          startInitialProductionClaim()
+          attemptProductionAcquisition()
           return
         }
         if (message?.type === "LUNA_SHIPPING_ACTIVE_JOB_STATUS") {
@@ -1158,7 +1218,7 @@ export function LunaShippingCaptureControlPlane({
             return
           }
           recoveredActiveJob = candidate
-          startInitialProductionClaim()
+          attemptProductionAcquisition()
           return
         }
         if (message?.type === EXTENSION_DISPATCH_RECEIVED) {
@@ -1261,7 +1321,7 @@ export function LunaShippingCaptureControlPlane({
             canonicalUsProfileFound: true,
             shippingAddressAccepted: false,
           }))
-          startInitialProductionClaim()
+          attemptProductionAcquisition()
           return
         }
         if (message?.type === "LUNA_SHIPPING_JOB_PROGRESS") {
@@ -1481,6 +1541,7 @@ export function LunaShippingCaptureControlPlane({
           }
           fail(new Error(typeof message.error === "string"
             ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"))
+          if (mode === "AUTO") scheduleProductionAcquisition()
           return
         }
         const exactIdentityMatches = candidateMatches &&
@@ -1556,7 +1617,9 @@ export function LunaShippingCaptureControlPlane({
               sendCurrent()
               return
             }
-            await loadJobs(undefined, "AUTO")
+            busy = false
+            setRunning(false)
+            attemptProductionAcquisition()
           }).catch((stockError) => {
             port?.postMessage({
               type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",
@@ -1653,7 +1716,9 @@ export function LunaShippingCaptureControlPlane({
               setStatus("LIVE_LISTING_SHIPPING_EVIDENCE_PERSISTED")
               return
             }
-            await loadJobs(undefined, "AUTO")
+            busy = false
+            setRunning(false)
+            attemptProductionAcquisition()
           }).catch((certificationError) => {
             port?.postMessage({
               type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",
@@ -1804,7 +1869,10 @@ export function LunaShippingCaptureControlPlane({
         activeJobStatusReady = false
         recoveredActiveJob = null
         if (!busy) {
-          initialAutoClaimStarted = false
+          if (discoveryRetryTimer !== null) {
+            window.clearTimeout(discoveryRetryTimer)
+            discoveryRetryTimer = null
+          }
           setStatus("RECONNECTING_EXTENSION")
         }
         let lastError: unknown = new Error(
@@ -1889,6 +1957,9 @@ export function LunaShippingCaptureControlPlane({
       if (portHandshakeTimer !== null) window.clearTimeout(portHandshakeTimer)
       if (dispatchReceiptTimer !== null) window.clearTimeout(dispatchReceiptTimer)
       if (traceFlushTimer !== null) window.clearTimeout(traceFlushTimer)
+      if (discoveryRetryTimer !== null) {
+        window.clearTimeout(discoveryRetryTimer)
+      }
       triggerRef.current = null
       liveTriggerRef.current = null
       bindDestinationRef.current = null
@@ -1900,11 +1971,13 @@ export function LunaShippingCaptureControlPlane({
     const workerSnapshot: LunaShippingOwnerWorkerSnapshot = {
       status: dashboardWorkerStatus(connected, running,
         canonicalBindingStatusReady, canonicalDestinationBound,
-        canonicalDestinationMismatch, status, error),
+        canonicalDestinationMismatch, status, error,
+        eligiblePendingJobCount),
       reasonCode: safeWorkerReason(error || status),
       connected,
       canonicalBindingReady: canonicalBindingStatusReady,
       canonicalDestinationBound,
+      eligiblePendingJobCount,
       autoClaimEnabled: true,
     }
     onWorkerSnapshot?.(workerSnapshot)
@@ -1915,8 +1988,8 @@ export function LunaShippingCaptureControlPlane({
       autoClaimEnabled: true,
     }, window.location.origin)
   }, [canonicalBindingStatusReady, canonicalDestinationBound,
-    canonicalDestinationMismatch, connected, error, onWorkerSnapshot, running,
-    status])
+    canonicalDestinationMismatch, connected, eligiblePendingJobCount, error,
+    onWorkerSnapshot, running, status])
 
   const newestTrace = liveTraceEvents.at(-1) ?? null
   const lastSuccessfulTrace = [...liveTraceEvents].reverse()
@@ -1934,7 +2007,8 @@ export function LunaShippingCaptureControlPlane({
   if (runtimeOnly) return <output hidden aria-hidden="true"
     data-luna-owner-runtime={dashboardWorkerStatus(connected, running,
       canonicalBindingStatusReady, canonicalDestinationBound,
-      canonicalDestinationMismatch, status, error)} />
+      canonicalDestinationMismatch, status, error,
+      eligiblePendingJobCount)} />
 
   return <main className="min-h-screen bg-[#07111a] px-4 py-10 text-white">
     <section className="mx-auto max-w-2xl rounded-3xl border border-white/15 bg-white/[0.05] p-6">

@@ -222,6 +222,7 @@ export type LunaChromeShippingJobV1 = Readonly<{
   contractVersion: typeof LUNA_SHIPPING_QUOTE_CAPTURE_VERSION
   captureSessionId: string
   nonce: string
+  snapshotDigest: string
   identity: LunaShippingIdentityV1
   destination: LunaShippingDestinationV1
   salePriceUsd: number
@@ -391,14 +392,23 @@ function canonicalProductUrl(value: string) {
   try { parsed = new URL(value) } catch {
     throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID")
   }
+  const path = parsed.pathname.replace(/\/$/, "")
+  const encodedHandle = path.startsWith("/products/")
+    ? path.slice("/products/".length) : ""
+  let handle = ""
+  try { handle = decodeURIComponent(encodedHandle).normalize("NFKC") }
+  catch { throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID") }
+  const handleLength = Array.from(handle).length
   if (parsed.protocol !== "https:" ||
       !new Set(["lunaportex.com", "www.lunaportex.com"]).has(parsed.hostname) ||
-      !/^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/.test(parsed.pathname) ||
+      handleLength < 2 || handleLength > 255 ||
+      /[\u0000-\u0020\u007f/\\?#]/u.test(handle) ||
+      handle === "." || handle === ".." || /[A-Z]/.test(handle) ||
       parsed.username || parsed.password || parsed.port) {
     throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID")
   }
   parsed.hostname = "www.lunaportex.com"
-  parsed.pathname = parsed.pathname.replace(/\/$/, "")
+  parsed.pathname = `/products/${encodeURIComponent(handle)}`
   parsed.search = ""
   parsed.hash = ""
   return parsed.toString()
@@ -436,6 +446,7 @@ export function normalizeLunaChromeShippingJobV1(
   const productName = safeProductName(input.productName)
   if (input.contractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION ||
       !UUID.test(input.captureSessionId) || !NONCE.test(input.nonce) ||
+      !SHA256.test(input.snapshotDigest) ||
       salePriceUsd === null || salePriceUsd <= 0 ||
       supplierCostUsd === null || productName === null) {
     throw new Error("LUNA_SHIPPING_EXTENSION_JOB_INVALID")

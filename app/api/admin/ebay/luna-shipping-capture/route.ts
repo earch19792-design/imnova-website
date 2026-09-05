@@ -31,6 +31,7 @@ import {
   persistLunaProductPageOosV1,
   persistLunaShippingRuntimeTraceV1,
   readLatestLunaShippingRuntimeTraceV1,
+  acquireLunaChromeShippingJobsV1,
   resolveLunaChromeShippingJobsV1,
   resolveLunaChromeShippingLiveListingJobV1,
 } from
@@ -52,6 +53,16 @@ function candidateIds(value: unknown) {
   return (Array.isArray(value) ? value : [])
     .filter((entry): entry is string => typeof entry === "string")
     .map((entry) => entry.trim()).filter(Boolean).slice(0, 20)
+}
+
+function runtimeInstanceId(value: unknown, fallback: string) {
+  const requested = typeof value === "string" ? value.trim() : ""
+  const resolved = requested || fallback
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(resolved)) {
+    throw new Error("LUNA_SHIPPING_RUNTIME_INSTANCE_INVALID")
+  }
+  return resolved
 }
 
 function liveListingTarget(value: unknown, accountKey: string) {
@@ -128,6 +139,21 @@ export async function POST(req: Request) {
     if (body.action === "resolve_jobs") {
       enforceListingAiRouteRateLimit(auth.actorId, "READ")
       const requested = candidateIds(body.candidateIds)
+      if (!requested.length) {
+        const acquisition = await acquireLunaChromeShippingJobsV1({
+          supabase: auth.supabase,
+          accountKey: auth.accountKey,
+          runtimeInstanceId: runtimeInstanceId(body.runtimeInstanceId,
+            auth.actorId),
+          sessionSecret: sessionSecret(),
+        })
+        return listingAiResponse({ success: true,
+          jobs: acquisition.jobs, acquisition,
+          safety: { readOnly: false,
+            durableWriteScope: "SELLER_OS_LUNA_SHIPPING_JOB_CLAIM_V1",
+            cookieAccess: false, credentialAccess: false,
+            lunaPurchases: 0, marketplaceWrites: 0 } })
+      }
       const jobs = await resolveLunaChromeShippingJobsV1({
         supabase: auth.supabase,
         accountKey: auth.accountKey,
