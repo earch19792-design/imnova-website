@@ -229,56 +229,38 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
   const categoryWindows = [1, 7, 30, 90].map(buildCategoryWindow)
   const allCategoryWindow = buildCategoryWindow(3650)
 
-  // Radar authority is intentionally acquired sequentially. Concurrent fanout
-  // against the recovered database previously produced false UNKNOWN states.
-  const radarRunRead = await input.supabase
-    .from("seller_os_daily_dollar_radar_runs")
-      .select("run_id,status,queue_entry_count,families_evaluated,demand_proven_count,demand_supported_count,luna_match_count,last_error_code,failure_stage,started_at,completed_at")
-      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
-      .order("started_at", { ascending: false }).limit(1).maybeSingle()
-  const radarReceiptRead = await input.supabase
-    .from("seller_os_daily_dollar_radar_run_receipts")
-      .select("receipt_id,event_type,run_status,failure_stage,families_evaluated,demand_proven_count,demand_supported_count,luna_match_count,morning_queue_count,recorded_at")
-      .order("recorded_at", { ascending: false }).limit(1).maybeSingle()
-  const radarSchedulerRead = await input.supabase
-    .from("seller_os_post_runtime_scheduler_v1")
-      .select("lane,schedule,dispatch_window_seconds,enabled,updated_at")
-      .eq("lane", "DAILY_DOLLAR_RADAR_AUTOPILOT").maybeSingle()
-  const radarDispatchRead = await input.supabase
-    .from("seller_os_post_runtime_dispatch_receipts_v1")
-      .select("dispatch_slot,status,requested_at")
-      .eq("lane", "DAILY_DOLLAR_RADAR_AUTOPILOT")
-      .order("requested_at", { ascending: false }).limit(1).maybeSingle()
-  const opportunityRead = await input.supabase
-    .from("seller_os_market_opportunity_cases")
-      .select("opportunity_case_id,family_name,status,updated_at")
-      .eq("status", "MONITORING").order("updated_at", { ascending: false })
-      .limit(100)
-  const radarRun = record(radarRunRead.data)
-  const radarReceipt = record(radarReceiptRead.data)
-  const radarScheduler = record(radarSchedulerRead.data)
-  const radarDispatch = record(radarDispatchRead.data)
-  const radarLastCompletedAt = iso(radarRun.completed_at)
-  const radarAgeSeconds = radarLastCompletedAt
-    ? Math.max(0, Math.floor((now.getTime() - Date.parse(radarLastCompletedAt)) / 1_000))
-    : null
-  const radarAuthorityAvailable = !radarRunRead.error &&
-    !radarSchedulerRead.error && !radarDispatchRead.error
+  // These SECURITY DEFINER read RPCs are the supported service-role boundary;
+  // the underlying durable tables deliberately deny direct Data API reads.
+  const radarQueueRead = await input.supabase.rpc(
+    "get_seller_os_morning_dollar_opportunity_queue_v1", {
+      p_account_key: input.accountKey, p_marketplace_id: "EBAY_US",
+      p_logical_run_date: null, p_limit: 5,
+    })
+  const runtimeStatusRead = await input.supabase.rpc(
+    "get_seller_os_post_runtime_status_v1")
+  const radarQueue = record(radarQueueRead.data)
+  const runtimeStatus = record(runtimeStatusRead.data)
+  const radarLane = (Array.isArray(runtimeStatus.lanes)
+    ? runtimeStatus.lanes.map(record) : []).find((lane) =>
+    lane.lane === "DAILY_DOLLAR_RADAR_AUTOPILOT") ?? {}
+  const opportunityRows = Array.isArray(radarQueue.entries)
+    ? radarQueue.entries.map(record) : []
+  const radarLastCompletedAt = null
+  const radarAuthorityAvailable = !radarQueueRead.error &&
+    !runtimeStatusRead.error && Boolean(radarLane.lane)
   const radarStatus = !radarAuthorityAvailable ? "DESCONOCIDO" as const
-    : radarScheduler.enabled !== true ? "BLOQUEADO" as const
-      : !iso(radarDispatch.requested_at) ? "BLOQUEADO" as const
-        : radarAgeSeconds !== null && radarAgeSeconds > 36 * 60 * 60
-          ? "BLOQUEADO" as const : radarRun.status === "RUNNING"
-            ? "OPERANDO" as const : "SIN_TRABAJO" as const
+    : radarLane.enabled !== true ? "BLOQUEADO" as const
+      : !iso(radarLane.lastPostQueuedAt) ? "BLOQUEADO" as const
+        : radarQueue.status === "AVAILABLE" ? "SIN_TRABAJO" as const
+          : "RECUPERANDO" as const
   const radarCause = !radarAuthorityAvailable
     ? "RADAR_AUTHORITY_UNAVAILABLE"
-    : radarScheduler.enabled !== true ? "RADAR_SCHEDULER_DISABLED"
-      : !iso(radarDispatch.requested_at)
+    : radarLane.enabled !== true ? "RADAR_SCHEDULER_DISABLED"
+      : !iso(radarLane.lastPostQueuedAt)
         ? "RADAR_POST_DISPATCH_RECEIPT_ABSENT"
-        : radarAgeSeconds !== null && radarAgeSeconds > 36 * 60 * 60
-          ? "RADAR_LAST_COMPLETED_RUN_STALE"
+        : radarQueue.status !== "AVAILABLE"
+          ? String(radarQueue.reason ?? "RADAR_QUEUE_UNAVAILABLE")
           : "RADAR_RUNTIME_AUTHORITY_CURRENT"
-  const opportunityRows = (opportunityRead.data ?? []).map(record)
   const activity: Array<Readonly<{ type: string; at: string; title: string;
     amountUsd: number | null; units: number | null; whatsappStatus: string;
     buyerThankYouStatus: string; officialReadbackState: string }>> =
@@ -293,15 +275,6 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
       buyerThankYouStatus: "UNKNOWN" as const,
       officialReadbackState: "OFFICIAL_ORDER_CONFIRMED" as const })] : []
     })
-  if (radarLastCompletedAt) activity.push(Object.freeze({
-    type: "RADAR_COMPLETED" as const, at: radarLastCompletedAt,
-    title: "Radar nocturno terminó",
-    amountUsd: null, units: nonnegative(radarRun.queue_entry_count),
-    whatsappStatus: "NOT_ELIGIBLE" as const,
-    buyerThankYouStatus: "NOT_ELIGIBLE" as const,
-    officialReadbackState: radarReceipt.event_type === "COMPLETED"
-      ? "DURABLE_RECEIPT_CONFIRMED" as const : "RECEIPT_UNPROVEN" as const,
-  }))
 
   return Object.freeze({
     contractVersion: SELLER_OS_OWNER_OPERATIONAL_INSIGHTS_V1,
@@ -335,18 +308,20 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
           (nonnegative(row.line_item_amount) ?? 0), 0)) < 0.005 }),
     radar: Object.freeze({ status: radarStatus, cause: radarCause,
       lastCompletedRunAt: radarLastCompletedAt,
-      lastDispatchAt: iso(radarDispatch.requested_at),
-      lastResult: text(radarRun.status, 40),
-      currentStage: text(radarRun.failure_stage, 80) ??
-        (radarRun.status === "COMPLETED" ? "COMPLETADO" : "DESCONOCIDO"),
-      schedule: text(radarScheduler.schedule, 40),
-      schedulerEnabled: radarScheduler.enabled === true,
+      lastCompletedRunDate: text(radarQueue.logicalRunDate, 20),
+      lastDispatchAt: iso(radarLane.lastPostQueuedAt),
+      lastResult: text(radarQueue.status, 40),
+      currentStage: radarQueue.status === "AVAILABLE"
+        ? "COMPLETADO" as const : "DESCONOCIDO" as const,
+      schedule: text(radarLane.schedule, 40),
+      schedulerEnabled: radarLane.enabled === true,
       schedulerTickIsEligibleDispatch: false as const,
-      opportunitiesFound: opportunityRead.error ? null : opportunityRows.length,
+      opportunitiesFound: radarQueueRead.error ? null
+        : nonnegative(radarQueue.resultCount),
       handoffCount: null,
-      lunaMatchCount: nonnegative(radarRun.luna_match_count),
-      errorCount: radarRun.last_error_code ? 1 : 0,
-      errorCode: text(radarRun.last_error_code, 120) }),
+      lunaMatchCount: null,
+      errorCount: radarQueue.status === "UNAVAILABLE" ? 1 : 0,
+      errorCode: text(radarQueue.reason, 120) }),
     listingIntegrity: Object.freeze({ authorityAvailable: !registryRead.error,
       listingCount: registryRows.length,
       supplierLinkMissingCount: registryRows.filter((row) =>
@@ -360,11 +335,12 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
           lastEvidenceAt: iso(row.last_ebay_sync_at),
           nextAction: "RUNTIME_RECONCILIATION", ownerRequired: false }))) }),
     marketOpportunity: Object.freeze({ separateFromAccountSales: true as const,
-      status: opportunityRead.error ? "UNAVAILABLE" as const :
+      status: radarQueueRead.error ? "UNAVAILABLE" as const :
         radarStatus === "BLOQUEADO" ? "STALE" as const : "AVAILABLE" as const,
       opportunities: Object.freeze(opportunityRows.slice(0, 5).map((row) =>
-        Object.freeze({ family: text(row.family_name, 120),
-          opportunityCount: 1, updatedAt: iso(row.updated_at) }))) }),
+        Object.freeze({ family: text(row.familyName ?? row.productFamily ??
+          row.name ?? row.familyId, 120), opportunityCount: 1,
+          updatedAt: null }))) }),
     activity: Object.freeze(activity.sort((left, right) =>
       Date.parse(right.at) - Date.parse(left.at)).slice(0, 8)),
     safety: Object.freeze({ readOnly: true as const, marketplaceWrites: 0 as const,

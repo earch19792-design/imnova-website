@@ -380,7 +380,9 @@ export function SellerOsHomeDashboardV1() {
               <dd><Status state={operationalState(radar.status)} /></dd>
             </div>
             <p className="mt-1 text-[11px] leading-4 text-white/45">
-              Último ciclo: {ownerTime(radar.lastCompletedRunAt)} · último dispatch: {ownerTime(radar.lastDispatchAt)} · oportunidades: {count(radar.opportunitiesFound) ?? "—"}.
+              Último ciclo: {safeIso(radar.lastCompletedRunAt)
+                ? ownerTime(radar.lastCompletedRunAt)
+                : String(radar.lastCompletedRunDate ?? "—")} · último dispatch: {ownerTime(radar.lastDispatchAt)} · oportunidades: {count(radar.opportunitiesFound) ?? "—"}.
             </p>
             <p className="mt-1 text-[10px] text-white/35">
               Tick: {String(radar.schedule ?? "—")} · un tick no implica un dispatch elegible · {String(radar.cause ?? "RADAR_AUTHORITY_UNAVAILABLE")}.
