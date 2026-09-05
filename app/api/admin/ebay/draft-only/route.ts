@@ -2814,7 +2814,8 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
     .select("id,candidate_id,package_id,package_digest,authorization_binding,status,stage,error_class,receipt_digest,marketplace_write_count,approval_id,execution_id,offer_id,item_id,attempt_count")
     .eq("batch_authorization_id", input.batchId)
     .eq("marketplace_account_key", input.accountKey)
-    .eq("status", "FAILED_BLOCKED").eq("stage", "PREFLIGHT")
+    .in("status", ["FAILED_BLOCKED", "AMBIGUOUS_FAIL_CLOSED"])
+    .eq("stage", "PREFLIGHT")
     .order("updated_at", { ascending: true })
     .limit(maximumChildrenPerDispatch)
   if (failedPrewriteRead.error) throw new Error(
@@ -2835,8 +2836,11 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
         candidateId: candidate.candidateId, packageId: candidate.packageId,
         packageDigest: candidate.currentPackageDigest,
         authorizationBinding: candidate.authorizationBinding }])
-    const reusableApprovalLineage = failedChild.error_class ===
-      "EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED"
+    const reusableApprovalLineage = [
+      "EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED",
+      "EBAY_DRAFT_ONLY_ACTIVE_APPROVAL_EXISTS",
+      "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_AMBIGUOUS",
+    ].includes(text(failedChild.error_class))
     if (!exactCurrentBinding || Number(failedChild.marketplace_write_count) !== 0
         || (failedChild.approval_id && !reusableApprovalLineage)
         || failedChild.execution_id
