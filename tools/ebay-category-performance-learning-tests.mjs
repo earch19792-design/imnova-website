@@ -673,5 +673,5 @@ test("migration, performance route and scan enforce the conservative learning pa
   assert.doesNotMatch(vercel, /ebay-seller-performance-learning/)
   assert.equal(JSON.parse(vercel).crons.length, 4)
   assert.match(vercel,
-    /quick-pick-runtime-recovery[\s\S]*\*\/15 \* \* \* \*/)
+    /quick-pick-runtime-recovery[\s\S]*20 7 \* \* \*/)
 })
