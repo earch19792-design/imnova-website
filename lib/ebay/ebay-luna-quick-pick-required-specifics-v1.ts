@@ -81,6 +81,22 @@ function marker(value: unknown) {
     QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1 ? candidate : null
 }
 
+export function durableQuickPickBatchAiCallConsumedV1(
+  value: unknown,
+  expectedBatchId: string,
+) {
+  return rows(value).some((row) => {
+    const assessment = record(row.assessment)
+    const operation = record(assessment.lunaQuickPickOperationV1)
+    const continuation = marker(
+      assessment.quickPickRequiredSpecificsContinuationV1)
+    return text(operation.batchId, 80) === expectedBatchId
+      && Number(continuation?.aiCallCount ?? 0) >= 1
+      && /^sha256:[0-9a-f]{64}$/.test(String(
+        continuation?.aiBatchEvidenceDigest ?? ""))
+  })
+}
+
 function unique(values: string[]) {
   return [...new Set(values.filter(Boolean))]
 }
@@ -554,6 +570,13 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     .in("candidate_key", candidateKeys).limit(MAXIMUM_QUICK_PICKS)
   if (read.error) throw new Error("LUNA_QUICK_PICK_SPECIFICS_READ_FAILED")
   const queueRows = rows(read.data)
+  const operationBatchIds = [...new Set(queueRows.flatMap((row) => {
+    const batchId = text(record(record(row.assessment)
+      .lunaQuickPickOperationV1).batchId, 80)
+    return batchId ? [batchId] : []
+  }))]
+  const consumedAiBatchIds = new Set(operationBatchIds.filter((batchId) =>
+    durableQuickPickBatchAiCallConsumedV1(queueRows, batchId)))
   const waitingBatchIds = new Set(queueRows.flatMap((row) => {
     const assessment = record(row.assessment)
     const operation = record(assessment.lunaQuickPickOperationV1)
@@ -736,7 +759,9 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       .maybeSingle()
     if (!claim.error && claim.data) claimed.push(Object.freeze({
       row: { ...record(claim.data), assessment: nextAssessment }, candidate,
-      aiExhausted: Number(nextMarker.aiCallCount ?? 0) >= 1,
+      aiExhausted: Number(nextMarker.aiCallCount ?? 0) >= 1
+        || Boolean(operationBatchId
+          && consumedAiBatchIds.has(operationBatchId)),
       aiCallCountBefore, baselineUnresolvedFields,
     }))
   }
