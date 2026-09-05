@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUNTIME_ENV="/home/earch/.config/imnova/seller-os-cloud-read-relay.env"
+RECOVERY_URL="https://imnova-seller-os-preprod.vercel.app/api/cron/quick-pick-runtime-recovery"
+
+source "$RUNTIME_ENV"
+
+curl --fail-with-body --silent --show-error --max-time 310 \
+  --header "x-seller-os-runtime-recovery-secret: ${SELLER_OS_CLOUD_READ_RELAY_SECRET}" \
+  --output /dev/null \
+  "$RECOVERY_URL"
+
+unset SELLER_OS_CLOUD_READ_RELAY_SECRET 2>/dev/null || true

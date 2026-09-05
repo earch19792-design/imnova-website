@@ -1,0 +1,11 @@
+[Unit]
+Description=Run IMNOVA Seller OS Interrupted Runtime Recovery Every 15 Minutes
+
+[Timer]
+OnBootSec=180
+OnUnitActiveSec=900
+AccuracySec=15
+Persistent=true
+
+[Install]
+WantedBy=timers.target

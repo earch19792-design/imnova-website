@@ -15,9 +15,14 @@ import { recoverInterruptedLunaQuickPickRuntimeV1 } from
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 function authorized(req: Request) {
-  const secret = process.env.CRON_SECRET?.trim() ?? ""
-  return Boolean(secret && req.headers.get("authorization") ===
-    `Bearer ${secret}`)
+  const cronSecret = process.env.CRON_SECRET?.trim() ?? ""
+  const runtimeSecret = process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET
+    ?.trim() ?? ""
+  return Boolean(
+    cronSecret && req.headers.get("authorization") === `Bearer ${cronSecret}`
+    || runtimeSecret && req.headers.get(
+      "x-seller-os-runtime-recovery-secret") === runtimeSecret,
+  )
 }
 
 export async function GET(req: Request) {

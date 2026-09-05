@@ -1,0 +1,9 @@
+[Unit]
+Description=IMNOVA Seller OS Interrupted Runtime Recovery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/earch/.local/bin/imnova-seller-os-runtime-recovery
+TimeoutStartSec=330
