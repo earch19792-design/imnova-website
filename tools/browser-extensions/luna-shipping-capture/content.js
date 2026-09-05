@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.51" },
+      extensionBuildVersion: "1.0.52" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -54,10 +54,24 @@ const MONEY = /(?:\$\s*([0-9][0-9,]*(?:\.\d{2})?)|([0-9][0-9,]*(?:\.\d{2})?)\s*U
 function exactProductUrl(value) {
   try {
     const url = new URL(value)
-    return url.protocol === "https:" &&
-      new Set(["lunaportex.com", "www.lunaportex.com"]).has(url.hostname) &&
-      /^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/.test(url.pathname) &&
-      !url.username && !url.password && !url.port ? url : null
+    const path = url.pathname.replace(/\/$/, "")
+    const encodedHandle = path.startsWith("/products/")
+      ? path.slice("/products/".length) : ""
+    let handle = ""
+    try { handle = decodeURIComponent(encodedHandle).normalize("NFKC") }
+    catch { return null }
+    const handleLength = Array.from(handle).length
+    if (url.protocol !== "https:" ||
+        !new Set(["lunaportex.com", "www.lunaportex.com"]).has(url.hostname) ||
+        handleLength < 2 || handleLength > 255 ||
+        /[\u0000-\u0020\u007f/\\?#]/u.test(handle) ||
+        handle === "." || handle === ".." || /[A-Z]/.test(handle) ||
+        url.username || url.password || url.port) return null
+    url.hostname = "www.lunaportex.com"
+    url.pathname = `/products/${encodeURIComponent(handle)}`
+    url.search = ""
+    url.hash = ""
+    return url
   } catch { return null }
 }
 
@@ -1975,8 +1989,7 @@ async function recoverJobContext() {
   throw lastError ?? new Error("SERVICE_WORKER_JOB_STATE_NOT_RECOVERED")
 }
 
-const isProductPage = /^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/
-  .test(location.pathname)
+const isProductPage = Boolean(exactProductUrl(location.href))
 const isCartPage = location.pathname.replace(/\/$/, "") === "/cart"
 const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
   location.hostname === "account.lunaportex.com" ||
