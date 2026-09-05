@@ -134,6 +134,8 @@ import { readSellerOsPublisherOperationalCohortV1 } from
   "@/lib/ebay/seller-os-publisher-operational-cohort-v1"
 import { persistQuickPickOwnerReviewV1 } from
   "@/lib/ebay/ebay-quick-pick-owner-review-persistence-v1"
+import { recoverQuickPickPublisherPackagesV1 } from
+  "@/lib/ebay/ebay-quick-pick-publisher-package-recovery-v1"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 import { sellerOsPostRuntimeAuthorizedV1 } from
   "@/lib/seller-os/post-only-runtime-route-v1"
@@ -2876,6 +2878,9 @@ async function handlePost(req: Request) {
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) return jsonError(new Error(
       "SELLER_OS_PUBLISHER_BATCH_ACCOUNT_SCOPE_REQUIRED"), 503)
+    const packageRecovery = await recoverQuickPickPublisherPackagesV1({
+      supabase, accountKey,
+    })
     const active = await supabase.from(
       "seller_os_publisher_batch_authorizations_v1").select("id")
       .eq("marketplace_account_key", accountKey)
@@ -2887,7 +2892,7 @@ async function handlePost(req: Request) {
     for (const row of rows(active.data)) outcomes.push(
       await resumeSellerOsPublisherBatchV1({ batchId: text(row.id),
         accountKey }))
-    return NextResponse.json({ success: true, outcomes,
+    return NextResponse.json({ success: true, packageRecovery, outcomes,
       safety: { runtimeAuthority: true, ownerAuthorizationRequired: true,
         unauthorizedMarketplaceWrites: 0 } })
   }
