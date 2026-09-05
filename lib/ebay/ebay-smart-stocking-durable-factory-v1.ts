@@ -673,7 +673,20 @@ function numericCategoryId(value: unknown) {
   return candidate && /^\d{1,20}$/.test(candidate) ? candidate : null
 }
 
-function exactDurableCategoryAuthorityV1(
+async function categoryResolverProductTruthV1(
+  opportunity: JsonRecord,
+  packageData?: JsonRecord,
+) {
+  const resolver = await import(
+    // @ts-expect-error Node direct TypeScript tests require the explicit
+    // extension; the production bundler resolves the same source module.
+    "./ebay-category-resolver-v1.ts")
+  return resolver.buildEbayCategoryResolverProductTruthV1({
+    opportunity, packageData,
+  })
+}
+
+async function exactDurableCategoryAuthorityV1(
   opportunity: JsonRecord,
   listingPackage: JsonRecord,
 ) {
@@ -683,6 +696,9 @@ function exactDurableCategoryAuthorityV1(
   const marketplace = record(record(opportunity.assessment)
     .canonicalMarketplaceReadinessV1)
   const resolver = record(packageData.categoryResolverV1)
+  const semantic = record(resolver.semanticCompatibility)
+  const productTruth = await categoryResolverProductTruthV1(
+    opportunity, packageData)
   const marketplaceExact = marketplace.categoryReady === true
     && marketplace.listingPackageId === listingPackage.id
     && marketplace.queueCandidateKey === opportunity.candidate_key
@@ -696,14 +712,41 @@ function exactDurableCategoryAuthorityV1(
     && resolver.candidateKey === opportunity.candidate_key
     && resolver.selectedCategoryId === packageCategoryId
     && resolver.capabilityUnavailable !== true
-  return marketplaceExact || resolverExact ? Object.freeze({
+  const semanticExact = semantic.status === "PROVEN"
+    && semantic.categoryId === packageCategoryId
+    && semantic.familyTypeFingerprint === productTruth.familyTypeFingerprint
+    && ["EXACT_LISTING_ACCEPTANCE", "OFFICIAL_TITLE_SUGGESTION",
+      "EXACT_PRODUCT_TRUTH_CATEGORY"].includes(String(
+      semantic.evidenceClass ?? ""))
+  if (!resolverExact && !marketplaceExact) return null
+  const shared = {
     categoryId: packageCategoryId,
     categoryName: text(packageData.categoryName),
+    exactProductIdentityVerified: true as const,
+    listingAcceptance: resolver.listingAcceptance === "ACCEPTED"
+      ? "ACCEPTED" as const : resolver.listingAcceptance === "REJECTED"
+        ? "REJECTED" as const : "UNKNOWN" as const,
+    familyTypeFingerprint: productTruth.familyTypeFingerprint,
+  }
+  return resolverExact && semanticExact ? Object.freeze({
+    ...shared,
     authorityClass: marketplaceExact
       ? "EXACT_PREVIOUSLY_CERTIFIED_CATEGORY"
       : "EXACT_DURABLE_CATEGORY_RESOLVER_BINDING",
-    exactProductIdentityVerified: true as const,
-  }) : null
+    semanticCompatibility: {
+      status: "PROVEN" as const,
+      categoryId: packageCategoryId,
+      familyTypeFingerprint: productTruth.familyTypeFingerprint,
+      evidenceClass: String(semantic.evidenceClass) as
+        "EXACT_LISTING_ACCEPTANCE" | "OFFICIAL_TITLE_SUGGESTION" |
+        "EXACT_PRODUCT_TRUTH_CATEGORY",
+      evidenceDigest: text(semantic.evidenceDigest),
+    },
+  }) : Object.freeze({
+    ...shared,
+    authorityClass: "UNPROVEN_EXISTING_CATEGORY_CANDIDATE",
+    semanticCompatibility: null,
+  })
 }
 
 async function priorExactDurableCategoryAuthorityV1(input: Readonly<{
@@ -711,6 +754,8 @@ async function priorExactDurableCategoryAuthorityV1(input: Readonly<{
   accountKey: string
   opportunity: JsonRecord
 }>) {
+  const currentProductTruth = await categoryResolverProductTruthV1(
+    input.opportunity)
   const read = await input.supabase.from("ebay_luna_opportunity_queue")
     .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment")
     .eq("supplier_product_id", input.opportunity.supplier_product_id)
@@ -731,7 +776,9 @@ async function priorExactDurableCategoryAuthorityV1(input: Readonly<{
       && categoryId && /^[0-9a-f-]{36}$/i.test(String(
         evidence.listingPackageId ?? ""))
       ? [{ packageId: String(evidence.listingPackageId), categoryId,
-        categoryName: text(evidence.categoryName) }] : []
+        categoryName: text(evidence.categoryName),
+        opportunityId: String(row.id),
+        candidateKey: String(row.candidate_key) }] : []
   })
   if (!candidates.length) return null
   const categories = [...new Set(candidates.map((entry) => entry.categoryId))]
@@ -745,17 +792,50 @@ async function priorExactDurableCategoryAuthorityV1(input: Readonly<{
   }
   const exactPackages = (packageRead.data ?? []).filter((raw) => {
     const row = record(raw)
+    const packageData = record(row.package_data)
+    const resolver = record(packageData.categoryResolverV1)
+    const semantic = record(resolver.semanticCompatibility)
     return candidates.some((candidate) => candidate.packageId === row.id
-      && numericCategoryId(record(row.package_data).categoryId) ===
-        candidate.categoryId)
+      && row.opportunity_id === candidate.opportunityId
+      && row.candidate_key === candidate.candidateKey
+      && numericCategoryId(packageData.categoryId) === candidate.categoryId
+      && resolver.status === "AUTO_SELECTED"
+      && resolver.listingPackageId === row.id
+      && resolver.opportunityId === row.opportunity_id
+      && resolver.candidateKey === row.candidate_key
+      && resolver.selectedCategoryId === candidate.categoryId
+      && semantic.status === "PROVEN"
+      && semantic.categoryId === candidate.categoryId
+      && semantic.familyTypeFingerprint ===
+        currentProductTruth.familyTypeFingerprint
+      && ["EXACT_LISTING_ACCEPTANCE", "OFFICIAL_TITLE_SUGGESTION",
+        "EXACT_PRODUCT_TRUTH_CATEGORY"].includes(String(
+        semantic.evidenceClass ?? "")))
   })
-  return exactPackages.length === candidates.length ? Object.freeze({
+  if (exactPackages.length !== candidates.length) return null
+  const exactPackageData = record(exactPackages[0]?.package_data)
+  const exactResolver = record(exactPackageData.categoryResolverV1)
+  const exactSemantic = record(exactResolver.semanticCompatibility)
+  return Object.freeze({
     categoryId: categories[0],
     categoryName: candidates.find((entry) => entry.categoryName)
       ?.categoryName ?? null,
     authorityClass: "EXACT_PRODUCT_IDENTITY_DURABLE_CATEGORY_REUSE",
     exactProductIdentityVerified: true as const,
-  }) : null
+    listingAcceptance: exactResolver.listingAcceptance === "ACCEPTED"
+      ? "ACCEPTED" as const : exactResolver.listingAcceptance === "REJECTED"
+        ? "REJECTED" as const : "UNKNOWN" as const,
+    familyTypeFingerprint: currentProductTruth.familyTypeFingerprint,
+    semanticCompatibility: {
+      status: "PROVEN" as const,
+      categoryId: categories[0],
+      familyTypeFingerprint: currentProductTruth.familyTypeFingerprint,
+      evidenceClass: String(exactSemantic.evidenceClass) as
+        "EXACT_LISTING_ACCEPTANCE" | "OFFICIAL_TITLE_SUGGESTION" |
+        "EXACT_PRODUCT_TRUTH_CATEGORY",
+      evidenceDigest: text(exactSemantic.evidenceDigest),
+    },
+  })
 }
 
 async function resolveAndPersistQuickPickCategoryV1(input: Readonly<{
@@ -765,10 +845,9 @@ async function resolveAndPersistQuickPickCategoryV1(input: Readonly<{
   listingPackage: JsonRecord
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
 }>) {
-  if (input.listingPackage.created_by !== null
-      || !isSellerOsDeterministicFactoryPackageV1(
+  if (!isSellerOsDeterministicFactoryPackageV1(
         input.listingPackage.package_data)) return input.listingPackage
-  const exactCanonicalCategory = exactDurableCategoryAuthorityV1(
+  const exactCanonicalCategory = await exactDurableCategoryAuthorityV1(
     input.opportunity, input.listingPackage)
     ?? await priorExactDurableCategoryAuthorityV1({
       supabase: input.supabase, accountKey: input.accountKey,
@@ -798,18 +877,28 @@ async function resolveAndPersistQuickPickCategoryV1(input: Readonly<{
     resolvedPackageData: binding.packageData,
   })) return input.listingPackage
   const now = new Date().toISOString()
-  const write = await input.supabase.from("ebay_listing_packages")
-    .update({ package_data: binding.packageData, updated_at: now })
+  let write = input.supabase.from("ebay_listing_packages")
+    .update({
+      package_data: binding.packageData,
+      ...(record(record(binding.packageData)
+        .categoryDerivedStateInvalidationV1)
+        .packageReadinessInvalidated === true
+        ? { status: "draft", readiness: 0 } : {}),
+      updated_at: now,
+    })
     .eq("id", input.listingPackage.id)
     .eq("account_key", input.accountKey)
     .eq("opportunity_id", input.opportunity.id)
     .eq("candidate_key", input.opportunity.candidate_key)
     .eq("updated_at", input.listingPackage.updated_at)
-    .is("created_by", null).select("*").maybeSingle()
-  if (write.error || !write.data) {
+  write = input.listingPackage.created_by === null
+    ? write.is("created_by", null)
+    : write.eq("created_by", input.listingPackage.created_by)
+  const readback = await write.select("*").maybeSingle()
+  if (readback.error || !readback.data) {
     throw new Error("QUICK_PICK_CATEGORY_BINDING_WRITE_FAILED")
   }
-  const stored = write.data as JsonRecord
+  const stored = readback.data as JsonRecord
   if (categoryResolver.canonicalCategoryBindingNeedsDurableSaveV1({
     currentPackageData: record(stored.package_data),
     resolvedPackageData: binding.packageData,
@@ -823,7 +912,9 @@ function preserveCanonicalCategoryBindingV1(
 ) {
   const next = { ...seed }
   for (const field of ["categoryId", "categoryName", "aspects",
-    "taxonomyPreflight", "categoryResolverV1"] as const) {
+    "taxonomyPreflight", "categoryResolverV1",
+    "categoryDerivedStateInvalidationV1", "quickPickMarketTestPackageV1",
+    "quickPickOwnerReviewV1", "draftConfiguration"] as const) {
     next[field] = durablePackageData[field] ?? null
   }
   return next

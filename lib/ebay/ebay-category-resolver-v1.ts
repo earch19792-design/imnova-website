@@ -89,6 +89,16 @@ export type EbayExactCanonicalCategoryAuthorityV1 = Readonly<{
   categoryName?: string | null
   authorityClass: string
   exactProductIdentityVerified: true
+  listingAcceptance?: "UNKNOWN" | "ACCEPTED" | "REJECTED"
+  familyTypeFingerprint?: string | null
+  semanticCompatibility?: Readonly<{
+    status: "PROVEN"
+    categoryId: string
+    familyTypeFingerprint: string
+    evidenceClass: "EXACT_LISTING_ACCEPTANCE" |
+      "OFFICIAL_TITLE_SUGGESTION" | "EXACT_PRODUCT_TRUTH_CATEGORY"
+    evidenceDigest?: string | null
+  }> | null
 }>
 
 type RankedCandidate = {
@@ -114,6 +124,7 @@ type ValidatedCandidate = Readonly<{
   taxonomyTreeVersion: string
   freshMapping: boolean
   staleMapping: boolean
+  listingAccepted: boolean
 }>
 
 function record(value: unknown): JsonRecord {
@@ -282,6 +293,8 @@ export function buildEbayCategoryResolverProductTruthV1(input: Readonly<{
   const productTruth = record(assessment.productTruth)
   const candidate = record(assessment.candidate)
   const intelligence = record(assessment.listingIntelligencePackage)
+  const exactLunaEvidence = record(record(record(productTruth.sourceEvidence)
+    .requiredItemSpecificsTruthV1).lunaExactProductEvidenceSetV1)
   const categoryRecommendation = record(intelligence.categoryRecommendation)
   const titleStrategy = record(intelligence.titleStrategy)
   const supplierConfirmed = record(record(intelligence.itemSpecifics)
@@ -297,6 +310,7 @@ export function buildEbayCategoryResolverProductTruthV1(input: Readonly<{
   if (!title) throw new Error("EBAY_CATEGORY_RESOLVER_PRODUCT_TRUTH_REQUIRED")
   const productType = text(
     productTruth.productType
+    ?? exactLunaEvidence.productType
     ?? supplierConfirmed.Type
     ?? candidate.productType
     ?? input.opportunity.product_type,
@@ -342,13 +356,13 @@ export function buildEbayCategoryResolverProductTruthV1(input: Readonly<{
     "PRODUCT_TRUTH",
     text(productTruth.evidenceDigest, 100),
   )
-  const recommendationOfficial =
-    categoryRecommendation.taxonomyStatus === "AVAILABLE"
-    || categoryRecommendation.source === "EBAY_TAXONOMY_OFFICIAL_READONLY"
   pushSignal(
     categoryRecommendation.categoryId,
     categoryRecommendation.categoryName,
-    recommendationOfficial ? "PRODUCT_TRUTH" : "MARKET_CONTEXT",
+    // A Taxonomy read proves that the category exists, not that it belongs to
+    // this exact product. Only an explicit Product Truth category above may
+    // enter the resolver as PRODUCT_TRUTH.
+    "MARKET_CONTEXT",
     categoryRecommendation.evidenceId,
   )
   pushSignal(
@@ -406,8 +420,18 @@ export function buildEbayCategoryResolverProductTruthV1(input: Readonly<{
   })
 }
 
+function semanticTaxonomyQueryV1(
+  productTruth: EbayCategoryResolverProductTruthV1,
+) {
+  return uniqueStrings([
+    productTruth.title,
+    productTruth.normalizedProductType,
+    productTruth.normalizedProductFamily,
+  ], 350).join(" ").slice(0, 350)
+}
+
 function sourceBaseScore(source: EbayCategoryCandidateSourceV1) {
-  if (source === "PROVEN_MAPPING") return 92
+  if (source === "PROVEN_MAPPING") return 72
   if (source === "PRODUCT_TRUTH") return 88
   if (source === "OFFICIAL_TITLE_SUGGESTION") return 84
   if (source === "MARKET_CONTEXT") return 56
@@ -447,12 +471,18 @@ function addCandidate(
   existing.freshMapping ||= input.freshMapping === true
   existing.staleMapping ||= input.staleMapping === true
   existing.listingAccepted ||= input.listingAccepted === true
+  const confidenceScore = input.source === "PROVEN_MAPPING"
+    && input.listingAccepted !== true
+    ? Math.min(input.confidenceScore ?? 0, 74)
+    : input.confidenceScore ?? 0
   existing.score = Math.max(
     existing.score,
     sourceBaseScore(input.source),
-    input.confidenceScore ?? 0,
+    confidenceScore,
   ) + (newSource && existing.sources.size > 1 ? 4 : 0)
-  if (input.freshMapping) existing.score = Math.max(existing.score, 94)
+  if (input.freshMapping && input.listingAccepted) {
+    existing.score = Math.max(existing.score, 94)
+  }
   if (input.listingAccepted) existing.score = Math.max(existing.score, 98)
   candidates.set(input.categoryId, existing)
 }
@@ -543,12 +573,14 @@ export async function resolveEbayCategoryV1(input: Readonly<{
   productTruth: EbayCategoryResolverProductTruthV1
   learningRows?: EbayCategoryResolverLearningRowV1[]
   taxonomyReader: EbayCategoryResolverTaxonomyReaderV1
+  officialTitleSuggestion?: EbayTaxonomyListingIntelligence | null
   now?: string | Date
 }>) {
   const now = input.now instanceof Date
     ? input.now
     : new Date(validTimestamp(input.now) ?? new Date().toISOString())
   const learningRows = input.learningRows ?? []
+  const taxonomyQuery = semanticTaxonomyQueryV1(input.productTruth)
   let ranked = rankEbayCategoryCandidatesV1({
     signals: input.productTruth.categorySignals,
     learningRows,
@@ -564,11 +596,12 @@ export async function resolveEbayCategoryV1(input: Readonly<{
     null = null
   let officialSuggestionFailureCode: string | null = null
   if (needsOfficialSuggestion) {
-    const suggestion = await input.taxonomyReader(
-      input.productTruth.title,
-      null,
-      { allowTitleSuggestionFallback: false },
-    )
+    const suggestion = input.officialTitleSuggestion
+      ?? await input.taxonomyReader(
+        taxonomyQuery,
+        null,
+        { allowTitleSuggestionFallback: false },
+      )
     officialSuggestionStatus = suggestion.status
     officialSuggestionFailureCode = suggestion.failureCode
     if (suggestion.status === "AVAILABLE" && categoryId(suggestion.categoryId)) {
@@ -597,7 +630,7 @@ export async function resolveEbayCategoryV1(input: Readonly<{
   )) {
     testedCategoryIds.push(candidate.categoryId)
     const taxonomy = await input.taxonomyReader(
-      input.productTruth.title,
+      taxonomyQuery,
       candidate.categoryId,
       { allowTitleSuggestionFallback: false },
     )
@@ -618,6 +651,7 @@ export async function resolveEbayCategoryV1(input: Readonly<{
       taxonomyTreeVersion: taxonomy.categoryTreeVersion ?? "UNVERSIONED",
       freshMapping: candidate.freshMapping,
       staleMapping: candidate.staleMapping,
+      listingAccepted: candidate.listingAccepted,
     }))
   }
   validated.sort((left, right) =>
@@ -820,6 +854,60 @@ export async function persistEbayCategoryResolverLearningV1(input: Readonly<{
   return row
 }
 
+export function invalidateCategoryDerivedPackageStateV1(input: Readonly<{
+  packageData: JsonRecord
+  oldCategoryId: string | null
+  newCategoryId: string | null
+}>) {
+  const ownerReview = record(input.packageData.quickPickOwnerReviewV1)
+  const priorProjection = record(
+    input.packageData.quickPickMarketTestPackageV1,
+  )
+  const draftConfiguration = record(input.packageData.draftConfiguration)
+  const oldPackageDigest = text(
+    priorProjection.packageDigest ?? ownerReview.reviewedPackageDigest,
+    100,
+  ) || null
+  return Object.freeze({
+    ...input.packageData,
+    quickPickMarketTestPackageV1: null,
+    ...(Object.keys(ownerReview).length ? {
+      quickPickOwnerReviewV1: {
+        ...ownerReview,
+        status: "INVALIDATED_CATEGORY_CHANGE",
+        readyForOwnerPublishAuthorization: false,
+        marketplaceWriteAuthorized: false,
+        marketplaceWrites: 0,
+        invalidationReason: "CATEGORY_SEMANTIC_AUTHORITY_CHANGED",
+      },
+    } : {}),
+    ...(Object.keys(draftConfiguration).length ? {
+      draftConfiguration: {
+        ...draftConfiguration,
+        aspectValidation: {},
+        ebayPreflightSnapshot: null,
+        quickPickPublicationAuthorization: null,
+      },
+    } : {}),
+    categoryDerivedStateInvalidationV1: {
+      contractVersion:
+        "SELLER_OS_CATEGORY_DERIVED_STATE_INVALIDATION_V1",
+      reason: "CATEGORY_SEMANTIC_AUTHORITY_CHANGED",
+      oldCategoryId: input.oldCategoryId,
+      newCategoryId: input.newCategoryId,
+      oldPackageDigest,
+      categoryCertificationInvalidated: true,
+      categoryDerivedRequiredSpecificsInvalidated: true,
+      packageReadinessInvalidated: true,
+      oldPackageDigestInvalidated: Boolean(oldPackageDigest),
+      ownerReauthorizationRequired: true,
+      oldCategoryDerivedSpecificsReused: false,
+      oldPackageAuthorizationReused: false,
+      marketplaceWrites: 0,
+    },
+  })
+}
+
 export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
@@ -834,6 +922,7 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
     opportunity: input.opportunity,
     packageData: input.packageData,
   })
+  const taxonomyQuery = semanticTaxonomyQueryV1(productTruth)
   const exactCanonicalAuthoritySupplied = input.exactCanonicalCategory
     ?.exactProductIdentityVerified === true
   const exactCanonicalCategoryId = exactCanonicalAuthoritySupplied
@@ -841,24 +930,58 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
   if (exactCanonicalAuthoritySupplied && !exactCanonicalCategoryId) {
     throw new Error("EBAY_EXACT_CANONICAL_CATEGORY_AUTHORITY_INVALID")
   }
-  const exactCanonicalTaxonomy = exactCanonicalCategoryId
+  const suppliedSemantic = record(
+    input.exactCanonicalCategory?.semanticCompatibility,
+  )
+  const suppliedSemanticProof = suppliedSemantic.status === "PROVEN"
+    && suppliedSemantic.categoryId === exactCanonicalCategoryId
+    && suppliedSemantic.familyTypeFingerprint ===
+      productTruth.familyTypeFingerprint
+    && ["EXACT_LISTING_ACCEPTANCE", "OFFICIAL_TITLE_SUGGESTION",
+      "EXACT_PRODUCT_TRUTH_CATEGORY"].includes(String(
+      suppliedSemantic.evidenceClass ?? ""))
+  const acceptedListingProof =
+    input.exactCanonicalCategory?.listingAcceptance === "ACCEPTED"
+    && input.exactCanonicalCategory.familyTypeFingerprint ===
+      productTruth.familyTypeFingerprint
+  const officialTitleSuggestion = exactCanonicalCategoryId
+    && !suppliedSemanticProof && !acceptedListingProof
     ? await input.taxonomyReader(
-      productTruth.title,
+      taxonomyQuery,
+      null,
+      { allowTitleSuggestionFallback: false },
+    ) : null
+  const officialSuggestionProof = Boolean(
+    officialTitleSuggestion
+    && officialTitleSuggestion.status === "AVAILABLE"
+    && officialTitleSuggestion.source === "EBAY_TAXONOMY_OFFICIAL_READONLY"
+    && officialTitleSuggestion.categoryResolution === "TITLE_SUGGESTION"
+    && officialTitleSuggestion.categoryId === exactCanonicalCategoryId,
+  )
+  const reusableExactAuthorityProof = Boolean(
+    exactCanonicalCategoryId && (suppliedSemanticProof || acceptedListingProof),
+  )
+  const exactCanonicalTaxonomy = reusableExactAuthorityProof
+    ? await input.taxonomyReader(
+      taxonomyQuery,
       exactCanonicalCategoryId,
       { allowTitleSuggestionFallback: false },
     ) : null
   const exactCanonicalCategoryPass = Boolean(
-    exactCanonicalTaxonomy
+    reusableExactAuthorityProof && exactCanonicalTaxonomy
     && taxonomyExactPass(exactCanonicalTaxonomy, exactCanonicalCategoryId),
   )
-  const learningRows = exactCanonicalCategoryId
+  const useExactCanonicalAuthority = Boolean(
+    exactCanonicalCategoryId && exactCanonicalCategoryPass,
+  )
+  const learningRows = useExactCanonicalAuthority
     ? []
     : await loadEbayCategoryResolverLearningV1({
       supabase: input.supabase,
       accountKey: input.accountKey,
       productTruth,
     })
-  const resolution = exactCanonicalCategoryId
+  const resolution = useExactCanonicalAuthority
     ? Object.freeze({
       authorityClass: input.exactCanonicalCategory?.authorityClass
         ?? EBAY_CATEGORY_RESOLVER_V1,
@@ -881,6 +1004,7 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
             exactCanonicalTaxonomy.categoryTreeVersion ?? "UNVERSIONED",
           freshMapping: false,
           staleMapping: false,
+          listingAccepted: acceptedListingProof,
         })
         : null,
       testedCategoryIds: [exactCanonicalCategoryId],
@@ -908,8 +1032,28 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
       productTruth,
       learningRows,
       taxonomyReader: input.taxonomyReader,
+      officialTitleSuggestion,
       now: input.now,
     })
+  const invalidatedExactCategory = Boolean(
+    exactCanonicalCategoryId && !useExactCanonicalAuthority,
+  )
+  const exactSemanticCompatibility = useExactCanonicalAuthority
+    ? Object.freeze({
+      status: "PROVEN" as const,
+      categoryId: exactCanonicalCategoryId,
+      familyTypeFingerprint: productTruth.familyTypeFingerprint,
+      evidenceClass: acceptedListingProof
+        ? "EXACT_LISTING_ACCEPTANCE" as const
+        : suppliedSemanticProof
+          ? String(suppliedSemantic.evidenceClass) as
+            "EXACT_LISTING_ACCEPTANCE" | "OFFICIAL_TITLE_SUGGESTION" |
+            "EXACT_PRODUCT_TRUTH_CATEGORY"
+          : "OFFICIAL_TITLE_SUGGESTION" as const,
+      evidenceDigest: officialSuggestionProof && officialTitleSuggestion
+        ? ebayCategoryTaxonomySnapshotDigestV1(officialTitleSuggestion)
+        : text(suppliedSemantic.evidenceDigest, 100) || null,
+    }) : null
   const contextBinding = {
     contextBindingVersion: "SELLER_OS_EBAY_LISTING_CONTEXT_ISOLATION_V1",
     marketplaceId: input.context.marketplaceId,
@@ -918,9 +1062,21 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
     candidateKey: input.context.candidateKey,
   }
   if (resolution.status !== "AUTO_SELECTED" || !resolution.selectedCategory) {
+    const packageData = invalidatedExactCategory
+      ? invalidateCategoryDerivedPackageStateV1({
+        packageData: input.packageData,
+        oldCategoryId: exactCanonicalCategoryId,
+        newCategoryId: null,
+      }) : input.packageData
     return Object.freeze({
       packageData: {
-        ...input.packageData,
+        ...packageData,
+        ...(invalidatedExactCategory ? {
+          categoryId: null,
+          categoryName: null,
+          aspects: {},
+          taxonomyPreflight: null,
+        } : {}),
         categoryResolverV1: {
           ...contextBinding,
           ...resolution,
@@ -933,6 +1089,10 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
           categorySource: resolution.categorySource,
           categoryBlockerReason: resolution.categoryBlockerReason,
           capabilityUnavailable: resolution.capabilityUnavailable,
+          semanticCompatibility: null,
+          priorExactCategoryInvalidated: invalidatedExactCategory,
+          priorExactCategoryId: invalidatedExactCategory
+            ? exactCanonicalCategoryId : null,
         },
       },
       resolution,
@@ -941,6 +1101,18 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
     })
   }
   const selected = resolution.selectedCategory
+  const selectedSemanticCompatibility = exactSemanticCompatibility
+    ?? Object.freeze({
+      status: "PROVEN" as const,
+      categoryId: selected.categoryId,
+      familyTypeFingerprint: productTruth.familyTypeFingerprint,
+      evidenceClass: selected.listingAccepted
+        ? "EXACT_LISTING_ACCEPTANCE" as const
+        : selected.sources.includes("PRODUCT_TRUTH")
+          ? "EXACT_PRODUCT_TRUTH_CATEGORY" as const
+          : "OFFICIAL_TITLE_SUGGESTION" as const,
+      evidenceDigest: selected.taxonomySnapshotDigest,
+    })
   const existingTaxonomyPreflight = record(
     input.packageData.taxonomyPreflight,
   )
@@ -971,7 +1143,7 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
     unprovenAspectEvidenceRequirements:
       productTruth.unprovenAspectEvidenceRequirements,
   })
-  const learning = exactCanonicalCategoryId
+  const learning = useExactCanonicalAuthority
     ? null
     : await persistEbayCategoryResolverLearningV1({
       supabase: input.supabase,
@@ -981,16 +1153,24 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
       selected,
       now: input.now,
     })
+  const categoryChanged = invalidatedExactCategory
+    || categoryId(input.packageData.categoryId) !== selected.categoryId
+  const packageData = categoryChanged
+    ? invalidateCategoryDerivedPackageStateV1({
+      packageData: input.packageData,
+      oldCategoryId: categoryId(input.packageData.categoryId),
+      newCategoryId: selected.categoryId,
+    }) : input.packageData
   return Object.freeze({
     packageData: {
-      ...input.packageData,
+      ...packageData,
       categoryId: selected.categoryId,
-      categoryName: selected.categoryName ?? input.packageData.categoryName ?? null,
+      categoryName: selected.categoryName ?? null,
       aspects: preflight.resolvedAspects,
       taxonomyPreflight: preflight,
       categoryResolverV1: {
         ...contextBinding,
-        authorityClass: exactCanonicalCategoryId
+        authorityClass: useExactCanonicalAuthority
           ? input.exactCanonicalCategory?.authorityClass
             ?? EBAY_CATEGORY_RESOLVER_V1
           : EBAY_CATEGORY_RESOLVER_V1,
@@ -1012,12 +1192,16 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
         learningId: learning?.id ?? null,
         testedCategoryIds: resolution.testedCategoryIds,
         listingAcceptance: learning?.listingAcceptance ?? "UNKNOWN",
+        semanticCompatibility: selectedSemanticCompatibility,
+        priorExactCategoryInvalidated: invalidatedExactCategory,
+        priorExactCategoryId: invalidatedExactCategory
+          ? exactCanonicalCategoryId : null,
         manualCategorySelectionRequired: false,
-        categorySelectionMode: exactCanonicalCategoryId
+        categorySelectionMode: useExactCanonicalAuthority
           ? "PRESERVED_EXACT_CANONICAL_AUTHORITY"
           : "AUTOMATIC_CATEGORY_RESOLUTION",
-        exactCanonicalCategoryPreserved: Boolean(exactCanonicalCategoryId),
-        explicitReclassificationRequired: Boolean(exactCanonicalCategoryId),
+        exactCanonicalCategoryPreserved: useExactCanonicalAuthority,
+        explicitReclassificationRequired: invalidatedExactCategory,
         codexRequired: false,
         marketplaceWrites: 0,
       },
@@ -1034,6 +1218,10 @@ const CANONICAL_CATEGORY_BINDING_FIELDS = [
   "aspects",
   "taxonomyPreflight",
   "categoryResolverV1",
+  "quickPickMarketTestPackageV1",
+  "quickPickOwnerReviewV1",
+  "draftConfiguration",
+  "categoryDerivedStateInvalidationV1",
 ] as const
 
 function canonicalCategoryBindingProjectionV1(
