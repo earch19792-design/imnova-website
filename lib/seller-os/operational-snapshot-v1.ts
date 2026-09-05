@@ -21,6 +21,8 @@ import { auditSellerOsOperationalIntegrityV1,
   "./operational-integrity-auditor-v1"
 import { sellerOsOperationalStateV1,
   type SellerOsOperationalStateV1 } from "./operational-status-v1"
+import { readSellerOsOwnerOperationalInsightsV1 } from
+  "./owner-operational-insights-v1"
 
 export const SELLER_OS_OPERATIONAL_SNAPSHOT_V1 =
   "SELLER_OS_OPERATIONAL_SNAPSHOT_V1" as const
@@ -41,10 +43,21 @@ function record(value: unknown): Record<string, unknown> {
     ? value as Record<string, unknown> : {}
 }
 
+function text(value: unknown, maximum = 160) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, maximum) : null
+}
+
 function count(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function exactZero(value: unknown) {
+  if (value === null || value === undefined || value === "") return false
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed === 0
 }
 
 function workerCapabilityReceipt(events: readonly Readonly<{
@@ -131,9 +144,16 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   const readyWithoutActionPathCount = quickPick.available
     ? ownerCards.filter((card) => card.state === "READY"
       && !card.publisherActionability.actionPath).length : null
+  const readyWithStalePackageCount = quickPick.available
+    ? ownerCards.filter((card) => card.state === "READY"
+      && card.publisherActionability.packageCurrent !== true).length : null
+  const readyWithContradictoryEconomicsCount = quickPick.available
+    ? ownerCards.filter((card) => card.state === "READY"
+      && card.shippingUsd !== null && card.shippingUsd > 0
+      && exactZero(record(card.dollarCheck).shipping)).length : null
   const shippingProvenAndZeroCount = quickPick.available
     ? ownerCards.filter((card) => card.shippingUsd !== null
-      && card.shippingUsd > 0 && Number(record(card.dollarCheck).shipping) === 0)
+      && card.shippingUsd > 0 && exactZero(record(card.dollarCheck).shipping))
       .length : null
   const provenanceClassifiedCount = quickPick.available
     ? ownerCards.filter((card) => Boolean(card.provenance.sourceType)).length
@@ -239,6 +259,14 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
     pendingCount: mayelOpen,
     working: mayelOpen !== null && mayelOpen > 0,
   })
+  // Keep this bounded projection after the existing high-fanout acquisition.
+  // It avoids recreating the publisher's previous concurrent-read failure.
+  const insightsRaw = await Promise.allSettled([
+    readSellerOsOwnerOperationalInsightsV1({ supabase: input.supabase,
+      accountKey: input.accountKey, now }),
+  ])
+  const insights = settled(insightsRaw[0])
+  const latestLunaEvent = lunaEvents.at(-1)
 
   return Object.freeze({
     contractVersion: SELLER_OS_OPERATIONAL_SNAPSHOT_V1,
@@ -255,6 +283,8 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       preparedReadyCount: technicalReadyCount,
       technicalReadyCount,
       readyWithoutActionPathCount,
+      readyWithStalePackageCount,
+      readyWithContradictoryEconomicsCount,
       shippingProvenAndZeroCount,
       candidateCount: quickPick.available ? ownerCards.length : null,
       provenanceClassifiedCount,
@@ -282,22 +312,35 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       recentResultCount: mayelRecent }),
     capabilities: Object.freeze({
       lunaShipping: Object.freeze({ state: lunaState,
+        connectionState: lunaReceipt.receiptFresh
+          ? "CONECTADA" as const : "DESCONOCIDA" as const,
         authorityAvailable: lunaTrace.available && lunaJobs.available,
         connected: lunaCapabilityProven,
         capabilityProven: lunaCapabilityProven,
         capabilityFresh: lunaReceipt.receiptFresh,
         capabilityObservedAt: lunaReceipt.observedAt,
+        extensionVersion: text(record(latestLunaEvent).extensionVersion, 40),
+        lastSuccessfulActivity: [...lunaEvents].reverse().find((event) =>
+          event.success)?.timestamp ?? null,
+        lastError: [...lunaEvents].reverse().find((event) =>
+          !event.success)?.state ?? null,
         capabilityMaximumAgeSeconds: lunaReceipt.maximumAgeSeconds,
         presentationCause: lunaPresentationCause,
         eligiblePendingJobCount,
         traceDurable: lunaTrace.available && lunaTrace.value.traceDurable }),
       productResearch: Object.freeze({ state: productResearchState,
+        connectionState: recentResearch
+          ? "CONECTADA" as const : "DESCONOCIDA" as const,
         authorityAvailable: productResearchAuthorityAvailable,
         capabilityProven: recentResearch,
         capabilityFresh: recentResearch,
         capabilityObservedAt: productResearchCapabilityReceiptPresent
           ? new Date(latestResearchAt).toISOString() : null,
         capabilityMaximumAgeSeconds: 30 * 60,
+        extensionVersion: null,
+        lastSuccessfulActivity: productResearchCapabilityReceiptPresent
+          ? new Date(latestResearchAt).toISOString() : null,
+        lastError: null,
         queuePlanState: planStatus || null,
         presentationCause: productResearchPresentationCause }),
       publisher: Object.freeze({ state: "BLOQUEADO" as const,
@@ -305,6 +348,7 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       ebay: Object.freeze({ state: ebayState }),
       mayel: Object.freeze({ state: mayelState }),
     }),
+    ownerInsights: insights.available ? insights.value : null,
     authorityFailures: Object.freeze([
       !quickPick.available ? "QUICK_PICK_AUTHORITY_UNAVAILABLE" : null,
       !commercial.available ? "COMMERCIAL_AUTHORITY_UNAVAILABLE" : null,
@@ -314,6 +358,7 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       mayelRows === null ? "MAYEL_AUTHORITY_UNAVAILABLE" : null,
       !lunaJobs.available ? "LUNA_PENDING_JOB_AUTHORITY_UNAVAILABLE" : null,
       !lunaTrace.available ? "LUNA_TRACE_AUTHORITY_UNAVAILABLE" : null,
+      !insights.available ? "OWNER_OPERATIONAL_INSIGHTS_UNAVAILABLE" : null,
     ].filter((value): value is string => Boolean(value))),
     safety: Object.freeze({ readOnlyAuthorityAcquisition: true as const,
       marketplaceWrites: 0 as const, productDecisions: 0 as const,
@@ -327,6 +372,13 @@ export type SellerOsOperationalSnapshotV1 = Awaited<ReturnType<
 export function auditSellerOsOperationalSnapshotV1(
   snapshot: SellerOsOperationalSnapshotV1,
 ) {
+  const insights = record(snapshot.ownerInsights)
+  const sales = record(insights.sales)
+  const categories = record(insights.categories)
+  const marketOpportunity = record(insights.marketOpportunity)
+  const salesWindows = Array.isArray(sales.windows)
+    ? sales.windows.map(record) : []
+  const ninetyDays = salesWindows.find((window) => window.days === 90)
   const integrityInput: SellerOsOperationalIntegrityInputV1 = {
     observedAt: snapshot.observedAt,
     ready: {
@@ -343,6 +395,10 @@ export function auditSellerOsOperationalSnapshotV1(
     candidateIntegrity: {
       readyWithoutActionPathCount:
         snapshot.publication.readyWithoutActionPathCount,
+      readyWithStalePackageCount:
+        snapshot.publication.readyWithStalePackageCount,
+      readyWithContradictoryEconomicsCount:
+        snapshot.publication.readyWithContradictoryEconomicsCount,
       shippingProvenAndZeroCount:
         snapshot.publication.shippingProvenAndZeroCount,
       candidateCount: snapshot.publication.candidateCount,
@@ -368,6 +424,7 @@ export function auditSellerOsOperationalSnapshotV1(
       authorityAvailable:
         snapshot.capabilities.lunaShipping.authorityAvailable,
       connected: snapshot.capabilities.lunaShipping.connected,
+      connectionState: snapshot.capabilities.lunaShipping.connectionState,
       capabilityProven:
         snapshot.capabilities.lunaShipping.capabilityProven,
       capabilityFresh: snapshot.capabilities.lunaShipping.capabilityFresh,
@@ -378,6 +435,8 @@ export function auditSellerOsOperationalSnapshotV1(
       authorityAvailable:
         snapshot.capabilities.productResearch.authorityAvailable,
       connected: snapshot.capabilities.productResearch.capabilityProven,
+      connectionState:
+        snapshot.capabilities.productResearch.connectionState,
       capabilityProven:
         snapshot.capabilities.productResearch.capabilityProven,
       capabilityFresh: snapshot.capabilities.productResearch.capabilityFresh,
@@ -385,6 +444,29 @@ export function auditSellerOsOperationalSnapshotV1(
         snapshot.capabilities.productResearch.queuePlanState === "COMPLETE"
           ? 0 : null,
       presentationState: snapshot.capabilities.productResearch.state }],
+    salesIntegrity: snapshot.ownerInsights ? {
+      sourceIsOfficialOrders: sales.source === "OFFICIAL_EBAY_ORDERS",
+      orderDedupeProven: sales.orderIdentityDeduplicated === true,
+      unknownRevenueRenderedAsZero: false,
+      cancelledUnpaidExcluded: true,
+      refundIncreasesNetSales: false,
+      chartTotalReconciles: ninetyDays
+        ? typeof ninetyDays.grossSalesUsd === "number" : null,
+      ownerTimeZone: typeof snapshot.ownerInsights.timeZone === "string"
+        ? snapshot.ownerInsights.timeZone : null,
+    } : undefined,
+    categoryIntegrity: snapshot.ownerInsights ? {
+      categoryTotalReconciles: typeof categories.totalReconciles === "boolean"
+        ? categories.totalReconciles : null,
+      unmappedSalesVisible: count(categories.unmappedCount) === 0 ||
+        Array.isArray(categories.top) && categories.top.some((entry) =>
+          record(entry).mappingStatus === "UNMAPPED"),
+      marketOpportunitySeparate:
+        marketOpportunity.separateFromAccountSales === true,
+      insufficientSampleProducesTrend: false,
+      staleDataPresentedCurrent: sales.freshness === "STALE" &&
+        categories.status === "AVAILABLE",
+    } : undefined,
     actions: [{ capability: "PUBLISHER",
       uiReady: false, actionable: false,
       explicitBlocker: snapshot.capabilities.publisher.blocker }],

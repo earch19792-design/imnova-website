@@ -31,6 +31,8 @@ export type SellerOsOperationalIntegrityInputV1 = Readonly<{
   }>
   candidateIntegrity?: Readonly<{
     readyWithoutActionPathCount: number | null
+    readyWithStalePackageCount: number | null
+    readyWithContradictoryEconomicsCount: number | null
     shippingProvenAndZeroCount: number | null
     candidateCount: number | null
     provenanceClassifiedCount: number | null
@@ -46,11 +48,28 @@ export type SellerOsOperationalIntegrityInputV1 = Readonly<{
     worker: string
     authorityAvailable: boolean
     connected: boolean
+    connectionState?: string
     capabilityProven: boolean
     capabilityFresh: boolean
     eligiblePendingJobCount: number | null
     presentationState: string
   }>[]
+  salesIntegrity?: Readonly<{
+    sourceIsOfficialOrders: boolean
+    orderDedupeProven: boolean
+    unknownRevenueRenderedAsZero: boolean
+    cancelledUnpaidExcluded: boolean
+    refundIncreasesNetSales: boolean
+    chartTotalReconciles: boolean | null
+    ownerTimeZone: string | null
+  }>
+  categoryIntegrity?: Readonly<{
+    categoryTotalReconciles: boolean | null
+    unmappedSalesVisible: boolean
+    marketOpportunitySeparate: boolean
+    insufficientSampleProducesTrend: boolean
+    staleDataPresentedCurrent: boolean
+  }>
   actions?: readonly Readonly<{
     capability: string
     uiReady: boolean
@@ -199,11 +218,60 @@ export function auditSellerOsOperationalIntegrityV1(
     }))
   }
 
+  const sales = input.salesIntegrity
+  if (sales) for (const [code, failureClass, passes] of [
+    ["OFFICIAL_ORDER_COUNT_MUST_NOT_BE_DERIVED_FROM_ANALYTICS",
+      "NON_OFFICIAL_SALES_AUTHORITY", sales.sourceIsOfficialOrders],
+    ["ORDER_DEDUPE_REQUIRED", "ORDER_IDENTITY_DEDUPE_UNPROVEN",
+      sales.orderDedupeProven],
+    ["UNKNOWN_REVENUE_MUST_NOT_RENDER_AS_ZERO",
+      "UNKNOWN_REVENUE_RENDERED_ZERO", !sales.unknownRevenueRenderedAsZero],
+    ["REFUND_MUST_NOT_INCREASE_NET_SALES", "REFUND_NET_SALES_INVERSION",
+      !sales.refundIncreasesNetSales],
+    ["CANCELLED_UNPAID_ORDER_MUST_NOT_COUNT_AS_CONFIRMED_REVENUE",
+      "UNCONFIRMED_ORDER_COUNTED_AS_REVENUE", sales.cancelledUnpaidExcluded],
+    ["SALES_CHART_TOTAL_MUST_RECONCILE_WITH_OFFICIAL_ORDER_AUTHORITY",
+      "SALES_CHART_TOTAL_DIVERGENCE", sales.chartTotalReconciles],
+    ["OWNER_TIME_BUCKETS_MUST_USE_DECLARED_OPERATIONAL_TIMEZONE",
+      "OWNER_SALES_TIMEZONE_DIVERGENCE",
+      sales.ownerTimeZone === "America/Managua"],
+  ] as const) checks.push(check({ invariantCode: code,
+    status: passes === null ? "UNKNOWN" : passes ? "PASS" : "VIOLATION",
+    failureClass, retrySafety: "ENGINEERING_REQUIRED",
+    recoveryClass: "ENGINEERING_REQUIRED", evidence: { passes,
+      ownerTimeZone: sales.ownerTimeZone },
+    regressionGuard: { officialOrdersOnly: true, unknownIsNotZero: true,
+      ownerTimeZone: "America/Managua" } }))
+
+  const categories = input.categoryIntegrity
+  if (categories) for (const [code, failureClass, passes] of [
+    ["CATEGORY_SALES_TOTAL_MUST_RECONCILE_WITH_OFFICIAL_ORDER_TOTAL",
+      "CATEGORY_SALES_TOTAL_DIVERGENCE", categories.categoryTotalReconciles],
+    ["UNMAPPED_LISTING_CATEGORY_MUST_NOT_BE_SILENTLY_DROPPED",
+      "UNMAPPED_CATEGORY_SILENTLY_DROPPED", categories.unmappedSalesVisible],
+    ["MARKET_OPPORTUNITY_MUST_NOT_BE_MERGED_WITH_ACCOUNT_SALES",
+      "MARKET_AND_ACCOUNT_SALES_MERGED", categories.marketOpportunitySeparate],
+    ["INSUFFICIENT_SAMPLE_MUST_NOT_PRODUCE_FALSE_TREND",
+      "FALSE_CATEGORY_TREND", !categories.insufficientSampleProducesTrend],
+    ["STALE_CATEGORY_DATA_MUST_NOT_BE_PRESENTED_AS_CURRENT",
+      "STALE_CATEGORY_PRESENTED_CURRENT", !categories.staleDataPresentedCurrent],
+  ] as const) checks.push(check({ invariantCode: code,
+    status: passes === null ? "UNKNOWN" : passes ? "PASS" : "VIOLATION",
+    failureClass, retrySafety: "ENGINEERING_REQUIRED",
+    recoveryClass: "ENGINEERING_REQUIRED", evidence: { passes },
+    regressionGuard: { unmappedMustRemainVisible: true,
+      accountSalesSeparatedFromMarketOpportunity: true } }))
+
   const candidates = input.candidateIntegrity
   if (candidates) {
     for (const [code, failureClass, value] of [
       ["READY_WITHOUT_ACTION_PATH_ZERO", "READY_WITHOUT_ACTION_PATH",
         candidates.readyWithoutActionPathCount],
+      ["READY_WITH_STALE_PACKAGE_ZERO", "READY_WITH_STALE_PACKAGE",
+        candidates.readyWithStalePackageCount],
+      ["READY_WITH_CONTRADICTORY_ECONOMICS_ZERO",
+        "READY_WITH_CONTRADICTORY_ECONOMICS",
+        candidates.readyWithContradictoryEconomicsCount],
       ["SHIPPING_PROVEN_AND_SHIPPING_ZERO_ZERO",
         "CONTRADICTORY_ECONOMICS_PRESENTATION",
         candidates.shippingProvenAndZeroCount],
@@ -292,6 +360,21 @@ export function auditSellerOsOperationalIntegrityV1(
         freshWorkerCapabilityPassMustNotBeUnknown: true,
         expiredOrMissingCapabilityMayRemainUnknown: true,
       },
+    }))
+    const freshHandshakeUnknown = worker.authorityAvailable
+      && worker.capabilityFresh && worker.connected
+      && worker.connectionState === "DESCONOCIDA"
+    checks.push(check({
+      invariantCode: `FRESH_HANDSHAKE_AND_IDENTITY_NOT_UNKNOWN:${worker.worker}`,
+      status: freshHandshakeUnknown ? "VIOLATION" : "PASS",
+      failureClass: "FRESH_EXTENSION_CONNECTION_PRESENTED_UNKNOWN",
+      retrySafety: "SAFE_READ_ONLY_RECONCILIATION",
+      recoveryClass: "AUTO_RECOVERABLE",
+      evidence: { worker: worker.worker, connected: worker.connected,
+        capabilityFresh: worker.capabilityFresh,
+        connectionState: worker.connectionState ?? null },
+      regressionGuard: { freshHandshakePassMustNotRenderUnknown: true,
+        unknownDoesNotEqualDisconnected: true },
     }))
   }
 
