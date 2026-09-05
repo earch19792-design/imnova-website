@@ -39,6 +39,16 @@ function validCategoryId(value: unknown) {
   return typeof value === "string" && /^\d{1,20}$/.test(value)
 }
 
+export function prioritizeCategoryAuthorityRecoveryRowsV1(
+  packageRows: readonly JsonRecord[],
+  readyCandidateKeys: readonly string[],
+) {
+  const ready = new Set(readyCandidateKeys.filter(validCandidateKey))
+  return [...packageRows].sort((left, right) =>
+    Number(ready.has(String(right.candidate_key)))
+      - Number(ready.has(String(left.candidate_key))))
+}
+
 export function projectFalseExactCategoryAuthorityRecoveryV1(value: unknown) {
   const row = record(value)
   const packageData = record(row.package_data)
@@ -89,13 +99,25 @@ async function readRecoveryRowsV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
 }>) {
-  const read = await input.supabase.from("ebay_listing_packages")
-    .select("id,account_key,opportunity_id,candidate_key,created_by,package_data,updated_at")
-    .eq("account_key", input.accountKey)
-    .order("updated_at", { ascending: false })
-    .limit(MAXIMUM_SCAN_ROWS)
-  if (read.error) throw new Error("CATEGORY_AUTHORITY_RECOVERY_SCOPE_READ_FAILED")
-  return rows(read.data)
+  const [packageRead, readyRead] = await Promise.all([
+    input.supabase.from("ebay_listing_packages")
+      .select("id,account_key,opportunity_id,candidate_key,created_by,package_data,updated_at")
+      .eq("account_key", input.accountKey)
+      .order("updated_at", { ascending: false })
+      .limit(MAXIMUM_SCAN_ROWS),
+    input.supabase.from("ebay_luna_opportunity_queue")
+      .select("candidate_key")
+      .eq("queue_status", "ready")
+      .in("decision", ["MARKET_TEST_READY", "LISTING_READY"])
+      .limit(250),
+  ])
+  if (packageRead.error || readyRead.error) {
+    throw new Error("CATEGORY_AUTHORITY_RECOVERY_SCOPE_READ_FAILED")
+  }
+  const readyCandidateKeys = rows(readyRead.data).flatMap((row) =>
+    validCandidateKey(row.candidate_key) ? [String(row.candidate_key)] : [])
+  return prioritizeCategoryAuthorityRecoveryRowsV1(
+    rows(packageRead.data), readyCandidateKeys)
 }
 
 type Materialize = typeof materializeSellerOsDeterministicFactoryCandidateV1
