@@ -15,7 +15,7 @@
   "crons": [
     {
       "path": "/api/cron/quick-pick-runtime-recovery",
-      "schedule": "30 5 * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/market-radar-luna-sync",

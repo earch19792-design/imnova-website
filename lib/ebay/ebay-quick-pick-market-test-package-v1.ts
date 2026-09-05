@@ -262,10 +262,10 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     ...(Array.isArray(catalog.tags) ? catalog.tags.map((value) =>
       text(value, 120)) : []), ...Object.values(aspects.values).map((value) =>
       text(value, 300))].filter(Boolean).join(" ")
-  const marketTest = (minimumContractCurrent
-      && minimumReadiness.marketTestReady === true)
-    || marketTestReview.finalDecision === "MARKET_TEST_READY"
-    || input.opportunity.decision === "MARKET_TEST_READY"
+  const marketTest = minimumContractCurrent
+    ? minimumReadiness.marketTestReady === true
+    : marketTestReview.finalDecision === "MARKET_TEST_READY"
+      || input.opportunity.decision === "MARKET_TEST_READY"
   const generatedTitle = optimizedTitle({ exactTitle,
     primaryPhrase: text(titleStrategy.primarySearchPhrase, 160),
     aspects: aspects.values, exactEvidence })
@@ -374,9 +374,9 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     ownerReview.authorizedSku === supplierSku &&
     boundLineage.lunaProductId === lunaProductId &&
     boundLineage.lunaVariantId === lunaVariantId
-  const listingReady = !marketTest && ((minimumContractCurrent
-      && minimumReadiness.listingReady === true)
-    || input.opportunity.decision === "LISTING_READY")
+  const listingReady = !marketTest && (minimumContractCurrent
+    ? minimumReadiness.listingReady === true
+    : input.opportunity.decision === "LISTING_READY")
   const publishableAsMarketTest = marketTest && packageReady
   const publishableReadiness = packageReady &&
     (listingReady || publishableAsMarketTest)

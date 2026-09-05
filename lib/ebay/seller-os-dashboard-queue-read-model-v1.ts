@@ -22,6 +22,8 @@ const QUEUE_READ_MODEL_PROJECTION = [
   "dashboard_is_quick_pick", "dashboard_is_radar_candidate",
   "dashboard_radar_family_id", "dashboard_radar_luna_sku",
   "dashboard_quick_pick_operation_id",
+  "dashboard_minimum_readiness_current", "dashboard_minimum_listing_ready",
+  "dashboard_minimum_market_test_ready",
 ].join(",")
 
 function record(value: unknown): Record<string, unknown> {
@@ -100,9 +102,9 @@ async function loadSellerOsDashboardQueueReadModelV1(
       queueDatabaseReadCount: 1 as const,
       broadQueuePayloadRead: false as const,
       separateQueueCountQueries: 0 as const,
-      selectedQueueFieldCount: 14 as const,
+      selectedQueueFieldCount: 17 as const,
       assessmentJsonRead: false as const,
-      generatedAuthorityProjectionCount: 5 as const,
+      generatedAuthorityProjectionCount: 8 as const,
       boundedRowLimit: QUEUE_ROW_LIMIT,
       totalQueueRows: queueRead.count ?? rows.length,
       truncated: (queueRead.count ?? rows.length) > rows.length,

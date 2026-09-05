@@ -44,6 +44,7 @@ export function projectFalseExactCategoryAuthorityRecoveryV1(value: unknown) {
   const packageData = record(row.package_data)
   const resolver = record(packageData.categoryResolverV1)
   const semantic = record(resolver.semanticCompatibility)
+  const invalidation = record(packageData.categoryDerivedStateInvalidationV1)
   const categoryId = validCategoryId(packageData.categoryId)
     ? String(packageData.categoryId) : null
   const familyTypeFingerprint = typeof resolver.familyTypeFingerprint ===
@@ -57,13 +58,17 @@ export function projectFalseExactCategoryAuthorityRecoveryV1(value: unknown) {
       semantic.evidenceClass ?? ""))
   const deterministicFactoryPackage =
     isSellerOsDeterministicFactoryPackageV1(packageData)
+  const rematerializationPending = invalidation.contractVersion ===
+      "SELLER_OS_CATEGORY_DERIVED_STATE_INVALIDATION_V1"
+    && invalidation.packageReadinessInvalidated === true
+    && invalidation.packageRematerializedByRuntime !== true
   const eligible = deterministicFactoryPackage
     && validUuid(row.id)
     && validUuid(row.opportunity_id)
     && validCandidateKey(row.candidate_key)
     && resolver.status === "AUTO_SELECTED"
     && Boolean(categoryId)
-    && !semanticProofCurrent
+    && (!semanticProofCurrent || rematerializationPending)
   return Object.freeze({
     eligible,
     listingPackageId: eligible ? String(row.id) : null,
@@ -71,7 +76,9 @@ export function projectFalseExactCategoryAuthorityRecoveryV1(value: unknown) {
     candidateKey: eligible ? String(row.candidate_key) : null,
     oldCategoryId: eligible ? categoryId : null,
     reasonCode: eligible
-      ? "CATEGORY_SEMANTIC_AUTHORITY_UNPROVEN"
+      ? rematerializationPending
+        ? "CATEGORY_PACKAGE_REMATERIALIZATION_PENDING"
+        : "CATEGORY_SEMANTIC_AUTHORITY_UNPROVEN"
       : semanticProofCurrent ? "SEMANTIC_AUTHORITY_ALREADY_PROVEN"
         : !deterministicFactoryPackage ? "PACKAGE_NOT_DETERMINISTIC_FACTORY"
           : "CATEGORY_AUTHORITY_NOT_RECOVERABLE",

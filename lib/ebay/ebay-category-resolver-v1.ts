@@ -899,6 +899,7 @@ export function invalidateCategoryDerivedPackageStateV1(input: Readonly<{
       categoryCertificationInvalidated: true,
       categoryDerivedRequiredSpecificsInvalidated: true,
       packageReadinessInvalidated: true,
+      packageRematerializedByRuntime: false,
       oldPackageDigestInvalidated: Boolean(oldPackageDigest),
       ownerReauthorizationRequired: true,
       oldCategoryDerivedSpecificsReused: false,
@@ -906,6 +907,18 @@ export function invalidateCategoryDerivedPackageStateV1(input: Readonly<{
       marketplaceWrites: 0,
     },
   })
+}
+
+export function categoryMaterialPackageChangedV1(input: Readonly<{
+  currentCategoryId: unknown
+  resolvedCategoryId: unknown
+  currentAspects: unknown
+  resolvedAspects: unknown
+}>) {
+  return categoryId(input.currentCategoryId) !==
+      categoryId(input.resolvedCategoryId)
+    || !isDeepStrictEqual(record(input.currentAspects),
+      record(input.resolvedAspects))
 }
 
 export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
@@ -1153,9 +1166,13 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
       selected,
       now: input.now,
     })
-  const categoryChanged = invalidatedExactCategory
-    || categoryId(input.packageData.categoryId) !== selected.categoryId
-  const packageData = categoryChanged
+  const categoryMaterialChanged = categoryMaterialPackageChangedV1({
+    currentCategoryId: input.packageData.categoryId,
+    resolvedCategoryId: selected.categoryId,
+    currentAspects: input.packageData.aspects,
+    resolvedAspects: preflight.resolvedAspects,
+  })
+  const packageData = categoryMaterialChanged
     ? invalidateCategoryDerivedPackageStateV1({
       packageData: input.packageData,
       oldCategoryId: categoryId(input.packageData.categoryId),
@@ -1201,7 +1218,9 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
           ? "PRESERVED_EXACT_CANONICAL_AUTHORITY"
           : "AUTOMATIC_CATEGORY_RESOLUTION",
         exactCanonicalCategoryPreserved: useExactCanonicalAuthority,
-        explicitReclassificationRequired: invalidatedExactCategory,
+        explicitReclassificationRequired:
+          categoryId(input.packageData.categoryId) !== selected.categoryId,
+        materialPackageChanged: categoryMaterialChanged,
         codexRequired: false,
         marketplaceWrites: 0,
       },

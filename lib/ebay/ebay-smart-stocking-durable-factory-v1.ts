@@ -920,6 +920,31 @@ function preserveCanonicalCategoryBindingV1(
   return next
 }
 
+export function rematerializeSellerOsDeterministicPackageDataV1(
+  seed: JsonRecord,
+  durablePackageData: JsonRecord,
+) {
+  const next = preserveCanonicalCategoryBindingV1(seed, durablePackageData)
+  const ownerReview = record(durablePackageData.quickPickOwnerReviewV1)
+  const authorizedEdits = record(ownerReview.authorizedEdits)
+  const authorizedTitle = text(authorizedEdits.title)
+  const authorizedDescription = text(authorizedEdits.description)
+  const invalidation = record(
+    durablePackageData.categoryDerivedStateInvalidationV1)
+  return Object.freeze({
+    ...next,
+    ...(authorizedTitle ? { title: authorizedTitle } : {}),
+    ...(authorizedDescription ? { description: authorizedDescription } : {}),
+    ...(invalidation.contractVersion ===
+        "SELLER_OS_CATEGORY_DERIVED_STATE_INVALIDATION_V1"
+      ? { categoryDerivedStateInvalidationV1: {
+        ...invalidation,
+        packageRematerializedByRuntime: true,
+        marketplaceWrites: 0,
+      } } : {}),
+  })
+}
+
 export function isGenericSmartStockingListingIntakeV1(value: unknown) {
   const marker = record(record(value).smartStockingListingIntakeV1)
   return isSmartStockingListingIntakeReadinessV1(value)
@@ -1328,7 +1353,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       ...(plan.listingReady
         ? { decision: "LISTING_READY", queue_status: "ready" }
         : plan.marketTestReady
-          ? { decision: "MARKET_TEST_READY", queue_status: "ready" } : {}),
+          ? { decision: "MARKET_TEST_READY", queue_status: "ready" }
+          : { queue_status: "review" }),
       updated_at: new Date().toISOString(),
     }).eq("id", input.opportunityId).eq("candidate_key", input.candidateKey)
     .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,gtin,decision,assessment")
@@ -1347,19 +1373,26 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   let packageCreated = false
   if (existingPackage) {
     listingPackage = existingPackage
-    if (existingPackage.created_by === null
-      && isSellerOsDeterministicFactoryPackageV1(existingPackage.package_data)) {
-      const packageWrite = await input.supabase.from("ebay_listing_packages")
+    if (isSellerOsDeterministicFactoryPackageV1(
+      existingPackage.package_data)) {
+      let packageWriteQuery = input.supabase.from("ebay_listing_packages")
         .update({
-          package_data: preserveCanonicalCategoryBindingV1(
+          package_data: rematerializeSellerOsDeterministicPackageDataV1(
             plan.packageSeed, record(existingPackage.package_data)),
           status: plan.listingReady || plan.marketTestReady
             ? "ready_for_review" : "draft",
           readiness: plan.readiness,
           source_observed_at: opportunity.supplier_snapshot_at ?? null,
           updated_at: new Date().toISOString(),
-        }).eq("id", existingPackage.id).eq("opportunity_id", input.opportunityId)
-        .is("created_by", null).select("*").single()
+        }).eq("id", existingPackage.id)
+        .eq("account_key", input.accountKey)
+        .eq("opportunity_id", input.opportunityId)
+        .eq("candidate_key", input.candidateKey)
+        .eq("updated_at", existingPackage.updated_at)
+      packageWriteQuery = existingPackage.created_by === null
+        ? packageWriteQuery.is("created_by", null)
+        : packageWriteQuery.eq("created_by", existingPackage.created_by)
+      const packageWrite = await packageWriteQuery.select("*").maybeSingle()
       if (packageWrite.error || !packageWrite.data) {
         throw new Error("DETERMINISTIC_FACTORY_PACKAGE_REUSE_FAILED")
       }

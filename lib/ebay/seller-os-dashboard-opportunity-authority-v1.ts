@@ -24,6 +24,9 @@ export type SellerOsDashboardQueueAuthorityRowV1 = Readonly<{
   dashboard_radar_family_id?: unknown
   dashboard_radar_luna_sku?: unknown
   dashboard_quick_pick_operation_id?: unknown
+  dashboard_minimum_readiness_current?: unknown
+  dashboard_minimum_listing_ready?: unknown
+  dashboard_minimum_market_test_ready?: unknown
 }>
 
 type LiveMatch = Readonly<{ ebayItemIds: readonly string[] }>
@@ -76,6 +79,26 @@ function radarAssessment(row: SellerOsDashboardQueueAuthorityRowV1) {
     Object.keys(record(record(row.assessment).radarFactoryCandidateV1)).length > 0
 }
 
+function minimumTruthfulReadiness(
+  row: SellerOsDashboardQueueAuthorityRowV1,
+) {
+  const minimum = record(record(row.assessment)
+    .minimumTruthfulListingReadinessV1)
+  const currentFromAssessment = minimum.contractVersion ===
+      "MINIMUM_TRUTHFUL_LISTING_READINESS_V1"
+    && minimum.candidateKey === row.candidate_key
+    && minimum.opportunityId === row.id
+  const current = row.dashboard_minimum_readiness_current === true
+    || currentFromAssessment
+  return Object.freeze({ current,
+    listingReady: current && (row.dashboard_minimum_listing_ready === true
+      || currentFromAssessment && minimum.listingReady === true),
+    marketTestReady: current &&
+      (row.dashboard_minimum_market_test_ready === true
+        || currentFromAssessment && minimum.marketTestReady === true),
+  })
+}
+
 function radarHandoff(value: unknown) {
   const projected = record(value)
   const projectedFamilyId = text(projected.dashboard_radar_family_id, 140)
@@ -110,6 +133,11 @@ function classifyQueueRow(row: SellerOsDashboardQueueAuthorityRowV1,
   if (alreadyLive) return "ALREADY_LIVE" as const
   const decision = text(row.decision, 120)
   const queueStatus = text(row.queue_status, 80)
+  const minimum = minimumTruthfulReadiness(row)
+  if (minimum.current) return queueStatus === "ready"
+      && (minimum.listingReady || minimum.marketTestReady)
+    ? "READY" as const : radarAssessment(row)
+      ? "RADAR_SIGNAL" as const : "UNPROVEN" as const
   if (queueStatus === "ready" && decision &&
       OWNER_REVIEW_DECISIONS.has(decision)) return "READY" as const
   if (radarAssessment(row)) return "RADAR_SIGNAL" as const
@@ -150,6 +178,7 @@ function projectQueueRow(row: SellerOsDashboardQueueAuthorityRowV1,
     lunaVariantId: text(row.supplier_variant_id, 100),
     queueStatus: text(row.queue_status, 80),
     decision: text(row.decision, 120),
+    minimumTruthfulReadiness: minimumTruthfulReadiness(row),
     quickPick: quickPickAssessment(row),
     classification: classifyQueueRow(row, alreadyLive),
     alreadyLiveExactProduct: alreadyLive,

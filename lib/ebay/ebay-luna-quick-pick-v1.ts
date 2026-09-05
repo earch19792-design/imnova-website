@@ -1598,14 +1598,14 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const overnightAudit = record(
       assessment.quickPickRadarOvernightEnrichmentV1)
     const specificsResolutions = rows(specificsResolution.resolutions)
-    const listingReady = (minimumContractCurrent
-        && minimumReadiness.listingReady === true)
-      || intake.finalDecision === "LISTING_READY"
-      || row.decision === "LISTING_READY"
-    const marketTestReady = (minimumContractCurrent
-        && minimumReadiness.marketTestReady === true)
-      || marketTestReview.finalDecision === "MARKET_TEST_READY"
-      || row.decision === "MARKET_TEST_READY"
+    const listingReady = minimumContractCurrent
+      ? minimumReadiness.listingReady === true
+      : intake.finalDecision === "LISTING_READY"
+        || row.decision === "LISTING_READY"
+    const marketTestReady = minimumContractCurrent
+      ? minimumReadiness.marketTestReady === true
+      : marketTestReview.finalDecision === "MARKET_TEST_READY"
+        || row.decision === "MARKET_TEST_READY"
     const reviewReady = listingReady || marketTestReady
     const autonomousDisposition = text(
       specificsContinuation.finalDisposition, 120)
