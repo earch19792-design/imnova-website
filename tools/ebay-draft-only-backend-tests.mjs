@@ -30,6 +30,13 @@ const categoryProductIdentifierSource = readFileSync(
   ),
   "utf8",
 )
+const publisherSemanticReadbackSource = readFileSync(
+  new URL(
+    "../lib/ebay/ebay-publisher-semantic-readback-v1.ts",
+    import.meta.url,
+  ),
+  "utf8",
+)
 
 function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) {
   const withoutImport = source
@@ -41,10 +48,11 @@ function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) 
     .replace(/import \{\n  canonicalEbayPackageSku,\n  isCanonicalEbayPackageSku,\n\} from "\.\/ebay-sku"\n/, "")
     .replace('import { isCanonicalEbayPackageSku } from "./ebay-sku"\n', "")
     .replace(/import \{ evaluateEbayCategoryProductIdentifierPreflightV1 \} from\n  "\.\/ebay-category-product-identifier-preflight-v1"\n/, "")
+    .replace(/import \{\n  compareEbayInventoryItemReadbackV1,\n  compareEbayOfferReadbackV1,\n  compareEbayPublisherReadbackV1,\n\} from "\.\/ebay-publisher-semantic-readback-v1"\n/, "")
   const categorySource = includeCategoryProductIdentifiers
     ? `${categoryProductIdentifierSource}\n`
     : ""
-  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${categorySource}${withoutImport}`
+  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${publisherSemanticReadbackSource}\n${categorySource}${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(

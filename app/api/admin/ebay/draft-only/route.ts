@@ -379,6 +379,26 @@ async function readExactUnpublishedPublicationState(input: {
   ])
   const safe = inventory.safe && offer.safe
     && skuState.inventoryExists && skuState.offerCount === 1
+  const failedVerification = !inventory.safe ? inventory : !offer.safe ? offer : null
+  const mismatchFields = failedVerification?.mismatchFields ?? []
+  const mismatchClassification = failedVerification?.mismatchClassification ?? []
+  const officialCurrentState = offer.status === "PUBLISHED" || offer.listingPresent
+    ? "PUBLISHED_CONFIRMED"
+    : offer.status === "UNPUBLISHED" && offer.listingPresent === false
+      ? "UNPUBLISHED_CONFIRMED"
+      : "UNKNOWN"
+  const retryable = safe
+    ? false
+    : !inventory.safe
+      ? inventory.retryable
+      : !offer.safe
+        ? offer.retryable
+        : false
+  const ownerActionState = safe
+    ? "SAFE_TO_RETRY"
+    : retryable
+      ? "WAITING_FOR_READBACK"
+      : "AMBIGUOUS_FAIL_CLOSED"
   return {
     safe,
     inventory,
@@ -412,13 +432,7 @@ async function readExactUnpublishedPublicationState(input: {
         : !offer.safe
           ? offer.errorClass
           : "OFFER_STATE_MISMATCH",
-    retryable: safe
-      ? false
-      : !inventory.safe
-        ? inventory.retryable
-        : !offer.safe
-          ? offer.retryable
-          : false,
+    retryable,
     safeNextAction: safe
       ? "OWNER_ACTION_REQUIRED_TO_CONTINUE"
       : !inventory.safe
@@ -426,7 +440,103 @@ async function readExactUnpublishedPublicationState(input: {
         : !offer.safe
           ? offer.safeNextAction
           : "STOP_AND_REVIEW",
+    publisherState: {
+      contractVersion: "SELLER_OS_PUBLISHER_ERROR_CONTRACT_V1",
+      stage: !inventory.safe
+        ? "OFFICIAL_INVENTORY_READBACK"
+        : "OFFICIAL_OFFER_READBACK",
+      errorClass: safe ? null : !inventory.safe
+        ? inventory.errorClass
+        : !offer.safe ? offer.errorClass : "OFFER_STATE_MISMATCH",
+      ebayErrorIds: failedVerification?.errorIds ?? [],
+      mismatchFields,
+      mismatchClassification,
+      retrySafety: safe
+        ? "SAME_LINEAGE_RESUME_SAFE"
+        : retryable
+          ? "READBACK_RETRY_ONLY"
+          : "DO_NOT_RETRY_WRITE",
+      offerId: input.offerId,
+      itemId: null,
+      officialCurrentState,
+      ownerActionState,
+    },
   }
+}
+
+function publisherOfferVerificationReceipt(
+  verificationValue: unknown,
+  offerIdValue: unknown,
+) {
+  const verification = record(verificationValue)
+  const status = text(verification.status).toUpperCase()
+  const listingPresent = verification.listingPresent === true
+  const safe = verification.safe === true
+  const retryable = verification.retryable === true
+  return {
+    contractVersion: "SELLER_OS_PUBLISHER_ERROR_CONTRACT_V1",
+    stage: "OFFICIAL_OFFER_READBACK",
+    errorClass: safe ? null : text(verification.errorClass)
+      || "OFFER_READBACK_FAILURE",
+    ebayErrorIds: Array.isArray(verification.errorIds)
+      ? verification.errorIds.slice(0, 8) : [],
+    mismatchFields: Array.isArray(verification.mismatchFields)
+      ? verification.mismatchFields.slice(0, 24) : [],
+    mismatchClassification: Array.isArray(verification.mismatchClassification)
+      ? verification.mismatchClassification.slice(0, 40) : [],
+    retrySafety: safe
+      ? "SAME_LINEAGE_RESUME_SAFE"
+      : retryable
+        ? "READBACK_RETRY_ONLY"
+        : "DO_NOT_RETRY_WRITE",
+    offerId: sanitizeEbayOfferId(offerIdValue)
+      ?? sanitizeEbayOfferId(verification.offerId),
+    itemId: null,
+    officialCurrentState: status === "PUBLISHED" || listingPresent
+      ? "PUBLISHED_CONFIRMED"
+      : status === "UNPUBLISHED"
+        ? "UNPUBLISHED_CONFIRMED"
+        : "UNKNOWN",
+    ownerActionState: safe
+      ? "SAFE_TO_RETRY"
+      : retryable
+        ? "WAITING_FOR_READBACK"
+        : "AMBIGUOUS_FAIL_CLOSED",
+  }
+}
+
+function publisherOfferVerificationFailureResponse(
+  verification: unknown,
+  offerId: unknown,
+  marketplaceWritesThisRequest = 0,
+) {
+  const value = record(verification)
+  const publisherState = publisherOfferVerificationReceipt(value, offerId)
+  const error = text(value.blocker) || "EBAY_OFFER_READBACK_FAILED"
+  const status = error === "EBAY_OFFER_PUBLICATION_SAFETY_INCIDENT"
+    || publisherState.retrySafety === "DO_NOT_RETRY_WRITE" ? 409 : 503
+  return NextResponse.json({
+    success: false,
+    error,
+    stage: publisherState.stage,
+    errorClass: publisherState.errorClass,
+    ebayErrorIds: publisherState.ebayErrorIds,
+    mismatchFields: publisherState.mismatchFields,
+    mismatchClassification: publisherState.mismatchClassification,
+    retrySafety: publisherState.retrySafety,
+    offerId: publisherState.offerId,
+    itemId: publisherState.itemId,
+    officialCurrentState: publisherState.officialCurrentState,
+    ownerActionState: publisherState.ownerActionState,
+    safety: {
+      inventoryItemCreated: false,
+      offerCreated: marketplaceWritesThisRequest > 0,
+      offerUpdated: false,
+      publishOfferCalled: false,
+      ebayWrites: marketplaceWritesThisRequest,
+      canPublish: false,
+    },
+  }, { status })
 }
 
 async function verifyExactUnpublishedPublicationState(input: {
@@ -2297,7 +2407,8 @@ export async function GET(req: Request) {
         : null
     let unpublishedReadback = null
     if (
-      text(ledger?.phase) === "completed"
+      ["completed", "offer_create_in_flight", "offer_outcome_unknown"]
+        .includes(text(ledger?.phase))
       && !publication
       && text(ledger?.offer_id)
       && text(ledger?.sku)
@@ -3700,6 +3811,10 @@ async function executeDraft(body: JsonRecord, actor: string) {
       : await discoverEbayUnpublishedOfferBySku(approvedSku, approvedOfferPayload)
     const quarantinedOfferId = sanitizeEbayOfferId(verification.offerId)
     const ledgerId = uuid(existing.id)
+    const publisherState = publisherOfferVerificationReceipt(
+      verification,
+      quarantinedOfferId ?? existing.offer_id,
+    )
     if (!quarantinedOfferId || !ledgerId) {
       await supabase.from("ebay_draft_only_execution_ledger").update({
         phase: "offer_outcome_unknown",
@@ -3707,12 +3822,13 @@ async function executeDraft(body: JsonRecord, actor: string) {
         sanitized_result: {
           verifiedStatus: verification.status,
           listingPresent: verification.listingPresent,
+          publisherState,
         },
         updated_at: new Date().toISOString(),
       }).eq("id", existing.id).in("phase", ["offer_create_in_flight", "offer_outcome_unknown"])
-      return jsonError(
-        new Error(verification.blocker),
-        verification.blocker === "EBAY_OFFER_PUBLICATION_SAFETY_INCIDENT" ? 409 : 503,
+      return publisherOfferVerificationFailureResponse(
+        verification,
+        existing.offer_id,
       )
     }
     if (!verification.safe) {
@@ -3723,12 +3839,13 @@ async function executeDraft(body: JsonRecord, actor: string) {
         sanitized_result: {
           verifiedStatus: verification.status,
           listingPresent: verification.listingPresent,
+          publisherState,
         },
         updated_at: new Date().toISOString(),
       }).eq("id", ledgerId).in("phase", ["offer_create_in_flight", "offer_outcome_unknown"])
-      return jsonError(
-        new Error(verification.blocker),
-        verification.blocker === "EBAY_OFFER_PUBLICATION_SAFETY_INCIDENT" ? 409 : 503,
+      return publisherOfferVerificationFailureResponse(
+        verification,
+        quarantinedOfferId,
       )
     }
     if (existing.phase === "offer_create_in_flight") {
@@ -4509,6 +4626,10 @@ async function executeDraft(body: JsonRecord, actor: string) {
           existingOfferReadbackMatch: offerVerification.safe,
           offerCount: skuState.offerCount,
           createOfferCalled: false,
+          publisherState: publisherOfferVerificationReceipt(
+            offerVerification,
+            correctedRetryHistory.historical.offerId,
+          ),
         },
         lease_token: null,
         lease_expires_at: null,
@@ -4629,6 +4750,10 @@ async function executeDraft(body: JsonRecord, actor: string) {
     record(approvedPayload.offerPayload),
   )
   if (!offerVerification.safe) {
+    const publisherState = publisherOfferVerificationReceipt(
+      offerVerification,
+      offerId,
+    )
     const { data: quarantinedOffer, error: quarantinedOfferError } = await supabase.from("ebay_draft_only_execution_ledger").update({
       phase: "offer_outcome_unknown",
       offer_http_status: offerVerification.httpStatus || offerResult.status,
@@ -4637,6 +4762,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
       sanitized_result: {
         verifiedStatus: offerVerification.status,
         listingPresent: offerVerification.listingPresent,
+        publisherState,
       },
       lease_token: null,
       lease_expires_at: null,
@@ -4652,7 +4778,11 @@ async function executeDraft(body: JsonRecord, actor: string) {
       offerVerification.blocker,
       true,
     )
-    return jsonError(new Error(offerVerification.blocker), 503)
+    return publisherOfferVerificationFailureResponse(
+      offerVerification,
+      offerId,
+      2,
+    )
   }
   const { data: completed, error: completionError } = await supabase
     .rpc("complete_ebay_draft_only_execution", {
@@ -5282,6 +5412,7 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     confirmPublish: machinePublishConfirmation,
   })
   if (!publishResult.ok || !publishResult.listingId) {
+    const publisherError = record(publishResult.body)
     await supabase.rpc("fail_ebay_authorized_listing_publication", {
       p_publication_id: publicationId,
       p_actor_user_id: actor,
@@ -5294,7 +5425,21 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     return NextResponse.json({
       success: false,
       error: publishResult.blocker,
-      details: record(publishResult.body),
+      stage: publisherError.stage ?? "PUBLISH_OFFER_ONE_SHOT",
+      errorClass: publisherError.errorClass
+        ?? (publishResult.outcomeKnown
+          ? "EBAY_WRITE_REJECTED" : "PUBLISH_WRITE_AMBIGUOUS_RESULT"),
+      ebayErrorIds: publisherError.ebayErrorIds ?? [],
+      mismatchFields: publisherError.mismatchFields ?? [],
+      retrySafety: publisherError.retrySafety
+        ?? (publishResult.outcomeKnown
+          ? "UNPUBLISHED_REVALIDATION_REQUIRED"
+          : "GET_ONLY_RECONCILIATION_REQUIRED"),
+      offerId: publisherError.offerId ?? built.offerId,
+      itemId: publisherError.itemId ?? null,
+      officialCurrentState: publisherError.officialCurrentState
+        ?? (publishResult.outcomeKnown ? "UNPUBLISHED_CONFIRMED" : "AMBIGUOUS"),
+      details: publisherError,
       safety: {
         target: "PRODUCTION",
         canPublish: false,

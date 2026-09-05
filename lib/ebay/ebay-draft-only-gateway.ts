@@ -6,6 +6,11 @@ import {
   resolveEbayDraftOnlyPreflightSnapshotSecret,
   verifyEbayDraftOnlyPreflightSnapshot,
 } from "./ebay-draft-only-preflight-snapshot"
+import {
+  compareEbayInventoryItemReadbackV1,
+  compareEbayOfferReadbackV1,
+  compareEbayPublisherReadbackV1,
+} from "./ebay-publisher-semantic-readback-v1"
 import { isCanonicalEbayPackageSku } from "./ebay-sku"
 import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
 import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"
@@ -1095,47 +1100,20 @@ export function buildEbayInventoryManagedImageReplacementV1(input: {
     nonAuthorizedFieldsPreserved: true as const })
 }
 
-function containsExpected(actual: unknown, expected: unknown): boolean {
-  if (Array.isArray(expected)) {
-    if (expected.length === 0) return true
-    return Array.isArray(actual)
-      && actual.length === expected.length
-      && expected.every((value, index) => containsExpected(actual[index], value))
-  }
-  if (expected && typeof expected === "object") {
-    if (Object.keys(expected).length === 0) return true
-    if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false
-    const actualRecord = actual as JsonRecord
-    return Object.entries(expected as JsonRecord)
-      .every(([key, value]) => containsExpected(actualRecord[key], value))
-  }
-  return actual === expected
-}
-
 export function ebayReadbackMismatchPathsV1(
   actual: unknown,
   expected: unknown,
   path = "$",
 ): string[] {
-  if (Array.isArray(expected)) {
-    if (expected.length === 0) return []
-    if (!Array.isArray(actual)) return [path]
-    const mismatches = expected.flatMap((value, index) =>
-      ebayReadbackMismatchPathsV1(actual[index], value, `${path}[${index}]`))
-    return actual.length === expected.length
-      ? mismatches
-      : [...mismatches, `${path}.length`]
-  }
-  if (expected && typeof expected === "object") {
-    if (Object.keys(expected).length === 0) return []
-    if (!actual || typeof actual !== "object" || Array.isArray(actual)) {
-      return [path]
-    }
-    const actualRecord = actual as JsonRecord
-    return Object.entries(expected as JsonRecord).flatMap(([key, value]) =>
-      ebayReadbackMismatchPathsV1(actualRecord[key], value, `${path}.${key}`))
-  }
-  return actual === expected ? [] : [path]
+  const mismatches = compareEbayPublisherReadbackV1(
+    actual,
+    expected,
+    "INVENTORY_ITEM",
+  ).materialMismatchFields
+  if (path === "$") return [...mismatches]
+  return mismatches.map((mismatch) => mismatch === "$"
+    ? path
+    : `${path}${mismatch.slice(1)}`)
 }
 
 async function verifyInventoryItemWithToken(
@@ -1150,15 +1128,18 @@ async function verifyInventoryItemWithToken(
     config.apiOrigin,
   )
   const result = await preflightRead(config, token, url, fetchImpl)
-  const mismatchFields = result.ok
-    ? ebayReadbackMismatchPathsV1(result.body, expectedPayload).slice(0, 24)
-    : []
-  const safe = result.ok && mismatchFields.length === 0
+  const comparison = result.ok
+    ? compareEbayInventoryItemReadbackV1(result.body, expectedPayload)
+    : null
+  const mismatchFields = comparison?.materialMismatchFields.slice(0, 24) ?? []
+  const safe = result.ok && comparison?.equivalent === true
   return {
     safe,
     absent: result.status === 404,
     httpStatus: result.status,
     mismatchFields,
+    mismatchClassification: comparison?.differences ?? [],
+    normalizationRulesApplied: comparison?.normalizationRulesApplied ?? [],
     errorIds: readErrorIds(result),
     errorClass: safe
       ? null
@@ -1790,11 +1771,11 @@ async function verifyOfferWithToken(
   const identityMatches = returnedSku === normalizedSku
     && returnedMarketplaceId === normalizedMarketplaceId
     && offerIdMatches
-  const payloadMatches = !expectedPayload
-    || containsExpected(result.body, expectedPayload)
-  const mismatchFields = result.ok && expectedPayload
-    ? ebayReadbackMismatchPathsV1(result.body, expectedPayload).slice(0, 24)
-    : []
+  const comparison = result.ok && expectedPayload
+    ? compareEbayOfferReadbackV1(result.body, expectedPayload)
+    : null
+  const payloadMatches = !expectedPayload || comparison?.equivalent === true
+  const mismatchFields = comparison?.materialMismatchFields.slice(0, 24) ?? []
   const safe = result.ok
     && status === "UNPUBLISHED"
     && !listingPresent
@@ -1811,6 +1792,8 @@ async function verifyOfferWithToken(
     marketplaceId: returnedMarketplaceId,
     payloadMatches,
     mismatchFields,
+    mismatchClassification: comparison?.differences ?? [],
+    normalizationRulesApplied: comparison?.normalizationRulesApplied ?? [],
     errorIds: readErrorIds(result),
     errorClass: safe
       ? null
@@ -1985,7 +1968,7 @@ export async function discoverEbayUnpublishedOfferBySku(
     offer.status === "UNPUBLISHED"
     && offer.sku === normalizedSku
     && offer.marketplaceId === "EBAY_US"
-    && containsExpected(offer, expectedOfferPayload)
+    && compareEbayOfferReadbackV1(offer, expectedOfferPayload).equivalent
     && !Object.prototype.hasOwnProperty.call(offer, "listing")
     && !Object.prototype.hasOwnProperty.call(offer, "listingId")
     && Boolean(sanitizeEbayOfferId(offer.offerId))
@@ -2073,8 +2056,10 @@ async function verifyPublishedOfferWithToken(
     ? result.body.marketplaceId.trim().toUpperCase()
     : ""
   const listingId = publishedListingId(result.body)
-  const payloadMatches = !expectedPayload
-    || containsExpected(result.body, expectedPayload)
+  const comparison = result.ok && expectedPayload
+    ? compareEbayOfferReadbackV1(result.body, expectedPayload)
+    : null
+  const payloadMatches = !expectedPayload || comparison?.equivalent === true
   const safe = result.ok
     && status === "PUBLISHED"
     && sku === normalizedSku
@@ -2093,6 +2078,9 @@ async function verifyPublishedOfferWithToken(
     sku,
     marketplaceId,
     payloadMatches,
+    mismatchFields: comparison?.materialMismatchFields.slice(0, 24) ?? [],
+    mismatchClassification: comparison?.differences ?? [],
+    normalizationRulesApplied: comparison?.normalizationRulesApplied ?? [],
     blocker: safe
       ? ""
       : !payloadMatches
@@ -2215,6 +2203,18 @@ export async function publishEbayOfferOnce(input: {
       reconciled: false,
       publishRequestSent: false,
       blocker: "EBAY_FINAL_PUBLICATION_INVENTORY_EXACT_READBACK_MISMATCH",
+      body: {
+        stage: "FRESH_PREFLIGHT_INVENTORY_READBACK",
+        errorClass: inventory.errorClass,
+        ebayErrorIds: inventory.errorIds,
+        mismatchFields: inventory.mismatchFields,
+        mismatchClassification: inventory.mismatchClassification,
+        retrySafety: inventory.retryable
+          ? "READBACK_RETRY_ONLY" : "DO_NOT_RETRY_WRITE",
+        offerId,
+        itemId: null,
+        officialCurrentState: "UNKNOWN",
+      },
     }
   }
   const unpublished = await verifyOfferWithToken(
@@ -2254,6 +2254,20 @@ export async function publishEbayOfferOnce(input: {
       reconciled: false,
       publishRequestSent: false,
       blocker: unpublished.blocker || "EBAY_OFFER_NOT_PUBLISHABLE",
+      body: {
+        stage: "FRESH_PREFLIGHT_OFFER_READBACK",
+        errorClass: unpublished.errorClass,
+        ebayErrorIds: unpublished.errorIds,
+        mismatchFields: unpublished.mismatchFields,
+        mismatchClassification: unpublished.mismatchClassification,
+        retrySafety: unpublished.retryable
+          ? "READBACK_RETRY_ONLY" : "DO_NOT_RETRY_WRITE",
+        offerId,
+        itemId: alreadyPublished.listingId,
+        officialCurrentState: unpublished.status === "UNPUBLISHED"
+          && unpublished.listingPresent === false
+          ? "UNPUBLISHED_CONFIRMED" : "AMBIGUOUS",
+      },
     }
   }
 
@@ -2278,6 +2292,7 @@ export async function publishEbayOfferOnce(input: {
     responseBody = record(await response.json().catch(() => ({})))
     requestCompleted = true
     if (!response.ok) {
+      const ebayErrors = safeBody(responseBody)
       return {
         ok: false,
         status: response.status,
@@ -2288,7 +2303,23 @@ export async function publishEbayOfferOnce(input: {
         blocker: response.status < 500
           ? "EBAY_PUBLISH_WRITE_REJECTED"
           : "EBAY_PUBLISH_OUTCOME_UNKNOWN",
-        body: safeBody(responseBody),
+        body: {
+          stage: "PUBLISH_OFFER_ONE_SHOT",
+          errorClass: response.status < 500
+            ? "EBAY_WRITE_REJECTED" : "PUBLISH_WRITE_AMBIGUOUS_RESULT",
+          ebayErrorIds: Array.isArray(ebayErrors.errors)
+            ? ebayErrors.errors.map((error) => record(error).errorId)
+              .filter(Boolean) : [],
+          mismatchFields: [],
+          retrySafety: response.status < 500
+            ? "UNPUBLISHED_REVALIDATION_REQUIRED"
+            : "GET_ONLY_RECONCILIATION_REQUIRED",
+          offerId,
+          itemId: null,
+          officialCurrentState: response.status < 500
+            ? "UNPUBLISHED_CONFIRMED" : "AMBIGUOUS",
+          ebay: ebayErrors,
+        },
       }
     }
   } catch {
@@ -2345,6 +2376,18 @@ export async function publishEbayOfferOnce(input: {
       reconciled: false,
       publishRequestSent: true,
       blocker: "EBAY_PUBLISH_OUTCOME_UNKNOWN",
+      body: {
+        stage: "FINAL_OFFICIAL_ACTIVE_READBACK",
+        errorClass: "PUBLISH_WRITE_AMBIGUOUS_RESULT",
+        ebayErrorIds: [],
+        mismatchFields: verification.mismatchFields,
+        mismatchClassification: verification.mismatchClassification,
+        retrySafety: "GET_ONLY_RECONCILIATION_REQUIRED",
+        offerId,
+        itemId: verification.listingId,
+        officialCurrentState: verification.status === "PUBLISHED"
+          ? "PUBLISHED_PENDING_VERIFICATION" : "AMBIGUOUS",
+      },
     }
 }
 

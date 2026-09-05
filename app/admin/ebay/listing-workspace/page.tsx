@@ -284,6 +284,26 @@ type DraftState = {
     inventory?: { safe?: boolean; httpStatus?: number; mismatchFields?: string[] }
     offer?: { safe?: boolean; httpStatus?: number; status?: string; listingId?: string | null; mismatchFields?: string[] }
     idempotency?: { offerCountForReservedSku?: number; duplicateOfferCount?: number }
+    publisherState?: {
+      contractVersion: "SELLER_OS_PUBLISHER_ERROR_CONTRACT_V1"
+      stage: string
+      errorClass?: string | null
+      ebayErrorIds?: string[]
+      mismatchFields?: string[]
+      mismatchClassification?: Array<{
+        path: string
+        classification: string
+        material: boolean
+      }>
+      retrySafety: "SAME_LINEAGE_RESUME_SAFE" | "READBACK_RETRY_ONLY"
+        | "DO_NOT_RETRY_WRITE"
+      offerId?: string | null
+      itemId?: string | null
+      officialCurrentState: "UNPUBLISHED_CONFIRMED" | "PUBLISHED_CONFIRMED"
+        | "UNKNOWN"
+      ownerActionState: "SAFE_TO_RETRY" | "WAITING_FOR_READBACK"
+        | "AMBIGUOUS_FAIL_CLOSED"
+    }
   } | null
   compensatedOfferFreshReadEligibility?: {
     eligible: boolean
@@ -2685,6 +2705,9 @@ function ListingWorkspacePageContent() {
       && !correctedPackageSafeRetryReady)
   const controlledPublicationCtaLabel = publicationAutomationBusy
     ? "SISTEMA EN OPERACIÓN"
+    : draftState.unpublishedReadback?.publisherState?.ownerActionState ===
+        "SAFE_TO_RETRY" && unpublishedExecutionPhase === "offer_outcome_unknown"
+      ? "REANUDAR CON EL MISMO OFFER"
     : ["publish_in_flight", "outcome_unknown",
         "published_pending_verification"].includes(publicationPhase)
       ? "VERIFICAR PUBLICACIÓN EN EBAY"
@@ -5418,6 +5441,9 @@ function ListingWorkspacePageContent() {
               <PublicationLaunchVisualizer phase={publicationVisualizerPhase} busy={publicationAutomationBusy} failed={publicationAutomationFailed} elapsedSeconds={publicationAutomationElapsed} productImageUrl={publicationProductImageUrl} status={publicationAutomationStep} />
               {publicationPhase === "monitor_registered" ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p></div> : <button type="button" disabled={singleHumanPublicationButtonDisabled} data-owner-authorization-digest={canonicalOwnerAuthorizationDigest} onClick={() => void publishSmartStockingWithSingleAuthorization()} className="min-h-16 w-full rounded-2xl bg-rose-200 px-4 text-lg font-black text-black disabled:opacity-40">{controlledPublicationCtaLabel}</button>}
               <p className="text-xs leading-5 text-rose-50/65">Cada etapa requiere una acción explícita: primero se crea y verifica el Offer UNPUBLISHED; después se prepara el preview; sólo un clic posterior puede ejecutar publish one-shot. Recargar o volver a esta pantalla nunca continúa una escritura.</p>
+              {unpublishedExecutionPhase === "offer_outcome_unknown" && draftState.unpublishedReadback?.publisherState?.ownerActionState === "SAFE_TO_RETRY" && <div data-publisher-owner-state="SAFE_TO_RETRY" className="rounded-xl border border-emerald-200/35 bg-emerald-200/[0.09] p-3 text-emerald-50"><strong>Offer existente verificado · reanudación segura</strong><p className="mt-1 text-xs">Seller OS confirmó por lectura oficial que el mismo Offer {draftState.unpublishedReadback.publisherState.offerId ?? draftState.execution?.offer_id} sigue UNPUBLISHED y coincide semánticamente con el package autorizado. La acción disponible reutiliza ese Offer; no crea otro.</p></div>}
+              {unpublishedExecutionPhase === "offer_outcome_unknown" && draftState.unpublishedReadback?.publisherState?.ownerActionState === "WAITING_FOR_READBACK" && <div data-publisher-owner-state="WAITING_FOR_READBACK" className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-amber-50"><strong>Esperando readback oficial</strong><p className="mt-1 text-xs">No se repetirá ninguna escritura. Seller OS sólo permite volver a consultar eBay cuando el upstream esté disponible.</p></div>}
+              {unpublishedExecutionPhase === "offer_outcome_unknown" && draftState.unpublishedReadback?.publisherState?.ownerActionState === "AMBIGUOUS_FAIL_CLOSED" && <div data-publisher-owner-state="AMBIGUOUS_FAIL_CLOSED" className="rounded-xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Estado ambiguo · publicación bloqueada</strong><p className="mt-1 text-xs">La lectura oficial no autoriza reintentar una escritura. Campos materiales: {draftState.unpublishedReadback.publisherState.mismatchFields?.join(", ") || "estado o identidad del Offer"}.</p></div>}
               {executionCompleted && !draftState.publication && draftState.unpublishedReadback?.safe === true && <div data-current-unpublished-readback className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Draft no publicado validado ahora ✓</strong><p className="mt-1 text-xs">El Inventory Item y el Offer {draftState.execution?.offer_id} coinciden con el package autorizado. Actualizar esta pantalla sólo repite lecturas.</p></div>}
               {executionCompleted && !draftState.publication && draftState.unpublishedReadback && draftState.unpublishedReadback.safe !== true && <div data-current-unpublished-readback-error className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-amber-50"><strong>No se pudo validar el draft no publicado</strong><p className="mt-1 text-xs">{draftState.unpublishedReadback.errorClass === "EBAY_UPSTREAM_READ_FAILURE" ? "eBay temporalmente no respondió. No se creó otro Offer." : draftState.unpublishedReadback.errorClass === "INVENTORY_ITEM_MISMATCH" || draftState.unpublishedReadback.errorClass === "OFFER_PAYLOAD_MISMATCH" ? "El contenido oficial no coincide con el package autorizado. No se creó otro Offer." : "Seller OS detuvo la continuación para revisión. No se creó otro Offer."}</p></div>}
             </div>}
