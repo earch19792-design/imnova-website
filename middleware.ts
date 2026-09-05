@@ -99,7 +99,8 @@ export async function middleware(request: NextRequest) {
   const nodeGuardedOAuthCeremony =
     isEbayOAuthNodeGuardedCeremonyPath(pathname)
   if (boundary.blocked && !nodeGuardedOAuthCeremony) {
-    if (pathname.startsWith("/api/")) return NextResponse.json(getBlockedEbayProResponsePayload(pathname), { status: 403 })
+    if (pathname.startsWith("/api/")) return NextResponse.json(
+      getBlockedEbayProResponsePayload(pathname, boundary), { status: 403 })
     return NextResponse.redirect(new URL("/admin", request.url), 307)
   }
 

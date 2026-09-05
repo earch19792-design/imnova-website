@@ -415,12 +415,26 @@ export function isEbayProAllowed(input: EbayProBoundaryInput = {}) {
   return getEbayProRuntimeBoundary(input).ebayProAllowed
 }
 
-export function getBlockedEbayProResponsePayload(pathname: string) {
+export function getBlockedEbayProResponsePayload(
+  pathname: string,
+  boundary?: ReturnType<typeof getEbayProRuntimeBoundary>,
+) {
   return {
     error: "ebay_pro_disabled_by_environment_boundary",
     message: "Seller OS is not available in this deployment environment.",
     productionCoreProtected: true,
     pathname,
     isolationVersion: EBAY_PRO_PRODUCTION_ISOLATION_VERSION,
+    ...(boundary ? { boundaryDiagnostic: {
+      boundaryClassification: boundary.boundaryClassification,
+      failedDedicatedPreprodSignal:
+        boundary.dedicatedPreprod.failedSignal,
+      dedicatedPreprodSignals: boundary.dedicatedPreprod.signals,
+      draftBranchMatches: boundary.draftBoundary.branchMatches,
+      draftEnvironmentAllowed: boundary.draftBoundary.environmentAllowed,
+      productionDedicatedPreprodBound:
+        boundary.draftBoundary.productionDedicatedPreprodBound,
+      valuesDisplayed: false,
+    } } : {}),
   }
 }
