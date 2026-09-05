@@ -487,6 +487,7 @@ export default function LunaQuickPickPage() {
   const ownerLastMileFactCount = ownerLastMileCards.reduce((total, card) =>
     total + card.ownerTruePublicationBlockers.length, 0)
   const batchSummary = publisherCohort?.summary
+  const batchButtonN = batchSummary?.batchButtonN ?? null
   const exactBatchMembers = (publisherCohort?.candidates ?? []).filter(
     (candidate) => candidate.batchEligible)
   const exactMembershipValid = Boolean(batchSummary
@@ -578,7 +579,7 @@ export default function LunaQuickPickPage() {
         className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4">
         <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/70">Autorización comercial de lote</p>
         <h2 className="mt-1 text-xl font-black">PUBLICAR {
-          batchSummary?.batchButtonN ?? 0} LISTOS</h2>
+          batchButtonN ?? "—"} LISTOS</h2>
         <p className="mt-2 text-sm text-white/65">
           Autoridad {batchSummary?.authoritativeReadyCount ?? "—"} · visibles {
           batchSummary?.visibleReadyCount ?? "—"} · accionables {
@@ -615,7 +616,7 @@ export default function LunaQuickPickPage() {
             (batchSummary?.batchEligibleCount ?? 0) < 1}
           className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">
           {batchBusy ? "SELLER OS EJECUTANDO…" : `PUBLICAR ${
-            batchSummary?.batchButtonN ?? 0} LISTOS`}
+            batchButtonN ?? "—"} LISTOS`}
         </button>
         {!batchParity && <p className="mt-2 text-xs text-amber-100">
           El lote permanece cerrado hasta que autoridad, acción, preflight y membresía exacta coincidan.
