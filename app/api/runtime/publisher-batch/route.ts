@@ -7,20 +7,40 @@ import { NextResponse } from "next/server"
 import { sellerOsPostOnlyGetResponseV1 } from
   "@/lib/seller-os/post-only-runtime-route-v1"
 
+function runtimeHandoffFailure(errorClass: string, upstreamStatus: number) {
+  return NextResponse.json({ success: false,
+    stage: "RUNTIME_AUTHORITY_HANDOFF", error: errorClass, errorClass,
+    upstreamStatus, retrySafety: "ENGINEERING_CONFIGURATION_REQUIRED",
+    officialCurrentState: "NOT_STARTED",
+    safety: { runtimeAuthority: true, ownerAuthorizationRequired: true,
+      executorInvoked: false, marketplaceWrites: 0 } }, { status: 503 })
+}
+
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? ""
   const protectionBypass = request.headers.get(
     "x-vercel-protection-bypass") ?? ""
   const target = new URL("/api/admin/ebay/draft-only", request.url)
-  const response = await fetch(target, { method: "POST", cache: "no-store",
-    headers: { Authorization: authorization,
-      "Content-Type": "application/json",
-      ...(protectionBypass
-        ? { "x-vercel-protection-bypass": protectionBypass } : {}) },
-    body: JSON.stringify({ action: "batch_runtime" }) })
-  const payload = await response.json().catch(() => ({
-    success: false, error: "PUBLISHER_BATCH_RUNTIME_INVALID_RESPONSE" }))
-  return NextResponse.json(payload, { status: response.status })
+  try {
+    const response = await fetch(target, { method: "POST", cache: "no-store",
+      headers: { Authorization: authorization,
+        "Content-Type": "application/json",
+        ...(protectionBypass
+          ? { "x-vercel-protection-bypass": protectionBypass } : {}) },
+      body: JSON.stringify({ action: "batch_runtime" }) })
+    const contentType = response.headers.get("content-type") ?? ""
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return runtimeHandoffFailure(
+        "PUBLISHER_BATCH_RUNTIME_UPSTREAM_NON_JSON", response.status)
+    }
+    const payload = await response.json().catch(() => null)
+    if (!payload || typeof payload !== "object") return runtimeHandoffFailure(
+      "PUBLISHER_BATCH_RUNTIME_UPSTREAM_INVALID_JSON", response.status)
+    return NextResponse.json(payload, { status: response.status })
+  } catch {
+    return runtimeHandoffFailure(
+      "PUBLISHER_BATCH_RUNTIME_UPSTREAM_FETCH_FAILED", 0)
+  }
 }
 
 export function GET() {

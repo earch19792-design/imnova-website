@@ -2026,6 +2026,20 @@ function jsonError(error: unknown, status?: number, blockers?: string[]) {
   }, { status: status ?? canonicalDraftOnlyErrorHttpStatus(error) })
 }
 
+function publisherBatchRuntimeFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : ""
+  const errorClass = /Supabase service role no esta configurado|Supabase Auth no esta configurado/.test(
+    message) ? "SELLER_OS_PUBLISHER_BATCH_RUNTIME_CONFIGURATION_MISSING"
+    : errorCode(error)
+  return NextResponse.json({ success: false,
+    stage: "RUNTIME_CONFIGURATION_OR_RECOVERY",
+    error: errorClass, errorClass,
+    retrySafety: "ENGINEERING_CONFIGURATION_REQUIRED",
+    officialCurrentState: "NOT_STARTED",
+    safety: { runtimeAuthority: true, ownerAuthorizationRequired: true,
+      executorInvoked: false, marketplaceWrites: 0 } }, { status: 503 })
+}
+
 function oneClickPrewriteError(
   error: unknown,
   blockers: string[],
@@ -2870,31 +2884,35 @@ async function handlePost(req: Request) {
   }
   const action = text(body.action)
   if (action === "batch_runtime") {
-    const supabase = getSupabaseAdminClient()
-    const authorized = await sellerOsPostRuntimeAuthorizedV1({ request: req,
-      supabase, environmentSecrets: [process.env.CRON_SECRET,
-        process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET] })
-    if (!authorized) return jsonError(new Error("RUNTIME_UNAUTHORIZED"), 401)
-    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
-    if (!accountKey) return jsonError(new Error(
-      "SELLER_OS_PUBLISHER_BATCH_ACCOUNT_SCOPE_REQUIRED"), 503)
-    const packageRecovery = await recoverQuickPickPublisherPackagesV1({
-      supabase, accountKey,
-    })
-    const active = await supabase.from(
-      "seller_os_publisher_batch_authorizations_v1").select("id")
-      .eq("marketplace_account_key", accountKey)
-      .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL"])
-      .order("created_at", { ascending: true }).limit(3)
-    if (active.error) return jsonError(new Error(
-      "SELLER_OS_PUBLISHER_BATCH_RUNTIME_SCOPE_READ_FAILED"), 503)
-    const outcomes = []
-    for (const row of rows(active.data)) outcomes.push(
-      await resumeSellerOsPublisherBatchV1({ batchId: text(row.id),
-        accountKey }))
-    return NextResponse.json({ success: true, packageRecovery, outcomes,
-      safety: { runtimeAuthority: true, ownerAuthorizationRequired: true,
-        unauthorizedMarketplaceWrites: 0 } })
+    try {
+      const supabase = getSupabaseAdminClient()
+      const authorized = await sellerOsPostRuntimeAuthorizedV1({ request: req,
+        supabase, environmentSecrets: [process.env.CRON_SECRET,
+          process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET] })
+      if (!authorized) return jsonError(new Error("RUNTIME_UNAUTHORIZED"), 401)
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) return jsonError(new Error(
+        "SELLER_OS_PUBLISHER_BATCH_ACCOUNT_SCOPE_REQUIRED"), 503)
+      const packageRecovery = await recoverQuickPickPublisherPackagesV1({
+        supabase, accountKey,
+      })
+      const active = await supabase.from(
+        "seller_os_publisher_batch_authorizations_v1").select("id")
+        .eq("marketplace_account_key", accountKey)
+        .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL"])
+        .order("created_at", { ascending: true }).limit(3)
+      if (active.error) return jsonError(new Error(
+        "SELLER_OS_PUBLISHER_BATCH_RUNTIME_SCOPE_READ_FAILED"), 503)
+      const outcomes = []
+      for (const row of rows(active.data)) outcomes.push(
+        await resumeSellerOsPublisherBatchV1({ batchId: text(row.id),
+          accountKey }))
+      return NextResponse.json({ success: true, packageRecovery, outcomes,
+        safety: { runtimeAuthority: true, ownerAuthorizationRequired: true,
+          unauthorizedMarketplaceWrites: 0 } })
+    } catch (error) {
+      return publisherBatchRuntimeFailure(error)
+    }
   }
   const auth = await authenticate(req)
   if (auth.response) return auth.response
