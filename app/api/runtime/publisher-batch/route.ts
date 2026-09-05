@@ -51,6 +51,8 @@ export function GET() {
     boundaryClassification: boundary.productionDedicatedPreprodBound
       ? "SELLER_OS_DEDICATED_PREPROD" : "BLOCKED",
     branchMatches: boundary.branchMatches,
+    allowedBranch: boundary.allowedBranch,
+    observedGitRef: boundary.observedGitRef,
     environmentAllowed: boundary.environmentAllowed,
     productionDedicatedPreprodBound:
       boundary.productionDedicatedPreprodBound,

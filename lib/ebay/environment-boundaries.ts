@@ -295,6 +295,8 @@ export function getEbayDraftWriteEnvironmentBoundary(
     targetValid,
     masterEnabled,
     productionEnabled,
+    allowedBranch: allowedBranch || null,
+    observedGitRef: gitRef || null,
     allowedBranchConfigured: Boolean(allowedBranch),
     branchMatches: Boolean(allowedBranch) && gitRef === allowedBranch,
     productionPreviewBound,
