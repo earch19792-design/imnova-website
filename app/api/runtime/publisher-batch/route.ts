@@ -53,6 +53,8 @@ export function GET() {
     branchMatches: boundary.branchMatches,
     allowedBranch: boundary.allowedBranch,
     observedGitRef: boundary.observedGitRef,
+    deploymentAttestedGitRef: boundary.deploymentAttestedGitRef,
+    branchAuthority: boundary.branchAuthority,
     environmentAllowed: boundary.environmentAllowed,
     productionDedicatedPreprodBound:
       boundary.productionDedicatedPreprodBound,

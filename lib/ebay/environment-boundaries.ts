@@ -91,6 +91,7 @@ type EbayProBoundaryInput = {
   pathname?: string | null
   method?: string | null
   vercelGitCommitRef?: string | null
+  deploymentAttestedGitRef?: string | null
   allowedProductionBranch?: string | null
   draftTarget?: string | null
   draftMasterEnabled?: boolean
@@ -108,6 +109,7 @@ type DraftWriteBoundaryInput = Pick<
   | "ebayProRuntime"
   | "supabaseUrl"
   | "vercelGitCommitRef"
+  | "deploymentAttestedGitRef"
   | "allowedProductionBranch"
   | "draftTarget"
   | "draftMasterEnabled"
@@ -267,22 +269,33 @@ export function getEbayDraftWriteEnvironmentBoundary(
   const gitRef = rawValue(
     input.vercelGitCommitRef ?? process.env.VERCEL_GIT_COMMIT_REF,
   )
+  const deploymentAttestedGitRef = rawValue(
+    input.deploymentAttestedGitRef
+      ?? process.env.SELLER_OS_DEPLOYMENT_ATTESTED_GIT_REF,
+  )
   const masterEnabled = input.draftMasterEnabled
     ?? process.env.EBAY_DRAFT_ONLY_WRITES_ENABLED === "true"
   const productionEnabled = input.draftProductionEnabled
     ?? process.env.EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED === "true"
   const targetValid = target === "SANDBOX" || target === "PRODUCTION"
+  const nativeBranchMatches = Boolean(allowedBranch)
+    && Boolean(gitRef) && gitRef === allowedBranch
+  const dedicatedAttestationMatches = Boolean(allowedBranch)
+    && !gitRef && runtime.dedicatedPreprod.certified
+    && deploymentAttestedGitRef === allowedBranch
+  const branchMatches = nativeBranchMatches
+    || dedicatedAttestationMatches
   const productionPreviewBound = target === "PRODUCTION"
     && runtime.vercelEnv === "preview"
     && Boolean(allowedBranch)
-    && gitRef === allowedBranch
+    && nativeBranchMatches
     && !runtime.isProductionRuntime
   const productionDedicatedPreprodBound = target === "PRODUCTION"
     && runtime.dedicatedPreprod.certified
     && runtime.boundaryClassification ===
       SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION
     && Boolean(allowedBranch)
-    && gitRef === allowedBranch
+    && branchMatches
     && !runtime.isProductionRuntime
   const environmentAllowed = target === "SANDBOX"
     ? !runtime.isProductionRuntime
@@ -297,8 +310,12 @@ export function getEbayDraftWriteEnvironmentBoundary(
     productionEnabled,
     allowedBranch: allowedBranch || null,
     observedGitRef: gitRef || null,
+    deploymentAttestedGitRef: deploymentAttestedGitRef || null,
+    branchAuthority: nativeBranchMatches ? "VERCEL_GIT_COMMIT_REF"
+      : dedicatedAttestationMatches
+        ? "SELLER_OS_DEPLOYMENT_ATTESTED_GIT_REF" : "NONE",
     allowedBranchConfigured: Boolean(allowedBranch),
-    branchMatches: Boolean(allowedBranch) && gitRef === allowedBranch,
+    branchMatches,
     productionPreviewBound,
     productionDedicatedPreprodBound,
     environmentAllowed,
