@@ -47,19 +47,24 @@ function count(value: unknown) {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
 }
 
-function recentWorkerCapability(events: readonly Readonly<{
+function workerCapabilityReceipt(events: readonly Readonly<{
   timestamp: string
   state: string
   success: boolean
 }>[], now: Date) {
   const latest = events[events.length - 1]
-  if (!latest || !Number.isFinite(Date.parse(latest.timestamp)) ||
-      now.getTime() - Date.parse(latest.timestamp) > 20 * 60 * 1_000 ||
-      latest.success !== true || latest.state === "FAIL") return false
-  return events.some((event) => event.success && [
+  const observedAtMs = Date.parse(latest?.timestamp ?? "")
+  const receiptPresent = Boolean(latest && Number.isFinite(observedAtMs))
+  const receiptFresh = receiptPresent && now.getTime() >= observedAtMs
+    && now.getTime() - observedAtMs <= 20 * 60 * 1_000
+  const capabilityPass = receiptFresh && latest?.success === true
+    && latest.state !== "FAIL" && events.some((event) => event.success && [
     "PRODUCTION_WORKER_READY", "BRIDGE_CONNECTED",
     "WORKER_IDLE_NO_ELIGIBLE_JOB", "PASS",
   ].includes(event.state))
+  return Object.freeze({ receiptPresent, receiptFresh, capabilityPass,
+    observedAt: receiptPresent ? new Date(observedAtMs).toISOString() : null,
+    maximumAgeSeconds: 20 * 60 })
 }
 
 export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
@@ -182,16 +187,30 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   const latestResearchAt = Date.parse(String(latestResearch.captured_at ??
     latestResearch.created_at ?? ""))
   const recentResearch = Number.isFinite(latestResearchAt) &&
+    now.getTime() >= latestResearchAt &&
     now.getTime() - latestResearchAt <= 30 * 60 * 1_000
+  const productResearchAuthorityAvailable = research.available &&
+    researchPlan.available
+  const productResearchCapabilityReceiptPresent =
+    Number.isFinite(latestResearchAt)
   const productResearchState: SellerOsOperationalStateV1 =
-    !research.available || !researchPlan.available ? "DESCONOCIDO"
-      : planStatus === "COMPLETE" ? "SIN_TRABAJO"
-        : recentResearch ? "OPERANDO" : "DESCONOCIDO"
+    !productResearchAuthorityAvailable || !recentResearch ? "DESCONOCIDO"
+      : planStatus === "COMPLETE" ? "SIN_TRABAJO" : "OPERANDO"
+  const productResearchPresentationCause = !productResearchAuthorityAvailable
+    ? "PRODUCT_RESEARCH_AUTHORITY_UNAVAILABLE"
+    : !productResearchCapabilityReceiptPresent
+      ? "PRODUCT_RESEARCH_WORKER_CAPABILITY_RECEIPT_ABSENT"
+      : !recentResearch ? "PRODUCT_RESEARCH_WORKER_CAPABILITY_RECEIPT_EXPIRED"
+        : planStatus === "COMPLETE"
+          ? "FRESH_CAPABILITY_AND_NO_PENDING_PLAN_WORK"
+          : "FRESH_CAPABILITY_AND_PLAN_WORK_AVAILABLE"
 
   const lunaJobs = settled(lunaJobsRaw)
   const lunaTrace = settled(lunaTraceRaw)
   const lunaEvents = lunaTrace.available ? lunaTrace.value.events : []
-  const lunaCapabilityProven = recentWorkerCapability(lunaEvents, now)
+  const lunaReceipt = workerCapabilityReceipt(lunaEvents, now)
+  const lunaCapabilityProven = lunaTrace.available
+    && lunaReceipt.capabilityPass
   const eligiblePendingJobCount = lunaJobs.available
     ? lunaJobs.value.length : null
   const lunaState: SellerOsOperationalStateV1 =
@@ -199,6 +218,17 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       !lunaCapabilityProven ? "BLOQUEADO"
       : !lunaCapabilityProven ? "DESCONOCIDO"
         : eligiblePendingJobCount === 0 ? "SIN_TRABAJO" : "RECUPERANDO"
+  const lunaPresentationCause = !lunaTrace.available
+    ? "LUNA_TRACE_AUTHORITY_UNAVAILABLE"
+    : !lunaReceipt.receiptPresent ? "LUNA_WORKER_CAPABILITY_RECEIPT_ABSENT"
+      : !lunaReceipt.receiptFresh
+        ? "LUNA_WORKER_CAPABILITY_RECEIPT_EXPIRED"
+        : !lunaReceipt.capabilityPass
+          ? "LUNA_WORKER_CAPABILITY_NOT_PROVEN"
+          : !lunaJobs.available ? "LUNA_PENDING_JOB_AUTHORITY_UNAVAILABLE"
+            : eligiblePendingJobCount === 0
+              ? "FRESH_CAPABILITY_AND_NO_ELIGIBLE_PENDING_WORK"
+              : "FRESH_CAPABILITY_WITH_ELIGIBLE_PENDING_WORK"
 
   const orderAuthority = orders.sourceStatus === "AVAILABLE"
   const ebayState: SellerOsOperationalStateV1 = orderAuthority
@@ -252,11 +282,24 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       recentResultCount: mayelRecent }),
     capabilities: Object.freeze({
       lunaShipping: Object.freeze({ state: lunaState,
+        authorityAvailable: lunaTrace.available && lunaJobs.available,
         connected: lunaCapabilityProven,
         capabilityProven: lunaCapabilityProven,
+        capabilityFresh: lunaReceipt.receiptFresh,
+        capabilityObservedAt: lunaReceipt.observedAt,
+        capabilityMaximumAgeSeconds: lunaReceipt.maximumAgeSeconds,
+        presentationCause: lunaPresentationCause,
         eligiblePendingJobCount,
         traceDurable: lunaTrace.available && lunaTrace.value.traceDurable }),
-      productResearch: Object.freeze({ state: productResearchState }),
+      productResearch: Object.freeze({ state: productResearchState,
+        authorityAvailable: productResearchAuthorityAvailable,
+        capabilityProven: recentResearch,
+        capabilityFresh: recentResearch,
+        capabilityObservedAt: productResearchCapabilityReceiptPresent
+          ? new Date(latestResearchAt).toISOString() : null,
+        capabilityMaximumAgeSeconds: 30 * 60,
+        queuePlanState: planStatus || null,
+        presentationCause: productResearchPresentationCause }),
       publisher: Object.freeze({ state: "BLOQUEADO" as const,
         blocker: SELLER_OS_PUBLISHER_PHYSICAL_STATE_V1 }),
       ebay: Object.freeze({ state: ebayState }),
@@ -322,12 +365,26 @@ export function auditSellerOsOperationalSnapshotV1(
         presentedValue: snapshot.business.fulfillmentPending },
     ],
     workers: [{ worker: "LUNA_SHIPPING",
+      authorityAvailable:
+        snapshot.capabilities.lunaShipping.authorityAvailable,
       connected: snapshot.capabilities.lunaShipping.connected,
       capabilityProven:
         snapshot.capabilities.lunaShipping.capabilityProven,
+      capabilityFresh: snapshot.capabilities.lunaShipping.capabilityFresh,
       eligiblePendingJobCount:
         snapshot.capabilities.lunaShipping.eligiblePendingJobCount,
-      presentationState: snapshot.capabilities.lunaShipping.state }],
+      presentationState: snapshot.capabilities.lunaShipping.state },
+    { worker: "PRODUCT_RESEARCH",
+      authorityAvailable:
+        snapshot.capabilities.productResearch.authorityAvailable,
+      connected: snapshot.capabilities.productResearch.capabilityProven,
+      capabilityProven:
+        snapshot.capabilities.productResearch.capabilityProven,
+      capabilityFresh: snapshot.capabilities.productResearch.capabilityFresh,
+      eligiblePendingJobCount:
+        snapshot.capabilities.productResearch.queuePlanState === "COMPLETE"
+          ? 0 : null,
+      presentationState: snapshot.capabilities.productResearch.state }],
     actions: [{ capability: "PUBLISHER",
       uiReady: false, actionable: false,
       explicitBlocker: snapshot.capabilities.publisher.blocker }],

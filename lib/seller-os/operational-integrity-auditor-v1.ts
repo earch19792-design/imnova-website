@@ -44,8 +44,10 @@ export type SellerOsOperationalIntegrityInputV1 = Readonly<{
   }>[]
   workers?: readonly Readonly<{
     worker: string
+    authorityAvailable: boolean
     connected: boolean
     capabilityProven: boolean
+    capabilityFresh: boolean
     eligiblePendingJobCount: number | null
     presentationState: string
   }>[]
@@ -270,6 +272,26 @@ export function auditSellerOsOperationalIntegrityV1(
         presentationState: worker.presentationState },
       regressionGuard: { connectedDoesNotEqualWorkerCapable: true,
         noPendingWorkRequiresAuthoritativeZero: true },
+    }))
+    const freshAuthorityUnknown = worker.authorityAvailable
+      && worker.capabilityProven && worker.capabilityFresh
+      && worker.presentationState === "DESCONOCIDO"
+    checks.push(check({
+      invariantCode:
+        `FRESH_WORKER_CAPABILITY_PASS_AND_AUTHORITY_AVAILABLE:${worker.worker}`,
+      status: freshAuthorityUnknown ? "VIOLATION" : "PASS",
+      failureClass: "FRESH_WORKER_CAPABILITY_PRESENTED_UNKNOWN",
+      retrySafety: "SAFE_READ_ONLY_RECONCILIATION",
+      recoveryClass: "AUTO_RECOVERABLE",
+      evidence: { worker: worker.worker,
+        authorityAvailable: worker.authorityAvailable,
+        capabilityProven: worker.capabilityProven,
+        capabilityFresh: worker.capabilityFresh,
+        presentationState: worker.presentationState },
+      regressionGuard: {
+        freshWorkerCapabilityPassMustNotBeUnknown: true,
+        expiredOrMissingCapabilityMayRemainUnknown: true,
+      },
     }))
   }
 

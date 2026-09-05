@@ -26,8 +26,10 @@ type PublisherCohort = {
   summary: { authoritativeReadyCount: number; visibleReadyCount: number
     actionableReadyCount: number; batchEligibleCount: number
     batchButtonN: number; preflightEligible: boolean
+    exactMemberDigestsMatch: boolean
     falseDisabledReadyCount: number; trueBlockerCount: number }
   candidates: Array<{ candidateId: string; packageId: string
+    sourceSku: string | null; title: string | null
     currentPackageDigest: string; batchEligible: boolean
     authorizationBinding: Record<string, unknown> | null
     lastPublisherStage: string; lastErrorClass: string | null
@@ -36,6 +38,8 @@ type PublisherCohort = {
       officialReadbackState: string | null; marketplaceWriteCount: number
       attemptCount: number; receiptDigest: string | null
       inProgress: boolean; published: boolean; blocked: boolean } }>
+  source?: { apiSourceSha?: string | null; deploymentId?: string | null
+    projection?: string | null }
 }
 type QuickPickCard = {
   sourceUrl: string
@@ -184,6 +188,7 @@ export default function LunaQuickPickPage() {
   const [factFeedback, setFactFeedback] = useState<Record<string, string>>({})
   const [publisherCohort, setPublisherCohort] =
     useState<PublisherCohort | null>(null)
+  const [publisherReadError, setPublisherReadError] = useState("")
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchFeedback, setBatchFeedback] = useState("")
   const [batchIdempotencyKey, setBatchIdempotencyKey] = useState("")
@@ -208,11 +213,13 @@ export default function LunaQuickPickPage() {
   const loadReadModel = useCallback(async () => {
     setRehydrating(true)
     setError("")
-    try {
-      const [payload, publisher] = await Promise.all([
-        request("/api/admin/ebay/luna-quick-pick"),
-        request("/api/admin/ebay/publisher-cohort"),
-      ])
+    setPublisherReadError("")
+    const [quickPickResult, publisherResult] = await Promise.allSettled([
+      request("/api/admin/ebay/luna-quick-pick"),
+      request("/api/admin/ebay/publisher-cohort"),
+    ])
+    if (quickPickResult.status === "fulfilled") {
+      const payload = quickPickResult.value
       const readModel = record(payload.readModel)
       const selectedBatch = record(readModel.selectedBatch)
       const globalQueue = record(readModel.globalQueue)
@@ -227,13 +234,19 @@ export default function LunaQuickPickPage() {
         ? record(selectedBatch.summary) as QuickPickSummary : null)
       setGlobalQueueSummary(Object.keys(record(globalQueue.summary)).length
         ? record(globalQueue.summary) as QuickPickSummary : null)
-      setPublisherCohort(publisher.cohort as PublisherCohort)
       setLastReadAt(new Date().toISOString())
-    } catch {
-      setError("No pudimos cargar Quick Pick")
-    } finally {
-      setRehydrating(false)
+    } else {
+      setError(quickPickResult.reason instanceof Error
+        ? quickPickResult.reason.message : "LUNA_QUICK_PICK_READ_FAILED")
     }
+    if (publisherResult.status === "fulfilled") {
+      setPublisherCohort(publisherResult.value.cohort as PublisherCohort)
+    } else {
+      setPublisherCohort(null)
+      setPublisherReadError(publisherResult.reason instanceof Error
+        ? publisherResult.reason.message : "PUBLISHER_COHORT_READ_FAILED")
+    }
+    setRehydrating(false)
   }, [request])
 
   const processLinks = useCallback(async (urls: string[],
@@ -449,6 +462,22 @@ export default function LunaQuickPickPage() {
   const ownerLastMileFactCount = ownerLastMileCards.reduce((total, card) =>
     total + card.ownerTruePublicationBlockers.length, 0)
   const batchSummary = publisherCohort?.summary
+  const exactBatchMembers = (publisherCohort?.candidates ?? []).filter(
+    (candidate) => candidate.batchEligible)
+  const exactMembershipValid = Boolean(batchSummary
+    && batchSummary.exactMemberDigestsMatch
+    && exactBatchMembers.length === batchSummary.batchEligibleCount
+    && new Set(exactBatchMembers.map((entry) => entry.candidateId)).size
+      === exactBatchMembers.length
+    && exactBatchMembers.every((entry) => {
+      const binding = record(entry.authorizationBinding)
+      return /^sha256:[0-9a-f]{64}$/.test(entry.candidateId)
+        && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(entry.packageId)
+        && /^sha256:[0-9a-f]{64}$/.test(entry.currentPackageDigest)
+        && binding.candidateId === entry.candidateId
+        && binding.packageId === entry.packageId
+        && binding.packageDigest === entry.currentPackageDigest
+    }))
   const batchParity = Boolean(batchSummary
     && batchSummary.authoritativeReadyCount ===
       batchSummary.visibleReadyCount
@@ -456,7 +485,7 @@ export default function LunaQuickPickPage() {
       batchSummary.actionableReadyCount
     && batchSummary.actionableReadyCount === batchSummary.batchEligibleCount
     && batchSummary.batchEligibleCount === batchSummary.batchButtonN
-    && batchSummary.preflightEligible)
+    && batchSummary.preflightEligible && exactMembershipValid)
 
   return <main className="min-h-screen bg-[#080b11] px-4 pb-28 pt-6 text-white">
     <div className="mx-auto max-w-5xl space-y-5">
@@ -531,6 +560,31 @@ export default function LunaQuickPickPage() {
           batchSummary?.actionableReadyCount ?? "—"} · elegibles {
           batchSummary?.batchEligibleCount ?? "—"}.
         </p>
+        {publisherReadError && <p role="alert"
+          className="mt-2 text-xs text-rose-100">
+          Autoridad Publisher no disponible · {publisherReadError}. El lote
+          continúa cerrado y no se presenta como cero.
+        </p>}
+        {publisherCohort && <div className="mt-3 rounded-2xl bg-black/25 p-3">
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-white/55">
+            Membresía exacta · {exactMembershipValid ? "DIGESTS MATCH" : "NO VERIFICADA"}
+          </p>
+          <ol className="mt-2 space-y-2">
+            {exactBatchMembers.map((member) => <li key={member.candidateId}
+              className="rounded-xl border border-white/10 p-2 text-xs">
+              <p className="font-black text-white/85">{member.title
+                ?? member.sourceSku ?? "Producto sin título"}</p>
+              <p className="mt-1 break-all text-white/45">SKU {member.sourceSku
+                ?? "NO DEMOSTRADO"} · candidate {member.candidateId}</p>
+              <p className="break-all text-white/45">package {member.packageId}
+                · {member.currentPackageDigest}</p>
+            </li>)}
+          </ol>
+          {publisherCohort.source?.apiSourceSha && <p
+            className="mt-2 break-all text-[10px] text-white/35">
+            API source · {publisherCohort.source.apiSourceSha}
+          </p>}
+        </div>}
         <button type="button" onClick={() => void publishReadyBatch()}
           disabled={!batchParity || batchBusy ||
             (batchSummary?.batchEligibleCount ?? 0) < 1}
@@ -549,7 +603,9 @@ export default function LunaQuickPickPage() {
 
       {error && <section role="alert"
         className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm text-rose-50">
-        <strong>No pudimos cargar Quick Pick</strong>
+        <strong>No pudimos cargar Quick Pick · {error}</strong>
+        <p className="mt-1 text-xs text-white/60">La autoridad del lote
+          Publisher se conserva de forma independiente cuando está disponible.</p>
         {cards.length > 0 && lastReadAt && <p className="mt-1 text-xs text-white/60">
           Mostrando la última lectura durable confirmada de esta sesión · {new Date(lastReadAt).toLocaleString("es-NI")}.
         </p>}

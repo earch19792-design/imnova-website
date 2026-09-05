@@ -26,7 +26,9 @@ type HomeAuthority = Readonly<{
   postSaleWorking: boolean
   ebayState: SellerOsOperationalStateV1
   productResearchState: SellerOsOperationalStateV1
+  productResearchCause: string
   lunaState: SellerOsOperationalStateV1
+  lunaCause: string
   mayelState: SellerOsOperationalStateV1
   mayelAvailable: boolean
   mayelDelegated: number | null
@@ -50,7 +52,9 @@ const EMPTY_AUTHORITY: HomeAuthority = Object.freeze({
   postSaleWorking: false,
   ebayState: "DESCONOCIDO",
   productResearchState: "DESCONOCIDO",
+  productResearchCause: "OPERATIONAL_SNAPSHOT_NOT_LOADED",
   lunaState: "DESCONOCIDO",
+  lunaCause: "OPERATIONAL_SNAPSHOT_NOT_LOADED",
   mayelState: "DESCONOCIDO",
   mayelAvailable: false,
   mayelDelegated: null,
@@ -130,7 +134,12 @@ export function SellerOsHomeDashboardV1() {
         ebayState: operationalState(record(capabilities.ebay).state),
         productResearchState: operationalState(
           record(capabilities.productResearch).state),
+        productResearchCause: String(
+          record(capabilities.productResearch).presentationCause
+            ?? "PRODUCT_RESEARCH_PRESENTATION_CAUSE_UNAVAILABLE"),
         lunaState: operationalState(record(capabilities.lunaShipping).state),
+        lunaCause: String(record(capabilities.lunaShipping).presentationCause
+          ?? "LUNA_PRESENTATION_CAUSE_UNAVAILABLE"),
         mayelState: operationalState(record(capabilities.mayel).state),
         mayelAvailable: mayel.authorityAvailable === true,
         mayelDelegated: count(mayel.delegatedCount),
@@ -187,9 +196,9 @@ export function SellerOsHomeDashboardV1() {
   const capabilities: readonly [string, SellerOsOperationalStateV1,
     string][] = [
     ["Luna Shipping", lunaState,
-      "Cola, binding y capacidad del worker; conexión sola no basta."],
+      `Cola, binding y capacidad del worker · ${authority.lunaCause}.`],
     ["Product Research", authority.productResearchState,
-      "Receipt reciente y plan durable; configured no equivale a operar."],
+      `Receipt reciente y plan durable · ${authority.productResearchCause}.`],
     ["Publisher", "BLOQUEADO",
       "FAILED_PHYSICAL_ACCEPTANCE · no se solicitan pruebas SKU por SKU."],
     ["eBay", authority.ebayState,

@@ -230,6 +230,8 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
         ? "PUBLISHED_CONFIRMED" : executionPhase === "completed"
           ? "UNPUBLISHED_CONFIRMED" : "NOT_STARTED")
     return Object.freeze({ candidateId, packageId,
+      sourceSku: text(card.sourceSku, 160),
+      title: text(card.title, 240),
       currentPackageDigest: text(review.packageDigest, 100),
       readinessState: officiallyPublished ? "PUBLISHED"
         : runtimeInProgress ? "PUBLISHER_RUNNING"
@@ -297,6 +299,18 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
     })
   })
   const batchEligibleMembers = cohort.filter((entry) => entry.batchEligible)
+  const exactMemberDigestsMatch = batchEligibleMembers.every((entry) => {
+    const binding = record(entry.authorizationBinding)
+    return /^sha256:[0-9a-f]{64}$/.test(entry.candidateId)
+      && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(entry.packageId)
+      && /^sha256:[0-9a-f]{64}$/.test(entry.currentPackageDigest ?? "")
+      && binding.candidateId === entry.candidateId
+      && binding.packageId === entry.packageId
+      && binding.packageDigest === entry.currentPackageDigest
+  }) && new Set(batchEligibleMembers.map((entry) => entry.candidateId)).size
+      === batchEligibleMembers.length
+    && new Set(batchEligibleMembers.map((entry) => entry.packageId)).size
+      === batchEligibleMembers.length
   const failureClassCounts = Object.fromEntries([...new Set(cohort.flatMap(
     (entry) => entry.failureClass ? [entry.failureClass] : []))].map((code) =>
     [code, cohort.filter((entry) => entry.failureClass === code).length]))
@@ -316,6 +330,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
         entry.actionableReady).length,
       batchEligibleCount: batchEligibleMembers.length,
       batchButtonN: batchEligibleMembers.length,
+      exactMemberDigestsMatch,
       falseDisabledReadyCount: cohort.filter((entry) =>
         entry.authoritativeReady && !entry.batchEligible).length,
       trueBlockerCount: cohort.filter((entry) => !entry.batchEligible
@@ -338,5 +353,10 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
     safety: Object.freeze({ readOnly: true as const,
       marketplaceWrites: 0 as const, databaseMutations: 0 as const,
       codexProductDecisions: 0 as const }),
+    source: Object.freeze({
+      apiSourceSha: process.env.VERCEL_GIT_COMMIT_SHA?.trim() ?? null,
+      deploymentId: process.env.VERCEL_DEPLOYMENT_ID?.trim() ?? null,
+      projection: SELLER_OS_PUBLISHER_OPERATIONAL_COHORT_V1,
+    }),
   })
 }

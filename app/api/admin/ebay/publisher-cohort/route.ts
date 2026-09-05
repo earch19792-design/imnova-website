@@ -51,6 +51,10 @@ export async function GET(request: Request) {
     })
     const response = NextResponse.json({ success: true, cohort })
     response.headers.set("Cache-Control", "private, no-store, max-age=0")
+    response.headers.set("X-Seller-Os-Projection",
+      "SELLER_OS_PUBLISHER_OPERATIONAL_COHORT_V1")
+    const sourceSha = process.env.VERCEL_GIT_COMMIT_SHA?.trim()
+    if (sourceSha) response.headers.set("X-Seller-Os-Source-Sha", sourceSha)
     return response
   } catch (error) {
     const code = error instanceof Error ? error.message : ""
