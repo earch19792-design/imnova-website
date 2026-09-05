@@ -100,6 +100,15 @@ function serverManagedExtraPath(
     if (path === "$.includeCatalogProductDetails") return value === false
     return false
   }
+  if (path ===
+      "$.availability.shipToLocationAvailability.allocationByFormat") {
+    return isRecord(value)
+      && Object.keys(value).length > 0
+      && Object.keys(value).every((key) =>
+        ["auction", "fixedPrice"].includes(key))
+      && Object.values(value).every((entry) =>
+        Number.isInteger(entry) && Number(entry) >= 0)
+  }
   return ["$.sku", "$.locale"].includes(path)
 }
 

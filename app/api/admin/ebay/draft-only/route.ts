@@ -2623,7 +2623,9 @@ async function persistPublisherBatchChildResult(input: Readonly<{
       ...input.values, receipt_digest: receiptDigest,
       lease_owner: null, lease_expires_at: null,
       retry_after_at: input.values.status === "FAILED_RETRY_SAFE"
-        ? new Date(Date.now() + 15 * 60_000).toISOString() : null,
+        ? text(input.values.retry_after_at)
+          || new Date(Date.now() + 15 * 60_000).toISOString()
+        : null,
       updated_at: new Date().toISOString(),
       ...(input.values.status === "COMPLETED"
         ? { completed_at: new Date().toISOString() } : {}),
@@ -2745,6 +2747,7 @@ async function reconcilePublisherBatchOfficialReadbacksV1(input: Readonly<{
           ) ? publisherState.mismatchClassification : [],
           retry_safety: safe ? "SAME_LINEAGE_RESUME_SAFE"
             : text(publisherState.retrySafety) || "ENGINEERING_REQUIRED",
+          retry_after_at: safe ? new Date().toISOString() : null,
           approval_id: approval.id, execution_id: execution.id,
           offer_id: offerId, item_id: null,
           marketplace_write_count: Number(failed.marketplace_write_count),
@@ -2799,9 +2802,11 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
   let stopGlobal = false
   const maximumChildrenPerDispatch = Math.min(4,
     Number(batch.exact_member_count))
+  const maximumReadbacksPerDispatch = Math.min(8,
+    Number(batch.exact_member_count))
   const reconciledReadbacks = await reconcilePublisherBatchOfficialReadbacksV1({
     supabase, batchId: input.batchId, accountKey: input.accountKey,
-    actor, workerId, maximum: maximumChildrenPerDispatch,
+    actor, workerId, maximum: maximumReadbacksPerDispatch,
   })
   results.push(...reconciledReadbacks)
   const failedPrewriteRead = await supabase.from(
@@ -2830,8 +2835,11 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
         candidateId: candidate.candidateId, packageId: candidate.packageId,
         packageDigest: candidate.currentPackageDigest,
         authorizationBinding: candidate.authorizationBinding }])
+    const reusableApprovalLineage = failedChild.error_class ===
+      "EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED"
     if (!exactCurrentBinding || Number(failedChild.marketplace_write_count) !== 0
-        || failedChild.approval_id || failedChild.execution_id
+        || (failedChild.approval_id && !reusableApprovalLineage)
+        || failedChild.execution_id
         || failedChild.offer_id || failedChild.item_id
         || !text(failedChild.receipt_digest)) continue
     const rearm = await supabase.rpc(
@@ -4361,6 +4369,57 @@ async function approveDraft(body: JsonRecord, actor: string) {
   }, { status: 201 })
 }
 
+async function hasExactPublisherBatchApprovalContinuationAuthorityV1(
+  input: Readonly<{
+    supabase: ReturnType<typeof getSupabaseAdminClient>
+    approval: JsonRecord
+    actor: string
+  }>,
+) {
+  const approvalKey = text(input.approval.approval_idempotency_key)
+  const childId = uuid(approvalKey.startsWith("batch-approval:")
+    ? approvalKey.slice("batch-approval:".length) : "")
+  const authorization = record(record(
+    input.approval.approved_payload,
+  ).compliance)
+  const quickPick = record(authorization.quickPickPublicationAuthorization)
+  if (!childId || quickPick.commercialAuthorizationAuthority !==
+      "SELLER_OS_PUBLISHER_BATCH_AUTHORIZATION_V1") return false
+  const childRead = await input.supabase.from(
+    "seller_os_publisher_batch_children_v1")
+    .select("id,batch_authorization_id,marketplace_account_key,actor_user_id,candidate_id,package_id,package_digest,authorization_binding,status")
+    .eq("id", childId).eq("actor_user_id", input.actor)
+    .eq("package_id", input.approval.listing_package_id)
+    .eq("candidate_id", input.approval.candidate_key).maybeSingle()
+  if (childRead.error || !childRead.data) return false
+  const child = record(childRead.data)
+  const batchRead = await input.supabase.from(
+    "seller_os_publisher_batch_authorizations_v1")
+    .select("id,marketplace_account_key,actor_user_id,marketplace_id,status,authorization_digest")
+    .eq("id", child.batch_authorization_id)
+    .eq("actor_user_id", input.actor)
+    .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL", "BLOCKED"])
+    .maybeSingle()
+  if (batchRead.error || !batchRead.data) return false
+  const batch = record(batchRead.data)
+  const binding = record(child.authorization_binding)
+  return batch.marketplace_id === "EBAY_US"
+    && batch.marketplace_account_key === child.marketplace_account_key
+    && text(quickPick.batchAuthorizationId) === text(batch.id)
+    && text(quickPick.batchAuthorizationDigest) ===
+      text(batch.authorization_digest)
+    && text(quickPick.accountKey) === text(child.marketplace_account_key)
+    && text(quickPick.actorUserId) === input.actor
+    && text(quickPick.listingPackageId) === text(child.package_id)
+    && text(quickPick.opportunityId) === text(input.approval.opportunity_id)
+    && text(quickPick.candidateKey) === text(child.candidate_id)
+    && text(quickPick.packageDigest) === text(child.package_digest)
+    && text(quickPick.authorizedImagesDigest) === text(binding.imagesDigest)
+    && ["AUTHORIZED", "CLAIMED", "RUNNING", "FAILED_RETRY_SAFE",
+      "FAILED_BLOCKED", "AMBIGUOUS_FAIL_CLOSED"].includes(
+        text(child.status) ?? "")
+}
+
 async function executeDraft(body: JsonRecord, actor: string) {
   const approvalId = uuid(body.approvalId)
   const executionKey = idempotencyKey(body.idempotencyKey)
@@ -4396,6 +4455,10 @@ async function executeDraft(body: JsonRecord, actor: string) {
   const approvedPayload = record(approval.approved_payload)
   const approvedOfferPayload = record(approvedPayload.offerPayload)
   const approvedSku = text(approvedPayload.sku)
+  const batchContinuationAuthority =
+    await hasExactPublisherBatchApprovalContinuationAuthorityV1({
+      supabase, approval: approval as JsonRecord, actor,
+    })
   if (existing && existing.idempotency_key !== executionKey) return jsonError(new Error("EBAY_DRAFT_ONLY_IDEMPOTENCY_MISMATCH"), 409)
   if (existing?.phase === "completed") return NextResponse.json({
     success: true,
@@ -4562,6 +4625,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     "inventory_confirmed",
   ].includes(existingPhase)
   const approvalExpired = Date.parse(approval.expires_at) <= Date.now()
+    && !batchContinuationAuthority
   const approvalInactive = approval.status !== "approved"
     || Boolean(approval.consumed_at)
     || Boolean(approval.revoked_at)
@@ -4641,7 +4705,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
   }
   if (existing?.phase === "terminal_failure") return jsonError(new Error("EBAY_DRAFT_ONLY_TERMINAL_FAILURE"), 409)
   if (approval.status !== "approved" || approval.consumed_at || approval.revoked_at) return jsonError(new Error("EBAY_DRAFT_ONLY_APPROVAL_NOT_ACTIVE"), 409)
-  if (Date.parse(approval.expires_at) <= Date.now()) {
+  if (Date.parse(approval.expires_at) <= Date.now()
+      && !batchContinuationAuthority) {
     await supabase.from("ebay_draft_only_approvals").update({ status: "expired", updated_at: new Date().toISOString() }).eq("id", approvalId).eq("status", "approved")
     return jsonError(new Error("EBAY_DRAFT_ONLY_APPROVAL_EXPIRED"), 409)
   }
