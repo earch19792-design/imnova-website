@@ -629,7 +629,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const overnightReevaluation = input.trigger === "OVERNIGHT_ENRICHMENT"
       && Boolean(currentMarker?.completedAt)
     if (!candidate || (!metadataBlocked && !safeContractUpgrade
-        && !brandEvidencePending)
+        && !brandEvidencePending && !incompleteClaimStale)
       || (currentMarker && !legacyScopeReconciliation
         && !autonomousUpgradeRequired && !incompleteClaimStale
         && !overnightReevaluation && !brandEvidencePending)) continue
