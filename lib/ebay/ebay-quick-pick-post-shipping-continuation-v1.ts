@@ -87,6 +87,7 @@ export async function continueLunaQuickPickPostShippingRuntimeV1(
     accountKey: string
     candidateKeys: readonly string[]
     scopeMode?: "DURABLE_BATCH" | "EXACT_REQUEST"
+    trigger?: "IMMEDIATE" | "OVERNIGHT_ENRICHMENT" | "DEPENDENCY_RECOVERY"
     taxonomyReader: RadarMarketplaceTaxonomyReaderV1
     productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
     dependencies?: Readonly<{
@@ -128,7 +129,7 @@ export async function continueLunaQuickPickPostShippingRuntimeV1(
     candidateKeys: scopedCandidateKeys,
     taxonomyReader: input.taxonomyReader,
     productIdentifierPolicyReader: input.productIdentifierPolicyReader,
-    trigger: "IMMEDIATE",
+    trigger: input.trigger ?? "IMMEDIATE",
   })
   const minimumReadinessContinuation = await (
     input.dependencies?.continueMinimumReadiness ??
@@ -140,6 +141,7 @@ export async function continueLunaQuickPickPostShippingRuntimeV1(
   return Object.freeze({
     contractVersion: QUICK_PICK_POST_SHIPPING_CONTINUATION_V1,
     scopeMode: input.scopeMode ?? "DURABLE_BATCH",
+    trigger: input.trigger ?? "IMMEDIATE",
     requestedCandidateCount: requestedKeys.length,
     scopedCandidateCount: scopedCandidateKeys.length,
     requiredSpecificsContinuation,

@@ -535,7 +535,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
   productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
   aiResolver?: RequiredSpecificsAiBatchV1 | null
-  trigger?: "IMMEDIATE" | "OVERNIGHT_ENRICHMENT"
+  trigger?: "IMMEDIATE" | "OVERNIGHT_ENRICHMENT" | "DEPENDENCY_RECOVERY"
 }>) {
   const candidateKeys = [...new Set(input.candidateKeys.filter((value) =>
     /^sha256:[0-9a-f]{64}$/.test(value)))].slice(0, MAXIMUM_QUICK_PICKS)
