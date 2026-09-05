@@ -234,15 +234,18 @@ export function OpportunityCommandCenter({
   async function request(body?: Record<string, unknown>) {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
-    const response = await fetch("/api/admin/ebay/luna-opportunity-queue", {
-      method: body ? "POST" : "GET",
-      cache: "no-store",
-      headers: {
-        Authorization: `Bearer ${data.session.access_token}`,
-        ...(body ? { "Content-Type": "application/json" } : {}),
+    const response = await fetch(
+      "/api/admin/ebay/luna-opportunity-queue?fullQueue=1",
+      {
+        method: body ? "POST" : "GET",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
       },
-      body: body ? JSON.stringify(body) : undefined,
-    })
+    )
     const payload = await readMobileReviewJson<Record<string, any>>(
       response,
       "No se pudo consultar la cola de oportunidades",

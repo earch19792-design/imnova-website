@@ -73,11 +73,10 @@ export async function GET(req: Request) {
   if (unauthorized) return unauthorized
   try {
     const supabase = getSupabaseAdminClient()
-    const ownerDashboardSummary = new URL(req.url).searchParams.get(
-      "ownerDashboardSummary") === "1"
-    const dashboard = ownerDashboardSummary
-      ? await getSellerOsDashboardQueueReadModelV1(supabase)
-      : await getEbayFirstLunaQueueDashboard(supabase)
+    const fullQueue = new URL(req.url).searchParams.get("fullQueue") === "1"
+    const dashboard = fullQueue
+      ? await getEbayFirstLunaQueueDashboard(supabase)
+      : await getSellerOsDashboardQueueReadModelV1(supabase)
     return NextResponse.json({ success: true, dashboard })
   } catch (error) {
     return NextResponse.json({ success: false, error: safeError(error) }, { status: 502 })

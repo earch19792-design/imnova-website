@@ -177,7 +177,8 @@ export default function EbayLunaOpportunityQueuePage() {
   async function load() {
     setError("")
     try {
-      const response = await adminRequest("/api/admin/ebay/luna-opportunity-queue")
+      const response = await adminRequest(
+        "/api/admin/ebay/luna-opportunity-queue?fullQueue=1")
       const payload = await response.json()
       if (!response.ok || !payload.success) throw new Error(payload.error)
       setDashboard(payload.dashboard)

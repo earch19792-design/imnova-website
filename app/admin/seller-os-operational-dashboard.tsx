@@ -995,7 +995,7 @@ export function SellerOsOperationalDashboard() {
           "/api/admin/ebay/commercial-monitor?dashboardHealthOnly=1",
         ),
         adminRequest(
-          "/api/admin/ebay/luna-opportunity-queue?ownerDashboardSummary=1",
+          "/api/admin/ebay/luna-opportunity-queue",
         ),
       ])
 
