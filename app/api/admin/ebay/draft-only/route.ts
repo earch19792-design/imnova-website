@@ -1354,6 +1354,7 @@ async function loadCrossApprovalExistingUnpublishedOfferAuthorityV1(input: {
   currentApproval: JsonRecord | null
   expected: ExactDraftOnlyPublicationExpectedV1
   verifyOfficial: boolean
+  exactBatchContinuationAuthority?: boolean
 }) {
   const currentApprovalId = uuid(input.currentApproval?.id)
   if (!currentApprovalId) return null
@@ -1392,6 +1393,8 @@ async function loadCrossApprovalExistingUnpublishedOfferAuthorityV1(input: {
       currentApproval: input.currentApproval,
       priorApproval: priorApproval ?? null,
       priorExecution: execution as JsonRecord,
+      exactBatchContinuationAuthority:
+        input.exactBatchContinuationAuthority,
       expected: input.expected,
     })
     return {
@@ -2681,7 +2684,14 @@ async function reconcilePublisherBatchOfficialReadbacksV1(input: Readonly<{
     .eq("marketplace_account_key", input.accountKey)
     .eq("actor_user_id", input.actor)
     .eq("status", "FAILED_BLOCKED")
-    .eq("error_class", "INVENTORY_ITEM_MISMATCH")
+    .in("error_class", [
+      "INVENTORY_ITEM_MISMATCH",
+      "EBAY_DRAFT_ONLY_ACTIVE_APPROVAL_EXISTS",
+      "EBAY_AUTHORIZED_PUBLICATION_OPPORTUNITY_INVALID",
+      "EBAY_AUTHORIZED_PUBLICATION_APPROVED_CANDIDATE_REQUIRED",
+      "EBAY_AUTHORIZED_PUBLICATION_SIX_APPROVED_IMAGES_REQUIRED",
+      "EBAY_AUTHORIZED_PUBLICATION_APPROVED_IMAGES_REQUIRED",
+    ])
     .gt("marketplace_write_count", 0)
     .order("updated_at", { ascending: true })
     .limit(input.maximum)
@@ -2846,13 +2856,23 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
         || failedChild.execution_id
         || failedChild.offer_id || failedChild.item_id
         || !text(failedChild.receipt_digest)) continue
+    const exactAuthorityRecovery = [
+      "EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED",
+      "EBAY_DRAFT_ONLY_ACTIVE_APPROVAL_EXISTS",
+      "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_AMBIGUOUS",
+      "EBAY_DRAFT_ONLY_BLOCKED",
+    ].includes(text(failedChild.error_class))
     const rearm = await supabase.rpc(
-      "rearm_seller_os_publisher_batch_prewrite_child_v1", {
+      exactAuthorityRecovery
+        ? "rearm_seller_os_publisher_batch_exact_authority_child_v2"
+        : "rearm_seller_os_publisher_batch_prewrite_child_v1", {
         p_marketplace_account_key: input.accountKey,
         p_batch_authorization_id: input.batchId,
         p_child_id: failedChild.id,
         p_expected_receipt_digest: failedChild.receipt_digest,
-        p_mechanism_version: "SELLER_OS_PUBLISHER_PREFLIGHT_RECOVERY_V1",
+        p_mechanism_version: exactAuthorityRecovery
+          ? "SELLER_OS_PUBLISHER_EXACT_AUTHORITY_RECOVERY_V2"
+          : "SELLER_OS_PUBLISHER_PREFLIGHT_RECOVERY_V1",
       })
     if (rearm.error) throw new Error(
       "SELLER_OS_PUBLISHER_PREFLIGHT_RECOVERY_REARM_FAILED")
@@ -4019,6 +4039,13 @@ async function approveDraft(body: JsonRecord, actor: string) {
         supabase,
         exactExpectedSelfLineage,
       )
+      const exactBatchContinuationAuthority = exactSelfLineage.approval
+        ? await hasExactPublisherBatchApprovalContinuationAuthorityV1({
+          supabase,
+          approval: exactSelfLineage.approval,
+          actor,
+        })
+        : false
       const correctedRetryCollisionAuthority =
         await loadCorrectedPackageRetryCollisionAuthorityV1({
           supabase,
@@ -4028,6 +4055,18 @@ async function approveDraft(body: JsonRecord, actor: string) {
           currentPublication: exactSelfLineage.publication,
           currentSelfLineage: exactSelfLineage.classification,
         })
+      const crossApprovalExistingOffer =
+        await loadCrossApprovalExistingUnpublishedOfferAuthorityV1({
+          supabase,
+          currentApproval: exactSelfLineage.approval,
+          expected: exactExpectedSelfLineage,
+          verifyOfficial: true,
+          exactBatchContinuationAuthority,
+        })
+      const collisionSelfLineage = crossApprovalCollisionSelfLineageV1({
+        current: correctedRetryCollisionAuthority.collisionSelfLineage,
+        authority: crossApprovalExistingOffer,
+      })
       context = await loadPackageContext(
         supabase,
         packageId,
@@ -4035,7 +4074,7 @@ async function approveDraft(body: JsonRecord, actor: string) {
         text(requestedConfiguration.sku),
         target,
         fingerprint,
-        correctedRetryCollisionAuthority.collisionSelfLineage,
+        collisionSelfLineage,
       )
       if (refreshedSource.sourceClassification ===
           "QUICK_PICK_DURABLE_REVALIDATED") {
@@ -4824,6 +4863,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
         sku,
       },
       verifyOfficial: true,
+      exactBatchContinuationAuthority: batchContinuationAuthority,
     })
   const correctedRetryHistory = correctedRetryCollisionAuthority.history
   const collisionSelfLineage = crossApprovalCollisionSelfLineageV1({

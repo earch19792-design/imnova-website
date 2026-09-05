@@ -226,6 +226,7 @@ export function classifyCrossApprovalExistingUnpublishedOfferV1(input: Readonly<
   currentApproval?: JsonRecord | null
   priorApproval?: JsonRecord | null
   priorExecution?: JsonRecord | null
+  exactBatchContinuationAuthority?: boolean
   expected: Readonly<{
     actorUserId: string
     listingPackageId: string
@@ -271,8 +272,10 @@ export function classifyCrossApprovalExistingUnpublishedOfferV1(input: Readonly<
     current.status !== "approved"
     || Boolean(current.consumed_at)
     || Boolean(current.revoked_at)
-    || !Number.isFinite(Date.parse(text(current.expires_at)))
-    || Date.parse(text(current.expires_at)) <= Date.now()
+    || (!input.exactBatchContinuationAuthority && (
+      !Number.isFinite(Date.parse(text(current.expires_at)))
+      || Date.parse(text(current.expires_at)) <= Date.now()
+    ))
   ) return result(false, "CURRENT_OWNER_AUTHORIZATION_NOT_ACTIVE")
   if (
     prior.status !== "consumed"
