@@ -31,9 +31,12 @@ export const LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1 =
   "LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1" as const
 
 const verifiedConditionContracts = new Map([
-  ["new", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
-  ["brand new", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
-  ["nuevo", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
+  ["new", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New",
+    inventoryConditionCode: "NEW" }],
+  ["brand new", { conditionId: EBAY_US_NEW_CONDITION_ID,
+    canonicalLabel: "New", inventoryConditionCode: "NEW" }],
+  ["nuevo", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New",
+    inventoryConditionCode: "NEW" }],
 ])
 
 /**
@@ -50,7 +53,29 @@ export function ebayConditionContractFromVerifiedFact(value: unknown) {
     .replace(/[\s_-]+/g, " ")
     .trim()
   const contract = verifiedConditionContracts.get(normalized)
-  return contract ? { ...contract, marketplaceId: "EBAY_US" as const } : null
+  return contract ? { conditionId: contract.conditionId,
+    canonicalLabel: contract.canonicalLabel,
+    marketplaceId: "EBAY_US" as const } : null
+}
+
+/**
+ * Adapts the already-verified condition fact to the Inventory API enum. This
+ * is a representation adapter only: it cannot select or change condition and
+ * returns null unless the label and official condition ID prove the same
+ * existing condition contract.
+ */
+export function ebayInventoryConditionCodeFromVerifiedContractV1(
+  conditionId: unknown,
+  conditionLabel: unknown,
+) {
+  const normalized = stringValue(conditionLabel)
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[\s_-]+/g, " ")
+    .trim()
+  const contract = verifiedConditionContracts.get(normalized)
+  return contract && stringValue(conditionId) === contract.conditionId
+    ? contract.inventoryConditionCode : null
 }
 
 /**

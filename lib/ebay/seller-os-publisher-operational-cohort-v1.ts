@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { preflightEbayDraftOnlyMobile } from "./ebay-draft-only-gateway"
+import { ebayInventoryConditionCodeFromVerifiedContractV1 } from
+  "./ebay-manual-listing-domain"
 import { readLunaQuickPickProgressV1 } from "./ebay-luna-quick-pick-v1"
 import { projectQuickPickOwnerCardV1,
   quickPickPublisherActionabilityV1,
@@ -191,6 +193,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
     const batchChild = batchChildren.get(candidateId) ?? {}
     const actionability = card.publisherActionability
     const review = record(card.listingReview)
+    const reviewCondition = record(review.condition)
     const packageFrozenForActor = packageRow.created_by === input.actorUserId
     const childStatus = text(batchChild.status, 100)
     const activeChild = ["AUTHORIZED", "CLAIMED", "RUNNING",
@@ -274,6 +277,10 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
       actionableReady: authoritativeReady,
       publisherPreflightEligible: preflightEligible,
       publisherRuntimeEligible,
+      publisherConditionId: text(reviewCondition.id, 30),
+      publisherConditionCode:
+        ebayInventoryConditionCodeFromVerifiedContractV1(
+          reviewCondition.id, reviewCondition.label),
       batchEligible,
       failureClass: officiallyPublished ? null
         : runtimeInProgress ? "PUBLISHER_BATCH_RUNTIME_IN_PROGRESS"

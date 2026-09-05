@@ -311,13 +311,14 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
   const ownerReviewConfirmed = legacyOwnerReviewConfirmed ||
     batchAuthorizationConfirmed
   const packageMatch = legacyPackageMatch || batchAuthorizationConfirmed
-  const marketTestReady = input.card.marketTestReady === true &&
-    input.card.disposition === "MARKET_TEST_READY" &&
-    opportunity.decision === "MARKET_TEST_READY" &&
+  const durableMarketTestReady = opportunity.decision === "MARKET_TEST_READY" &&
     publishHandoff.marketTestReadiness === "PASS" &&
     publishHandoff.publishableAsMarketTest === true &&
     publishHandoff.demandProven === false &&
     publishHandoff.demandUnprovenDoesNotBlockMarketTest === true
+  const marketTestReady = durableMarketTestReady &&
+    (batchAuthorizationConfirmed || (input.card.marketTestReady === true &&
+      input.card.disposition === "MARKET_TEST_READY"))
   const duplicateGuardReady = input.card.alreadyLive === false &&
     input.card.linkedLiveItemIds.length === 0
   const legacy = evaluateEbayListingWorkspaceEligibility(opportunity)

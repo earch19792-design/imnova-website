@@ -2643,6 +2643,48 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
   let stopGlobal = false
   const maximumChildrenPerDispatch = Math.min(4,
     Number(batch.exact_member_count))
+  const failedPrewriteRead = await supabase.from(
+    "seller_os_publisher_batch_children_v1")
+    .select("id,candidate_id,package_id,package_digest,authorization_binding,status,stage,error_class,receipt_digest,marketplace_write_count,approval_id,execution_id,offer_id,item_id,attempt_count")
+    .eq("batch_authorization_id", input.batchId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("status", "FAILED_BLOCKED").eq("stage", "PREFLIGHT")
+    .order("updated_at", { ascending: true })
+    .limit(maximumChildrenPerDispatch)
+  if (failedPrewriteRead.error) throw new Error(
+    "SELLER_OS_PUBLISHER_PREFLIGHT_RECOVERY_READ_FAILED")
+  let rearmedCount = 0
+  for (const failedChild of rows(failedPrewriteRead.data)) {
+    const candidate = current.get(text(failedChild.candidate_id) ?? "")
+    const binding = record(failedChild.authorization_binding)
+    const exactCurrentBinding = candidate?.publisherRuntimeEligible === true
+      && candidate.packageId === failedChild.package_id
+      && candidate.currentPackageDigest === failedChild.package_digest
+      && candidate.publisherConditionId === binding.condition
+      && Boolean(text(candidate.publisherConditionCode))
+      && publisherBatchDigest([{ candidateId: failedChild.candidate_id,
+        packageId: failedChild.package_id,
+        packageDigest: failedChild.package_digest,
+        authorizationBinding: binding }]) === publisherBatchDigest([{
+        candidateId: candidate.candidateId, packageId: candidate.packageId,
+        packageDigest: candidate.currentPackageDigest,
+        authorizationBinding: candidate.authorizationBinding }])
+    if (!exactCurrentBinding || Number(failedChild.marketplace_write_count) !== 0
+        || failedChild.approval_id || failedChild.execution_id
+        || failedChild.offer_id || failedChild.item_id
+        || !text(failedChild.receipt_digest)) continue
+    const rearm = await supabase.rpc(
+      "rearm_seller_os_publisher_batch_prewrite_child_v1", {
+        p_marketplace_account_key: input.accountKey,
+        p_batch_authorization_id: input.batchId,
+        p_child_id: failedChild.id,
+        p_expected_receipt_digest: failedChild.receipt_digest,
+        p_mechanism_version: "SELLER_OS_PUBLISHER_PREFLIGHT_RECOVERY_V1",
+      })
+    if (rearm.error) throw new Error(
+      "SELLER_OS_PUBLISHER_PREFLIGHT_RECOVERY_REARM_FAILED")
+    rearmedCount += rows(rearm.data).length
+  }
   for (let ordinal = 0; ordinal < maximumChildrenPerDispatch; ordinal++) {
     if (stopGlobal) break
     const claim = await supabase.rpc(
@@ -2678,10 +2720,13 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
       }
       const policies = record(binding.businessPolicies)
       const quantity = Number(binding.quantity)
-      const condition = text(binding.condition)
+      const conditionId = text(binding.condition)
+      const condition = text(candidate.publisherConditionCode)
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100
-          || !condition) throw new Error(
+          || !condition || candidate.publisherConditionId !== conditionId) {
+        throw new Error(
         "SELLER_OS_PUBLISHER_BATCH_MATERIAL_BINDING_INVALID")
+      }
       const approve = await approveDraft({
         packageId: candidate.packageId,
         packageDigest: candidate.currentPackageDigest,
@@ -2776,8 +2821,12 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
           result: "FAILED", error_class: errorClass,
           ebay_error_codes: Array.isArray(payload.ebayErrorIds)
             ? payload.ebayErrorIds : [],
-          mismatch_fields: Array.isArray(payload.mismatchFields)
-            ? payload.mismatchFields : [],
+          mismatch_fields: [...new Set([
+            ...(Array.isArray(payload.mismatchFields)
+              ? payload.mismatchFields : []),
+            ...(Array.isArray(payload.blockers) ? payload.blockers : []),
+          ].flatMap((value) => text(value)
+            ? [String(value).slice(0, 240)] : []))].slice(0, 40),
           retry_safety: text(payload.retrySafety)
             || (status === "FAILED_RETRY_SAFE" ? "SAFE_TO_RETRY"
               : "ENGINEERING_REQUIRED"),
@@ -2806,14 +2855,17 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
   }
   const batchStatus = completedCount === statuses.length ? "COMPLETED"
     : pendingCount > 0 ? "PARTIAL" : "BLOCKED"
-  await supabase.from("seller_os_publisher_batch_authorizations_v1").update({
-    status: batchStatus,
-    ...(batchStatus === "COMPLETED"
-      ? { completed_at: new Date().toISOString() } : {}),
-    updated_at: new Date().toISOString(),
-  }).eq("id", input.batchId)
+  if (batch.status !== batchStatus) {
+    await supabase.from("seller_os_publisher_batch_authorizations_v1").update({
+      status: batchStatus,
+      ...(batchStatus === "COMPLETED"
+        ? { completed_at: new Date().toISOString() } : {}),
+      updated_at: new Date().toISOString(),
+    }).eq("id", input.batchId)
+  }
   return Object.freeze({ batchId: input.batchId, status: batchStatus,
     childCount: statuses.length, completedCount, pendingCount,
+    rearmedPrewriteChildCount: rearmedCount,
     runtimeResults: Object.freeze(results),
     sellerOsRuntimeAuthority: true as const,
     codexPublishDispatch: 0 as const })
@@ -2899,8 +2951,8 @@ async function handlePost(req: Request) {
       const active = await supabase.from(
         "seller_os_publisher_batch_authorizations_v1").select("id")
         .eq("marketplace_account_key", accountKey)
-        .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL"])
-        .order("created_at", { ascending: true }).limit(3)
+        .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL", "BLOCKED"])
+        .order("created_at", { ascending: false }).limit(10)
       if (active.error) return jsonError(new Error(
         "SELLER_OS_PUBLISHER_BATCH_RUNTIME_SCOPE_READ_FAILED"), 503)
       const outcomes = []
