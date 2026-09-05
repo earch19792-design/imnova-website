@@ -60,6 +60,13 @@ function candidatePath(candidateKey: string) {
   return createHash("sha256").update(candidateKey).digest("hex").slice(0, 24)
 }
 
+export function canonicalApprovedLunaImageUrlsV1(
+  assets: ReadonlyArray<unknown>,
+) {
+  return [...new Set(assets.map((asset) =>
+    text(record(asset).public_url, 2_000)).filter(Boolean))]
+}
+
 export function listingPackagePreparationReadinessV1(value: unknown) {
   const packageData = record(value)
   const completeFields = [
@@ -422,6 +429,10 @@ export async function ensureAutomaticLunaSupplierImagesV1(input: Readonly<{
     throw new Error("LUNA_IMAGE_VALID_COMPLIANT_COUNT_ZERO")
   }
   const acceptedIds = new Set(accepted.map((asset) => uuid(asset.id)).filter(Boolean))
+  const acceptedImageUrls = canonicalApprovedLunaImageUrlsV1(accepted)
+  if (acceptedImageUrls.length < 1) {
+    throw new Error("LUNA_IMAGE_APPROVED_PUBLIC_URL_COUNT_ZERO")
+  }
   const approvedAssets = await input.supabase
     .from("ebay_listing_image_assets")
     .select("id,status")
@@ -447,6 +458,7 @@ export async function ensureAutomaticLunaSupplierImagesV1(input: Readonly<{
   const authority = LUNA_SUPPLIER_IMAGE_RIGHTS_AUTHORITY_V1
   const nextPackageData = {
     ...packageData,
+    imageUrls: acceptedImageUrls,
     draftConfiguration: {
       ...draftConfiguration,
       imageAuthorization: {
