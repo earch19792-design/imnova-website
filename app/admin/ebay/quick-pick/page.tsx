@@ -199,11 +199,26 @@ export default function LunaQuickPickPage() {
     const response = await fetch(path, { ...init, cache: "no-store",
       headers: { ...(init?.headers ?? {}),
         Authorization: `Bearer ${data.session.access_token}` } })
-    const payload = await response.json()
+    const payload = await response.json().catch(() => null)
+    if (!payload || typeof payload !== "object") throw new Error(
+      `SELLER_OS_READ_MODEL_HTTP_${response.status}`)
     if (!response.ok || !payload.success) throw new Error(payload.error ||
       "LUNA_QUICK_PICK_REQUEST_FAILED")
     return payload
   }, [])
+
+  const readProjection = useCallback(async (path: string) => {
+    try {
+      return await request(path)
+    } catch (initialError) {
+      const code = initialError instanceof Error ? initialError.message : ""
+      if (!/(?:_READ_FAILED|_UNAVAILABLE|HTTP_50[234])$/.test(code)) {
+        throw initialError
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1_500))
+      return request(path)
+    }
+  }, [request])
 
   const mergeCards = useCallback((incoming: QuickPickCard[]) => {
     setCards((current) => [...mergeSellerOsQuickPickPresentationV1(
@@ -214,10 +229,27 @@ export default function LunaQuickPickPage() {
     setRehydrating(true)
     setError("")
     setPublisherReadError("")
-    const [quickPickResult, publisherResult] = await Promise.allSettled([
-      request("/api/admin/ebay/luna-quick-pick"),
-      request("/api/admin/ebay/publisher-cohort"),
-    ])
+    // Publisher is the canonical owner control plane. Load it first so the
+    // legacy Quick Pick projection cannot contend for the same bounded
+    // Supabase reads and strand exact batch membership behind a transient
+    // package-authority failure. Each read gets at most one fail-safe retry.
+    const publisherResult = await Promise.resolve(readProjection(
+      "/api/admin/ebay/publisher-cohort")).then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (reason) => ({ status: "rejected" as const, reason }),
+    )
+    if (publisherResult.status === "fulfilled") {
+      setPublisherCohort(publisherResult.value.cohort as PublisherCohort)
+    } else {
+      setPublisherCohort(null)
+      setPublisherReadError(publisherResult.reason instanceof Error
+        ? publisherResult.reason.message : "PUBLISHER_COHORT_READ_FAILED")
+    }
+    const quickPickResult = await Promise.resolve(readProjection(
+      "/api/admin/ebay/luna-quick-pick")).then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (reason) => ({ status: "rejected" as const, reason }),
+    )
     if (quickPickResult.status === "fulfilled") {
       const payload = quickPickResult.value
       const readModel = record(payload.readModel)
@@ -239,15 +271,8 @@ export default function LunaQuickPickPage() {
       setError(quickPickResult.reason instanceof Error
         ? quickPickResult.reason.message : "LUNA_QUICK_PICK_READ_FAILED")
     }
-    if (publisherResult.status === "fulfilled") {
-      setPublisherCohort(publisherResult.value.cohort as PublisherCohort)
-    } else {
-      setPublisherCohort(null)
-      setPublisherReadError(publisherResult.reason instanceof Error
-        ? publisherResult.reason.message : "PUBLISHER_COHORT_READ_FAILED")
-    }
     setRehydrating(false)
-  }, [request])
+  }, [readProjection])
 
   const processLinks = useCallback(async (urls: string[],
     selectedVariants: Record<string, string> = {}) => {
