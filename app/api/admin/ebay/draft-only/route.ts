@@ -2566,6 +2566,16 @@ async function responseBody(response: NextResponse) {
   return record(await response.clone().json())
 }
 
+function canonicalPublisherBatchJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalPublisherBatchJson)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as JsonRecord)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, canonicalPublisherBatchJson(nested)]))
+  }
+  return value
+}
+
 function publisherBatchDigest(members: readonly JsonRecord[]) {
   const canonical = [...members].map((member) => ({
     candidateId: text(member.candidateId),
@@ -2573,8 +2583,8 @@ function publisherBatchDigest(members: readonly JsonRecord[]) {
     packageDigest: text(member.packageDigest),
     authorizationBinding: record(member.authorizationBinding),
   })).sort((left, right) => left.candidateId.localeCompare(right.candidateId))
-  return `sha256:${createHash("sha256").update(JSON.stringify(canonical))
-    .digest("hex")}`
+  return `sha256:${createHash("sha256").update(JSON.stringify(
+    canonicalPublisherBatchJson(canonical))).digest("hex")}`
 }
 
 function batchFailureStatus(payload: JsonRecord) {
@@ -2594,15 +2604,20 @@ async function recoverPublisherBatchPrewriteObservabilityGapsV1(input:
   }>) {
   const read = await input.supabase.from(
     "seller_os_publisher_batch_children_v1")
-    .select("id,error_class,offer_id,item_id")
+    .select("id,error_class,offer_id,item_id,attempt_count")
     .eq("batch_authorization_id", input.batchId)
     .eq("status", "FAILED_BLOCKED")
     .eq("marketplace_write_count", 0)
     .is("approval_id", null).is("execution_id", null)
   if (read.error) throw new Error(
     "SELLER_OS_PUBLISHER_BATCH_PREWRITE_RECOVERY_READ_FAILED")
-  const ids = rows(read.data).filter((child) =>
-    !text(child.error_class) && !text(child.offer_id) && !text(child.item_id))
+  const ids = rows(read.data).filter((child) => {
+    const errorClass = text(child.error_class)
+    return (!errorClass || errorClass ===
+      "SELLER_OS_PUBLISHER_BATCH_CHILD_BINDING_CHANGED")
+      && Number(child.attempt_count ?? 0) <= 2
+      && !text(child.offer_id) && !text(child.item_id)
+  })
     .flatMap((child) => text(child.id) ? [text(child.id)] : [])
   if (!ids.length) return 0
   const update = await input.supabase.from(
@@ -2615,6 +2630,7 @@ async function recoverPublisherBatchPrewriteObservabilityGapsV1(input:
       updated_at: new Date().toISOString(),
     }).in("id", ids).eq("status", "FAILED_BLOCKED")
     .eq("marketplace_write_count", 0)
+    .lte("attempt_count", 2)
     .is("approval_id", null).is("execution_id", null)
     .select("id")
   if (update.error || rows(update.data).length !== ids.length) {
