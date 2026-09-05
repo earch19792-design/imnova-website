@@ -119,7 +119,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
         { ascending: false }).limit(100) :
       Promise.resolve({ data: [], error: null }),
     packageIds.length ? input.supabase.from("ebay_authorized_listing_publications")
-      .select("id,listing_package_id,draft_execution_id,phase,publish_attempt_count,offer_id,listing_id,active_listing_id,last_error_code,last_http_status,error_details,updated_at")
+      .select("id,listing_package_id,draft_execution_id,phase,publish_attempt_count,offer_id,listing_id,active_listing_id,last_error_code,publish_http_status,sanitized_result,updated_at")
       .in("listing_package_id", packageIds).order("updated_at",
         { ascending: false }).limit(100) :
       Promise.resolve({ data: [], error: null }),
@@ -136,10 +136,14 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
         { ascending: false }).limit(100) :
       Promise.resolve({ data: [], error: null }),
   ])
-  if (packageRead.error || approvalRead.error || executionRead.error
-      || publicationRead.error || profileRead.error || batchChildRead.error) {
-    throw new Error("SELLER_OS_PUBLISHER_COHORT_AUTHORITY_READ_FAILED")
-  }
+  const failedAuthority = [
+    ["PACKAGE", packageRead.error], ["APPROVAL", approvalRead.error],
+    ["EXECUTION", executionRead.error],
+    ["PUBLICATION", publicationRead.error], ["PROFILE", profileRead.error],
+    ["BATCH_CHILD", batchChildRead.error],
+  ].find(([, error]) => Boolean(error))
+  if (failedAuthority) throw new Error(
+    `SELLER_OS_PUBLISHER_COHORT_${failedAuthority[0]}_READ_FAILED`)
   const profile = record(profileRead.data)
   const requested = {
     fulfillmentPolicyId: text(profile.fulfillment_policy_id, 100) ?? "",
@@ -245,8 +249,8 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
       lastPublisherStage: text(batchChild.stage, 120)
         ?? publicationPhase ?? executionPhase ?? "NOT_STARTED",
       lastErrorClass: errorClass,
-      ebayErrorId: Array.isArray(record(publication.error_details).errors)
-        ? text(record((record(publication.error_details).errors as
+      ebayErrorId: Array.isArray(record(publication.sanitized_result).errors)
+        ? text(record((record(publication.sanitized_result).errors as
           unknown[])[0]).errorId, 40) : null,
       mismatchFields: Array.isArray(batchChild.mismatch_fields)
         ? batchChild.mismatch_fields : mismatchFields(execution.sanitized_result),
