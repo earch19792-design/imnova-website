@@ -205,16 +205,20 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
     const runtimeBlocked = currentBatchOwnsCandidate && [
       "FAILED_BLOCKED", "AMBIGUOUS_FAIL_CLOSED",
     ].includes(childStatus ?? "")
+    const publicationPhase = text(publication.phase, 100)
+    const executionPhase = text(execution.phase, 100)
+    const officiallyPublished = runtimePublished
+      || (publicationPhase === "monitor_registered"
+        && Boolean(text(publication.listing_id, 80)))
     const authoritativeReady = actionability.authoritativeReady
-      && !currentBatchOwnsCandidate
+      && !currentBatchOwnsCandidate && !officiallyPublished
     const publisherRuntimeEligible = actionability.batchEligible
-      && preflightEligible && packageClaimable && !runtimePublished
+      && preflightEligible && packageClaimable && !officiallyPublished
       && !runtimeBlocked
     const batchEligible = authoritativeReady && preflightEligible
       && packageClaimable
-    const publicationPhase = text(publication.phase, 100)
-    const executionPhase = text(execution.phase, 100)
-    const errorClass = text(batchChild.error_class, 160)
+    const errorClass = officiallyPublished ? null
+      : text(batchChild.error_class, 160)
       ?? text(publication.last_error_code, 160)
       ?? text(execution.last_error_code, 160)
       ?? (!batchEligible ? actionability.failureClass : null)
@@ -227,7 +231,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
           ? "UNPUBLISHED_CONFIRMED" : "NOT_STARTED")
     return Object.freeze({ candidateId, packageId,
       currentPackageDigest: text(review.packageDigest, 100),
-      readinessState: runtimePublished ? "PUBLISHED"
+      readinessState: officiallyPublished ? "PUBLISHED"
         : runtimeInProgress ? "PUBLISHER_RUNNING"
           : runtimeBlocked ? "PUBLISHER_BLOCKED"
             : authoritativeReady ? "AUTHORITATIVE_READY" : actionability.technicalReady
@@ -244,8 +248,8 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
           ? "UNPUBLISHED" : "UNKNOWN",
       publishAttemptCount: number(publication.publish_attempt_count) ?? 0,
       publishedItemId: text(batchChild.item_id, 80)
-        ?? text(publication.active_listing_id
-        ?? publication.listing_id, 80),
+        ?? text(publication.listing_id
+        ?? publication.active_listing_id, 80),
       lastPublisherStage: text(batchChild.stage, 120)
         ?? publicationPhase ?? executionPhase ?? "NOT_STARTED",
       lastErrorClass: errorClass,
@@ -265,7 +269,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
       publisherPreflightEligible: preflightEligible,
       publisherRuntimeEligible,
       batchEligible,
-      failureClass: runtimePublished ? null
+      failureClass: officiallyPublished ? null
         : runtimeInProgress ? "PUBLISHER_BATCH_RUNTIME_IN_PROGRESS"
           : runtimeBlocked ? errorClass ?? "PUBLISHER_BATCH_BLOCKED"
             : batchEligible ? null
@@ -287,7 +291,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
         marketplaceWriteCount: number(batchChild.marketplace_write_count) ?? 0,
         attemptCount: number(batchChild.attempt_count) ?? 0,
         receiptDigest: text(batchChild.receipt_digest, 100),
-        inProgress: runtimeInProgress, published: runtimePublished,
+        inProgress: runtimeInProgress, published: officiallyPublished,
         blocked: runtimeBlocked,
       }),
     })
@@ -314,7 +318,11 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
       batchButtonN: batchEligibleMembers.length,
       falseDisabledReadyCount: cohort.filter((entry) =>
         entry.authoritativeReady && !entry.batchEligible).length,
-      trueBlockerCount: cohort.filter((entry) => !entry.batchEligible).length,
+      trueBlockerCount: cohort.filter((entry) => !entry.batchEligible
+        && !entry.batchRuntime.published && !entry.batchRuntime.inProgress)
+        .length,
+      publishedCount: cohort.filter((entry) =>
+        entry.batchRuntime.published).length,
       safeResumeCount: cohort.filter((entry) =>
         entry.safeResumeAvailable).length,
       existingOfferCount: cohort.filter((entry) => entry.offerId).length,

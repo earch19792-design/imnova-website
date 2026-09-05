@@ -408,7 +408,9 @@ export default function LunaQuickPickPage() {
     { id: "needs-data", title: "B. Datos por confirmar",
       copy: "Sólo hechos comerciales que Seller OS no pudo demostrar.",
       cards: cards.filter((card) =>
-        card.ownerTruePublicationBlockers.length > 0) },
+        card.ownerTruePublicationBlockers.length > 0
+        && publisherByCandidate.get(card.candidateKey ?? "")
+          ?.batchRuntime.published !== true) },
     { id: "prepare", title: "C. Preparar productos",
       copy: "Quick Pick Luna y paquetes que el runtime sigue preparando.",
       cards: cards.filter((card) => card.state === "WAITING"
@@ -422,9 +424,12 @@ export default function LunaQuickPickPage() {
           ?.batchRuntime.inProgress === true) },
     { id: "blocked", title: "E. Bloqueados",
       copy: "Cada producto conserva su avance y muestra solamente el blocker real.",
-      cards: cards.filter((card) => card.state === "BLOCKED"
-        || publisherByCandidate.get(card.candidateKey ?? "")
-          ?.batchRuntime.blocked === true) },
+      cards: cards.filter((card) =>
+        publisherByCandidate.get(card.candidateKey ?? "")
+          ?.batchRuntime.published !== true
+        && (card.state === "BLOCKED"
+          || publisherByCandidate.get(card.candidateKey ?? "")
+            ?.batchRuntime.blocked === true)) },
     { id: "published", title: "F. Publicados",
       copy: "Aparecerán aquí después de una publicación autorizada y readback LIVE.",
       cards: cards.filter((card) => publisherByCandidate.get(
