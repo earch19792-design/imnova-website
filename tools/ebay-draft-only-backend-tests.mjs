@@ -558,9 +558,19 @@ test("exact durable Quick Pick authorization bypasses stale legacy opportunity g
   const now = new Date("2026-09-01T17:00:00.000Z")
   const input = validInput(now)
   const packageDigest = `sha256:${"e".repeat(64)}`
+  const authorizedImagesDigest = `sha256:${module.hashEbayDraftOnlyPayload(
+    input.listingPackage.package_data.imageUrls,
+  )}`
   input.listingPackage.source_observed_at = "2026-08-01T00:00:00.000Z"
   input.listingPackage.package_data.quickPickOwnerReviewV1 = {
     reviewedPackageDigest: packageDigest,
+  }
+  input.listingPackage.package_data.quickPickMarketTestPackageV1 = {
+    contractVersion:
+      "QUICK_PICK_MARKET_TEST_PACKAGE_AND_REMOTE_OWNER_REVIEW_V1",
+    packageDigest,
+    authorizationBinding: { packageDigest,
+      imagesDigest: authorizedImagesDigest },
   }
   input.opportunity.hard_gates = [
     "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN",
@@ -583,6 +593,7 @@ test("exact durable Quick Pick authorization bypasses stale legacy opportunity g
     opportunityId: input.opportunity.id,
     candidateKey: input.listingPackage.candidate_key,
     packageDigest,
+    authorizedImagesDigest,
     productTruthDigest: `sha256:${"d".repeat(64)}`,
     lunaProductId: input.opportunity.supplier_product_id,
     lunaVariantId: input.opportunity.supplier_variant_id,
@@ -601,6 +612,7 @@ test("exact durable Quick Pick authorization bypasses stale legacy opportunity g
     demandProven: false,
     sourceRevalidationAuthority:
       "QUICK_PICK_DURABLE_GOLDEN_PATH_REVALIDATION_V1",
+    commercialAuthorizationAuthority: "QUICK_PICK_REMOTE_OWNER_REVIEW_V1",
     finalHumanAuthorizationRequired: true,
     unattendedPublicationAllowed: false,
   }

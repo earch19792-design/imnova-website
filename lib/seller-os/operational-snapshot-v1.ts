@@ -95,7 +95,7 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   const candidateKeys = candidateKeysResult[0].status === "fulfilled"
     ? candidateKeysResult[0].value : Object.freeze([] as string[])
   const [quickPickRaw, commercialRaw, fulfillmentRaw, researchRaw,
-    researchPlanRaw, mayelRaw, lunaJobsRaw, lunaTraceRaw] =
+    researchPlanRaw, mayelRaw, lunaJobsRaw, lunaTraceRaw, publisherBatchRaw] =
     await Promise.allSettled([
       readLunaQuickPickProgressV1({ supabase: input.supabase,
         accountKey: input.accountKey, candidateKeys, includeRecent: false }),
@@ -121,12 +121,64 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       }),
       readLatestLunaShippingRuntimeTraceV1({ supabase: input.supabase,
         accountKey: input.accountKey, now: now.getTime() }),
+      input.supabase.from("seller_os_publisher_batch_children_v1")
+        .select("id,candidate_id,package_id,package_digest,authorization_binding,status,created_at")
+        .eq("marketplace_account_key", input.accountKey)
+        .in("status", ["AUTHORIZED", "CLAIMED", "RUNNING",
+          "FAILED_RETRY_SAFE"]).order("created_at", { ascending: false })
+        .limit(100),
     ])
 
   const quickPick = settled(quickPickRaw)
   const rawCards = quickPick.available ? quickPick.value : []
   const ownerCards = rawCards.map((card) =>
     projectQuickPickOwnerCardV1(card))
+  const publisherBatch = settled(publisherBatchRaw)
+  const activeBatchChildren = publisherBatch.available &&
+      !publisherBatch.value.error && Array.isArray(publisherBatch.value.data)
+    ? publisherBatch.value.data.map(record) : null
+  const cardByCandidate = new Map(ownerCards.map((card) =>
+    [card.candidateKey, card]))
+  const authorizedDigestMismatchCount = activeBatchChildren?.filter((child) => {
+    const card = cardByCandidate.get(String(child.candidate_id ?? ""))
+    return !card || card.listingPackageId !== child.package_id ||
+      record(card.listingReview).packageDigest !== child.package_digest
+  }).length ?? null
+  const authorizedImagesDigestMismatchCount = activeBatchChildren?.filter(
+    (child) => {
+      const card = cardByCandidate.get(String(child.candidate_id ?? ""))
+      const reviewBinding = record(record(card?.listingReview)
+        .authorizationBinding)
+      const batchBinding = record(child.authorization_binding)
+      return !/^sha256:[0-9a-f]{64}$/.test(String(
+        reviewBinding.imagesDigest ?? "")) ||
+        reviewBinding.imagesDigest !== batchBinding.imagesDigest
+    }).length ?? null
+  const technicalConfirmationAfterAuthPackageWriteCount =
+    activeBatchChildren?.filter((child) => {
+      const card = cardByCandidate.get(String(child.candidate_id ?? ""))
+      const reviewedAt = Date.parse(String(record(record(card?.listingReview)
+        .ownerReview).reviewedAt ?? ""))
+      const authorizedAt = Date.parse(String(child.created_at ?? ""))
+      return Number.isFinite(reviewedAt) && Number.isFinite(authorizedAt)
+        && reviewedAt > authorizedAt
+    }).length ?? null
+  const postAuthorizationPackageMutationCount = activeBatchChildren === null ||
+      authorizedDigestMismatchCount === null ||
+      authorizedImagesDigestMismatchCount === null
+    ? null : new Set(activeBatchChildren.filter((child) => {
+      const card = cardByCandidate.get(String(child.candidate_id ?? ""))
+      const review = record(card?.listingReview)
+      const reviewBinding = record(review.authorizationBinding)
+      const batchBinding = record(child.authorization_binding)
+      return !card || card.listingPackageId !== child.package_id ||
+        review.packageDigest !== child.package_digest ||
+        reviewBinding.imagesDigest !== batchBinding.imagesDigest
+    }).map((child) => child.id)).size
+  const childScopedInvalidation = activeBatchChildren === null ? null
+    : activeBatchChildren.every((child) =>
+      record(child.authorization_binding)
+        .materialPackageChangeInvalidatesOnlyThisChild === true)
   const authoritativeReadyCount = quickPick.available
     ? ownerCards.filter((card) =>
       card.publisherActionability.authoritativeReady).length : null
@@ -292,6 +344,19 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       candidateBlockerCount,
       publisherState: SELLER_OS_PUBLISHER_PHYSICAL_STATE_V1,
       publisherPhysicalAcceptance: false as const,
+      publisherAuthorizationIntegrity: Object.freeze({
+        authorityAvailable: activeBatchChildren !== null,
+        authorizedPackageCount: activeBatchChildren?.length ?? null,
+        postAuthorizationPackageMutationCount,
+        authorizedDigestMismatchCount,
+        authorizedImagesDigestMismatchCount,
+        readOnlyPreflightPackageMutationCount:
+          postAuthorizationPackageMutationCount,
+        technicalConfirmationAfterAuthPackageWriteCount,
+        childMaterialChangeInvalidatesOnlyChild: childScopedInvalidation,
+        oldAuthorizationBoundToNewDigestCount:
+          authorizedDigestMismatchCount,
+      }),
     }),
     business: Object.freeze({
       liveAuthority,
@@ -475,6 +540,8 @@ export function auditSellerOsOperationalSnapshotV1(
       physicalPass: false, presentationPhysicalPass: false,
       uiReady: false, publishable: false,
       explicitBlocker: snapshot.capabilities.publisher.blocker },
+    publisherAuthorizationIntegrity:
+      snapshot.publication.publisherAuthorizationIntegrity,
     marketplaceResults: [],
     getBusinessMutationCount: 0,
   }

@@ -84,6 +84,17 @@ export type SellerOsOperationalIntegrityInputV1 = Readonly<{
     publishable: boolean
     explicitBlocker: string | null
   }>
+  publisherAuthorizationIntegrity?: Readonly<{
+    authorityAvailable: boolean
+    authorizedPackageCount: number | null
+    postAuthorizationPackageMutationCount: number | null
+    authorizedDigestMismatchCount: number | null
+    authorizedImagesDigestMismatchCount: number | null
+    readOnlyPreflightPackageMutationCount: number | null
+    technicalConfirmationAfterAuthPackageWriteCount: number | null
+    childMaterialChangeInvalidatesOnlyChild: boolean | null
+    oldAuthorizationBoundToNewDigestCount: number | null
+  }>
   marketplaceResults?: readonly Readonly<{
     operation: string
     httpStatus: number | null
@@ -421,6 +432,59 @@ export function auditSellerOsOperationalIntegrityV1(
         explicitBlocker: publisher.explicitBlocker },
       regressionGuard: { uiReadyDoesNotEqualPublishable: true,
         publisherFailsClosed: true },
+    }))
+  }
+
+  const authorization = input.publisherAuthorizationIntegrity
+  if (authorization) {
+    for (const [code, failureClass, value] of [
+      ["AUTHORIZED_PACKAGE_MUST_BE_IMMUTABLE",
+        "POST_AUTH_PACKAGE_MUTATION",
+        authorization.postAuthorizationPackageMutationCount],
+      ["POST_AUTH_PACKAGE_MUTATION_ZERO",
+        "POST_AUTH_PACKAGE_MUTATION",
+        authorization.postAuthorizationPackageMutationCount],
+      ["AUTHORIZED_DIGEST_MUST_EQUAL_EXECUTION_DIGEST",
+        "AUTHORIZED_EXECUTION_DIGEST_MISMATCH",
+        authorization.authorizedDigestMismatchCount],
+      ["AUTHORIZED_IMAGES_DIGEST_MUST_EQUAL_EXECUTION_IMAGES_DIGEST",
+        "AUTHORIZED_EXECUTION_IMAGES_DIGEST_MISMATCH",
+        authorization.authorizedImagesDigestMismatchCount],
+      ["READ_ONLY_PREFLIGHT_MUST_NOT_MUTATE_PACKAGE",
+        "READ_ONLY_PREFLIGHT_PACKAGE_MUTATION",
+        authorization.readOnlyPreflightPackageMutationCount],
+      ["TECHNICAL_CONFIRMATION_AFTER_AUTH_MUST_NOT_WRITE_PACKAGE",
+        "TECHNICAL_CONFIRMATION_AFTER_AUTH_PACKAGE_WRITE",
+        authorization.technicalConfirmationAfterAuthPackageWriteCount],
+      ["OLD_AUTHORIZATION_MUST_NEVER_BIND_TO_NEW_DIGEST",
+        "STALE_AUTHORIZATION_REBOUND_TO_NEW_DIGEST",
+        authorization.oldAuthorizationBoundToNewDigestCount],
+    ] as const) checks.push(check({ invariantCode: code,
+      status: !authorization.authorityAvailable || value === null
+        ? "UNKNOWN" : value === 0 ? "PASS" : "VIOLATION",
+      failureClass, retrySafety: "ENGINEERING_REQUIRED",
+      recoveryClass: "ENGINEERING_REQUIRED",
+      evidence: { authorityAvailable: authorization.authorityAvailable,
+        authorizedPackageCount: authorization.authorizedPackageCount,
+        violationCount: value },
+      regressionGuard: { expectedViolationCount: 0,
+        packageMutationAllowedAfterAuthorization: false },
+    }))
+    checks.push(check({
+      invariantCode: "CHILD_MATERIAL_CHANGE_INVALIDATES_ONLY_CHILD_AUTHORIZATION",
+      status: !authorization.authorityAvailable ||
+          authorization.childMaterialChangeInvalidatesOnlyChild === null
+        ? "UNKNOWN"
+        : authorization.childMaterialChangeInvalidatesOnlyChild
+          ? "PASS" : "VIOLATION",
+      failureClass: "BATCH_WIDE_AUTHORIZATION_INVALIDATION",
+      retrySafety: "ENGINEERING_REQUIRED",
+      recoveryClass: "ENGINEERING_REQUIRED",
+      evidence: { authorityAvailable: authorization.authorityAvailable,
+        childScopedInvalidation:
+          authorization.childMaterialChangeInvalidatesOnlyChild },
+      regressionGuard: { invalidateOnlyChangedChild: true,
+        unchangedChildrenRemainBoundToExactDigest: true },
     }))
   }
 

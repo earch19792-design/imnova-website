@@ -79,6 +79,7 @@ function authorizationBinding(input: Readonly<{
     }),
     location: text(input.policy.merchant_location_key, 100),
     images: number(authorization.imageCount),
+    imagesDigest: text(authorization.imagesDigest, 100),
     itemSpecificsDigestBoundInPackageDigest: true,
     materialPackageChangeInvalidatesOnlyThisChild: true,
   })
@@ -190,21 +191,24 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
     const batchChild = batchChildren.get(candidateId) ?? {}
     const actionability = card.publisherActionability
     const review = record(card.listingReview)
-    const packageClaimable = packageRow.created_by === null
-      || packageRow.created_by === input.actorUserId
+    const packageFrozenForActor = packageRow.created_by === input.actorUserId
     const childStatus = text(batchChild.status, 100)
+    const activeChild = ["AUTHORIZED", "CLAIMED", "RUNNING",
+      "FAILED_RETRY_SAFE"].includes(childStatus ?? "")
     const currentBatchOwnsCandidate = batchChild.package_id === packageId
       && batchChild.package_digest === text(review.packageDigest, 100)
-      && Boolean(childStatus)
-    const runtimeInProgress = currentBatchOwnsCandidate && [
-      "AUTHORIZED", "CLAIMED", "RUNNING", "FAILED_RETRY_SAFE",
-    ].includes(childStatus ?? "")
-    const runtimePublished = currentBatchOwnsCandidate
+      && (activeChild || childStatus === "COMPLETED")
+    const runtimeInProgress = currentBatchOwnsCandidate && activeChild
+    const runtimePublished = batchChild.package_id === packageId
+      && batchChild.package_digest === text(review.packageDigest, 100)
       && childStatus === "COMPLETED"
       && batchChild.official_readback_state === "PUBLISHED_CONFIRMED"
-    const runtimeBlocked = currentBatchOwnsCandidate && [
+    const historicalRuntimeBlocked = batchChild.package_id === packageId
+      && batchChild.package_digest === text(review.packageDigest, 100) && [
       "FAILED_BLOCKED", "AMBIGUOUS_FAIL_CLOSED",
     ].includes(childStatus ?? "")
+    const runtimeBlocked = historicalRuntimeBlocked
+      && actionability.authoritativeReady !== true
     const publicationPhase = text(publication.phase, 100)
     const executionPhase = text(execution.phase, 100)
     const officiallyPublished = runtimePublished
@@ -213,10 +217,10 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
     const authoritativeReady = actionability.authoritativeReady
       && !currentBatchOwnsCandidate && !officiallyPublished
     const publisherRuntimeEligible = actionability.batchEligible
-      && preflightEligible && packageClaimable && !officiallyPublished
+      && preflightEligible && packageFrozenForActor && !officiallyPublished
       && !runtimeBlocked
     const batchEligible = authoritativeReady && preflightEligible
-      && packageClaimable
+      && packageFrozenForActor
     const errorClass = officiallyPublished ? null
       : text(batchChild.error_class, 160)
       ?? text(publication.last_error_code, 160)
@@ -277,7 +281,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
             : batchEligible ? null
         : !preflightEligible ? preflightFailure
           ?? "PUBLISHER_PREFLIGHT_NOT_ELIGIBLE"
-          : !packageClaimable ? "PACKAGE_OWNED_BY_OTHER_ACTOR"
+          : !packageFrozenForActor ? "PACKAGE_NOT_FROZEN_FOR_OWNER"
             : actionability.failureClass,
       authorizationBinding: publisherRuntimeEligible ? authorizationBinding({
         accountKey: input.accountKey, candidateId, packageId,
@@ -295,6 +299,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
         receiptDigest: text(batchChild.receipt_digest, 100),
         inProgress: runtimeInProgress, published: officiallyPublished,
         blocked: runtimeBlocked,
+        historicalBlocked: historicalRuntimeBlocked,
       }),
     })
   })
@@ -307,6 +312,7 @@ export async function readSellerOsPublisherOperationalCohortV1(input: Readonly<{
       && binding.candidateId === entry.candidateId
       && binding.packageId === entry.packageId
       && binding.packageDigest === entry.currentPackageDigest
+      && /^sha256:[0-9a-f]{64}$/.test(String(binding.imagesDigest ?? ""))
   }) && new Set(batchEligibleMembers.map((entry) => entry.candidateId)).size
       === batchEligibleMembers.length
     && new Set(batchEligibleMembers.map((entry) => entry.packageId)).size

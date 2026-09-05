@@ -345,6 +345,7 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   const quantity = Math.max(1, Math.trunc(number(packageData.quantity) ?? 1))
   const imageUrls = unique((Array.isArray(packageData.imageUrls)
     ? packageData.imageUrls : []).map((value) => text(value, 2_000)), 24)
+  const imagesDigest = digest(imageUrls)
   const persistedItemSpecifics = Object.keys(ownerReview).length > 0
     ? record(packageData.aspects) : aspects.values
   const packageShipping = money(record(packageData.shipping)
@@ -487,6 +488,7 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
       exactProductLineage: materialPackage.exactProductLineage,
       quantity,
       imageCount: imageUrls.length,
+      imagesDigest,
       materialPackageChangeInvalidatesAuthorization: true as const,
     }),
     runtimeMaterialization: Object.freeze({

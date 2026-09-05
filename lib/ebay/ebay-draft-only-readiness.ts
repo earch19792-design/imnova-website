@@ -655,6 +655,12 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const quickPickPublicationAuthorization = record(
     input.quickPickPublicationAuthorization,
   )
+  const quickPickMaterialPackage = record(
+    packageData.quickPickMarketTestPackageV1,
+  )
+  const quickPickMaterialBinding = record(
+    quickPickMaterialPackage.authorizationBinding,
+  )
   const quickPickAuthorizationCore = {
     ...quickPickPublicationAuthorization,
   }
@@ -665,6 +671,25 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const quickPickAuthorizedQuantity = numberOrNull(
     quickPickPublicationAuthorization.quantity,
   )
+  const quickPickBatchCommercialAuthorization =
+    quickPickPublicationAuthorization.commercialAuthorizationAuthority ===
+      "SELLER_OS_PUBLISHER_BATCH_AUTHORIZATION_V1"
+    && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(text(
+      quickPickPublicationAuthorization.batchAuthorizationId,
+    ))
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      quickPickPublicationAuthorization.batchAuthorizationDigest,
+    ))
+    && quickPickPublicationAuthorization.finalHumanAuthorizationRequired ===
+      false
+  const quickPickLegacyCommercialAuthorization =
+    quickPickPublicationAuthorization.commercialAuthorizationAuthority ===
+      "QUICK_PICK_REMOTE_OWNER_REVIEW_V1"
+    && quickPickPublicationAuthorization.finalHumanAuthorizationRequired ===
+      true
+  const quickPickCommercialAuthorizationValid =
+    quickPickBatchCommercialAuthorization
+    || quickPickLegacyCommercialAuthorization
   const quickPickPublicationAuthorized =
     quickPickPublicationAuthorization.validated === true
     && text(quickPickPublicationAuthorization.version)
@@ -679,8 +704,14 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       quickPickPublicationAuthorization.packageDigest,
     ))
     && text(quickPickPublicationAuthorization.packageDigest)
-      === text(record(packageData.quickPickOwnerReviewV1)
-        .reviewedPackageDigest)
+      === text(quickPickMaterialPackage.packageDigest)
+    && text(quickPickPublicationAuthorization.packageDigest)
+      === text(quickPickMaterialBinding.packageDigest)
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      quickPickPublicationAuthorization.authorizedImagesDigest,
+    ))
+    && text(quickPickPublicationAuthorization.authorizedImagesDigest)
+      === text(quickPickMaterialBinding.imagesDigest)
     && /^sha256:[0-9a-f]{64}$/.test(text(
       quickPickPublicationAuthorization.productTruthDigest,
     ))
@@ -711,7 +742,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     )
     && quickPickPublicationAuthorization.sourceRevalidationAuthority
       === "QUICK_PICK_DURABLE_GOLDEN_PATH_REVALIDATION_V1"
-    && quickPickPublicationAuthorization.finalHumanAuthorizationRequired === true
+    && quickPickCommercialAuthorizationValid
     && quickPickPublicationAuthorization.unattendedPublicationAllowed === false
     && text(quickPickPublicationAuthorization.authorizationDigest)
       === `sha256:${hashEbayDraftOnlyPayload(quickPickAuthorizationCore)}`

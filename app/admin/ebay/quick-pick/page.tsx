@@ -467,7 +467,9 @@ export default function LunaQuickPickPage() {
           ?.batchRuntime.published !== true
         && (card.state === "BLOCKED"
           || publisherByCandidate.get(card.candidateKey ?? "")
-            ?.batchRuntime.blocked === true)) },
+            ?.batchRuntime.blocked === true)
+        && publisherByCandidate.get(card.candidateKey ?? "")
+          ?.batchEligible !== true) },
     { id: "published", title: "F. Publicados",
       copy: "Aparecerán aquí después de una publicación autorizada y readback LIVE.",
       cards: cards.filter((card) => publisherByCandidate.get(

@@ -76,8 +76,88 @@ function safeLegacyState(blockers: readonly string[], guard: string) {
 
 export function isQuickPickCanonicalPublishPackageV1(value: unknown) {
   const data = record(value)
-  const review = record(data.quickPickOwnerReviewV1)
-  return review.contractVersion === "QUICK_PICK_REMOTE_OWNER_REVIEW_V1"
+  const materialized = record(data.quickPickMarketTestPackageV1)
+  return materialized.contractVersion ===
+    "QUICK_PICK_MARKET_TEST_PACKAGE_AND_REMOTE_OWNER_REVIEW_V1"
+}
+
+async function readExactPublisherBatchCommercialAuthorizationV1(input:
+Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  actorUserId: string
+  candidateKey: string
+  listingPackageId: string
+  packageDigest: string
+}>) {
+  if (!/^sha256:[0-9a-f]{64}$/.test(input.packageDigest)) return null
+  const childRead = await input.supabase.from(
+    "seller_os_publisher_batch_children_v1")
+    .select("id,batch_authorization_id,marketplace_account_key,actor_user_id,candidate_id,package_id,package_digest,authorization_binding,status")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("actor_user_id", input.actorUserId)
+    .eq("candidate_id", input.candidateKey)
+    .eq("package_id", input.listingPackageId)
+    .eq("package_digest", input.packageDigest)
+    .in("status", ["AUTHORIZED", "CLAIMED", "RUNNING",
+      "FAILED_RETRY_SAFE"])
+    .order("created_at", { ascending: false }).limit(2)
+  if (childRead.error) throw new Error(
+    "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_READ_FAILED")
+  const children = Array.isArray(childRead.data) ? childRead.data.map(record) : []
+  if (children.length > 1) throw new Error(
+    "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_AMBIGUOUS")
+  const child = children[0]
+  if (!child) return null
+  const batchRead = await input.supabase.from(
+    "seller_os_publisher_batch_authorizations_v1")
+    .select("id,marketplace_account_key,actor_user_id,marketplace_id,status,exact_member_count,authorization_digest,authorized_members,authorized_at")
+    .eq("id", child.batch_authorization_id)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("actor_user_id", input.actorUserId)
+    .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL"])
+    .maybeSingle()
+  if (batchRead.error) throw new Error(
+    "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_READ_FAILED")
+  const batch = record(batchRead.data)
+  if (!batch.id || batch.marketplace_id !== "EBAY_US" ||
+      !/^sha256:[0-9a-f]{64}$/.test(text(batch.authorization_digest, 100))) {
+    return null
+  }
+  const binding = record(child.authorization_binding)
+  const members = Array.isArray(batch.authorized_members)
+    ? batch.authorized_members.map(record) : []
+  const exactMember = members.filter((member) =>
+    member.candidateId === input.candidateKey &&
+    member.packageId === input.listingPackageId &&
+    member.packageDigest === input.packageDigest)
+  const normalizedMembers = members.map((member) => ({
+    candidateId: text(member.candidateId, 120),
+    packageId: text(member.packageId, 80),
+    packageDigest: text(member.packageDigest, 100),
+    authorizationBinding: record(member.authorizationBinding),
+  })).sort((left, right) => left.candidateId.localeCompare(right.candidateId))
+  if (members.length !== Number(batch.exact_member_count) ||
+      digest(normalizedMembers) !== batch.authorization_digest ||
+      exactMember.length !== 1 ||
+      JSON.stringify(canonical(record(exactMember[0].authorizationBinding)))
+        !== JSON.stringify(canonical(binding))) {
+    throw new Error("QUICK_PICK_PUBLISH_BATCH_AUTHORITY_BINDING_INVALID")
+  }
+  return Object.freeze({
+    contractVersion: "SELLER_OS_PUBLISHER_BATCH_COMMERCIAL_AUTHORITY_V1",
+    batchAuthorizationId: text(batch.id, 80),
+    batchAuthorizationDigest: text(batch.authorization_digest, 100),
+    batchChildId: text(child.id, 80),
+    authorizedAt: text(batch.authorized_at, 80),
+    actorUserId: input.actorUserId,
+    accountKey: input.accountKey,
+    candidateKey: input.candidateKey,
+    listingPackageId: input.listingPackageId,
+    packageDigest: input.packageDigest,
+    authorizationBinding: binding,
+    packageMutationAllowed: false as const,
+  })
 }
 
 export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
@@ -88,6 +168,7 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
   card: LunaQuickPickCardV1
   policyProfile: JsonRecord
   canonicalLunaUrl: string
+  batchCommercialAuthorization?: JsonRecord | null
   now?: Date
 }>) {
   const now = input.now ?? new Date()
@@ -174,10 +255,10 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
   const finalPackageReady = review.finalListingPackageReady === true &&
     factoryStages.LISTING_PACKAGE_READY === "READY" &&
     text(review.listingPackageId, 80) === packageId
-  const ownerReviewConfirmed = ownerMarker.status === "CONFIRMED" &&
+  const legacyOwnerReviewConfirmed = ownerMarker.status === "CONFIRMED" &&
     ownerMarker.readyForOwnerPublishAuthorization === true &&
     ownerReview.ownerReviewConfirmed === true
-  const packageMatch = ownerReview.packageMatch === true &&
+  const legacyPackageMatch = ownerReview.packageMatch === true &&
     ownerReview.currentListingPackageId === packageId &&
     ownerReview.confirmedPackageId === packageId &&
     publishHandoff.finalListingPackageMatch === true &&
@@ -193,6 +274,43 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
     ownerMarker.materialPackageDigestVersion ===
       "QUICK_PICK_MATERIAL_PACKAGE_DIGEST_V1" &&
     ownerMarker.materialPackageChangeInvalidatesAuthorization === true
+  const batchAuthority = record(input.batchCommercialAuthorization)
+  const batchBinding = record(batchAuthority.authorizationBinding)
+  const batchPolicies = record(batchBinding.businessPolicies)
+  const batchAuthorizationConfirmed = batchAuthority.contractVersion ===
+      "SELLER_OS_PUBLISHER_BATCH_COMMERCIAL_AUTHORITY_V1" &&
+    batchAuthority.actorUserId === input.actorUserId &&
+    batchAuthority.accountKey === input.accountKey &&
+    batchAuthority.candidateKey === candidateKey &&
+    batchAuthority.listingPackageId === packageId &&
+    batchAuthority.packageDigest === text(review.packageDigest, 100) &&
+    batchAuthority.packageMutationAllowed === false &&
+    batchBinding.candidateId === candidateKey &&
+    batchBinding.packageId === packageId &&
+    batchBinding.packageDigest === text(review.packageDigest, 100) &&
+    batchBinding.marketplaceId === "EBAY_US" &&
+    batchBinding.accountId === input.accountKey &&
+    exactMoney(batchBinding.price, targetPrice) &&
+    number(batchBinding.quantity) ===
+      number(record(review.authorizationBinding).quantity) &&
+    text(batchBinding.category, 30) ===
+      text(record(review.category).id, 30) &&
+    text(batchBinding.condition, 30) ===
+      text(record(review.condition).id, 30) &&
+    number(batchBinding.images) ===
+      number(record(review.authorizationBinding).imageCount) &&
+    text(batchBinding.imagesDigest, 100) ===
+      text(record(review.authorizationBinding).imagesDigest, 100) &&
+    text(batchPolicies.fulfillmentPolicyId, 100) ===
+      policySelection.fulfillmentPolicyId &&
+    text(batchPolicies.paymentPolicyId, 100) ===
+      policySelection.paymentPolicyId &&
+    text(batchPolicies.returnPolicyId, 100) ===
+      policySelection.returnPolicyId &&
+    text(batchBinding.location, 100) === policySelection.merchantLocationKey
+  const ownerReviewConfirmed = legacyOwnerReviewConfirmed ||
+    batchAuthorizationConfirmed
+  const packageMatch = legacyPackageMatch || batchAuthorizationConfirmed
   const marketTestReady = input.card.marketTestReady === true &&
     input.card.disposition === "MARKET_TEST_READY" &&
     opportunity.decision === "MARKET_TEST_READY" &&
@@ -292,7 +410,13 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
     opportunityId,
     candidateKey,
     packageDigest: text(review.packageDigest, 100),
-    ownerReviewedPackageDigest: text(ownerMarker.reviewedPackageDigest, 100),
+    ownerReviewedPackageDigest: batchAuthorizationConfirmed
+      ? text(review.packageDigest, 100)
+      : text(ownerMarker.reviewedPackageDigest, 100),
+    authorizedImagesDigest: text(
+      record(review.authorizationBinding).imagesDigest,
+      100,
+    ),
     lunaProductId,
     lunaVariantId,
     supplierSku,
@@ -322,7 +446,14 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
     policyProfileDigest: policiesBound ? digest(policySelection) : null,
     sourceRevalidationAuthority:
       "QUICK_PICK_DURABLE_GOLDEN_PATH_REVALIDATION_V1",
-    finalHumanAuthorizationRequired: true,
+    commercialAuthorizationAuthority: batchAuthorizationConfirmed
+      ? "SELLER_OS_PUBLISHER_BATCH_AUTHORIZATION_V1"
+      : "QUICK_PICK_REMOTE_OWNER_REVIEW_V1",
+    batchAuthorizationId: batchAuthorizationConfirmed
+      ? batchAuthority.batchAuthorizationId : null,
+    batchAuthorizationDigest: batchAuthorizationConfirmed
+      ? batchAuthority.batchAuthorizationDigest : null,
+    finalHumanAuthorizationRequired: !batchAuthorizationConfirmed,
     unattendedPublicationAllowed: false,
   })
   const authorization = Object.freeze({ ...core,
@@ -366,7 +497,9 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
       price: targetPrice, expectedProfit: profit, margin, shipping,
       policiesBound }),
     safety: Object.freeze({ marketplaceWrites: 0 as const,
-      listingPublications: 0 as const, canPublishWithoutNewOwnerClick: false,
+      listingPublications: 0 as const,
+      canPublishWithoutNewOwnerClick: batchAuthorizationConfirmed,
+      packageMutationAllowedAfterAuthorization: false as const,
       customerProductionUntouched: true as const }),
   })
 }
@@ -408,6 +541,14 @@ Readonly<{
     throw new Error("QUICK_PICK_CANONICAL_PUBLISH_OPPORTUNITY_NOT_FOUND")
   }
   const opportunity = opportunityRead.data as JsonRecord
+  const projectedReview = record(card.listingReview)
+  const batchCommercialAuthorization =
+    await readExactPublisherBatchCommercialAuthorizationV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      actorUserId: input.actorUserId, candidateKey: input.candidateKey,
+      listingPackageId: input.listingPackageId,
+      packageDigest: text(projectedReview.packageDigest, 100),
+    })
   const [profileRead, catalogRead] = await Promise.all([
     input.supabase.from("ebay_account_policy_profiles")
       .select("account_key,marketplace_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,verification_source,verified_at,expires_at")
@@ -432,6 +573,7 @@ Readonly<{
     accountKey: input.accountKey, actorUserId: input.actorUserId,
     listingPackage, opportunity, card,
     policyProfile: record(profileRead.data), canonicalLunaUrl,
+    batchCommercialAuthorization,
     now: input.now,
   })
   if (!handoff.publishAuthorizationReady ||
