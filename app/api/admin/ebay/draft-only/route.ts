@@ -2587,6 +2587,43 @@ function batchFailureStatus(payload: JsonRecord) {
   return "FAILED_BLOCKED" as const
 }
 
+async function recoverPublisherBatchPrewriteObservabilityGapsV1(input:
+  Readonly<{
+    supabase: ReturnType<typeof getSupabaseAdminClient>
+    batchId: string
+  }>) {
+  const read = await input.supabase.from(
+    "seller_os_publisher_batch_children_v1")
+    .select("id,error_class,offer_id,item_id")
+    .eq("batch_authorization_id", input.batchId)
+    .eq("status", "FAILED_BLOCKED")
+    .eq("marketplace_write_count", 0)
+    .is("approval_id", null).is("execution_id", null)
+  if (read.error) throw new Error(
+    "SELLER_OS_PUBLISHER_BATCH_PREWRITE_RECOVERY_READ_FAILED")
+  const ids = rows(read.data).filter((child) =>
+    !text(child.error_class) && !text(child.offer_id) && !text(child.item_id))
+    .flatMap((child) => text(child.id) ? [text(child.id)] : [])
+  if (!ids.length) return 0
+  const update = await input.supabase.from(
+    "seller_os_publisher_batch_children_v1").update({
+      status: "FAILED_RETRY_SAFE", stage: "PREFLIGHT", result: null,
+      error_class: "PUBLISHER_BATCH_PREWRITE_OBSERVABILITY_GAP",
+      retry_safety: "SAFE_TO_RETRY", duplicate_risk: "NONE_PROVEN",
+      official_readback_state: "NOT_STARTED", receipt_digest: null,
+      retry_after_at: null, lease_owner: null, lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    }).in("id", ids).eq("status", "FAILED_BLOCKED")
+    .eq("marketplace_write_count", 0)
+    .is("approval_id", null).is("execution_id", null)
+    .select("id")
+  if (update.error || rows(update.data).length !== ids.length) {
+    throw new Error(
+      "SELLER_OS_PUBLISHER_BATCH_PREWRITE_RECOVERY_WRITE_FAILED")
+  }
+  return ids.length
+}
+
 async function persistPublisherBatchChildResult(input: Readonly<{
   supabase: ReturnType<typeof getSupabaseAdminClient>
   childId: string
@@ -2626,6 +2663,9 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
     throw new Error("SELLER_OS_PUBLISHER_BATCH_NOT_FOUND")
   }
   const batch = batchRead.data as JsonRecord
+  await recoverPublisherBatchPrewriteObservabilityGapsV1({
+    supabase, batchId: input.batchId,
+  })
   const actor = text(batch.actor_user_id)
   const workerId = `publisher-batch:${randomUUID()}`
   const cohort = await readSellerOsPublisherOperationalCohortV1({
@@ -2758,8 +2798,8 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
       results.push(completed)
     } catch (error) {
       const payload = record(record(error).publisherPayload)
-      const errorClass = text(payload.errorClass) ?? text(payload.error)
-        ?? errorCode(error)
+      const errorClass = text(payload.errorClass) || text(payload.error)
+        || errorCode(error)
       const status = batchFailureStatus(payload)
       const failureSafety = record(payload.safety)
       writeCount += Number(failureSafety.ebayWrites ?? 0)
@@ -2770,21 +2810,22 @@ async function resumeSellerOsPublisherBatchV1(input: Readonly<{
           errorClass)
       const failed = await persistPublisherBatchChildResult({ supabase,
         childId: text(child.id), workerId, values: {
-          status, stage: text(payload.stage) ?? "PREFLIGHT",
+          status, stage: text(payload.stage) || "PREFLIGHT",
           result: "FAILED", error_class: errorClass,
           ebay_error_codes: Array.isArray(payload.ebayErrorIds)
             ? payload.ebayErrorIds : [],
           mismatch_fields: Array.isArray(payload.mismatchFields)
             ? payload.mismatchFields : [],
           retry_safety: text(payload.retrySafety)
-            ?? (status === "FAILED_RETRY_SAFE" ? "SAFE_TO_RETRY"
+            || (status === "FAILED_RETRY_SAFE" ? "SAFE_TO_RETRY"
               : "ENGINEERING_REQUIRED"),
-          offer_id: text(payload.offerId), item_id: text(payload.itemId),
+          offer_id: text(payload.offerId) || null,
+          item_id: text(payload.itemId) || null,
           marketplace_write_count: writeCount,
           duplicate_risk: status === "AMBIGUOUS_FAIL_CLOSED"
             ? "UNPROVEN_FAIL_CLOSED" : "NONE_PROVEN",
           official_readback_state: text(payload.officialCurrentState)
-            ?? "UNPUBLISHED_UNPROVEN",
+            || "UNPUBLISHED_UNPROVEN",
         } })
       results.push(failed)
     }
