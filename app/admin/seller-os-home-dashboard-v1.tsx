@@ -4,10 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { ArrowRight, BriefcaseBusiness, CircleAlert, PackageCheck,
   RefreshCw, ShieldCheck, UsersRound } from "lucide-react"
 
-import { useAdminOwnerRuntime } from "./admin-owner-runtime-provider"
 import { supabase } from "@/lib/supabase"
 import {
-  sellerOsLunaWorkerStateV1,
   sellerOsOperationalStateToneV1,
   type SellerOsOperationalStateV1,
 } from "@/lib/seller-os/operational-status-v1"
@@ -90,7 +88,6 @@ function Value({ value, suffix = "" }: { value: number | null;
 }
 
 export function SellerOsHomeDashboardV1() {
-  const runtime = useAdminOwnerRuntime()
   const [authority, setAuthority] = useState(EMPTY_AUTHORITY)
   const [readState, setReadState] = useState<
     "LOADING" | "STABLE" | "PARTIAL">("LOADING")
@@ -150,14 +147,10 @@ export function SellerOsHomeDashboardV1() {
 
   useEffect(() => { void load() }, [load])
 
-  const liveLunaState = sellerOsLunaWorkerStateV1({
-    status: runtime.lunaWorker.status,
-    connected: runtime.lunaWorker.connected,
-    canonicalBindingReady: runtime.lunaWorker.canonicalBindingReady,
-    eligiblePendingJobCount: runtime.lunaWorker.eligiblePendingJobCount,
-  })
-  const lunaState = liveLunaState === "DESCONOCIDO"
-    ? authority.lunaState : liveLunaState
+  // The global shell deliberately owns no Luna executor. Its initialization
+  // state is therefore not worker evidence and may never override the durable
+  // operational snapshot shown to the owner.
+  const lunaState = authority.lunaState
   const postSaleState: SellerOsOperationalStateV1 =
     !authority.postSaleAuthority ? "DESCONOCIDO"
       : authority.postSaleExceptions === null ? "DESCONOCIDO"
