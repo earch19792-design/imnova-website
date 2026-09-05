@@ -25,7 +25,16 @@ export type SellerOsOperationalIntegrityInputV1 = Readonly<{
     readModelCount: number | null
     visibleCount: number | null
     actionableCount: number | null
+    batchEligibleCount?: number | null
+    batchButtonCount?: number | null
     explicitLegitimateBlockerCount: number | null
+  }>
+  candidateIntegrity?: Readonly<{
+    readyWithoutActionPathCount: number | null
+    shippingProvenAndZeroCount: number | null
+    candidateCount: number | null
+    provenanceClassifiedCount: number | null
+    ownerRuntimeContinueRequiredCount: number | null
   }>
   numericProjections?: readonly Readonly<{
     field: string
@@ -164,6 +173,63 @@ export function auditSellerOsOperationalIntegrityV1(
         readyRequiresActionOrExplicitBlocker: true,
         hiddenOwnerBurdenForbidden: true,
       },
+    }))
+    const batchEligibleCount = ready.batchEligibleCount === undefined
+      ? ready.actionableCount : ready.batchEligibleCount
+    const batchButtonCount = ready.batchButtonCount === undefined
+      ? batchEligibleCount : ready.batchButtonCount
+    const batchAvailability = countStatus(ready.authorityAvailable,
+      ready.actionableCount, batchEligibleCount, batchButtonCount)
+    const batchParity = batchAvailability === "UNKNOWN" ? "UNKNOWN"
+      : ready.actionableCount === batchEligibleCount
+        && batchEligibleCount === batchButtonCount
+        ? "PASS" : "VIOLATION"
+    checks.push(check({
+      invariantCode: "ACTIONABLE_READY_EQUALS_BATCH_ELIGIBLE_AND_BUTTON_N",
+      status: batchParity,
+      failureClass: "BATCH_AUTHORIZATION_SCOPE_DIVERGENCE",
+      retrySafety: "ENGINEERING_REQUIRED",
+      recoveryClass: "ENGINEERING_REQUIRED",
+      evidence: { actionableCount: ready.actionableCount,
+        batchEligibleCount, batchButtonCount },
+      regressionGuard: { batchButtonUsesExactEligibleMembership: true,
+        visibleReadyCountIsNotBatchAuthority: true },
+    }))
+  }
+
+  const candidates = input.candidateIntegrity
+  if (candidates) {
+    for (const [code, failureClass, value] of [
+      ["READY_WITHOUT_ACTION_PATH_ZERO", "READY_WITHOUT_ACTION_PATH",
+        candidates.readyWithoutActionPathCount],
+      ["SHIPPING_PROVEN_AND_SHIPPING_ZERO_ZERO",
+        "CONTRADICTORY_ECONOMICS_PRESENTATION",
+        candidates.shippingProvenAndZeroCount],
+      ["OWNER_RUNTIME_CONTINUE_REQUIRED_ZERO",
+        "OWNER_RUNTIME_CONTINUE_REQUIRED_FOR_NORMAL_PROGRESS",
+        candidates.ownerRuntimeContinueRequiredCount],
+    ] as const) checks.push(check({
+      invariantCode: code,
+      status: value === null ? "UNKNOWN" : value === 0 ? "PASS" : "VIOLATION",
+      failureClass,
+      retrySafety: "ENGINEERING_REQUIRED",
+      recoveryClass: "ENGINEERING_REQUIRED",
+      evidence: { violationCount: value },
+      regressionGuard: { expectedViolationCount: 0 },
+    }))
+    const provenance = candidates.candidateCount === null
+      || candidates.provenanceClassifiedCount === null ? "UNKNOWN"
+      : candidates.candidateCount === candidates.provenanceClassifiedCount
+        ? "PASS" : "VIOLATION"
+    checks.push(check({
+      invariantCode: "EVERY_CANDIDATE_HAS_PROVENANCE_OR_EXPLICIT_UNKNOWN",
+      status: provenance,
+      failureClass: "CANDIDATE_PROVENANCE_UNCLASSIFIED",
+      retrySafety: "SAFE_READ_ONLY_RECONCILIATION",
+      recoveryClass: "AUTO_RECOVERABLE",
+      evidence: { candidateCount: candidates.candidateCount,
+        provenanceClassifiedCount: candidates.provenanceClassifiedCount },
+      regressionGuard: { unknownProvenanceMustBeExplicit: true },
     }))
   }
 

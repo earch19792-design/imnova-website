@@ -137,7 +137,7 @@ for (const name of migrationNames) {
   for (const table of createdSellerOsTables) {
     const escapedTable = table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     const explicitRevoke = new RegExp(
-      `revoke\\s+all\\s+on\\s+table\\s+public\\.${escapedTable}\\s+from\\s+anon\\s*,\\s*authenticated\\s*;`,
+      `revoke\\s+all\\s+on\\s+table\\s+public\\.${escapedTable}\\s+from\\s+(?:public\\s*,\\s*)?anon\\s*,\\s*authenticated\\s*;`,
       "i",
     )
     const remediationName = sellerOsAclRemediations.get(`${timestamp}:${table}`)

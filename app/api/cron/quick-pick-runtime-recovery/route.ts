@@ -14,6 +14,8 @@ import { recoverInterruptedLunaQuickPickRuntimeV1 } from
   "@/lib/ebay/ebay-quick-pick-interrupted-runtime-recovery-v1"
 import { recoverFalseExactCategoryAuthorityRuntimeV1 } from
   "@/lib/ebay/ebay-category-authority-runtime-recovery-v1"
+import { recoverQuickPickPublisherPackagesV1 } from
+  "@/lib/ebay/ebay-quick-pick-publisher-package-recovery-v1"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { sellerOsPostOnlyGetResponseV1,
   sellerOsPostRuntimeAuthorizedV1 } from
@@ -50,8 +52,12 @@ export async function POST(req: Request) {
       taxonomyReader: getEbayTaxonomyListingIntelligence,
       productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
     })
+    const publisherPackages = await recoverQuickPickPublisherPackagesV1({
+      supabase, accountKey,
+    })
     const success = interruptedClaims.status === "PASS"
       && categoryAuthority.status === "PASS"
+      && publisherPackages.status === "PASS"
     console.info("SELLER_OS_CATEGORY_AUTHORITY_RECOVERY_V1", {
       status: categoryAuthority.status,
       scannedPackageCount: categoryAuthority.scannedPackageCount,
@@ -61,7 +67,7 @@ export async function POST(req: Request) {
       marketplaceWrites: categoryAuthority.marketplaceWrites,
     })
     return NextResponse.json({ success,
-      recovery: { interruptedClaims, categoryAuthority },
+      recovery: { interruptedClaims, categoryAuthority, publisherPackages },
       safety: { marketplaceWrites: 0, listingPublications: 0,
         manualFactInjection: 0, codexProductDecisions: 0,
         codexCategorySelection: 0, itemSpecificPatches: 0 } },

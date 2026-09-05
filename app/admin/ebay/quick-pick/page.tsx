@@ -22,6 +22,21 @@ type QuickPickReceipt = {
 }
 type QuickPickSummary = { inProgress: number; readyForReview: number
   blocked: number; waiting: number; total: number }
+type PublisherCohort = {
+  summary: { authoritativeReadyCount: number; visibleReadyCount: number
+    actionableReadyCount: number; batchEligibleCount: number
+    batchButtonN: number; preflightEligible: boolean
+    falseDisabledReadyCount: number; trueBlockerCount: number }
+  candidates: Array<{ candidateId: string; packageId: string
+    currentPackageDigest: string; batchEligible: boolean
+    authorizationBinding: Record<string, unknown> | null
+    lastPublisherStage: string; lastErrorClass: string | null
+    batchRuntime: { status: string | null; stage: string | null
+      result: string | null; retrySafety: string | null
+      officialReadbackState: string | null; marketplaceWriteCount: number
+      attemptCount: number; receiptDigest: string | null
+      inProgress: boolean; published: boolean; blocked: boolean } }>
+}
 type QuickPickCard = {
   sourceUrl: string
   canonicalUrl: string | null
@@ -111,6 +126,7 @@ type QuickPickCard = {
     demandGateContinued: boolean; route: "MARKET_TEST" | "STANDARD" }
   dollarCheck: Record<string, unknown> | null
   elapsedMs: number
+  provenance?: { sourceType: string; label: string; sourceId: string | null }
 }
 
 function money(value: unknown) {
@@ -151,17 +167,6 @@ function record(value: unknown): Record<string, unknown> {
     ? value as Record<string, unknown> : {}
 }
 
-function ownerPublicationDecisionReady(card: QuickPickCard) {
-  return record(record(card.listingReview).publishAuthorizationHandoff)
-    .ownerPublicationDecisionReady === true
-}
-
-function ownerReviewHref(card: QuickPickCard) {
-  const candidate = card.candidateKey ?? ""
-  return `/admin?quickPickOwnerReview=${encodeURIComponent(candidate)}` +
-    "#dashboard-owner-review-queue"
-}
-
 export default function LunaQuickPickPage() {
   const [input, setInput] = useState("")
   const [cards, setCards] = useState<QuickPickCard[]>([])
@@ -177,8 +182,11 @@ export default function LunaQuickPickPage() {
   const [factDrafts, setFactDrafts] = useState<Record<string, string>>({})
   const [factBusy, setFactBusy] = useState<Record<string, boolean>>({})
   const [factFeedback, setFactFeedback] = useState<Record<string, string>>({})
-  const [continuingResolution, setContinuingResolution] = useState(false)
-  const [continuationFeedback, setContinuationFeedback] = useState("")
+  const [publisherCohort, setPublisherCohort] =
+    useState<PublisherCohort | null>(null)
+  const [batchBusy, setBatchBusy] = useState(false)
+  const [batchFeedback, setBatchFeedback] = useState("")
+  const [batchIdempotencyKey, setBatchIdempotencyKey] = useState("")
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -201,7 +209,10 @@ export default function LunaQuickPickPage() {
     setRehydrating(true)
     setError("")
     try {
-      const payload = await request("/api/admin/ebay/luna-quick-pick")
+      const [payload, publisher] = await Promise.all([
+        request("/api/admin/ebay/luna-quick-pick"),
+        request("/api/admin/ebay/publisher-cohort"),
+      ])
       const readModel = record(payload.readModel)
       const selectedBatch = record(readModel.selectedBatch)
       const globalQueue = record(readModel.globalQueue)
@@ -216,6 +227,7 @@ export default function LunaQuickPickPage() {
         ? record(selectedBatch.summary) as QuickPickSummary : null)
       setGlobalQueueSummary(Object.keys(record(globalQueue.summary)).length
         ? record(globalQueue.summary) as QuickPickSummary : null)
+      setPublisherCohort(publisher.cohort as PublisherCohort)
       setLastReadAt(new Date().toISOString())
     } catch {
       setError("No pudimos cargar Quick Pick")
@@ -299,28 +311,39 @@ export default function LunaQuickPickPage() {
     await processLinks(urls)
   }
 
-  async function continueAutomaticResolution() {
-    if (!receipt?.batchId || continuingResolution) return
-    setContinuingResolution(true)
-    setError("")
-    setContinuationFeedback("")
+  async function publishReadyBatch() {
+    if (!publisherCohort || batchBusy) return
+    const members = publisherCohort.candidates.filter((candidate) =>
+      candidate.batchEligible).map((candidate) => ({
+        candidateId: candidate.candidateId,
+        packageId: candidate.packageId,
+        packageDigest: candidate.currentPackageDigest,
+        authorizationBinding: candidate.authorizationBinding,
+      }))
+    if (members.length < 1) return
+    const key = batchIdempotencyKey ||
+      `publisher-batch:${crypto.randomUUID()}`
+    setBatchIdempotencyKey(key)
+    setBatchBusy(true); setBatchFeedback(""); setError("")
     try {
-      const payload = await request("/api/admin/ebay/luna-quick-pick", {
+      const payload = await request("/api/admin/ebay/draft-only", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "CONTINUE_FULL_LUNA_EVIDENCE",
-          batchId: receipt.batchId }),
+        body: JSON.stringify({ action: "batch_publish", members,
+          idempotencyKey: key, confirmExactMemberCount: members.length,
+          confirmCommercialAuthorization: true,
+          confirmation: `PUBLICAR ${members.length} LISTOS` }),
       })
-      const runtimeExecution = record(payload.runtimeExecution)
-      const completed = Number(runtimeExecution.continuationCompletedCount ?? 0)
-      setContinuationFeedback(completed > 0
-        ? `Resolución automática completada para ${completed} productos.`
-        : "La solicitud fue recibida; no había productos elegibles sin ejecutar.")
+      const runtime = record(payload.runtimeResult)
+      setBatchFeedback(runtime.status === "COMPLETED"
+        ? `${members.length} publicaciones confirmadas LIVE por eBay.`
+        : `Lote autorizado. Seller OS continúa de forma durable; estado ${
+          String(runtime.status ?? "EN EJECUCIÓN")}.`)
       await loadReadModel()
-    } catch {
-      setError("No pudimos continuar la resolución automática. Ningún listing fue modificado.")
-    } finally {
-      setContinuingResolution(false)
-    }
+    } catch (caught) {
+      setBatchFeedback(caught instanceof Error ? caught.message
+        : "El lote quedó fail-closed antes de una operación no comprobada.")
+      await loadReadModel().catch(() => undefined)
+    } finally { setBatchBusy(false) }
   }
 
   async function chooseVariant(card: QuickPickCard, variantId: string) {
@@ -372,20 +395,44 @@ export default function LunaQuickPickPage() {
     return () => undefined
   }, [loadReadModel])
 
+  const publisherByCandidate = useMemo(() => new Map(
+    (publisherCohort?.candidates ?? []).map((candidate) =>
+      [candidate.candidateId, candidate]),
+  ), [publisherCohort])
+
   const sections = useMemo(() => [
-    { id: "in-progress", title: "En proceso",
-      copy: "Seller OS continúa automáticamente cuando llega nueva evidencia durable.",
-      cards: cards.filter((card) => card.state === "RUNNING") },
-    { id: "ready", title: "Listos para revisar",
-      copy: "Dollar Check y pruebas de mercado que esperan una decisión del owner.",
-      cards: cards.filter((card) => card.state === "READY") },
-    { id: "blocked", title: "Bloqueados",
+    { id: "ready", title: "A. Listos",
+      copy: "Paquetes actuales, accionables y elegibles para el Publisher.",
+      cards: cards.filter((card) => publisherByCandidate.get(
+        card.candidateKey ?? "")?.batchEligible === true) },
+    { id: "needs-data", title: "B. Datos por confirmar",
+      copy: "Sólo hechos comerciales que Seller OS no pudo demostrar.",
+      cards: cards.filter((card) =>
+        card.ownerTruePublicationBlockers.length > 0) },
+    { id: "prepare", title: "C. Preparar productos",
+      copy: "Quick Pick Luna y paquetes que el runtime sigue preparando.",
+      cards: cards.filter((card) => card.state === "WAITING"
+        && card.ownerTruePublicationBlockers.length === 0
+        && !publisherByCandidate.get(card.candidateKey ?? "")
+          ?.batchRuntime.inProgress) },
+    { id: "in-progress", title: "D. En ejecución",
+      copy: "Seller OS continúa automáticamente desde receipts durables.",
+      cards: cards.filter((card) => card.state === "RUNNING"
+        || publisherByCandidate.get(card.candidateKey ?? "")
+          ?.batchRuntime.inProgress === true) },
+    { id: "blocked", title: "E. Bloqueados",
       copy: "Cada producto conserva su avance y muestra solamente el blocker real.",
-      cards: cards.filter((card) => card.state === "BLOCKED") },
-    { id: "completed", title: "Completados / Publicados",
+      cards: cards.filter((card) => card.state === "BLOCKED"
+        || publisherByCandidate.get(card.candidateKey ?? "")
+          ?.batchRuntime.blocked === true) },
+    { id: "published", title: "F. Publicados",
       copy: "Aparecerán aquí después de una publicación autorizada y readback LIVE.",
+      cards: cards.filter((card) => publisherByCandidate.get(
+        card.candidateKey ?? "")?.batchRuntime.published === true) },
+    { id: "history", title: "G. Historial",
+      copy: "Snapshots y lotes terminados, separados de la operación actual.",
       cards: [] as QuickPickCard[] },
-  ], [cards])
+  ], [cards, publisherByCandidate])
 
   const ownerLastMileCards = useMemo(() => cards.filter((card) =>
     card.ownerTruePublicationBlockers?.length > 0)
@@ -396,18 +443,40 @@ export default function LunaQuickPickPage() {
         String(right.sourceSku ?? ""))), [cards])
   const ownerLastMileFactCount = ownerLastMileCards.reduce((total, card) =>
     total + card.ownerTruePublicationBlockers.length, 0)
-  const fullLunaReviewPending = cards.some((card) =>
-    card.fullLunaBrandEvidenceReviewPending === true && card.aiCallCount < 1)
+  const batchSummary = publisherCohort?.summary
+  const batchParity = Boolean(batchSummary
+    && batchSummary.authoritativeReadyCount ===
+      batchSummary.visibleReadyCount
+    && batchSummary.visibleReadyCount ===
+      batchSummary.actionableReadyCount
+    && batchSummary.actionableReadyCount === batchSummary.batchEligibleCount
+    && batchSummary.batchEligibleCount === batchSummary.batchButtonN
+    && batchSummary.preflightEligible)
 
   return <main className="min-h-screen bg-[#080b11] px-4 pb-28 pt-6 text-white">
     <div className="mx-auto max-w-5xl space-y-5">
       <header className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-5">
-        <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/65">Seller OS · Fast Listing Path</p>
-        <h1 className="mt-2 text-3xl font-black">⚡ Quick Pick Luna</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">Pega productos Luna. Cada uno avanza de forma independiente por identidad, stock, demanda, envío, economía y preparación eBay. Nada se publica sin tu clic final.</p>
+        <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/65">Seller OS · Control plane comercial</p>
+        <h1 className="mt-2 text-3xl font-black">Publicar</h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">Prepara, autoriza y sigue cada publicación desde una sola autoridad operacional. Seller OS ejecuta cada child de forma independiente; tú autorizas el conjunto exacto una sola vez.</p>
+        <nav aria-label="Secciones de Publicar"
+          className="mt-4 flex flex-wrap gap-2 text-xs font-black">
+          {[{ label: "Listos", id: "ready" },
+            { label: "Datos por confirmar", id: "needs-data" },
+            { label: "Preparar productos", id: "prepare" },
+            { label: "En ejecución", id: "in-progress" },
+            { label: "Bloqueados", id: "blocked" },
+            { label: "Publicados", id: "published" },
+            { label: "Historial", id: "history" }]
+            .map(({ label, id }) => <a key={id}
+              href={`#quick-pick-${id}`}
+              className="rounded-full border border-white/15 px-3 py-2 text-white/70">{label}</a>)}
+        </nav>
       </header>
 
-      <section className="rounded-3xl border border-white/15 bg-white/[0.04] p-4">
+      <section id="quick-pick-preparar-productos"
+        className="rounded-3xl border border-white/15 bg-white/[0.04] p-4">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-100/60">Preparar productos · Quick Pick Luna</p>
         <label className="block"><span className="font-black">Pegar uno o varios links Luna</span>
           <textarea value={input} onChange={(event) => setInput(event.target.value)}
             placeholder="https://www.lunaportex.com/products/...&#10;https://www.lunaportex.com/products/..."
@@ -444,16 +513,32 @@ export default function LunaQuickPickPage() {
           className="mt-3 min-h-11 rounded-xl border border-white/20 px-4 text-sm font-black disabled:opacity-40">
           {rehydrating ? "Actualizando…" : "Actualizar estado"}
         </button>
-        {receipt?.batchId && fullLunaReviewPending && <button type="button"
-          onClick={() => void continueAutomaticResolution()}
-          disabled={continuingResolution || rehydrating}
-          className="ml-2 mt-3 min-h-11 rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">
-          {continuingResolution ? "Continuando resolución…" :
-            "Continuar resolución automática"}
-        </button>}
-        {continuationFeedback && <p aria-live="polite"
-          className="mt-3 text-sm text-cyan-50">{continuationFeedback}</p>}
       </section>}
+
+      <section data-publisher-batch-control
+        className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/70">Autorización comercial de lote</p>
+        <h2 className="mt-1 text-xl font-black">PUBLICAR {
+          batchSummary?.batchButtonN ?? 0} LISTOS</h2>
+        <p className="mt-2 text-sm text-white/65">
+          Autoridad {batchSummary?.authoritativeReadyCount ?? "—"} · visibles {
+          batchSummary?.visibleReadyCount ?? "—"} · accionables {
+          batchSummary?.actionableReadyCount ?? "—"} · elegibles {
+          batchSummary?.batchEligibleCount ?? "—"}.
+        </p>
+        <button type="button" onClick={() => void publishReadyBatch()}
+          disabled={!batchParity || batchBusy ||
+            (batchSummary?.batchEligibleCount ?? 0) < 1}
+          className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">
+          {batchBusy ? "SELLER OS EJECUTANDO…" : `PUBLICAR ${
+            batchSummary?.batchButtonN ?? 0} LISTOS`}
+        </button>
+        {!batchParity && <p className="mt-2 text-xs text-amber-100">
+          El lote permanece cerrado hasta que autoridad, acción, preflight y membresía exacta coincidan.
+        </p>}
+        {batchFeedback && <p aria-live="polite"
+          className="mt-2 text-sm text-emerald-50">{batchFeedback}</p>}
+      </section>
 
       {rehydrating && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4 text-sm text-cyan-50">Recuperando tus Quick Picks guardados…</p>}
 
@@ -560,7 +645,27 @@ export default function LunaQuickPickPage() {
           <div className="flex items-start justify-between gap-3"><div>
             <p className="text-xs font-black uppercase tracking-widest text-white/45">{card.sourceSku ?? "Identificando…"}</p>
             <h2 className="mt-1 font-black">{card.title ?? "Producto Luna"}</h2>
-          </div><span className="rounded-full border border-white/20 px-3 py-1 text-xs font-black">{card.state}</span></div>
+            <p className="mt-1 text-xs text-white/45">{
+              card.provenance?.label ?? "Origen · Por determinar"}</p>
+          </div><span className="rounded-full border border-white/20 px-3 py-1 text-xs font-black">{
+            publisherByCandidate.get(card.candidateKey ?? "")?.batchRuntime
+              .published ? "PUBLICADO"
+              : publisherByCandidate.get(card.candidateKey ?? "")?.batchRuntime
+                .inProgress ? "EN EJECUCIÓN"
+                : publisherByCandidate.get(card.candidateKey ?? "")?.batchRuntime
+                  .blocked ? "BLOQUEADO" : card.state}</span></div>
+
+          {publisherByCandidate.get(card.candidateKey ?? "")?.batchRuntime
+              .status && <p data-publisher-child-runtime
+            className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.05] p-2 text-xs text-cyan-50">
+            Publisher · {publisherByCandidate.get(card.candidateKey ?? "")
+              ?.batchRuntime.stage ?? "PREFLIGHT"} · {
+              publisherByCandidate.get(card.candidateKey ?? "")
+                ?.batchRuntime.status}
+            {publisherByCandidate.get(card.candidateKey ?? "")
+              ?.lastErrorClass ? ` · ${publisherByCandidate.get(
+                card.candidateKey ?? "")?.lastErrorClass}` : ""}
+          </p>}
 
           {card.demandSemantics?.demandGateContinued && <div
             data-quick-pick-demand-semantics
@@ -585,9 +690,7 @@ export default function LunaQuickPickPage() {
 
           <ol data-quick-pick-canonical-stage-renderer
             className="mt-4 list-none space-y-1.5 text-sm">{QUICK_PICK_OWNER_STAGE_CATALOG_V1.map(([key, label]) => {
-            const displayedState = key === "LISTING_READY" &&
-              card.marketTestReady && ownerPublicationDecisionReady(card)
-              ? "PASS" : card.stages[key]
+            const displayedState = card.stages[key]
             const displayedLabel = key === "LISTING_READY" &&
               card.marketTestReady ? "Listo para decisión owner" : label
             return <li key={key} className={`flex items-center gap-2 rounded-xl px-2 py-1.5 ${displayedState === "RUNNING" ? "bg-cyan-200/[0.08] text-cyan-50" : displayedState === "CONTINUES" ? "bg-violet-200/[0.08] text-violet-50" : displayedState === "BLOCKED" ? "text-amber-100" : "text-white/65"}`}>
@@ -672,14 +775,9 @@ export default function LunaQuickPickPage() {
               <div><dt>ROI</dt><dd className="font-black">{percent(card.dollarCheck.roi)}</dd></div>
               <div><dt>Stock</dt><dd className="font-black">Seguro</dd></div>
             </dl>
-            {card.marketTestReady && ownerPublicationDecisionReady(card)
-              ? <a href={ownerReviewHref(card)}
-                data-quick-pick-market-test-owner-review-path
-                className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-amber-200 px-4 font-black text-black">REVISAR PRUEBA DE MERCADO</a>
-              : card.marketTestReady ? <button type="button" disabled
-                className="mt-3 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black opacity-40">PREPARANDO REVISIÓN OWNER…</button> : card.opportunityId && card.candidateKey && <a
-              href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(card.opportunityId)}&candidate=${encodeURIComponent(card.candidateKey)}`}
-              className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-200 px-4 font-black text-black">PUBLICAR EN EBAY</a>}
+            <p className="mt-3 rounded-xl bg-black/20 p-3 text-sm font-black">
+              Incluido en la autorización exacta de “PUBLICAR N LISTOS”.
+            </p>
             <p className={`mt-2 text-xs ${card.marketTestReady
               ? "text-amber-50/70" : "text-emerald-50/65"}`}>{card.marketTestReady
               ? "Demanda = UNPROVEN. Precio competitivo = UNPROVEN. Requiere autorización explícita del owner."

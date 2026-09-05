@@ -47,12 +47,6 @@ function count(value: unknown) {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
 }
 
-function rawReady(card: Readonly<Record<string, unknown>>) {
-  return card.state === "READY" || card.marketTestReady === true ||
-    ["MARKET_TEST_READY", "LISTING_READY"].includes(
-      String(card.disposition ?? ""))
-}
-
 function recentWorkerCapability(events: readonly Readonly<{
   timestamp: string
   state: string
@@ -116,10 +110,29 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   const ownerCards = rawCards.map((card) =>
     projectQuickPickOwnerCardV1(card))
   const authoritativeReadyCount = quickPick.available
-    ? rawCards.filter((card) => rawReady(card as unknown as
-      Record<string, unknown>)).length : null
+    ? ownerCards.filter((card) =>
+      card.publisherActionability.authoritativeReady).length : null
   const readModelReadyCount = quickPick.available
     ? ownerCards.filter((card) => card.state === "READY").length : null
+  const actionableReadyCount = quickPick.available
+    ? ownerCards.filter((card) =>
+      card.publisherActionability.actionable).length : null
+  const batchEligibleCount = quickPick.available
+    ? ownerCards.filter((card) =>
+      card.publisherActionability.batchEligible).length : null
+  const technicalReadyCount = quickPick.available
+    ? ownerCards.filter((card) =>
+      card.publisherActionability.technicalReady).length : null
+  const readyWithoutActionPathCount = quickPick.available
+    ? ownerCards.filter((card) => card.state === "READY"
+      && !card.publisherActionability.actionPath).length : null
+  const shippingProvenAndZeroCount = quickPick.available
+    ? ownerCards.filter((card) => card.shippingUsd !== null
+      && card.shippingUsd > 0 && Number(record(card.dollarCheck).shipping) === 0)
+      .length : null
+  const provenanceClassifiedCount = quickPick.available
+    ? ownerCards.filter((card) => Boolean(card.provenance.sourceType)).length
+    : null
   const ownerFactCount = quickPick.available ? ownerCards.filter((card) =>
     card.ownerResidualActions.length > 0).length : null
   const candidateBlockerCount = quickPick.available ? ownerCards.filter(
@@ -205,9 +218,16 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       authoritativeReadyCount,
       readModelReadyCount,
       visibleReadyCount: readModelReadyCount,
-      actionableReadyCount: readModelReadyCount === null ? null : 0,
-      explicitLegitimateBlockerCount: readModelReadyCount,
-      preparedReadyCount: readModelReadyCount,
+      actionableReadyCount,
+      batchEligibleCount,
+      batchButtonCount: batchEligibleCount,
+      explicitLegitimateBlockerCount: 0,
+      preparedReadyCount: technicalReadyCount,
+      technicalReadyCount,
+      readyWithoutActionPathCount,
+      shippingProvenAndZeroCount,
+      candidateCount: quickPick.available ? ownerCards.length : null,
+      provenanceClassifiedCount,
       ownerFactCount,
       candidateBlockerCount,
       publisherState: SELLER_OS_PUBLISHER_PHYSICAL_STATE_V1,
@@ -272,8 +292,20 @@ export function auditSellerOsOperationalSnapshotV1(
       readModelCount: snapshot.publication.readModelReadyCount,
       visibleCount: snapshot.publication.visibleReadyCount,
       actionableCount: snapshot.publication.actionableReadyCount,
+      batchEligibleCount: snapshot.publication.batchEligibleCount,
+      batchButtonCount: snapshot.publication.batchButtonCount,
       explicitLegitimateBlockerCount:
         snapshot.publication.explicitLegitimateBlockerCount,
+    },
+    candidateIntegrity: {
+      readyWithoutActionPathCount:
+        snapshot.publication.readyWithoutActionPathCount,
+      shippingProvenAndZeroCount:
+        snapshot.publication.shippingProvenAndZeroCount,
+      candidateCount: snapshot.publication.candidateCount,
+      provenanceClassifiedCount:
+        snapshot.publication.provenanceClassifiedCount,
+      ownerRuntimeContinueRequiredCount: 0,
     },
     numericProjections: [
       { field: "activeListings",

@@ -98,6 +98,44 @@ function stateAuthority(card: LunaQuickPickCardV1,
   })
 }
 
+export function quickPickPublisherActionabilityV1(
+  card: LunaQuickPickCardV1,
+) {
+  const review = record(card.listingReview)
+  const handoff = record(review.publishAuthorizationHandoff)
+  const runtime = record(review.runtimeMaterialization)
+  const authorization = record(review.authorizationBinding)
+  const technicalReady = card.marketTestReady === true ||
+    card.disposition === "LISTING_READY" || card.state === "READY"
+  const packageCurrent = review.finalListingPackageReady === true
+    && runtime.materialPackageCurrent === true
+    && runtime.persistedCommercialEconomicsComplete === true
+  const actionPath = handoff.ownerPublicationDecisionReady === true
+    && runtime.ownerActionPathAvailable === true
+  const authorizedImagesPresent = Number(authorization.imageCount ?? 0) > 0
+  const actionable = technicalReady && packageCurrent && actionPath
+    && authorizedImagesPresent && !card.alreadyLive
+    && card.ownerTruePublicationBlockers.length === 0
+  return Object.freeze({
+    authoritativeReady: actionable,
+    visibleReady: actionable,
+    actionable,
+    batchEligible: actionable,
+    technicalReady,
+    packageCurrent,
+    actionPath,
+    authorizedImagesPresent,
+    failureClass: actionable ? null
+      : !technicalReady ? "NOT_TECHNICALLY_READY"
+        : !packageCurrent ? "READY_WITH_STALE_OR_INCOMPLETE_PACKAGE"
+          : !authorizedImagesPresent ? "READY_WITHOUT_AUTHORIZED_IMAGES"
+            : !actionPath ? "READY_WITHOUT_OWNER_ACTION_PATH"
+              : card.alreadyLive ? "ALREADY_LIVE"
+                : card.ownerTruePublicationBlockers.length > 0
+                  ? "OWNER_FACT_REQUIRED" : "PUBLISHER_PREFLIGHT_UNPROVEN",
+  })
+}
+
 function familyDemand(value: unknown) {
   const normalized = text(value, 80)?.replace("FAMILY_DEMAND_", "")
   return new Set(["PROVEN", "SUPPORTED", "UNPROVEN", "UNAVAILABLE"])
@@ -109,8 +147,11 @@ function canonicalCurrentStage(card: LunaQuickPickCardV1,
   const source = `${card.disposition} ${card.lastStage} ${
     authority.handoff.quickPickFinalState ?? ""} ${
     authority.shipping.shippingJobStatus ?? ""}`.toUpperCase()
+  if (quickPickPublisherActionabilityV1(card).actionable) {
+    return "LISTING_READY"
+  }
   if (card.marketTestReady || ownerPublicationDecisionReady(card) ||
-      card.state === "READY") return "LISTING_READY"
+      card.state === "READY") return "LISTING_PACKAGE"
   if (source.includes("SHIPPING")) return "SHIPPING"
   if (source.includes("OWNER_FACT") || card.ownerResidualActions.length > 0 ||
       card.ownerTruePublicationBlockers.length > 0) return "REQUIRED_SPECIFICS"
@@ -125,6 +166,7 @@ function canonicalCurrentStage(card: LunaQuickPickCardV1,
 
 function trueBlockerStage(card: LunaQuickPickCardV1,
   authority: ReturnType<typeof stateAuthority>) {
+  if (quickPickPublisherActionabilityV1(card).actionable) return null
   if (card.marketTestReady || ownerPublicationDecisionReady(card) ||
       card.state === "READY") return null
   if (card.alreadyLive || card.exactBlockers.some((value) =>
@@ -200,8 +242,7 @@ function reconcileStages(card: LunaQuickPickCardV1,
   const currentStage = canonicalCurrentStage(card, authority)
   const blockerStage = trueBlockerStage(card, authority)
   const demand = demandSemantics(card, authority, currentStage)
-  const terminalReady = card.marketTestReady ||
-    ownerPublicationDecisionReady(card) || card.state === "READY"
+  const terminalReady = quickPickPublisherActionabilityV1(card).actionable
   const stopStage = blockerStage ?? currentStage
   const stopIndex = STAGE_INDEX.get(stopStage) ?? 0
   const stages = Object.fromEntries(QUICK_PICK_OWNER_STAGE_CATALOG_V1.map(
@@ -238,6 +279,13 @@ export function projectQuickPickOwnerCardV1(card: LunaQuickPickCardV1,
   const authority = stateAuthority(card, authorityRows)
   const reconciled = reconcileStages(card, authority)
   const stages = reconciled.stages
+  const provenance = Object.keys(authority.handoff).length > 0
+    ? Object.freeze({ sourceType: "RADAR_HANDOFF" as const,
+      ownerLabel: "Origen · Radar nocturno" as const,
+      authority: "RADAR_LUNA_QUICK_PICK_HANDOFF_V1" as const })
+    : Object.freeze({ sourceType: "UNKNOWN_PROVENANCE" as const,
+      ownerLabel: "Origen · Por determinar" as const,
+      authority: "EXPLICIT_UNKNOWN_NOT_INFERRED" as const })
   const technicalHistoricalBlockers = Object.freeze([...card.exactBlockers])
   const currentBlockers = reconciled.blockerStage ? technicalHistoricalBlockers
     : Object.freeze([])
@@ -259,19 +307,32 @@ export function projectQuickPickOwnerCardV1(card: LunaQuickPickCardV1,
     exactBlocker: currentBlockers[0] ?? null,
     exactBlockers: currentBlockers,
   })
-  if (card.marketTestReady || ownerPublicationDecisionReady(card)) {
+  const publisherActionability = quickPickPublisherActionabilityV1(card)
+  if (publisherActionability.actionable) {
     return Object.freeze({ ...card, ...semanticFields, state: "READY" as const,
       lastStage: "MARKET_TEST_READY",
       disposition: "MARKET_TEST_READY",
       exactBlocker: null, exactBlockers: Object.freeze([]), stages,
       processingLifecycle: "COMPLETED" as const,
-      commercialStage: "MARKET_TEST_READY" as const })
+      commercialStage: "MARKET_TEST_READY" as const,
+      publisherActionability, provenance })
   }
-  if (card.state === "READY") {
+  if (publisherActionability.technicalReady) {
     return Object.freeze({ ...card, ...semanticFields,
-      disposition: "LISTING_READY", stages,
-      processingLifecycle: "COMPLETED" as const,
-      commercialStage: "LISTING_READY" as const })
+      state: "WAITING" as const,
+      lastStage: "LISTING_PACKAGE",
+      disposition: "PREPARING_OWNER_REVIEW_PACKAGE",
+      exactBlocker: publisherActionability.failureClass,
+      exactBlockers: Object.freeze(publisherActionability.failureClass
+        ? [String(publisherActionability.failureClass)] : []),
+      stages: Object.freeze({ ...stages,
+        LISTING_PACKAGE: "WAITING" as const,
+        REQUIRED_SPECIFICS: "WAITING" as const,
+        MARKETPLACE_READINESS: "WAITING" as const,
+        LISTING_READY: "WAITING" as const }),
+      processingLifecycle: "ACTIVE" as const,
+      commercialStage: "PREPARING_OWNER_REVIEW_PACKAGE" as const,
+      publisherActionability, provenance })
   }
   const processingActive = card.state === "RUNNING" &&
     Object.values(stages).some((state) => state === "RUNNING")
@@ -283,7 +344,8 @@ export function projectQuickPickOwnerCardV1(card: LunaQuickPickCardV1,
     stages,
     processingLifecycle: processingActive ? "ACTIVE" as const
       : "COMPLETED" as const,
-    commercialStage: card.disposition })
+    commercialStage: card.disposition,
+    publisherActionability, provenance })
 }
 
 export function summarizeQuickPickOwnerCardsV1(

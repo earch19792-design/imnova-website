@@ -211,9 +211,11 @@ test("route and bundle surface regress downward", () => {
   // to the previously isolated Seller OS surface. The explicitly temporary
   // seller reauthorization gate may add one paired page/API while present.
   // Operational IA adds four deliberate canonical pages: Listing Quality,
-  // Sales, Postventa and Mayel. Their old routes/runtimes remain intact.
+  // Sales, Postventa and Mayel. Publisher completion adds one canonical
+  // control-plane page while keeping Quick Pick as its preparation route.
+  // Their old routes/runtimes remain intact.
   assert.ok(
-    countNamed("app", "page.tsx") <= 27 + Number(temporarySellerOauthPage) +
+    countNamed("app", "page.tsx") <= 28 + Number(temporarySellerOauthPage) +
       Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
       Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage) +
       Number(lunaQuickPickPage),
@@ -242,9 +244,9 @@ test("route and bundle surface regress downward", () => {
   // normalized CURRENT-LIVE signals and performs no marketplace writes.
   // The old product/community domain remains at zero.
   // The current isolated base also includes prior publisher recovery surfaces;
-  // this WO adds only the snapshot and POST-only integrity runtime endpoints.
+  // this WO adds the read-only Publisher cohort and POST-only batch runtime.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 97 + Number(temporarySellerOauthApi) +
+    countNamed("app/api", "route.ts") <= 99 + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
       Number(lunaQuickPickApi),

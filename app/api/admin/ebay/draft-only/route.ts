@@ -1,6 +1,6 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+export const maxDuration = 300
 
 import { createHash, randomUUID } from "node:crypto"
 import { NextResponse } from "next/server"
@@ -130,11 +130,22 @@ import {
   withV3FinalSetAuthorization,
 } from "@/lib/ebay/ebay-v3-unpublished-offer-authorization"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
+import { readSellerOsPublisherOperationalCohortV1 } from
+  "@/lib/ebay/seller-os-publisher-operational-cohort-v1"
+import { persistQuickPickOwnerReviewV1 } from
+  "@/lib/ebay/ebay-quick-pick-owner-review-persistence-v1"
+import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
+import { sellerOsPostRuntimeAuthorizedV1 } from
+  "@/lib/seller-os/post-only-runtime-route-v1"
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord
     : {}
+}
+
+function rows(value: unknown) {
+  return Array.isArray(value) ? value.map(record) : []
 }
 
 function text(value: unknown) {
@@ -2072,7 +2083,8 @@ async function authenticate(req: Request) {
     response: jsonError(new Error("EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403),
     actor: null,
   }
-  return { response: null, actor: validation.userId }
+  return { response: null, actor: validation.userId,
+    accessRole: validation.accessRole }
 }
 
 export async function GET(req: Request) {
@@ -2531,9 +2543,323 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const auth = await authenticate(req)
-  if (auth.response) return auth.response
-  if (!auth.actor) return jsonError(new Error("EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403)
+  return handlePost(req)
+}
+
+async function responseBody(response: NextResponse) {
+  return record(await response.clone().json())
+}
+
+function publisherBatchDigest(members: readonly JsonRecord[]) {
+  const canonical = [...members].map((member) => ({
+    candidateId: text(member.candidateId),
+    packageId: text(member.packageId),
+    packageDigest: text(member.packageDigest),
+    authorizationBinding: record(member.authorizationBinding),
+  })).sort((left, right) => left.candidateId.localeCompare(right.candidateId))
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonical))
+    .digest("hex")}`
+}
+
+function batchFailureStatus(payload: JsonRecord) {
+  const retrySafety = text(payload.retrySafety)
+  const error = text(payload.error)
+  if (/AMBIGUOUS|GET_ONLY_RECONCILIATION_REQUIRED/.test(
+    `${retrySafety} ${error}`)) return "AMBIGUOUS_FAIL_CLOSED" as const
+  if (/SAFE_TO_RETRY|UNPUBLISHED_REVALIDATION_REQUIRED|READBACK_RETRY_ONLY|SAME_LINEAGE_RESUME_SAFE/.test(
+    `${retrySafety} ${error}`)) return "FAILED_RETRY_SAFE" as const
+  return "FAILED_BLOCKED" as const
+}
+
+async function persistPublisherBatchChildResult(input: Readonly<{
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  childId: string
+  workerId: string
+  values: JsonRecord
+}>) {
+  const receiptDigest = `sha256:${createHash("sha256")
+    .update(JSON.stringify(input.values)).digest("hex")}`
+  const write = await input.supabase.from(
+    "seller_os_publisher_batch_children_v1").update({
+      ...input.values, receipt_digest: receiptDigest,
+      lease_owner: null, lease_expires_at: null,
+      retry_after_at: input.values.status === "FAILED_RETRY_SAFE"
+        ? new Date(Date.now() + 15 * 60_000).toISOString() : null,
+      updated_at: new Date().toISOString(),
+      ...(input.values.status === "COMPLETED"
+        ? { completed_at: new Date().toISOString() } : {}),
+    }).eq("id", input.childId).eq("lease_owner", input.workerId)
+    .select("id,status,stage,result,error_class,retry_safety,offer_id,item_id,marketplace_write_count,official_readback_state,receipt_digest")
+    .maybeSingle()
+  if (write.error || !write.data) {
+    throw new Error("SELLER_OS_PUBLISHER_BATCH_CHILD_RECEIPT_FAILED")
+  }
+  return write.data as JsonRecord
+}
+
+async function resumeSellerOsPublisherBatchV1(input: Readonly<{
+  batchId: string
+  accountKey: string
+}>) {
+  const supabase = getSupabaseAdminClient()
+  const batchRead = await supabase.from(
+    "seller_os_publisher_batch_authorizations_v1").select("*")
+    .eq("id", input.batchId).eq("marketplace_account_key", input.accountKey)
+    .maybeSingle()
+  if (batchRead.error || !batchRead.data) {
+    throw new Error("SELLER_OS_PUBLISHER_BATCH_NOT_FOUND")
+  }
+  const batch = batchRead.data as JsonRecord
+  const actor = text(batch.actor_user_id)
+  const workerId = `publisher-batch:${randomUUID()}`
+  const cohort = await readSellerOsPublisherOperationalCohortV1({
+    supabase, accountKey: input.accountKey, actorUserId: actor,
+  })
+  const current = new Map(cohort.candidates.map((candidate) =>
+    [candidate.candidateId, candidate]))
+  const results: JsonRecord[] = []
+  let stopGlobal = false
+  const maximumChildrenPerDispatch = Math.min(4,
+    Number(batch.exact_member_count))
+  for (let ordinal = 0; ordinal < maximumChildrenPerDispatch; ordinal++) {
+    if (stopGlobal) break
+    const claim = await supabase.rpc(
+      "claim_seller_os_publisher_batch_child_v1", {
+        p_marketplace_account_key: input.accountKey,
+        p_batch_authorization_id: input.batchId,
+        p_worker_id: workerId,
+        p_lease_seconds: 300,
+      })
+    const child = rows(claim.data)[0]
+    if (claim.error) throw new Error(
+      "SELLER_OS_PUBLISHER_BATCH_CHILD_CLAIM_FAILED")
+    if (!child) break
+    const candidate = current.get(text(child.candidate_id) ?? "")
+    const binding = record(child.authorization_binding)
+    let writeCount = Number(child.marketplace_write_count ?? 0)
+    try {
+      if (!candidate || candidate.packageId !== child.package_id
+          || candidate.currentPackageDigest !== child.package_digest
+          || candidate.publisherRuntimeEligible !== true
+          || publisherBatchDigest([{
+            candidateId: child.candidate_id,
+            packageId: child.package_id,
+            packageDigest: child.package_digest,
+            authorizationBinding: binding,
+          }]) !== publisherBatchDigest([{
+            candidateId: candidate?.candidateId,
+            packageId: candidate?.packageId,
+            packageDigest: candidate?.currentPackageDigest,
+            authorizationBinding: candidate?.authorizationBinding,
+          }])) {
+        throw new Error("SELLER_OS_PUBLISHER_BATCH_CHILD_BINDING_CHANGED")
+      }
+      await persistQuickPickOwnerReviewV1({ supabase,
+        accountKey: input.accountKey, actorUserId: actor,
+        body: { candidateKey: candidate.candidateId,
+          listingPackageId: candidate.packageId, intent: "CONFIRM" } })
+      const policies = record(binding.businessPolicies)
+      const quantity = Number(binding.quantity)
+      const condition = text(binding.condition)
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100
+          || !condition) throw new Error(
+        "SELLER_OS_PUBLISHER_BATCH_MATERIAL_BINDING_INVALID")
+      const approve = await approveDraft({
+        packageId: candidate.packageId,
+        packageDigest: candidate.currentPackageDigest,
+        idempotencyKey: `batch-approval:${child.id}`,
+        authorizationMode: EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
+        authorizationSurface: EBAY_ONE_CLICK_PUBLICATION_SURFACE,
+        confirmation: EBAY_ONE_CLICK_PUBLICATION_LABEL,
+        confirmTarget: "PRODUCTION",
+        confirmControlledPublication: true,
+        confirmExactPayload: true,
+        confirmProductionAccount: true,
+        confirmImagesAuthorized: true,
+        draftConfiguration: {
+          quantity, condition,
+          merchantLocationKey: binding.location,
+          businessPolicies: policies,
+        },
+      }, actor)
+      const approved = await responseBody(approve)
+      if (!approve.ok || approved.success !== true) throw Object.assign(
+        new Error(text(approved.error) || "PUBLISHER_BATCH_APPROVAL_FAILED"),
+        { publisherPayload: { ...approved, httpStatus: approve.status } })
+      const approval = record(approved.approval)
+      const execute = await executeDraft({ action: "execute",
+        approvalId: approval.id,
+        idempotencyKey: `batch-execution:${approval.id}` }, actor)
+      const executed = await responseBody(execute)
+      if (!execute.ok || executed.success !== true) throw Object.assign(
+        new Error(text(executed.error) || "PUBLISHER_BATCH_EXECUTION_FAILED"),
+        { publisherPayload: { ...executed, httpStatus: execute.status } })
+      const execution = record(executed.execution)
+      const executionSafety = record(executed.safety)
+      writeCount += Number(executionSafety.inventoryItemCreated === true)
+        + Number(executionSafety.inventoryItemUpdated === true)
+        + Number(executionSafety.unpublishedOfferCreated === true)
+        + Number(executionSafety.offerUpdated === true)
+      const preparedResponse = await prepareFinalPublication({
+        executionId: execution.id,
+      }, actor)
+      const prepared = await responseBody(preparedResponse)
+      if (!preparedResponse.ok || prepared.success !== true) {
+        throw Object.assign(new Error(text(prepared.error)
+          || "PUBLISHER_BATCH_PREVIEW_FAILED"),
+        { publisherPayload: { ...prepared,
+          httpStatus: preparedResponse.status } })
+      }
+      const publication = record(prepared.publication)
+      const publishResponse = await publishFinalPublication({
+        publicationId: publication.id,
+        idempotencyKey: `batch-publish:${publication.id}`,
+        authorizationSurface: EBAY_ONE_CLICK_PUBLICATION_SURFACE,
+      }, actor)
+      const published = await responseBody(publishResponse)
+      if (!publishResponse.ok || published.success !== true) {
+        const publishSafety = record(published.safety)
+        writeCount += Number(publishSafety.publishRequestSent === true)
+        throw Object.assign(new Error(text(published.error)
+          || "PUBLISHER_BATCH_PUBLISH_FAILED"),
+        { publisherPayload: { ...published,
+          httpStatus: publishResponse.status } })
+      }
+      writeCount += 1
+      const finalPublication = record(published.publication)
+      const listing = record(published.listing)
+      const completed = await persistPublisherBatchChildResult({ supabase,
+        childId: text(child.id), workerId, values: {
+          status: "COMPLETED", stage: "LIVE_CONFIRMATION", result: "ACTIVE",
+          approval_id: approval.id, execution_id: execution.id,
+          offer_id: execution.offer_id,
+          item_id: listing.listingId ?? finalPublication.active_listing_id,
+          marketplace_write_count: writeCount,
+          error_class: null, ebay_error_codes: [], mismatch_fields: [],
+          retry_safety: "NOT_APPLICABLE", duplicate_risk: "NONE_PROVEN",
+          official_readback_state: "PUBLISHED_CONFIRMED",
+        } })
+      results.push(completed)
+    } catch (error) {
+      const payload = record(record(error).publisherPayload)
+      const errorClass = text(payload.errorClass) ?? text(payload.error)
+        ?? errorCode(error)
+      const status = batchFailureStatus(payload)
+      const failureSafety = record(payload.safety)
+      writeCount += Number(failureSafety.ebayWrites ?? 0)
+        + Number(failureSafety.publishRequestSent === true)
+      stopGlobal = status === "AMBIGUOUS_FAIL_CLOSED" ||
+        Number(payload.httpStatus) === 429 || Number(payload.httpStatus) >= 500 ||
+        /ACCOUNT_AUTH|MARKETPLACE_OUTAGE|GLOBAL_POLICY|GLOBAL_EXECUTOR|UNSAFE/.test(
+          errorClass)
+      const failed = await persistPublisherBatchChildResult({ supabase,
+        childId: text(child.id), workerId, values: {
+          status, stage: text(payload.stage) ?? "PREFLIGHT",
+          result: "FAILED", error_class: errorClass,
+          ebay_error_codes: Array.isArray(payload.ebayErrorIds)
+            ? payload.ebayErrorIds : [],
+          mismatch_fields: Array.isArray(payload.mismatchFields)
+            ? payload.mismatchFields : [],
+          retry_safety: text(payload.retrySafety)
+            ?? (status === "FAILED_RETRY_SAFE" ? "SAFE_TO_RETRY"
+              : "ENGINEERING_REQUIRED"),
+          offer_id: text(payload.offerId), item_id: text(payload.itemId),
+          marketplace_write_count: writeCount,
+          duplicate_risk: status === "AMBIGUOUS_FAIL_CLOSED"
+            ? "UNPROVEN_FAIL_CLOSED" : "NONE_PROVEN",
+          official_readback_state: text(payload.officialCurrentState)
+            ?? "UNPUBLISHED_UNPROVEN",
+        } })
+      results.push(failed)
+    }
+  }
+  const childrenRead = await supabase.from(
+    "seller_os_publisher_batch_children_v1")
+    .select("status").eq("batch_authorization_id", input.batchId)
+  if (childrenRead.error) throw new Error(
+    "SELLER_OS_PUBLISHER_BATCH_READBACK_FAILED")
+  const statuses = rows(childrenRead.data).map((child) => text(child.status))
+  const completedCount = statuses.filter((status) => status === "COMPLETED").length
+  const pendingCount = statuses.filter((status) => ["AUTHORIZED", "CLAIMED",
+    "RUNNING", "FAILED_RETRY_SAFE"].includes(status ?? "")).length
+  if (statuses.length !== Number(batch.exact_member_count)) {
+    throw new Error("SELLER_OS_PUBLISHER_BATCH_CHILD_COUNT_DIVERGENCE")
+  }
+  const batchStatus = completedCount === statuses.length ? "COMPLETED"
+    : pendingCount > 0 ? "PARTIAL" : "BLOCKED"
+  await supabase.from("seller_os_publisher_batch_authorizations_v1").update({
+    status: batchStatus,
+    ...(batchStatus === "COMPLETED"
+      ? { completed_at: new Date().toISOString() } : {}),
+    updated_at: new Date().toISOString(),
+  }).eq("id", input.batchId)
+  return Object.freeze({ batchId: input.batchId, status: batchStatus,
+    childCount: statuses.length, completedCount, pendingCount,
+    runtimeResults: Object.freeze(results),
+    sellerOsRuntimeAuthority: true as const,
+    codexPublishDispatch: 0 as const })
+}
+
+async function authorizeAndRunSellerOsPublisherBatchV1(
+  body: JsonRecord,
+  actor: string,
+) {
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  const idempotency = idempotencyKey(body.idempotencyKey)
+  const submitted = rows(body.members)
+  if (!accountKey || !idempotency || submitted.length < 1
+      || submitted.length > 20
+      || body.confirmExactMemberCount !== submitted.length
+      || body.confirmCommercialAuthorization !== true
+      || text(body.confirmation) !== `PUBLICAR ${submitted.length} LISTOS`) {
+    return jsonError(new Error(
+      "SELLER_OS_PUBLISHER_BATCH_EXACT_AUTHORIZATION_REQUIRED"), 409)
+  }
+  const supabase = getSupabaseAdminClient()
+  const cohort = await readSellerOsPublisherOperationalCohortV1({
+    supabase, accountKey, actorUserId: actor,
+  })
+  const eligible = cohort.candidates.filter((candidate) =>
+    candidate.batchEligible)
+  const requested = submitted.map((member) => ({
+    candidateId: text(member.candidateId), packageId: text(member.packageId),
+    packageDigest: text(member.packageDigest),
+    authorizationBinding: record(member.authorizationBinding),
+  })).sort((left, right) => left.candidateId.localeCompare(right.candidateId))
+  const expected = eligible.map((candidate) => ({
+    candidateId: candidate.candidateId, packageId: candidate.packageId,
+    packageDigest: candidate.currentPackageDigest,
+    authorizationBinding: record(candidate.authorizationBinding),
+  })).sort((left, right) => left.candidateId.localeCompare(right.candidateId))
+  if (expected.length !== requested.length
+      || publisherBatchDigest(expected) !== publisherBatchDigest(requested)) {
+    return jsonError(new Error(
+      "SELLER_OS_PUBLISHER_BATCH_COHORT_CHANGED"), 409)
+  }
+  const authorizationDigest = publisherBatchDigest(expected)
+  const batchWrite = await supabase.rpc(
+    "authorize_seller_os_publisher_batch_v1", {
+      p_marketplace_account_key: accountKey,
+      p_actor_user_id: actor, p_marketplace_id: "EBAY_US",
+      p_exact_member_count: expected.length,
+      p_authorization_digest: authorizationDigest,
+      p_idempotency_key: idempotency, p_authorized_members: expected,
+    })
+  const batch = rows(batchWrite.data)[0]
+  if (batchWrite.error || !batch) return jsonError(new Error(
+    batchWrite.error?.message?.includes("IDEMPOTENCY_CONFLICT")
+      ? "SELLER_OS_PUBLISHER_BATCH_IDEMPOTENCY_CONFLICT"
+      : "SELLER_OS_PUBLISHER_BATCH_AUTHORIZATION_PERSIST_FAILED"), 409)
+  const runtimeResult = await resumeSellerOsPublisherBatchV1({
+    batchId: text(batch.id), accountKey,
+  })
+  return NextResponse.json({ success: true,
+    authorization: { id: batch.id, authorizationDigest,
+      exactMemberCount: expected.length }, runtimeResult },
+  { status: runtimeResult.status === "COMPLETED" ? 200 : 207 })
+}
+
+async function handlePost(req: Request) {
   let body: JsonRecord
   try {
     body = record(await req.json())
@@ -2541,7 +2867,42 @@ export async function POST(req: Request) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
   }
   const action = text(body.action)
+  if (action === "batch_runtime") {
+    const supabase = getSupabaseAdminClient()
+    const authorized = await sellerOsPostRuntimeAuthorizedV1({ request: req,
+      supabase, environmentSecrets: [process.env.CRON_SECRET,
+        process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET] })
+    if (!authorized) return jsonError(new Error("RUNTIME_UNAUTHORIZED"), 401)
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) return jsonError(new Error(
+      "SELLER_OS_PUBLISHER_BATCH_ACCOUNT_SCOPE_REQUIRED"), 503)
+    const active = await supabase.from(
+      "seller_os_publisher_batch_authorizations_v1").select("id")
+      .eq("marketplace_account_key", accountKey)
+      .in("status", ["AUTHORIZED", "RUNNING", "PARTIAL"])
+      .order("created_at", { ascending: true }).limit(3)
+    if (active.error) return jsonError(new Error(
+      "SELLER_OS_PUBLISHER_BATCH_RUNTIME_SCOPE_READ_FAILED"), 503)
+    const outcomes = []
+    for (const row of rows(active.data)) outcomes.push(
+      await resumeSellerOsPublisherBatchV1({ batchId: text(row.id),
+        accountKey }))
+    return NextResponse.json({ success: true, outcomes,
+      safety: { runtimeAuthority: true, ownerAuthorizationRequired: true,
+        unauthorizedMarketplaceWrites: 0 } })
+  }
+  const auth = await authenticate(req)
+  if (auth.response) return auth.response
+  if (!auth.actor) return jsonError(new Error(
+    "EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403)
   try {
+    if (action === "batch_publish") {
+      if (auth.accessRole !== SELLER_OS_ACCESS_ROLES.owner) {
+        return jsonError(new Error(
+          "SELLER_OS_PUBLISHER_BATCH_OWNER_REQUIRED"), 403)
+      }
+      return await authorizeAndRunSellerOsPublisherBatchV1(body, auth.actor)
+    }
     if (action === "taxonomy_preflight") {
       return await taxonomyPreflight(body, auth.actor)
     }

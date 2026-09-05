@@ -364,6 +364,22 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     ...(exactGtin ? { productIdentifiers } : {}),
   })
   const packageDigest = digest(materialPackage)
+  const persistedPackageDigest = text(priorProjection.packageDigest, 100)
+  const persistedPricing = record(packageData.pricing)
+  const persistedShipping = record(packageData.shipping)
+  const persistedCommercialEconomicsComplete = Boolean(
+    positiveMoney(persistedPricing.targetPrice) !== null
+    && money(persistedPricing.supplierCost) !== null
+    && money(persistedPricing.estimatedEbayFees) !== null
+    && money(persistedPricing.estimatedOutboundShipping) !== null
+    && money(persistedPricing.estimatedNetProfit) !== null
+    && money(persistedPricing.estimatedNetMarginPercent) !== null
+    && money(persistedPricing.estimatedRoiPercent) !== null
+    && money(persistedPricing.contributionBreakEvenPrice) !== null
+    && money(persistedShipping.supplierShippingEconomicsUsd) !== null)
+  const persistedMaterialPackageCurrent = packageReady
+    && persistedPackageDigest === packageDigest
+    && persistedCommercialEconomicsComplete
   const ownerReviewConfirmed = ownerReview.status === "CONFIRMED" &&
     ownerReview.readyForOwnerPublishAuthorization === true
   const reviewedPackageDigest = text(ownerReview.reviewedPackageDigest, 100)
@@ -473,6 +489,17 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
       imageCount: imageUrls.length,
       materialPackageChangeInvalidatesAuthorization: true as const,
     }),
+    runtimeMaterialization: Object.freeze({
+      contractVersion: "QUICK_PICK_RUNTIME_PACKAGE_MATERIALIZATION_V1",
+      persistedPackageDigest,
+      projectedPackageDigest: packageDigest,
+      materialPackageCurrent: persistedMaterialPackageCurrent,
+      persistedCommercialEconomicsComplete,
+      ownerActionPathAvailable: ownerPublicationDecisionReady
+        && persistedMaterialPackageCurrent,
+      batchEligibilityRequiresCurrentPackage: true as const,
+      marketplaceWrites: 0 as const,
+    }),
     reuseAudit: Object.freeze({ demandIntelligenceReused: true,
       soldEvidenceReused: true, intelligentTitleFactoryReused: true,
       listingPackageReused: true, dollarCheckReused: true,
@@ -485,6 +512,75 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     aiFreeformDemandInvention: false as const,
     marketplaceWrites: 0 as const,
     listingPublications: 0 as const,
+  })
+}
+
+export function buildQuickPickRuntimeMaterializedPackageDataV1(input: Readonly<{
+  currentPackageData: JsonRecord
+  review: ReturnType<typeof buildQuickPickMarketTestListingReviewV1>
+  now: string
+}>) {
+  const currentOwnerReview = record(
+    input.currentPackageData.quickPickOwnerReviewV1)
+  const reviewedDigest = text(currentOwnerReview.reviewedPackageDigest, 100)
+  const sameDigest = reviewedDigest === input.review.packageDigest
+  const ownerReview = Object.keys(currentOwnerReview).length === 0 || sameDigest
+    ? currentOwnerReview
+    : Object.freeze({ ...currentOwnerReview,
+      status: "INVALIDATED_MATERIAL_PACKAGE_CHANGE",
+      readyForOwnerPublishAuthorization: false,
+      marketplaceWriteAuthorized: false,
+      invalidatedAt: input.now,
+      invalidatedBy:
+        "QUICK_PICK_RUNTIME_PACKAGE_MATERIALIZATION_V1" })
+  const invalidation = record(
+    input.currentPackageData.categoryDerivedStateInvalidationV1)
+  return Object.freeze({ ...input.currentPackageData,
+    title: input.review.title,
+    description: input.review.description,
+    categoryId: input.review.category.id,
+    categoryName: input.review.category.name,
+    conditionId: input.review.condition.id,
+    conditionLabel: input.review.condition.label,
+    quantity: input.review.authorizationBinding.quantity,
+    aspects: input.review.itemSpecifics,
+    shipping: { ...record(input.currentPackageData.shipping),
+      supplierShippingEconomicsUsd: input.review.shipping.amount,
+      currency: input.review.shipping.currency,
+      supplierShippingEvidenceClass: input.review.shipping.source,
+      supplierShippingIsBuyerFacing: false },
+    pricing: { ...record(input.currentPackageData.pricing),
+      currency: "USD", supplierCost: input.review.dollarCheck.supplierCost,
+      targetPrice: input.review.dollarCheck.targetPrice,
+      estimatedEbayFees: input.review.dollarCheck.ebayFees,
+      estimatedOutboundShipping: input.review.dollarCheck.shipping,
+      estimatedNetProfit: input.review.dollarCheck.expectedContribution,
+      estimatedNetMarginPercent: input.review.dollarCheck.expectedMargin,
+      estimatedRoiPercent: input.review.dollarCheck.expectedRoi,
+      contributionBreakEvenPrice: input.review.dollarCheck.breakEvenPrice,
+      minimumProfitablePrice:
+        input.review.dollarCheck.minimumProfitablePrice,
+      calculationSource: input.review.dollarCheck.evidenceClass,
+      marketPriceSupport: input.review.supportedPriceBand.status,
+      exactFeeClaimed: false },
+    quickPickMarketTestPackageV1: input.review,
+    ...(Object.keys(ownerReview).length > 0
+      ? { quickPickOwnerReviewV1: ownerReview } : {}),
+    ...(invalidation.contractVersion ===
+        "SELLER_OS_CATEGORY_DERIVED_STATE_INVALIDATION_V1"
+      ? { categoryDerivedStateInvalidationV1: { ...invalidation,
+        packageRematerializedByRuntime: true,
+        downstreamCommercialPackageRematerializedAt: input.now,
+        marketplaceWrites: 0 } } : {}),
+    quickPickRuntimePackageMaterializationV1: Object.freeze({
+      contractVersion: "QUICK_PICK_RUNTIME_PACKAGE_MATERIALIZATION_V1",
+      packageDigest: input.review.packageDigest,
+      materializedAt: input.now,
+      ownerAuthorizationCreated: false,
+      ownerAuthorizationInvalidated: Object.keys(currentOwnerReview).length > 0
+        && !sameDigest,
+      marketplaceWrites: 0,
+    }),
   })
 }
 

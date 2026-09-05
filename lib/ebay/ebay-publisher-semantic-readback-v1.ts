@@ -62,12 +62,25 @@ function unorderedArrayPath(path: string) {
   return /^\$\.product\.(?:aspects\.[^.]+|upc|ean|isbn)$/.test(path)
 }
 
-function materialContainerPath(path: string) {
-  return path === "$.listingPolicies"
-    || path === "$.pricingSummary"
-    || path === "$.tax"
-    || path === "$.product.aspects"
-    || path === "$.packageWeightAndSize"
+function ebayDefaultedOptionalExtraPath(
+  resource: EbayPublisherReadbackResourceV1,
+  path: string,
+  value: unknown,
+) {
+  if (resource !== "OFFER") return false
+  if (path === "$.listingPolicies.eBayPlusIfEligible") {
+    return value === false
+  }
+  if (path === "$.tax") return isRecord(value)
+    && Object.keys(value).every((key) => [
+      "applyTax", "thirdPartyTaxCategory", "vatPercentage",
+    ].includes(key))
+    && Object.values(value).every((entry) => entry === false
+      || entry === null || entry === "" || entry === 0)
+  if (path.startsWith("$.tax.")) {
+    return value === false || value === null || value === "" || value === 0
+  }
+  return false
 }
 
 function serverManagedExtraPath(
@@ -195,10 +208,12 @@ export function compareEbayPublisherReadbackV1(
       for (const key of Object.keys(actualValue)) {
         if (hasOwn(expectedValue, key)) continue
         const extraPath = `${path}.${key}`
-        if (serverManagedExtraPath(resource, extraPath, actualValue[key])) {
+        if (serverManagedExtraPath(resource, extraPath, actualValue[key])
+          || ebayDefaultedOptionalExtraPath(
+            resource, extraPath, actualValue[key],
+          )) {
           add(extraPath, "DEFAULT_VALUE_INSERTED_BY_EBAY", false)
-        } else if (materialContainerPath(path)
-          || materialExtraPath(resource, extraPath)) {
+        } else if (materialExtraPath(resource, extraPath)) {
           add(extraPath, "MATERIAL_MISMATCH", true)
         }
       }
