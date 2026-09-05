@@ -4264,6 +4264,78 @@ async function approveDraft(body: JsonRecord, actor: string) {
       },
     })
   }
+  if (
+    oneClickRequested
+    && batchAuthorizationRequested
+    && exactSelfLineage?.approval
+  ) {
+    const batchContinuationAuthority =
+      await hasExactPublisherBatchApprovalContinuationAuthorityV1({
+        supabase,
+        approval: exactSelfLineage.approval,
+        actor,
+      })
+    const material = validateExactRearmedPublicationMaterialV1({
+      approvedPayload: record(exactSelfLineage.approval.approved_payload),
+      currentPayload: readiness.payload,
+    })
+    if (batchContinuationAuthority && !material.exact) {
+      return oneClickApprovePrewriteError(
+        new Error(material.reasonCode),
+        [material.reasonCode],
+      )
+    }
+    if (batchContinuationAuthority && material.exact) {
+      return NextResponse.json({
+        success: true,
+        approval: {
+          id: exactSelfLineage.approval.id,
+          status: exactSelfLineage.approval.status,
+          payload_hash: exactSelfLineage.approval.payload_hash,
+          approved_at: exactSelfLineage.approval.approved_at,
+          expires_at: exactSelfLineage.approval.expires_at,
+        },
+        ...(exactSelfLineage.execution
+          ? { execution: exactSelfLineage.execution } : {}),
+        ...(exactSelfLineage.publication
+          ? { publication: exactSelfLineage.publication } : {}),
+        readiness: {
+          ready: true,
+          blockers: [],
+          payloadHash: exactSelfLineage.approval.payload_hash,
+        },
+        controlledPublication: {
+          eligible: true,
+          authorized: true,
+          version: EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
+          authorizationAuthority:
+            "EXACT_DURABLE_BATCH_APPROVAL_CONTINUATION",
+          reusesExistingHumanApproval: true,
+          newHumanApprovalCreated: false,
+          canonicalPackageDigest: canonicalOwnerAuthorizationDigest,
+          ownerAuthorizationDigest: canonicalOwnerAuthorizationDigest,
+          ...oneClickPublicationRequirements(true),
+        },
+        exactBatchApprovalContinuation: {
+          authorized: true,
+          materialClassification: material.reasonCode,
+          packageMutationAllowed: false,
+        },
+        prewriteAuthorizationCorrelation: oneClickCorrelation(
+          undefined,
+          text(exactSelfLineage.approval.id) || null,
+        ),
+        oneClickFreshness,
+        safety: {
+          canPublish: false,
+          newHumanApprovalCreated: false,
+          durableApprovalCreatedOnlyAfterRefreshPass: true,
+          marketplaceWritesBeforeRefreshPass: 0,
+          target,
+        },
+      })
+    }
+  }
   const approvedPayload = oneClickRequested
     ? bindOneClickControlledPublicationIntentV1({
       approvedPayload: readiness.payload,

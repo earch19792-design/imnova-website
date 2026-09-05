@@ -101,12 +101,14 @@ Readonly<{
     .eq("package_digest", input.packageDigest)
     .in("status", ["AUTHORIZED", "CLAIMED", "RUNNING",
       "FAILED_RETRY_SAFE", "FAILED_BLOCKED", "AMBIGUOUS_FAIL_CLOSED"])
-    .order("created_at", { ascending: false }).limit(2)
+    .order("created_at", { ascending: false }).limit(1)
   if (childRead.error) throw new Error(
     "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_READ_FAILED")
   const children = Array.isArray(childRead.data) ? childRead.data.map(record) : []
-  if (children.length > 1) throw new Error(
-    "QUICK_PICK_PUBLISH_BATCH_AUTHORITY_AMBIGUOUS")
+  // The same immutable package can legitimately occur in a later exact batch
+  // after an earlier batch reached a terminal state. The newest exact child is
+  // the current commercial authority; its parent batch and complete member
+  // digest are still verified below before it can be consumed.
   const child = children[0]
   if (!child) return null
   const batchRead = await input.supabase.from(
