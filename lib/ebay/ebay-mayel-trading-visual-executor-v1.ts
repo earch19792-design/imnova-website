@@ -376,13 +376,34 @@ export async function prepareMayelAssetWithEbayMediaV1(input: {
   const location = created.headers.get("location") ?? ""
   let imageId = ""
   try {
-    const url = new URL(location)
+    // eBay may return either an absolute resource URI or the same official
+    // resource path relative to the Media API origin. Both identify the same
+    // created resource; accepting the relative form avoids losing a durable
+    // 201 response and accidentally preparing the same source again.
+    const url = new URL(location, `${MAYEL_TRADING_MEDIA_IMAGE_ENDPOINT}/`)
     const hostAllowed = url.hostname === "api.ebay.com"
       || url.hostname === "apim.ebay.com"
     const matched = url.pathname.match(
-      /^\/commerce\/media\/v1_beta\/image\/([A-Za-z0-9_-]{1,200})$/)
+      /^\/commerce\/media\/v1_beta\/image\/([A-Za-z0-9_-]{1,200})\/?$/)
     if (url.protocol === "https:" && hostAllowed && matched) imageId = matched[1]
   } catch { imageId = "" }
+  if (!imageId && typeof createdBody.imageId === "string"
+    && /^[A-Za-z0-9_-]{1,200}$/.test(createdBody.imageId)) {
+    imageId = createdBody.imageId
+  }
+  if (!imageId) {
+    const createdEpsUrl = normalizeOfficialTradingPictureUrlV1(
+      createdBody.imageUrl)
+    if (createdEpsUrl
+      && classifyMayelTradingImageHostV1(createdEpsUrl) === "EBAY_EPS") {
+      try {
+        const epsUrl = new URL(createdEpsUrl)
+        imageId = epsUrl.pathname.match(
+          /^\/00\/s\/[A-Za-z0-9_-]+\/z\/([A-Za-z0-9_-]{1,200})\//)
+          ?.[1] ?? ""
+      } catch { imageId = "" }
+    }
+  }
   if (!imageId) throw new Error("MAYEL_TRADING_MEDIA_IMAGE_ID_MISSING")
   const getUrl = `${MAYEL_TRADING_MEDIA_IMAGE_ENDPOINT}/${encodeURIComponent(imageId)}`
   const readback = await fetchImpl(getUrl, {

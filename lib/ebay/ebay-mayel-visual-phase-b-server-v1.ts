@@ -39,6 +39,8 @@ import {
 export const MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION =
   "EJECUTAR MAYEL TRADING VISUAL LIVE CANARY V1" as const
 const MAYEL_TRADING_MEDIA_LEDGER_MECHANISM =
+  "MAYEL_TRADING_VISUAL_EXECUTOR_V3" as const
+const MAYEL_TRADING_MEDIA_LEGACY_LEDGER_MECHANISM =
   "MAYEL_TRADING_VISUAL_EXECUTOR_V2" as const
 const MAYEL_TRADING_MEDIA_LEDGER_INVARIANT =
   "MAYEL_APPROVED_ASSET_HAS_DURABLE_EPS_REPRESENTATION" as const
@@ -771,22 +773,34 @@ async function resolveMayelAssetToDurableEpsV1(input: {
     assetSha256: input.assetSha256,
     route: MAYEL_TRADING_MEDIA_PREPARATION_ROUTE,
   })
-  const existing = await input.supabase.from(
+  const current = await input.supabase.from(
     "seller_os_operational_learning_ledger_v1")
     .select("id,status,evidence,recovery_attempt_count")
     .eq("marketplace_account_key", input.accountKey)
     .eq("invariant_code", MAYEL_TRADING_MEDIA_LEDGER_INVARIANT)
     .eq("mechanism_version", MAYEL_TRADING_MEDIA_LEDGER_MECHANISM)
     .eq("evidence_fingerprint", evidenceFingerprint).maybeSingle()
-  if (existing.error) {
+  if (current.error) {
     throw new Error("MAYEL_TRADING_MEDIA_LEDGER_READ_FAILED")
   }
-  const existingMedia = record(record(existing.data?.evidence)
+  const legacy = current.data ? null : await input.supabase.from(
+    "seller_os_operational_learning_ledger_v1")
+    .select("id,status,evidence,recovery_attempt_count")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("invariant_code", MAYEL_TRADING_MEDIA_LEDGER_INVARIANT)
+    .eq("mechanism_version", MAYEL_TRADING_MEDIA_LEGACY_LEDGER_MECHANISM)
+    .eq("evidence_fingerprint", evidenceFingerprint)
+    .eq("status", "RESOLVED").maybeSingle()
+  if (legacy?.error) {
+    throw new Error("MAYEL_TRADING_MEDIA_LEDGER_READ_FAILED")
+  }
+  const existing = current.data ?? legacy?.data ?? null
+  const existingMedia = record(record(existing?.evidence)
     .mediaPreparation)
-  if (existing.data?.status === "RESOLVED"
+  if (existing?.status === "RESOLVED"
     && validDurableEps(existingMedia)) {
     return Object.freeze({
-      ledgerId: String(existing.data.id),
+      ledgerId: String(existing.id),
       mediaApiWriteCount: 0 as const,
       imageId: text(existingMedia.imageId, 200),
       epsImageUrl: text(existingMedia.epsImageUrl, 1_000),

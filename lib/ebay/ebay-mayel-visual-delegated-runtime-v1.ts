@@ -104,7 +104,7 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
       mechanism_version: MAYEL_VISUAL_DELEGATED_RUNTIME_V1,
       evidence_fingerprint: evidenceFingerprint,
       recovery_policy_version: MAYEL_VISUAL_DELEGATED_RUNTIME_V1,
-      retry_safety: "READBACK_BEFORE_ANY_RETRY",
+      retry_safety: "SAFE_IDEMPOTENT_RUNTIME_RESUME",
       recovery_class: "AUTO_RECOVERABLE",
       recovery_outcome: outcomes.some((outcome) => outcome.status === "BLOCKED")
         ? "OBSERVED" : "RECOVERED",
