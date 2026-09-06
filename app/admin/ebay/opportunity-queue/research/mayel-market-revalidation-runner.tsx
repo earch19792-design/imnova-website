@@ -141,6 +141,18 @@ export function MayelMarketRevalidationRunner() {
         if (claim.claimed !== true) break
         const claimedPlanId = String(claim.planId ?? "")
         try {
+          const claimedPlan = claim.plan && typeof claim.plan === "object"
+            ? claim.plan as JsonRecord : {}
+          if (String(claimedPlan.status ?? "").toUpperCase() === "COMPLETED") {
+            setState("Reanudando Radar, precio y rentabilidad desde la evidencia guardada…")
+            await authorizedPost({
+              action: "RESUME_MARKET_REVALIDATION_DOWNSTREAM",
+              planId: claimedPlanId,
+              workerId,
+            })
+            if (!autonomous) break
+            continue
+          }
           const plan = buildEbayOneClickResearchPlan(claim.plan as never)
           const lease = buildEbayOneClickResearchLease({
             sessionId: crypto.randomUUID(),

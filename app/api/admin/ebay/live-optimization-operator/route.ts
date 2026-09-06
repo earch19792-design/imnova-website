@@ -43,6 +43,7 @@ import {
   readMayelLiveMarketRevalidationPlanV1,
   readMayelLiveMarketRevalidationStatusV1,
   releaseMayelAutonomousResearchPlanV1,
+  resumeMayelMarketRevalidationDownstreamV1,
   startMayelLiveMarketRevalidationV1,
 } from "@/lib/ebay/ebay-mayel-live-market-revalidation-v1"
 import { currentLiveListingsForMonitorV1 } from
@@ -514,6 +515,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: safeCode(error),
         operatorMessage:
           "La evidencia quedó protegida, pero Seller OS no pudo cerrar todavía la revalidación." },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "RESUME_MARKET_REVALIDATION_DOWNSTREAM") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await resumeMayelMarketRevalidationDownstreamV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        planId: body?.planId, workerId: body?.workerId,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0,
+          promotionWrites: 0, sendOffers: 0, buyerMessages: 0 } },
+      { headers: { "Cache-Control": "private, no-store",
+        "X-Seller-OS-Mayel-Market-Revalidation": "DOWNSTREAM_RESUMED" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error),
+        operatorMessage:
+          "La captura sigue guardada; Seller OS reintentará únicamente el tramo pendiente." },
       { status: 409, headers: { "Cache-Control": "private, no-store" } })
     }
   }
