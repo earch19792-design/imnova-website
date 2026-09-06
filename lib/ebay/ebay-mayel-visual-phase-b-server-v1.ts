@@ -39,9 +39,11 @@ import {
 export const MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION =
   "EJECUTAR MAYEL TRADING VISUAL LIVE CANARY V1" as const
 const MAYEL_TRADING_MEDIA_LEDGER_MECHANISM =
-  "MAYEL_TRADING_VISUAL_EXECUTOR_V3" as const
-const MAYEL_TRADING_MEDIA_LEGACY_LEDGER_MECHANISM =
-  "MAYEL_TRADING_VISUAL_EXECUTOR_V2" as const
+  "MAYEL_TRADING_VISUAL_EXECUTOR_V4" as const
+const MAYEL_TRADING_MEDIA_LEGACY_LEDGER_MECHANISMS = [
+  "MAYEL_TRADING_VISUAL_EXECUTOR_V3",
+  "MAYEL_TRADING_VISUAL_EXECUTOR_V2",
+] as const
 const MAYEL_TRADING_MEDIA_LEDGER_INVARIANT =
   "MAYEL_APPROVED_ASSET_HAS_DURABLE_EPS_REPRESENTATION" as const
 
@@ -788,9 +790,10 @@ async function resolveMayelAssetToDurableEpsV1(input: {
     .select("id,status,evidence,recovery_attempt_count")
     .eq("marketplace_account_key", input.accountKey)
     .eq("invariant_code", MAYEL_TRADING_MEDIA_LEDGER_INVARIANT)
-    .eq("mechanism_version", MAYEL_TRADING_MEDIA_LEGACY_LEDGER_MECHANISM)
+    .in("mechanism_version", [...MAYEL_TRADING_MEDIA_LEGACY_LEDGER_MECHANISMS])
     .eq("evidence_fingerprint", evidenceFingerprint)
-    .eq("status", "RESOLVED").maybeSingle()
+    .eq("status", "RESOLVED").order("last_observed_at", {
+      ascending: false }).limit(1).maybeSingle()
   if (legacy?.error) {
     throw new Error("MAYEL_TRADING_MEDIA_LEDGER_READ_FAILED")
   }

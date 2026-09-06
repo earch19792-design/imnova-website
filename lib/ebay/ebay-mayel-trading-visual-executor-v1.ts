@@ -374,36 +374,54 @@ export async function prepareMayelAssetWithEbayMediaV1(input: {
     throw new Error(`MAYEL_TRADING_MEDIA_CREATE_HTTP_${created.status}`)
   }
   const location = created.headers.get("location") ?? ""
-  let imageId = ""
-  try {
-    // eBay may return either an absolute resource URI or the same official
-    // resource path relative to the Media API origin. Both identify the same
-    // created resource; accepting the relative form avoids losing a durable
-    // 201 response and accidentally preparing the same source again.
-    const url = new URL(location, `${MAYEL_TRADING_MEDIA_IMAGE_ENDPOINT}/`)
-    const hostAllowed = url.hostname === "api.ebay.com"
-      || url.hostname === "apim.ebay.com"
-    const matched = url.pathname.match(
-      /^\/commerce\/media\/v1_beta\/image\/([A-Za-z0-9_-]{1,200})\/?$/)
-    if (url.protocol === "https:" && hostAllowed && matched) imageId = matched[1]
-  } catch { imageId = "" }
-  if (!imageId && typeof createdBody.imageId === "string"
-    && /^[A-Za-z0-9_-]{1,200}$/.test(createdBody.imageId)) {
-    imageId = createdBody.imageId
+  const nestedImage = createdBody.image && typeof createdBody.image === "object"
+    ? createdBody.image as Record<string, unknown> : {}
+  const validId = (value: unknown) => typeof value === "string"
+    && /^[A-Za-z0-9_-]{1,200}$/.test(value) ? value : ""
+  const idFromLocation = (value: string) => {
+    const direct = validId(value.trim())
+    if (direct) return direct
+    try {
+      // eBay may return an absolute URI, a root-relative path, or a path
+      // relative to the Media image collection. Resolve all three against the
+      // official origin, then require the exact official resource shape.
+      const base = `${MAYEL_TRADING_MEDIA_IMAGE_ENDPOINT}/`
+      const url = new URL(value, base)
+      const hostAllowed = url.hostname === "api.ebay.com"
+        || url.hostname === "apim.ebay.com"
+      const decoded = decodeURIComponent(url.pathname)
+      const matched = decoded.match(
+        /\/commerce\/media\/v1_beta\/image\/([A-Za-z0-9_-]{1,200})\/?$/)
+        ?? decoded.match(/^\/([A-Za-z0-9_-]{1,200})\/?$/)
+      return url.protocol === "https:" && hostAllowed && matched
+        ? matched[1] : ""
+    } catch { return "" }
   }
-  if (!imageId) {
-    const createdEpsUrl = normalizeOfficialTradingPictureUrlV1(
-      createdBody.imageUrl)
-    if (createdEpsUrl
-      && classifyMayelTradingImageHostV1(createdEpsUrl) === "EBAY_EPS") {
-      try {
-        const epsUrl = new URL(createdEpsUrl)
-        imageId = epsUrl.pathname.match(
-          /^\/00\/s\/[A-Za-z0-9_-]+\/z\/([A-Za-z0-9_-]{1,200})\//)
-          ?.[1] ?? ""
-      } catch { imageId = "" }
-    }
+  const epsIdentity = (value: unknown) => {
+    const eps = normalizeOfficialTradingPictureUrlV1(value)
+    if (!eps || classifyMayelTradingImageHostV1(eps) !== "EBAY_EPS") return ""
+    try {
+      return validId(new URL(eps).pathname.match(
+        /\/z\/([A-Za-z0-9_-]{1,200})\//)?.[1])
+    } catch { return "" }
   }
+  const imageId = idFromLocation(location)
+    || validId(createdBody.imageId)
+    || validId(nestedImage.imageId)
+    || epsIdentity(createdBody.imageUrl)
+    || epsIdentity(nestedImage.imageUrl)
+  if (!imageId) console.warn("MAYEL_TRADING_MEDIA_CREATE_IDENTITY_UNAVAILABLE", {
+    httpStatus: created.status,
+    locationPresent: Boolean(location),
+    locationForm: location.startsWith("https://") ? "ABSOLUTE"
+      : location.startsWith("/") ? "ROOT_RELATIVE"
+        : location ? "OTHER" : "ABSENT",
+    bodyKeys: Object.keys(createdBody).filter((key) =>
+      /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(key)).sort().slice(0, 24),
+    bodyImageIdPresent: Boolean(createdBody.imageId || nestedImage.imageId),
+    bodyImageUrlHostClass: classifyMayelTradingImageHostV1(
+      String(createdBody.imageUrl ?? nestedImage.imageUrl ?? "")),
+  })
   if (!imageId) throw new Error("MAYEL_TRADING_MEDIA_IMAGE_ID_MISSING")
   const getUrl = `${MAYEL_TRADING_MEDIA_IMAGE_ENDPOINT}/${encodeURIComponent(imageId)}`
   const readback = await fetchImpl(getUrl, {
