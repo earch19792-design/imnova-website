@@ -1040,21 +1040,37 @@ export async function readMayelVisualWorkstationV1(input: {
     input.actorUserId)
   const { data: taskRows, error } = await query
   if (error) throw new Error("MAYEL_VISUAL_WORKSTATION_READ_FAILED")
+  const typedTaskRows = (taskRows ?? []) as JsonRecord[]
+  const taskIds = typedTaskRows.map((task) => String(task.id))
+    .filter(Boolean)
+  const assetColumns =
+    "id,mayel_visual_task_id,status,mayel_output_role,source_sha256,output_sha256,source_width,source_height,output_width,output_height,output_bytes,qa_result,mayel_approval_status,owner_approval_status,output_storage_path,public_url,created_at,approved_at"
+  const assetRead = taskIds.length
+    ? await input.supabase.from("ebay_listing_image_assets")
+      .select(assetColumns).in("mayel_visual_task_id", taskIds)
+      .order("mayel_visual_task_id", { ascending: true })
+      .order("position", { ascending: true })
+    : { data: [], error: null }
+  if (assetRead.error) throw new Error("MAYEL_VISUAL_OUTPUT_READ_FAILED")
+  const outputsByTaskId = new Map<string, JsonRecord[]>()
+  for (const output of (assetRead.data ?? []) as JsonRecord[]) {
+    const taskId = String(output.mayel_visual_task_id ?? "")
+    if (!taskId) continue
+    outputsByTaskId.set(taskId,
+      [...(outputsByTaskId.get(taskId) ?? []), output])
+  }
   const tasks = []
-  for (const task of (taskRows ?? []) as JsonRecord[]) {
-    const { data: outputRows, error: outputError } = await input.supabase
-      .from("ebay_listing_image_assets")
-      .select("id,status,mayel_output_role,source_sha256,output_sha256,source_width,source_height,output_width,output_height,output_bytes,qa_result,mayel_approval_status,owner_approval_status,output_storage_path,public_url,created_at,approved_at")
-      .eq("mayel_visual_task_id", task.id).order("position",
-        { ascending: true })
-    if (outputError) throw new Error("MAYEL_VISUAL_OUTPUT_READ_FAILED")
+  for (const task of typedTaskRows) {
+    const outputRows = outputsByTaskId.get(String(task.id)) ?? []
     const outputs = []
-    for (const output of outputRows ?? []) {
+    for (const output of outputRows) {
       let previewUrl = httpsUrl(output.public_url)
       let previewExpiresInSeconds: number | null = null
-      if (!previewUrl && output.status === "pending_review") {
+      const outputStoragePath = text(output.output_storage_path, 500)
+      if (!previewUrl && output.status === "pending_review" &&
+          outputStoragePath) {
         const signed = await input.supabase.storage.from(STAGING_BUCKET)
-          .createSignedUrl(output.output_storage_path, 300)
+          .createSignedUrl(outputStoragePath, 300)
         previewUrl = signed.error ? null : signed.data.signedUrl
         previewExpiresInSeconds = previewUrl ? 300 : null
       }
@@ -1091,9 +1107,11 @@ export async function readMayelVisualWorkstationV1(input: {
       visualManifestDigest: text(task.visual_manifest_digest, 100),
       marketplaceWriteCapability: false as const })
   }
-  return { contractVersion: "MAYEL_VISUAL_WORKSTATION_READ_MODEL_V1",
+  return { contractVersion: "MAYEL_VISUAL_WORKSTATION_READ_MODEL_V2",
     tasks, counts: { visualTasks: tasks.length,
       separatePrompts: tasks.length,
+      databaseReadCount: taskIds.length ? 2 : 1,
+      outputAssetReadStrategy: "BULK_TASK_SCOPE",
       openAiTextCalls: 0, openAiImageCalls: 0, marketplaceWrites: 0 },
     safety: { chatGptUiAutomation: false, chatGptCredentialStorage: false,
       localFileDirectToEbay: false, canonicalAssetRequired: true,
