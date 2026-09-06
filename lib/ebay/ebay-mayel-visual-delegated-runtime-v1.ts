@@ -54,12 +54,61 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
   if (tasks.error) {
     throw new Error("MAYEL_VISUAL_RUNTIME_TASK_DISCOVERY_FAILED")
   }
+  const taskRows = tasks.data ?? []
+  const taskIds = taskRows.map((task) => String(task.id))
+  const completed = taskIds.length ? await input.supabase.from(
+    "ebay_mayel_visual_phase_b_executions_v1")
+    .select("visual_task_id,visual_manifest_digest,phase")
+    .in("visual_task_id", taskIds)
+    .eq("phase", "APPLIED_AND_OFFICIALLY_VERIFIED") : {
+      data: [] as Record<string, unknown>[], error: null,
+    }
+  if (completed.error) {
+    throw new Error("MAYEL_VISUAL_RUNTIME_COMPLETION_READ_FAILED")
+  }
+  const verifiedBindings = new Set((completed.data ?? []).map((row) =>
+    `${row.visual_task_id}:${row.visual_manifest_digest}`))
+  const pendingTasks = taskRows.filter((task) => !verifiedBindings.has(
+    `${task.id}:${task.visual_manifest_digest}`))
+
+  // A terminal execution is the durable authority that a prior runtime
+  // blocker was recovered. Close stale OPEN learning receipts generically so
+  // owner read models do not keep projecting a failure after official eBay
+  // readback has already proved success.
+  const openReceipts = await input.supabase.from(
+    "seller_os_operational_learning_ledger_v1")
+    .select("id,evidence").eq("marketplace_account_key", input.accountKey)
+    .eq("mechanism_version", MAYEL_VISUAL_DELEGATED_RUNTIME_V1)
+    .eq("status", "OPEN")
+  if (openReceipts.error) {
+    throw new Error("MAYEL_VISUAL_RUNTIME_OPEN_RECEIPT_READ_FAILED")
+  }
+  const resolvedAt = new Date().toISOString()
+  for (const receipt of openReceipts.data ?? []) {
+    const evidence = receipt.evidence && typeof receipt.evidence === "object"
+      ? receipt.evidence as Record<string, unknown> : {}
+    const previous = Array.isArray(evidence.outcomes)
+      ? evidence.outcomes as Record<string, unknown>[] : []
+    const provenResolved = previous.length > 0 && previous.every((outcome) =>
+      verifiedBindings.has(`${outcome.taskId}:${outcome.manifestDigest}`))
+    if (!provenResolved) continue
+    const closed = await input.supabase.from(
+      "seller_os_operational_learning_ledger_v1").update({
+        status: "RESOLVED", recovery_outcome: "RESOLVED_BY_READBACK",
+        resolved_at: resolvedAt, last_observed_at: resolvedAt,
+        evidence: { ...evidence, supersededByOfficialExecution: true },
+        updated_at: resolvedAt,
+      }).eq("id", String(receipt.id)).eq("status", "OPEN")
+    if (closed.error) {
+      throw new Error("MAYEL_VISUAL_RUNTIME_OPEN_RECEIPT_CLOSE_FAILED")
+    }
+  }
 
   const outcomes: Record<string, unknown>[] = []
   let claimedCount = 0
   let listingWriteCount = 0
   let mediaWriteCount = 0
-  for (const task of tasks.data ?? []) {
+  for (const task of pendingTasks) {
     if (listingWriteCount >= MAX_LISTING_WRITES_PER_RUN) break
     const taskId = String(task.id)
     const itemId = String(task.ebay_item_id)
@@ -89,7 +138,7 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
   const observedAt = new Date().toISOString()
   const evidenceFingerprint = fingerprint({
     authorityDigest: authority.data?.authority_digest,
-    tasks: (tasks.data ?? []).map((task) => [task.id,
+    tasks: pendingTasks.map((task) => [task.id,
       task.visual_manifest_id, task.visual_manifest_digest]),
     outcomes: outcomes.map((outcome) => [outcome.taskId, outcome.status,
       outcome.failureClass ?? null]),
@@ -126,7 +175,7 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
     throw new Error("MAYEL_VISUAL_RUNTIME_RECEIPT_PERSIST_FAILED")
   }
   return Object.freeze({ authorityActive: true,
-    discoveredCount: (tasks.data ?? []).length, claimedCount,
+    discoveredCount: pendingTasks.length, claimedCount,
     listingWriteCount, mediaWriteCount, outcomes: Object.freeze(outcomes),
     receiptId: receipt.data.id,
     status: outcomes.some((outcome) => outcome.status === "BLOCKED")
