@@ -129,9 +129,14 @@ function money(label: string, value: unknown, currency = "USD") {
 }
 
 function freshness(input: Readonly<{ observedAt?: unknown; expiresAt?: unknown;
-  explicit?: unknown; durable?: boolean }>, now: Date) {
+  maximumAgeSeconds?: unknown; explicit?: unknown; durable?: boolean }>,
+  now: Date) {
   const observedAt = date(input.observedAt)
-  const expiresAt = date(input.expiresAt)
+  const maximumAgeSeconds = numberValue(input.maximumAgeSeconds)
+  const expiresAt = date(input.expiresAt) ?? (observedAt &&
+      maximumAgeSeconds !== null && maximumAgeSeconds > 0
+    ? new Date(Date.parse(observedAt) + maximumAgeSeconds * 1_000)
+      .toISOString() : null)
   const explicit = text(input.explicit, 40)?.toUpperCase()
   let status: ProductJourneyFreshnessV1 = "UNKNOWN"
   if (input.durable) status = "NOT_APPLICABLE"
@@ -553,10 +558,18 @@ export function buildSellerOsProductJourneyV1(
     && text(shippingCapture.evidenceDigest, 100) !== null
     && date(shippingCapture.observedAt) !== null
   const shippingFailure = shippingDurable && !shippingPhysicalReceipt
+  const shippingFreshness = freshness({
+    observedAt: shippingCapture.observedAt ?? frontier.source_updated_at,
+    expiresAt: shippingCapture.expiresAt,
+    maximumAgeSeconds: shippingCapture.maximumAgeSeconds,
+  }, now)
+  const shippingCurrent = shippingPhysicalReceipt &&
+    shippingFreshness.status === "FRESH"
   const shippingPhase = phase({
     ordinal: 5, code: "SHIPPING", label: "Shipping",
-    status: shippingFailure ? "TIENE_UN_FALLO" : shippingPhysicalReceipt
-      ? "COMPROBADO" : shipping.shippingJobStatus === "WAITING_BROWSER_WORKER"
+    status: shippingFailure ? "TIENE_UN_FALLO" : shippingCurrent
+      ? "COMPROBADO" : shippingPhysicalReceipt ? "FALTA_COMPROBAR"
+        : shipping.shippingJobStatus === "WAITING_BROWSER_WORKER"
         ? "EN_PROCESO" : "FALTA_COMPROBAR",
     mechanismCertification: shippingFailure ? "FAILED"
       : shippingPhysicalReceipt ? "PHYSICAL_PASS" : "NOT_CERTIFIED",
@@ -567,9 +580,7 @@ export function buildSellerOsProductJourneyV1(
     trigger: text(shipping.contractVersion) ?? "SHIPPING_REQUIRED",
     sourceAuthority: text(packageShipping.supplierShippingEvidenceClass)
       ?? text(frontier.shipping_status) ?? "NO_AUTHORITY_AVAILABLE",
-    freshness: freshness({ observedAt: shippingCapture.observedAt
-      ?? frontier.source_updated_at,
-      expiresAt: null }, now),
+    freshness: shippingFreshness,
     attempted: "Obtener el costo exacto de envío para la variante y destino autorizados.",
     found: [money("Subtotal", shippingCapture.subtotalUsd),
       money("Shipping", shippingAmount), money("Total", shippingCapture.totalUsd),
@@ -586,18 +597,24 @@ export function buildSellerOsProductJourneyV1(
         === null ? "Autoridad de destino canónico" : null,
       shippingFailure && [shippingCapture.subtotalUsd,
         shippingCapture.shippingUsd, shippingCapture.totalUsd].some((value) =>
-        numberValue(value) === null) ? "Subtotal, shipping y total" : null],
-    result: shippingPhysicalReceipt
+        numberValue(value) === null) ? "Subtotal, shipping y total" : null,
+      shippingPhysicalReceipt && !shippingCurrent
+        ? "Freshness vigente del Shipping" : null],
+    result: shippingCurrent
       ? "Shipping obtenido y persistido sin completar una compra."
+      : shippingPhysicalReceipt
+        ? "El capture físico existe, pero su vigencia actual no está demostrada."
       : shippingFailure ? "Existe un resumen durable, pero el receipt físico de Shipping está incompleto."
         : "Shipping aún no está comprobado.",
-    decision: shippingPhysicalReceipt ? "SHIPPING_PROVEN"
+    decision: shippingCurrent ? "SHIPPING_PROVEN"
       : "SHIPPING_REQUIRED",
     failureClass: shippingFailure ? "SHIPPING_PHYSICAL_RECEIPT_INCOMPLETE"
-      : null,
-    retrySafety: shippingPhysicalReceipt ? "NOT_APPLICABLE"
+      : shippingPhysicalReceipt && shippingFreshness.status === "STALE"
+        ? "SHIPPING_EVIDENCE_STALE"
+        : shippingPhysicalReceipt ? "SHIPPING_FRESHNESS_UNPROVEN" : null,
+    retrySafety: shippingCurrent ? "NOT_APPLICABLE"
       : "SAFE_IDEMPOTENT_RUNTIME_RESUME",
-    nextAction: shippingPhysicalReceipt ? "Usar el monto en economía y package."
+    nextAction: shippingCurrent ? "Usar el monto en economía y package."
       : "Seller OS debe adquirir el job durable de Shipping.",
     ownerIntervention: "Ninguna. Nunca se completa una compra.",
     databaseWriteCount: null,
