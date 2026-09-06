@@ -117,7 +117,8 @@ type VisualDelegation = {
   authorityStorageReady: boolean
   revocationReady: boolean
   accountIdentity: { status: string; sourceAuthority: string;
-    observedAt: string; marketplaceId: string } | null
+    observedAt: string; marketplaceId: string; liveReadStatus?: string;
+    liveReadFailureClass?: string | null } | null
 }
 
 const labels: Record<VisualRole, string> = {

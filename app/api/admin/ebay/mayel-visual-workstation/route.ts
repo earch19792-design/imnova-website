@@ -216,6 +216,11 @@ export async function GET(request: Request) {
       ownerAuthenticated: ownerView,
       accountIdentityProven: delegation.globalAccountIdentityProven,
       identityFailureClass: delegation.identityFailureClass,
+      accountIdentitySource: delegation.accountIdentity?.sourceAuthority,
+      accountIdentityLiveReadStatus:
+        delegation.accountIdentity?.liveReadStatus,
+      accountIdentityLiveReadFailureClass:
+        delegation.accountIdentity?.liveReadFailureClass,
       workspaceReady: delegation.predicates.find((predicate) =>
         predicate.code === "MAYEL_WORKSPACE_READY")?.pass === true,
       scopeValid: delegation.predicates.find((predicate) =>

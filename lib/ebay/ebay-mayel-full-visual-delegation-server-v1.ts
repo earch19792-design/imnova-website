@@ -67,20 +67,50 @@ async function canonicalAccountIdentity(input: {
   accountKey: string
   fetchImpl?: typeof fetch
 }) {
-  const { data: vaultRefreshToken, error: vaultReadError } =
-    await input.supabase.rpc(
+  const [{ data: vaultRefreshToken, error: vaultReadError },
+    { data: durableProfile, error: durableProfileError }] =
+    await Promise.all([input.supabase.rpc(
       "get_ebay_account_policy_readonly_refresh_token_v1",
       { p_account_key: input.accountKey },
-    )
+    ), input.supabase.from("ebay_account_policy_profiles")
+      .select("verified_at,expires_at,verification_source")
+      .eq("account_key", input.accountKey)
+      .eq("marketplace_id", "EBAY_US")
+      .eq("verification_source", "EBAY_ACCOUNT_API_GET")
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle()])
   if (vaultReadError) {
     throw new Error("EBAY_ACCOUNT_POLICY_OAUTH_VAULT_READ_FAILED")
   }
+  if (durableProfileError) {
+    throw new Error("EBAY_ACCOUNT_POLICY_PROFILE_READ_FAILED")
+  }
   const refreshToken = typeof vaultRefreshToken === "string"
     ? vaultRefreshToken.trim() : ""
-  return readCanonicalEbayAccountIdentityAuthorityV1(
-    input.fetchImpl ?? fetch,
-    refreshToken,
-  )
+  try {
+    return await readCanonicalEbayAccountIdentityAuthorityV1(
+      input.fetchImpl ?? fetch,
+      refreshToken,
+    )
+  } catch (error) {
+    const failureClass = error instanceof Error ? error.message : "UNKNOWN"
+    const durableVerifiedAt = typeof durableProfile?.verified_at === "string"
+      ? durableProfile.verified_at : ""
+    const liveReadUnavailable = failureClass ===
+      "EBAY_COMMERCIAL_ACCOUNT_IDENTITY_UNAVAILABLE"
+    if (!liveReadUnavailable || !durableVerifiedAt) throw error
+    return Object.freeze({
+      status: "BOUND" as const,
+      proven: true as const,
+      sourceAuthority:
+        "FRESH_VERIFIED_EBAY_ACCOUNT_POLICY_PROFILE_V1" as const,
+      observedAt: durableVerifiedAt,
+      marketplaceId: "EBAY_US" as const,
+      sanitized: true as const,
+      liveReadStatus: "TEMPORARILY_UNAVAILABLE" as const,
+      liveReadFailureClass: failureClass,
+    })
+  }
 }
 
 export async function readMayelFullVisualDelegationV1(input: {
@@ -140,6 +170,11 @@ export async function readMayelFullVisualDelegationV1(input: {
       sourceAuthority: identityResult.authority.sourceAuthority,
       observedAt: identityResult.authority.observedAt,
       marketplaceId: identityResult.authority.marketplaceId,
+      liveReadStatus: "liveReadStatus" in identityResult.authority
+        ? identityResult.authority.liveReadStatus : "PASS",
+      liveReadFailureClass:
+        "liveReadFailureClass" in identityResult.authority
+          ? identityResult.authority.liveReadFailureClass : null,
     } : null,
     authorityStorageReady,
     revocationReady: authorityStorageReady,
