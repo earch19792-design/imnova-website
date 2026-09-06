@@ -8,7 +8,12 @@ import {
   buildMayelCommercialIntelligenceV1,
   type MayelMarketEvidenceRowV1,
 } from "./ebay-mayel-commercial-intelligence-v1"
-import { importOfficialSoldEvidence } from "./ebay-official-sold-evidence-import"
+import { adaptMainSearchSoldCaptureForCanonicalImport } from
+  "./ebay-main-search-sold-capture-adapter-v1"
+import {
+  importOfficialSoldEvidence,
+  soldEvidenceNoValidRowsDiagnostic,
+} from "./ebay-official-sold-evidence-import"
 import {
   importProductResearchBrowserCapture,
   targetFromCatalogRow,
@@ -554,14 +559,30 @@ export async function completeMayelLiveMarketRevalidationV1(input: {
     visualContext: { categoryId: planned.categoryId },
   })
   let sold: Awaited<ReturnType<typeof importOfficialSoldEvidence>> | null = null
+  let soldNoValid: ReturnType<typeof soldEvidenceNoValidRowsDiagnostic> = null
+  let soldCapture: Awaited<ReturnType<
+    typeof adaptMainSearchSoldCaptureForCanonicalImport
+  >> | null = null
   if (input.soldRows.length > 0) {
-    sold = await importOfficialSoldEvidence({
-      supabase: input.supabase, accountKey: input.accountKey,
-      actorId: input.actorId, format: "JSON",
-      sourceExportType: "EBAY_MAIN_SEARCH_SOLD_CAPTURE",
-      content: JSON.stringify({ rows: input.soldRows }),
-      operatorAttested: true,
+    // The browser extension returns a deliberately minimal visible-row schema.
+    // Reuse the same canonical adapter as the established Product Research
+    // route before importing official Sold evidence. A healthy capture with no
+    // exact valid comparable is a durable market result, not a worker crash.
+    soldCapture = await adaptMainSearchSoldCaptureForCanonicalImport({
+      rows: input.soldRows,
     })
+    try {
+      sold = await importOfficialSoldEvidence({
+        supabase: input.supabase, accountKey: input.accountKey,
+        actorId: input.actorId, format: "JSON",
+        sourceExportType: "EBAY_MAIN_SEARCH_SOLD_CAPTURE",
+        content: JSON.stringify({ rows: soldCapture.rows }),
+        operatorAttested: true,
+      })
+    } catch (error) {
+      soldNoValid = soldEvidenceNoValidRowsDiagnostic(error)
+      if (!soldNoValid) throw error
+    }
   }
   if (!planned.alreadyProcessed) {
     await markProductResearchQueryCaptured({
@@ -623,13 +644,20 @@ export async function completeMayelLiveMarketRevalidationV1(input: {
         .pagesCapturedMinimum) || 1,
       pagesCapturedMaximum: Number(record(input.workerMetrics)
         .pagesCapturedMaximum) || 2,
-      rawResultCount: research.rowCount + Number(sold?.rowCount ?? 0),
-      soldResultCount: Number(sold?.rowCount ?? 0),
+      rawResultCount: research.rowCount +
+        Number(soldCapture?.sourceRowCount ?? input.soldRows.length),
+      soldResultCount: Number(sold?.rowCount ??
+        soldNoValid?.sourceRowCount ?? 0),
       dedupedResultCount: research.importedCount +
         Number(sold?.importedCount ?? 0),
       productResearchDuplicateCount: research.duplicateCount,
       soldDuplicateCount: Number(sold?.duplicateCount ?? 0),
     },
+    soldEvidenceOutcome: soldNoValid ? "NO_VALID_SOLD_EVIDENCE" :
+      sold ? "DURABLE_SOLD_EVIDENCE" : "NO_SOLD_ROWS_RETURNED",
+    soldEvidenceRejectedCount: Number(soldNoValid?.rejectedCount ??
+      sold?.rejectedCount ?? 0),
+    soldEvidenceRejectionReasonCounts: soldNoValid?.errorCounts ?? {},
     freshSoldEvidencePersisted,
     exactComparableCount: intelligence.market.acceptedComparableCount,
     rejectedComparableCount: intelligence.market.rejectedComparableCount,
