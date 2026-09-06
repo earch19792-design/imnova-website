@@ -17,6 +17,8 @@ import {
 
 export const ACTIVE_LISTING_IMAGE_REVISION_CONFIRMATION =
   "APLICAR 6 IMAGENES AL LISTING ACTIVO"
+export const EBAY_TRADING_OFFICIAL_IMAGE_SET_DIGEST_VERSION =
+  "EBAY_TRADING_PICTURE_URL_ORDERED_SET_V1" as const
 
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
 const COMPATIBILITY_LEVEL = "1423"
@@ -38,11 +40,35 @@ export type OfficialListingSnapshot = {
   ebaySku: string
   listingType: string
   pictureSource: string | null
+  galleryUrl: string | null
   pictureUrls: string[]
   externalPictureUrls: string[]
+  tradingPictureReadback: OfficialTradingPictureReadbackV1 | null
   observedAt: string
   sourceAuthority?: string
 }
+
+export type OfficialTradingPictureReadbackV1 = Readonly<{
+  authority: "EBAY_TRADING_GET_ITEM_PICTURE_DETAILS_V1"
+  officialPictureCount: number
+  orderedPictureUrlCount: number
+  imageDigestInputCount: number
+  imageDigestCanonicalizationVersion:
+    typeof EBAY_TRADING_OFFICIAL_IMAGE_SET_DIGEST_VERSION
+  officialImageSetDigest: string
+  canonicalDigestInput: readonly string[]
+  galleryUrlIncludedInDigest: false
+  browseImageIncludedInDigest: false
+  manifestImageIncludedInDigest: false
+  mixedImageAuthority: false
+  images: readonly Readonly<{
+    position: number
+    hostClass: "EBAY_EPS" | "EXTERNAL" | "OTHER"
+    urlPresent: boolean
+    urlSha256: string | null
+    dimensionsIfAvailable: null
+  }>[]
+}>
 
 type ImageVerification = {
   verified: boolean
@@ -67,6 +93,63 @@ function uuid(value: unknown) {
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex")
+}
+
+export function normalizeOfficialTradingPictureUrlV1(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null
+  try {
+    const url = new URL(value.trim())
+    if (url.protocol !== "https:" || url.username || url.password || url.hash) {
+      return null
+    }
+    // Query parameters are part of legitimate eBay PictureURL values and are
+    // therefore preserved as material bytes. Dropping or rejecting them makes
+    // the count and digest describe different ordered sets.
+    return url.href
+  } catch { return null }
+}
+
+function tradingPictureHostClass(value: string) {
+  try {
+    const host = new URL(value).hostname.toLowerCase()
+    if (host === "ebayimg.com" || host.endsWith(".ebayimg.com")) {
+      return "EBAY_EPS" as const
+    }
+    return host ? "EXTERNAL" as const : "OTHER" as const
+  } catch { return "OTHER" as const }
+}
+
+export function buildOfficialTradingPictureReadbackV1(
+  pictureUrls: readonly string[],
+): OfficialTradingPictureReadbackV1 {
+  const normalized = pictureUrls.map(normalizeOfficialTradingPictureUrlV1)
+  if (normalized.some((url) => url === null)) {
+    throw new Error("EBAY_TRADING_GET_ITEM_PICTURE_URL_INVALID")
+  }
+  const canonicalDigestInput = normalized as string[]
+  const canonicalBytes = JSON.stringify(canonicalDigestInput)
+  return Object.freeze({
+    authority: "EBAY_TRADING_GET_ITEM_PICTURE_DETAILS_V1" as const,
+    officialPictureCount: pictureUrls.length,
+    orderedPictureUrlCount: canonicalDigestInput.length,
+    imageDigestInputCount: canonicalDigestInput.length,
+    imageDigestCanonicalizationVersion:
+      EBAY_TRADING_OFFICIAL_IMAGE_SET_DIGEST_VERSION,
+    officialImageSetDigest: `sha256:${sha256(canonicalBytes)}`,
+    canonicalDigestInput: Object.freeze([...canonicalDigestInput]),
+    galleryUrlIncludedInDigest: false as const,
+    browseImageIncludedInDigest: false as const,
+    manifestImageIncludedInDigest: false as const,
+    mixedImageAuthority: false as const,
+    images: Object.freeze(canonicalDigestInput.map((url, index) =>
+      Object.freeze({
+        position: index + 1,
+        hostClass: tradingPictureHostClass(url),
+        urlPresent: true,
+        urlSha256: `sha256:${sha256(url)}`,
+        dimensionsIfAvailable: null,
+      }))),
+  })
 }
 
 function databaseErrorCode(error: unknown, fallback: string) {
@@ -147,10 +230,11 @@ function getItemRequestXml(itemId: string) {
       "Item.SellingStatus.ListingStatus",
         "Item.SKU",
         "Item.ListingType",
-        "Item.PictureDetails",
+      "Item.PictureDetails",
         "Item.PictureDetails.PictureSource",
         "Item.PictureDetails.PictureURL",
         "Item.PictureDetails.ExternalPictureURL",
+        "Item.PictureDetails.GalleryURL",
     ].map((selector) => `<OutputSelector>${selector}</OutputSelector>`).join("") +
     "</GetItemRequest>"
 }
@@ -265,6 +349,10 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
   const listingType = text(tradingXmlTagValue(item, "ListingType"), 40)
   const pictures = tradingXmlContainer(item, "PictureDetails")
   const pictureSource = text(tradingXmlTagValue(pictures, "PictureSource"), 20) || null
+  const galleryUrl = text(tradingXmlTagValue(pictures, "GalleryURL"), 500) || null
+  const tradingPictureReadback = buildOfficialTradingPictureReadbackV1(
+    xmlTagValues(pictures, "PictureURL"),
+  )
   const identityUserId = authenticatedUserId || sellerUserId
   const fingerprint = ebayProductionAccountFingerprint(identityUserId)
   const expectedFingerprint = identity.expectedAccountFingerprint.toLowerCase()
@@ -291,8 +379,10 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
     ebaySku,
     listingType,
     pictureSource,
-    pictureUrls: xmlTagValues(pictures, "PictureURL"),
+    galleryUrl,
+    pictureUrls: [...tradingPictureReadback.canonicalDigestInput],
     externalPictureUrls: xmlTagValues(pictures, "ExternalPictureURL"),
+    tradingPictureReadback,
     observedAt: new Date().toISOString(),
   } satisfies OfficialListingSnapshot
 }
@@ -356,8 +446,12 @@ export async function readOfficialActiveListingBrowseSnapshotV1(input: {
       ebaySku: "",
       listingType: "FixedPriceItem",
       pictureSource: "BROWSE_OFFICIAL",
+      galleryUrl: main || null,
       pictureUrls,
       externalPictureUrls: pictureUrls,
+      // Browse remains useful corroboration, but it never becomes the Trading
+      // PictureDetails authority or enters its official ordered-set digest.
+      tradingPictureReadback: null,
       observedAt: new Date().toISOString(),
       sourceAuthority: "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1",
     } satisfies OfficialListingSnapshot

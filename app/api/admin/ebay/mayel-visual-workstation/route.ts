@@ -193,6 +193,8 @@ export async function GET(request: Request) {
         currentImageSetProven: phaseB.currentImageSetProven,
         currentOfficialImageCount: phaseB.currentOfficialImageCount,
         currentOfficialImageSetDigest: phaseB.currentOfficialImageSetDigest,
+        tradingOfficialImageReadback: phaseB.tradingOfficialImageReadback,
+        tradingPictureContext: phaseB.tradingPictureContext,
         mayelManifestValid: phaseB.mayelManifestValid,
         visualOnlyDiff: phaseB.visualOnlyDiff,
         unauthorizedFieldDiffCount: phaseB.unauthorizedFieldDiffCount,

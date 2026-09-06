@@ -467,6 +467,14 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     imageSetChangeClassification: context.rebase.safe
       ? "SAFE_REBASE" : "MATERIAL_CONFLICT",
     currentOfficialImageCount: context.currentOfficialImageUrls.length,
+    tradingOfficialImageReadback:
+      context.official?.tradingPictureReadback ?? null,
+    tradingPictureContext: context.official?.tradingPictureReadback
+      ? {
+        pictureSource: context.official.pictureSource,
+        galleryUrlPresent: Boolean(context.official.galleryUrl),
+        galleryUrlIncludedInDigest: false as const,
+      } : null,
     manifestBoundImageCount: [record(context.task.visual_manifest).currentMainImage,
       ...(Array.isArray(record(context.task.visual_manifest).currentSecondaryImages)
         ? record(context.task.visual_manifest).currentSecondaryImages as unknown[]

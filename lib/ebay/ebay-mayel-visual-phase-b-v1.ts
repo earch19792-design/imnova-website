@@ -3,6 +3,8 @@ import {
   MAYEL_VISUAL_OUTPUT_ROLES,
   mayelVisualDigestV1,
 } from "./ebay-mayel-visual-workstation-v1"
+import { buildOfficialTradingPictureReadbackV1 } from
+  "./ebay-active-listing-image-revision-service"
 
 type JsonRecord = Record<string, unknown>
 
@@ -16,7 +18,7 @@ function exactHttpsUrl(value: unknown) {
   try {
     const url = new URL(value.trim())
     return url.protocol === "https:" && !url.username && !url.password
-      && !url.search && !url.hash ? url.href : null
+      && !url.hash ? url.href : null
   } catch { return null }
 }
 
@@ -32,7 +34,7 @@ function sha(value: unknown) {
 }
 
 export function ebayOfficialImageSetDigestV1(urls: readonly string[]) {
-  return mayelVisualDigestV1(urls.map((url, position) => ({ position, url })))
+  return buildOfficialTradingPictureReadbackV1(urls).officialImageSetDigest
 }
 
 export type MayelVisualPhaseBPlanV1 = Readonly<{
