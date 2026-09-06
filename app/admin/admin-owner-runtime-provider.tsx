@@ -4,6 +4,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef,
   useState, type ReactNode } from "react"
 import { usePathname } from "next/navigation"
 
+import { ProductResearchAutonomousAcquisitionV1 } from
+  "./product-research-autonomous-acquisition-v1"
+
 import { validateSellerOsSession } from "@/lib/admin-auth"
 import { supabase } from "@/lib/supabase"
 import {
@@ -520,6 +523,8 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
   const quickPickPageOwnsRead = pathname.startsWith("/admin/ebay/quick-pick")
     || pathname === "/admin"
   const [adminSessionReady, setAdminSessionReady] = useState(false)
+  const [researchWorkerSessionReady, setResearchWorkerSessionReady] =
+    useState(false)
   // Luna Shipping owns its executor on the dedicated control route opened by
   // the extension. The global owner shell must remain presentation-only:
   // navigating or refreshing an admin page may never acquire commercial work.
@@ -547,12 +552,21 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
     let active = true
     if (!runtimeRouteEligible) {
       setAdminSessionReady(false)
+      setResearchWorkerSessionReady(false)
       return () => { active = false }
     }
     void validateSellerOsSession().then((result) => {
-      if (active) setAdminSessionReady(result.authorized &&
+      if (!active) return
+      setAdminSessionReady(result.authorized &&
         result.role === SELLER_OS_ACCESS_ROLES.owner)
-    }).catch(() => { if (active) setAdminSessionReady(false) })
+      setResearchWorkerSessionReady(result.authorized && [
+        SELLER_OS_ACCESS_ROLES.owner,
+        SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator,
+      ].includes(result.role as never))
+    }).catch(() => { if (active) {
+      setAdminSessionReady(false)
+      setResearchWorkerSessionReady(false)
+    } })
     return () => { active = false }
   }, [runtimeRouteEligible])
 
@@ -630,6 +644,8 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
     overnightEnrichment, nightWorkProvenance, reconcileQuickPicks])
 
   return <OwnerRuntimeContext.Provider value={value}>
+    {runtimeRouteEligible && researchWorkerSessionReady &&
+      <ProductResearchAutonomousAcquisitionV1 />}
     {children}
   </OwnerRuntimeContext.Provider>
 }

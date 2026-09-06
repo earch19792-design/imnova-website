@@ -35,7 +35,8 @@ type VisualTask = {
   promptVersion: string
   promptDigest: string
   promptSlots: { role: VisualRole; status: "READY" |
-    "BLOCKED_MISSING_EVIDENCE"; requiredEvidence: string }[]
+    "READY_FACT_RESTRICTED"; requiredEvidence: string;
+    creativeWorkAllowed: boolean; factClaimRestricted: boolean }[]
   sourceImageSetDigest: string
   productTruthDigest: string
   sourceImages: { referenceId: string; sha256: string; url: string | null;
@@ -514,7 +515,7 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
   const [rights, setRights] = useState(false)
   const [message, setMessage] = useState("")
   const availableSlots = task.promptSlots.filter((slot) =>
-    slot.status === "READY" && !task.outputs.some((output) =>
+    slot.creativeWorkAllowed === true && !task.outputs.some((output) =>
       output.mayel_output_role === slot.role && output.status !== "rejected"))
 
   const selectionValid = uploads.length > 0 &&
@@ -550,6 +551,11 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
     <div className="flex items-center gap-2"><Upload className="h-5 w-5 text-[#1d5961]" />
       <h4 className="font-semibold">Subir imágenes creadas por Mayel</h4></div>
     <p className="mt-2 text-sm leading-6 text-[#5f645e]">El producto ya está ligado por la tarea. No escribas un SKU. Cada archivo entra primero a cuarentena privada.</p>
+    <p className="mt-2 rounded-xl bg-white p-3 text-xs leading-5 text-[#5f645e]">
+      La falta de un dato factual no bloquea el trabajo visual general. En los
+      slots marcados “crear sin claim factual”, no afirmes medidas, materiales,
+      accesorios incluidos, funciones ni beneficios no demostrados.
+    </p>
     <label className="mt-4 block rounded-xl border-2 border-dashed border-[#1d5961]/35 bg-white p-4 text-xs font-semibold">Arrastra o elige hasta seis archivos JPG, PNG o WebP
       <input type="file" multiple accept="image/jpeg,image/png,image/webp"
         onChange={(event) => {
@@ -1013,8 +1019,9 @@ export function MayelVisualWorkstation({ canOperate,
           className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-[#26312d]"><Clipboard className="h-4 w-4" />Copiar prompt</button>
       </section>}
       <div className="mt-6 grid gap-2 sm:grid-cols-3">{task.promptSlots.map((slot) =>
-        <div key={slot.role} className={`rounded-xl p-3 text-xs ${slot.status === "READY" ? "bg-[#e3ebe1] text-[#425143]" : "bg-[#eee9e1] text-[#777a73]"}`}>
-          <strong>{labels[slot.role]}</strong><span className="mt-1 block">{slot.status === "READY" ? "Lista" : "Bloqueada: falta evidencia"}</span>
+        <div key={slot.role} className={`rounded-xl p-3 text-xs ${slot.status === "READY" ? "bg-[#e3ebe1] text-[#425143]" : "bg-[#f7e9de] text-[#704d3c]"}`}>
+          <strong>{labels[slot.role]}</strong><span className="mt-1 block">{slot.status === "READY" ? "Libre para crear" : "Crear sin claim factual"}</span>
+          {slot.factClaimRestricted && <span className="mt-1 block">Evidencia factual pendiente; el trabajo visual continúa.</span>}
         </div>)}</div>
       {canOperate && <div className="mt-6"><UploadPanel task={task} busy={busy}
         onDone={refresh} /></div>}

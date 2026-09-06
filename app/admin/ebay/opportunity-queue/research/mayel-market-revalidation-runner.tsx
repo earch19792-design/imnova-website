@@ -22,6 +22,17 @@ function planIdFromLocation() {
     .test(value) ? value : null
 }
 
+function autonomousModeFromLocation() {
+  return new URLSearchParams(window.location.search)
+    .get("mayelResearchWorker") === "auto"
+}
+
+function safeReturnPath() {
+  const value = new URLSearchParams(window.location.search).get("returnTo")
+  return value && /^\/admin(?:\/|$)/.test(value) && !value.startsWith("//")
+    ? value : "/admin/ebay/mayel"
+}
+
 async function authorizedPost(body: JsonRecord) {
   const session = await supabase.auth.getSession()
   const token = session.data.session?.access_token
@@ -81,18 +92,11 @@ export function MayelMarketRevalidationRunner() {
 
   useEffect(() => {
     const planId = planIdFromLocation()
-    if (!planId || started.current) return
+    const autonomous = autonomousModeFromLocation()
+    if ((!planId && !autonomous) || started.current) return
     started.current = true
     setActive(true)
     void (async () => {
-      const planPayload = await authorizedPost({
-        action: "READ_MARKET_REVALIDATION_PLAN", planId,
-      })
-      const result = planPayload.result as JsonRecord
-      const plan = buildEbayOneClickResearchPlan(result.plan as never)
-      const lease = buildEbayOneClickResearchLease({
-        sessionId: crypto.randomUUID(),
-      })
       setState("Conectando Product Research…")
       const probe = await establishEbayOneClickResearchHandshake({
         probe: (timeoutMs) => extensionCommand<{
@@ -114,40 +118,87 @@ export function MayelMarketRevalidationRunner() {
         extensionVersion: probe.extensionVersion,
         manifestOriginMatch: probe.extensionId === probe.bridgeExtensionId,
       })
-      for (const task of plan.tasks) {
-        setState("Investigando comparables vendidos en eBay…")
-        const captured = await extensionCommand<{
-          success: true
-          extensionId: string
-          productResearchCapture: JsonRecord
-          mainSearchSoldRows: JsonRecord[]
-          soldFilterAutomated: boolean
-          paginationAutomated: boolean
-          cookieAccess: false
-          marketplaceWrites: 0
-        }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_QUERY_V1",
-          lease, task, remainingRows: 200 }, 150_000)
-        if (captured.cookieAccess !== false ||
-            captured.marketplaceWrites !== 0 ||
-            captured.extensionId !== probe.extensionId ||
-            captured.bridgeExtensionId !== probe.extensionId ||
-            captured.soldFilterAutomated !== true ||
-            captured.paginationAutomated !== true ||
-            !captured.productResearchCapture ||
-            !Array.isArray(captured.mainSearchSoldRows)) {
-          throw new Error("PRODUCT_RESEARCH_WORKER_RESULT_INVALID")
+      const workerId = `product-research-browser:${crypto.randomUUID()}`
+      const maximumPlans = autonomous ? 4 : 1
+      let completed = 0
+      for (; completed < maximumPlans; completed += 1) {
+        const capabilityObservedAt = new Date().toISOString()
+        const claimPayload = await authorizedPost({
+          action: "CLAIM_AUTONOMOUS_RESEARCH_PLAN", workerId,
+          ...(planId ? { planId } : {}),
+          workerCapability: {
+            handshakeStatus: "PASS", workerCapability: "PASS",
+            extensionIdentityMatch:
+              probe.extensionId === probe.bridgeExtensionId,
+            extensionId: probe.extensionId,
+            extensionVersion: probe.extensionVersion,
+            observedAt: capabilityObservedAt,
+            cookieAccess: probe.cookieAccess,
+            marketplaceWrites: probe.marketplaceWrites,
+          },
+        })
+        const claim = claimPayload.result as JsonRecord
+        if (claim.claimed !== true) break
+        const claimedPlanId = String(claim.planId ?? "")
+        try {
+          const plan = buildEbayOneClickResearchPlan(claim.plan as never)
+          const lease = buildEbayOneClickResearchLease({
+            sessionId: crypto.randomUUID(),
+          })
+          for (const task of plan.tasks) {
+            setState(`Investigando comparables vendidos en eBay · ${completed + 1}/${maximumPlans}…`)
+            const captured = await extensionCommand<{
+              success: true
+              extensionId: string
+              extensionVersion: string
+              productResearchCapture: JsonRecord
+              mainSearchSoldRows: JsonRecord[]
+              pagesCaptured?: number
+              soldFilterAutomated: boolean
+              paginationAutomated: boolean
+              cookieAccess: false
+              marketplaceWrites: 0
+            }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_QUERY_V1",
+              lease, task, remainingRows: 200 }, 150_000)
+            if (captured.cookieAccess !== false ||
+                captured.marketplaceWrites !== 0 ||
+                captured.extensionId !== probe.extensionId ||
+                captured.bridgeExtensionId !== probe.extensionId ||
+                captured.soldFilterAutomated !== true ||
+                captured.paginationAutomated !== true ||
+                !captured.productResearchCapture ||
+                !Array.isArray(captured.mainSearchSoldRows)) {
+              throw new Error("PRODUCT_RESEARCH_WORKER_RESULT_INVALID")
+            }
+            const exactPages = Number.isInteger(captured.pagesCaptured) &&
+              Number(captured.pagesCaptured) > 0
+              ? Number(captured.pagesCaptured)
+              : captured.mainSearchSoldRows.length > 60 ? 2 : null
+            setState("Guardando evidencia y recalculando mercado…")
+            await authorizedPost({ action: "COMPLETE_MARKET_REVALIDATION",
+              planId: claimedPlanId, workerId,
+              productResearchCapture: captured.productResearchCapture,
+              mainSearchSoldRows: captured.mainSearchSoldRows,
+              soldFilterAutomated: captured.soldFilterAutomated,
+              paginationAutomated: captured.paginationAutomated,
+              extensionMarketplaceWrites: captured.marketplaceWrites,
+              workerMetrics: { queryCount: plan.tasks.length,
+                pagesCaptured: exactPages,
+                pagesCapturedMinimum: 1, pagesCapturedMaximum: 2 } })
+          }
+        } catch (error) {
+          await authorizedPost({ action: "RELEASE_AUTONOMOUS_RESEARCH_PLAN",
+            workerId, planId: claimedPlanId,
+            errorCode: error instanceof Error ? error.message :
+              "PRODUCT_RESEARCH_WORKER_FAILED" }).catch(() => undefined)
+          throw error
         }
-        setState("Guardando evidencia y recalculando mercado…")
-        await authorizedPost({ action: "COMPLETE_MARKET_REVALIDATION",
-          planId, productResearchCapture: captured.productResearchCapture,
-          mainSearchSoldRows: captured.mainSearchSoldRows,
-          soldFilterAutomated: captured.soldFilterAutomated,
-          paginationAutomated: captured.paginationAutomated,
-          extensionMarketplaceWrites: captured.marketplaceWrites })
+        if (!autonomous) break
       }
       setState("Mercado revalidado. Volviendo a Mayel…")
       window.setTimeout(() => window.location.replace(
-        `/admin/ebay/mayel?marketRevalidation=${planId}`), 900)
+        autonomous ? safeReturnPath() :
+          `/admin/ebay/mayel?marketRevalidation=${planId}`), 900)
     })().catch((error) => {
       setFailed(true)
       setState(error instanceof Error ? error.message :

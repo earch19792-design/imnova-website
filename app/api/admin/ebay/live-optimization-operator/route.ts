@@ -37,9 +37,12 @@ import { buildProactiveExceptionQueueV1 } from
 import { loadEbayPromotionRecommendationSafeExecutionV1 } from
   "@/lib/ebay/ebay-promotion-recommendation-safe-execution-v1"
 import {
+  claimMayelAutonomousResearchPlanV1,
   completeMayelLiveMarketRevalidationV1,
+  readMayelAutonomousResearchAcquisitionV1,
   readMayelLiveMarketRevalidationPlanV1,
   readMayelLiveMarketRevalidationStatusV1,
+  releaseMayelAutonomousResearchPlanV1,
   startMayelLiveMarketRevalidationV1,
 } from "@/lib/ebay/ebay-mayel-live-market-revalidation-v1"
 import { currentLiveListingsForMonitorV1 } from
@@ -384,6 +387,55 @@ export async function POST(request: Request) {
   { status: 403 })
   const body = await jsonBody(request)
   const action = typeof body?.action === "string" ? body.action : ""
+  if (action === "READ_AUTONOMOUS_RESEARCH_ACQUISITION") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await readMayelAutonomousResearchAcquisitionV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "CLAIM_AUTONOMOUS_RESEARCH_PLAN") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await claimMayelAutonomousResearchPlanV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        workerId: body?.workerId, workerCapability: body?.workerCapability,
+        planId: body?.planId,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "RELEASE_AUTONOMOUS_RESEARCH_PLAN") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await releaseMayelAutonomousResearchPlanV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        workerId: body?.workerId, planId: body?.planId,
+        errorCode: body?.errorCode,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
   if (action === "READ_MARKET_REVALIDATION_STATUS") {
     try {
       const account = getEbaySellerAccountScopeConfiguration()
@@ -450,6 +502,8 @@ export async function POST(request: Request) {
         soldFilterAutomated: body?.soldFilterAutomated,
         paginationAutomated: body?.paginationAutomated,
         extensionMarketplaceWrites: body?.extensionMarketplaceWrites,
+        workerId: body?.workerId,
+        workerMetrics: body?.workerMetrics,
       })
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0,

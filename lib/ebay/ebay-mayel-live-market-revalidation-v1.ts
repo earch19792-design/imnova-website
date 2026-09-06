@@ -66,6 +66,18 @@ function validIdempotencyKey(value: unknown) {
   return /^[A-Za-z0-9._:-]{8,120}$/.test(normalized) ? normalized : null
 }
 
+function validWorkerId(value: unknown) {
+  const normalized = text(value, 160)
+  return /^product-research-browser:[0-9a-f-]{36}$/i.test(normalized)
+    ? normalized : null
+}
+
+function safeFailureCode(value: unknown) {
+  const normalized = text(value, 180).toUpperCase()
+  return /^[A-Z0-9_]{3,180}$/.test(normalized)
+    ? normalized : "PRODUCT_RESEARCH_WORKER_FAILED"
+}
+
 async function readExactLiveContext(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -308,6 +320,136 @@ export async function readMayelLiveMarketRevalidationPlanV1(input: {
     marketplaceWrites: 0 as const })
 }
 
+export async function readMayelAutonomousResearchAcquisitionV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+}) {
+  const plans = await input.supabase.from(
+    "marketplace_product_research_query_plans")
+    .select("id,request_receipt_id,subject_item_id,created_at")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("source_context", "LIVE_LISTING_REVALIDATION")
+    .eq("status", "ACTIVE")
+    .order("created_at", { ascending: true }).limit(4)
+  if (plans.error) {
+    throw new Error("MAYEL_RESEARCH_ACQUISITION_PLAN_READ_FAILED")
+  }
+  const planIds = (plans.data ?? []).map((plan) => String(plan.id))
+  if (!planIds.length) return Object.freeze({
+    pendingPlanCount: 0, claimablePlanCount: 0,
+    activeClaimCount: 0, nextPlanId: null,
+    authenticatedBrowserRequired: true as const,
+    marketplaceWrites: 0 as const,
+  })
+  const [tasks, receipts] = await Promise.all([
+    input.supabase.from("marketplace_product_research_query_tasks")
+      .select("plan_id").eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", "EBAY_US").in("plan_id", planIds)
+      .eq("status", "PENDING"),
+    input.supabase.from("seller_os_operational_learning_ledger_v1")
+      .select("id,status,lease_owner,lease_expires_at")
+      .eq("marketplace_account_key", input.accountKey)
+      .in("id", (plans.data ?? []).map((plan) =>
+        String(plan.request_receipt_id))),
+  ])
+  if (tasks.error || receipts.error) {
+    throw new Error("MAYEL_RESEARCH_ACQUISITION_STATE_READ_FAILED")
+  }
+  const pendingPlanIds = new Set((tasks.data ?? []).map((task) =>
+    String(task.plan_id)))
+  const now = Date.now()
+  const receiptById = new Map((receipts.data ?? []).map((receipt) =>
+    [String(receipt.id), receipt] as const))
+  const pending = (plans.data ?? []).filter((plan) =>
+    pendingPlanIds.has(String(plan.id)) &&
+    receiptById.get(String(plan.request_receipt_id))?.status === "OPEN")
+  const activeClaimCount = pending.filter((plan) => {
+    const receipt = receiptById.get(String(plan.request_receipt_id))
+    return Boolean(receipt?.lease_owner && receipt.lease_expires_at &&
+      Date.parse(String(receipt.lease_expires_at)) > now)
+  }).length
+  const claimable = pending.filter((plan) => {
+    const receipt = receiptById.get(String(plan.request_receipt_id))
+    return !receipt?.lease_expires_at ||
+      Date.parse(String(receipt.lease_expires_at)) <= now
+  })
+  return Object.freeze({ pendingPlanCount: pending.length,
+    claimablePlanCount: activeClaimCount ? 0 : claimable.length,
+    activeClaimCount,
+    nextPlanId: activeClaimCount ? null : claimable[0]?.id ?? null,
+    authenticatedBrowserRequired: true as const,
+    marketplaceWrites: 0 as const })
+}
+
+export async function claimMayelAutonomousResearchPlanV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  workerId: unknown
+  workerCapability: unknown
+  planId?: unknown
+}) {
+  const workerId = validWorkerId(input.workerId)
+  const capability = record(input.workerCapability)
+  const requestedPlanId = input.planId === undefined || input.planId === null
+    ? null : validPlanId(input.planId)
+  if (!workerId || (input.planId !== undefined && input.planId !== null &&
+      !requestedPlanId)) {
+    throw new Error("MAYEL_RESEARCH_WORKER_CLAIM_INVALID")
+  }
+  const claimed = await input.supabase.rpc(
+    "claim_next_live_listing_product_research_v1", {
+      p_marketplace_account_key: input.accountKey,
+      p_worker_id: workerId,
+      p_worker_capability: capability,
+      p_plan_id: requestedPlanId,
+      p_lease_seconds: 900,
+    })
+  if (claimed.error) {
+    throw new Error("MAYEL_RESEARCH_WORKER_CLAIM_FAILED")
+  }
+  const row = Array.isArray(claimed.data) ? claimed.data[0] : claimed.data
+  if (!record(row).claimed) return Object.freeze({ claimed: false as const,
+    planId: null, leaseExpiresAt: null, plan: null,
+    marketplaceWrites: 0 as const })
+  const planId = validPlanId(record(row).plan_id)
+  if (!planId) throw new Error("MAYEL_RESEARCH_WORKER_CLAIM_READBACK_FAILED")
+  const readback = await readMayelLiveMarketRevalidationPlanV1({
+    supabase: input.supabase, accountKey: input.accountKey, planId,
+  })
+  return Object.freeze({ claimed: true as const, workerId, planId,
+    leaseExpiresAt: record(row).lease_expires_at ?? null,
+    ledgerId: record(row).ledger_id ?? null, plan: readback.plan,
+    itemId: readback.itemId, marketplaceWrites: 0 as const })
+}
+
+export async function releaseMayelAutonomousResearchPlanV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  workerId: unknown
+  planId: unknown
+  errorCode: unknown
+}) {
+  const workerId = validWorkerId(input.workerId)
+  const planId = validPlanId(input.planId)
+  if (!workerId || !planId) {
+    throw new Error("MAYEL_RESEARCH_WORKER_RELEASE_INVALID")
+  }
+  const released = await input.supabase.rpc(
+    "release_live_listing_product_research_v1", {
+      p_marketplace_account_key: input.accountKey,
+      p_plan_id: planId,
+      p_worker_id: workerId,
+      p_error_code: safeFailureCode(input.errorCode),
+    })
+  if (released.error || released.data !== true) {
+    throw new Error("MAYEL_RESEARCH_WORKER_RELEASE_FAILED")
+  }
+  return Object.freeze({ released: true as const, planId,
+    retrySafety: "SAFE_IDEMPOTENT_RUNTIME_RESUME" as const,
+    marketplaceWrites: 0 as const })
+}
+
 export async function readMayelLiveMarketRevalidationStatusV1(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -367,18 +509,21 @@ export async function completeMayelLiveMarketRevalidationV1(input: {
   soldFilterAutomated: unknown
   paginationAutomated: unknown
   extensionMarketplaceWrites: unknown
+  workerId: unknown
+  workerMetrics?: unknown
 }) {
   const planId = validPlanId(input.planId)
+  const workerId = validWorkerId(input.workerId)
   if (!planId || input.soldFilterAutomated !== true ||
       input.paginationAutomated !== true || input.extensionMarketplaceWrites !== 0 ||
-      !Array.isArray(input.soldRows) || input.soldRows.length > 200) {
+      !workerId || !Array.isArray(input.soldRows) || input.soldRows.length > 200) {
     throw new Error("MAYEL_MARKET_REVALIDATION_WORKER_RESULT_INVALID")
   }
   const context = await readExactLiveContext({ ...input, planId })
   const receiptId = text(context.plan?.request_receipt_id, 40)
   const priorReceipt = await input.supabase.from(
     "seller_os_operational_learning_ledger_v1")
-    .select("id,status,evidence,resolved_at")
+    .select("id,status,evidence,resolved_at,lease_owner,lease_expires_at")
     .eq("id", receiptId).eq("marketplace_account_key", input.accountKey)
     .limit(1).maybeSingle()
   if (priorReceipt.error || !priorReceipt.data) {
@@ -389,6 +534,11 @@ export async function completeMayelLiveMarketRevalidationV1(input: {
       priorEvidence.requestState === "COMPLETED") {
     return Object.freeze({ ...priorEvidence,
       receiptId: priorReceipt.data.id, mayelResultVisible: true as const })
+  }
+  if (priorReceipt.data.lease_owner !== workerId ||
+      !priorReceipt.data.lease_expires_at ||
+      Date.parse(String(priorReceipt.data.lease_expires_at)) <= Date.now()) {
+    throw new Error("MAYEL_MARKET_REVALIDATION_WORKER_LEASE_REQUIRED")
   }
   const planned = await assertProductResearchCaptureMatchesNextQuery({
     supabase: input.supabase, accountKey: input.accountKey,
@@ -461,6 +611,25 @@ export async function completeMayelLiveMarketRevalidationV1(input: {
     captureBatchId: research.batchId,
     soldImportBatchId: sold?.batchId ?? null,
     productResearchExecuted: true,
+    workerClaimed: true,
+    workerCapabilityFresh: true,
+    workerMetrics: {
+      queryCount: Number(record(input.workerMetrics).queryCount) || 1,
+      pagesCaptured: Number.isInteger(Number(
+        record(input.workerMetrics).pagesCaptured)) &&
+        Number(record(input.workerMetrics).pagesCaptured) > 0
+        ? Number(record(input.workerMetrics).pagesCaptured) : null,
+      pagesCapturedMinimum: Number(record(input.workerMetrics)
+        .pagesCapturedMinimum) || 1,
+      pagesCapturedMaximum: Number(record(input.workerMetrics)
+        .pagesCapturedMaximum) || 2,
+      rawResultCount: research.rowCount + Number(sold?.rowCount ?? 0),
+      soldResultCount: Number(sold?.rowCount ?? 0),
+      dedupedResultCount: research.importedCount +
+        Number(sold?.importedCount ?? 0),
+      productResearchDuplicateCount: research.duplicateCount,
+      soldDuplicateCount: Number(sold?.duplicateCount ?? 0),
+    },
     freshSoldEvidencePersisted,
     exactComparableCount: intelligence.market.acceptedComparableCount,
     rejectedComparableCount: intelligence.market.rejectedComparableCount,
@@ -496,7 +665,9 @@ export async function completeMayelLiveMarketRevalidationV1(input: {
       resolved_at: completedAt, lease_owner: null, lease_expires_at: null,
       updated_at: completedAt,
     }).eq("id", receiptId).eq("marketplace_account_key", input.accountKey)
-    .eq("status", "OPEN").select("id,evidence,status,resolved_at").maybeSingle()
+    .eq("status", "OPEN").eq("lease_owner", workerId)
+    .gt("lease_expires_at", completedAt)
+    .select("id,evidence,status,resolved_at").maybeSingle()
   if (receipt.error || !receipt.data) {
     throw new Error("MAYEL_MARKET_REVALIDATION_RECEIPT_FINALIZE_FAILED")
   }

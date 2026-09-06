@@ -133,6 +133,9 @@ export type MayelProductEvidencePackV1 = Readonly<{
     unprovenIsNotFalse: true
     missingEvidenceIsNotPermissionToInfer: true
     generatedImageIsProductTruthAuthority: false
+    creativeWorkAllowed: true
+    factClaimRestrictedWhenUnproven: true
+    sellerOsProtectsFactsNotAesthetics: true
   }>
 }>
 
@@ -212,7 +215,10 @@ export function buildMayelProductEvidencePackV1(input: {
     semantics: Object.freeze({ unknownIsNotNone: true,
       unprovenIsNotFalse: true,
       missingEvidenceIsNotPermissionToInfer: true,
-      generatedImageIsProductTruthAuthority: false }),
+      generatedImageIsProductTruthAuthority: false,
+      creativeWorkAllowed: true,
+      factClaimRestrictedWhenUnproven: true,
+      sellerOsProtectsFactsNotAesthetics: true }),
   })
 }
 
@@ -222,8 +228,10 @@ export type MayelVisualPromptV1 = Readonly<{
   digest: string
   slots: readonly Readonly<{
     role: MayelVisualOutputRole
-    status: "READY" | "BLOCKED_MISSING_EVIDENCE"
+    status: "READY" | "READY_FACT_RESTRICTED"
     requiredEvidence: string
+    creativeWorkAllowed: true
+    factClaimRestricted: boolean
   }>[]
   textAiCallCount: 0
   imageApiCallCount: 0
@@ -233,15 +241,15 @@ export function buildMayelChatGptVisualPromptV1(
   pack: MayelProductEvidencePackV1,
 ): MayelVisualPromptV1 {
   const slots = MAYEL_VISUAL_OUTPUT_ROLES.map((role) => {
-    const supported = role === "DETAIL" ||
+    const factualClaimProven = role === "DETAIL" ||
       role === "PACKAGE_CONTENTS" && pack.packageContentsProven.length > 0 ||
       role === "DIMENSIONS" && pack.dimensionsProven.length > 0 ||
       role === "PRIMARY_BENEFIT" && pack.allowedProductBenefits.length > 0 ||
       ["LIFESTYLE", "HUMAN_USE"].includes(role) &&
         pack.allowedUseCases.length > 0
     return Object.freeze({ role,
-      status: supported ? "READY" as const :
-        "BLOCKED_MISSING_EVIDENCE" as const,
+      status: factualClaimProven ? "READY" as const :
+        "READY_FACT_RESTRICTED" as const,
       requiredEvidence: role === "DETAIL" ?
         "identidad del producto demostrada por las imágenes fuente" :
         role === "PACKAGE_CONTENTS" ?
@@ -249,7 +257,9 @@ export function buildMayelChatGptVisualPromptV1(
           role === "DIMENSIONS" ? "dimensiones demostradas" :
             role === "PRIMARY_BENEFIT" ?
               "beneficio del producto demostrado" :
-              "caso de uso demostrado" })
+              "caso de uso demostrado",
+      creativeWorkAllowed: true as const,
+      factClaimRestricted: !factualClaimProven })
   })
   const facts = (label: string, values: readonly string[]) =>
     `${label}: ${values.length ? values.join(" | ") :
@@ -277,7 +287,7 @@ export function buildMayelChatGptVisualPromptV1(
     "Mantén el producto exactamente igual a las imágenes fuente.",
     "Usa todas las imágenes fuente originales cargadas como autoridad del producto en CADA generación.",
     "Nunca uses una imagen generada anteriormente como única autoridad del producto.",
-    "Antes de generar cualquier imagen, valida qué slots cuentan con evidencia suficiente.",
+    "Antes de generar cualquier imagen, separa libertad creativa de afirmaciones factuales.",
     "Genera una imagen por vez y espera aprobación antes de continuar.",
     "Contrato interno: MAYEL_CHATGPT_VISUAL_PROMPT_V1",
     "",
@@ -301,16 +311,19 @@ export function buildMayelChatGptVisualPromptV1(
     "- No uses imágenes de competidores ni elementos con marcas de competidores.",
     "- No agregues texto salvo que el slot solicitado necesite explícitamente texto demostrado.",
     "",
-    "VALIDACIÓN DE EVIDENCIA:",
-    "- Genera únicamente los slots marcados como LISTO.",
-    "- Si falta la evidencia requerida, no generes ese slot.",
+    "LIBERTAD CREATIVA Y VERDAD DEL PRODUCTO:",
+    "- Todos los slots están libres para trabajo creativo si la identidad y variante exactas están demostradas.",
+    "- Si falta un fact, crea sin afirmar ese fact: no inventes números, piezas incluidas, materiales, funciones, certificaciones ni beneficios.",
+    "- Lifestyle y contexto aspiracional pueden ser nuevos; usa el producto exacto en un uso razonable que no contradiga Product Truth.",
+    "- Sin dimensiones exactas puedes usar escala visual o contexto proporcional, pero nunca cifras inventadas.",
+    "- Sin contenido de paquete demostrado puedes mejorar el resto de la galería, pero no mostrar accesorios o piezas como incluidos.",
     "- Que algo parezca probable no significa que esté demostrado.",
     "",
-    "Crea únicamente las imágenes secundarias LISTAS indicadas a continuación, un archivo por slot:",
+    "Crea las propuestas visuales indicadas a continuación, un archivo por slot:",
     ...slots.map((slot, index) =>
       `${String(index + 1).padStart(2, "0")}_${slot.role} — ${roleLabel[slot.role]}: ${
-        slot.status === "READY" ? "LISTO" :
-          "BLOQUEADO: FALTA EVIDENCIA"}`),
+        slot.status === "READY" ? "LISTA" :
+          "LIBRE PARA CREAR · SIN CLAIM FACTUAL"}`),
     "",
     "Prohibido o no demostrado:",
     ...pack.prohibitedOrUnprovenClaims.map((claim) =>
@@ -328,8 +341,8 @@ export function buildMayelChatGptVisualPromptV1(
     "- Una aprobación visual no autoriza cambios en eBay.",
     "",
     "INSTRUCCIONES FINALES:",
-    "Mantén sin cambios la imagen principal actual. Estos resultados son imágenes secundarias para revisión humana en Seller OS.",
-    "No generes slots bloqueados por falta de evidencia y no sustituyas hechos desconocidos con suposiciones.",
+    "La delegación visual permite a Mayel proponer una nueva imagen principal, nuevas secundarias y un orden visual mejor; Seller OS conserva el límite de ejecución segura.",
+    "No sustituyas hechos desconocidos con suposiciones. La falta de un fact restringe el claim, no el trabajo visual general.",
   ].join("\n")
   return Object.freeze({ contractVersion: MAYEL_CHATGPT_VISUAL_PROMPT_VERSION,
     text: textValue, digest: mayelVisualDigestV1(textValue), slots,

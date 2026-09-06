@@ -510,9 +510,9 @@ export async function uploadMayelVisualOutputV1(input: {
   const slot = buildMayelChatGptVisualPromptV1(
     task.evidence_pack as MayelProductEvidencePackV1,
   ).slots.find((entry) => entry.role === input.role)
-  if (!slot || slot.status !== "READY") {
+  if (!slot || slot.creativeWorkAllowed !== true) {
     input.file.fill(0)
-    throw new Error("MAYEL_VISUAL_SLOT_BLOCKED_MISSING_EVIDENCE")
+    throw new Error("MAYEL_VISUAL_SLOT_CREATIVE_WORK_NOT_ALLOWED")
   }
   const { count, error: countError } = await input.supabase
     .from("ebay_listing_image_assets").select("id", { count: "exact",
