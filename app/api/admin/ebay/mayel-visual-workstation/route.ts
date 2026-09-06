@@ -36,6 +36,21 @@ import {
   readMayelValidatedPriceDelegationV1,
   revokeMayelValidatedPriceDelegationV1,
 } from "@/lib/ebay/ebay-mayel-price-optimization-delegation-v1"
+import {
+  authorizeMayelCommercialOptimizationDelegationV1,
+  MAYEL_COMMERCIAL_OPTIMIZATION_DELEGATION_CONFIRMATION,
+  MAYEL_COMMERCIAL_OPTIMIZATION_DELEGATION_REVOKE_CONFIRMATION,
+  readMayelCommercialOptimizationDelegationV1,
+  revokeMayelCommercialOptimizationDelegationV1,
+} from
+  "@/lib/ebay/ebay-mayel-commercial-optimization-delegation-v1"
+import {
+  authorizeMayelPromotionSpendDelegationV1,
+  MAYEL_PROMOTION_SPEND_DELEGATION_CONFIRMATION,
+  MAYEL_PROMOTION_SPEND_DELEGATION_REVOKE_CONFIRMATION,
+  readMayelPromotionSpendDelegationV1,
+  revokeMayelPromotionSpendDelegationV1,
+} from "@/lib/ebay/ebay-mayel-promotion-spend-delegation-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
@@ -229,10 +244,15 @@ export async function GET(request: Request) {
       ownerView: auth.accessRole === SELLER_OS_ACCESS_ROLES.owner })
     const supabase = getSupabaseAdminClient()
     const ownerView = auth.accessRole === SELLER_OS_ACCESS_ROLES.owner
-    const [delegation, priceDelegation] = await Promise.all([
+    const [delegation, priceDelegation, commercialDelegation,
+      promotionDelegation] = await Promise.all([
       readMayelFullVisualDelegationV1({ supabase,
         accountKey: accountKey(), ownerAuthenticated: ownerView }),
       readMayelValidatedPriceDelegationV1({ supabase,
+        accountKey: accountKey(), ownerAuthenticated: ownerView }),
+      readMayelCommercialOptimizationDelegationV1({ supabase,
+        accountKey: accountKey(), ownerAuthenticated: ownerView }),
+      readMayelPromotionSpendDelegationV1({ supabase,
         accountKey: accountKey(), ownerAuthenticated: ownerView }),
     ])
     const currentAccountIdentity =
@@ -302,7 +322,8 @@ export async function GET(request: Request) {
       marketplaceWrites: 0,
     })
     return json({ success: true, workstation: { ...workstation, tasks },
-      delegation, priceDelegation,
+      delegation, priceDelegation, commercialDelegation,
+      promotionDelegation,
       accessRole: auth.accessRole,
       phase: "B_OWNER_GATED", marketplaceWrites: 0,
       openAiImageApiCalls: 0 })
@@ -457,6 +478,71 @@ export async function POST(request: Request) {
         ? "VALIDATED_PRICE_DELEGATION_ALREADY_INACTIVE"
         : "VALIDATED_PRICE_DELEGATION_REVOKED",
       priceDelegation: outcome.authority, marketplaceWrites: 0 })
+    }
+    if (action === "AUTHORIZE_COMMERCIAL_OPTIMIZATION_DELEGATION") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_COMMERCIAL_OWNER_AUTHORITY_REQUIRED" }, 403)
+      if (body?.confirmation !==
+          MAYEL_COMMERCIAL_OPTIMIZATION_DELEGATION_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_COMMERCIAL_DELEGATION_CONFIRMATION_INVALID" }, 400)
+      }
+      const outcome = await authorizeMayelCommercialOptimizationDelegationV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId })
+      return json({ success: true, outcome: outcome.idempotent
+        ? "COMMERCIAL_OPTIMIZATION_DELEGATION_ALREADY_ACTIVE"
+        : "COMMERCIAL_OPTIMIZATION_DELEGATION_ACTIVATED",
+      commercialDelegation: outcome.authority, marketplaceWrites: 0 })
+    }
+    if (action === "REVOKE_COMMERCIAL_OPTIMIZATION_DELEGATION") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_COMMERCIAL_OWNER_AUTHORITY_REQUIRED" }, 403)
+      if (body?.confirmation !==
+          MAYEL_COMMERCIAL_OPTIMIZATION_DELEGATION_REVOKE_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_COMMERCIAL_DELEGATION_REVOCATION_CONFIRMATION_INVALID" },
+        400)
+      }
+      const outcome = await revokeMayelCommercialOptimizationDelegationV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId })
+      return json({ success: true, outcome: outcome.idempotent
+        ? "COMMERCIAL_OPTIMIZATION_DELEGATION_ALREADY_INACTIVE"
+        : "COMMERCIAL_OPTIMIZATION_DELEGATION_REVOKED",
+      commercialDelegation: outcome.authority, marketplaceWrites: 0 })
+    }
+    if (action === "AUTHORIZE_PROMOTION_SPEND_DELEGATION") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_PROMOTION_OWNER_AUTHORITY_REQUIRED" }, 403)
+      if (body?.confirmation !== MAYEL_PROMOTION_SPEND_DELEGATION_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_PROMOTION_DELEGATION_CONFIRMATION_INVALID" }, 400)
+      }
+      const outcome = await authorizeMayelPromotionSpendDelegationV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId, ceilings: body?.ceilings })
+      return json({ success: true, outcome: outcome.idempotent
+        ? "PROMOTION_SPEND_DELEGATION_ALREADY_ACTIVE"
+        : "PROMOTION_SPEND_DELEGATION_ACTIVATED",
+      promotionDelegation: outcome.authority, marketplaceWrites: 0 })
+    }
+    if (action === "REVOKE_PROMOTION_SPEND_DELEGATION") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_PROMOTION_OWNER_AUTHORITY_REQUIRED" }, 403)
+      if (body?.confirmation !==
+          MAYEL_PROMOTION_SPEND_DELEGATION_REVOKE_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_PROMOTION_DELEGATION_REVOCATION_CONFIRMATION_INVALID" },
+        400)
+      }
+      const outcome = await revokeMayelPromotionSpendDelegationV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId })
+      return json({ success: true, outcome: outcome.idempotent
+        ? "PROMOTION_SPEND_DELEGATION_ALREADY_INACTIVE"
+        : "PROMOTION_SPEND_DELEGATION_REVOKED",
+      promotionDelegation: outcome.authority, marketplaceWrites: 0 })
     }
     if (action === "REBASE_VISUAL_MANIFEST") {
       if (!ownerRole) return json({ success: false,

@@ -22,6 +22,9 @@ import type { RemoteListingQualitySignalV1 } from
   "./ebay-listing-quality-report-owner-import-v1"
 import type { RemoteOperatorSafeMutationCanaryV1 } from
   "./ebay-remote-operator-safe-mutation-canary-v1"
+import {
+  buildMayelFullListingOptimizationStateV1,
+} from "./ebay-mayel-full-listing-commercial-optimization-v1"
 
 export const REMOTE_LIVE_OPTIMIZATION_OPERATOR_VERSION =
   "REMOTE_LIVE_OPTIMIZATION_OPERATOR_V1_2026_09_02_REAL_SESSION_FEED_PARITY" as const
@@ -187,6 +190,7 @@ export type RemoteLiveOperatorListingV1 = Readonly<{
     }>
   }> | null
   safeMutationCanary: RemoteOperatorSafeMutationCanaryV1 | null
+  optimization: ReturnType<typeof buildMayelFullListingOptimizationStateV1>
   canonicalTask: RemoteOperatorCanonicalTaskV1 | null
   action: Readonly<{
     kind: "SAFE_PRICE_CHANGE" | "OWNER_ESCALATION" |
@@ -941,6 +945,31 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       qualityRecommendations: qualityReport.recommendations,
       decisionReasonCodes: decision?.reasonCodes ?? [],
     })
+    const optimization = buildMayelFullListingOptimizationStateV1({
+      exactListingIdentity, productTruthSupported, currentLiveReadback,
+      attentionClass: canonicalTask?.attentionClass ?? narrative.attentionClass,
+      metrics: {
+        impressions: metricValue(listing, "impressions"),
+        views: metricValue(listing, "ebay_views"),
+        ctrPercent: metricValue(listing, "ctr_calculated") ??
+          metricValue(listing, "ctr_reported"),
+        orders: metricValue(listing, "orders"),
+        unitsSold: metricValue(listing, "units_sold"),
+      },
+      commercialIntelligence,
+      visualFindings: visual?.findings ?? [],
+      ebayGuidance: quality.map((row) => ({
+        category: row.recommendationCategory,
+        recommendation: row.recommendationText ??
+          `Revisar ${row.recommendationCategory}`,
+        exactListingAssociation: row.associationStatus !== "UNPROVEN",
+      })),
+      durableVisualProposalPresent: preparedProposal !== null,
+      // The legacy safe-mutation canary certifies a title-only path. It is not
+      // evidence that a Mayel visual proposal was applied, so keep this false
+      // until the visual executor leaves its own official readback receipt.
+      durableVisualChangeApplied: false,
+    })
     return Object.freeze({
       ebayItemId: listing.identity.itemId,
       title: listing.identity.title ?? `Listing ${listing.identity.itemId}`,
@@ -980,6 +1009,7 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       }))),
       officialQualitySignals: Object.freeze(officialQualitySignals),
       commercialIntelligence,
+      optimization,
       visualReview: Object.freeze({
         status: visual?.status ?? "UNPROVEN",
         imageUrl: visual?.heroImageUrl ?? listing.identity.primaryImageUrl,
@@ -1009,7 +1039,8 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
     const priority: Record<RemoteLiveAttentionClass, number> = {
       NEEDS_ATTENTION: 0, CAN_IMPROVE: 1, ENRICH: 2, WAIT: 3,
     }
-    return priority[left.attentionClass] - priority[right.attentionClass] ||
+    return right.optimization.priorityScore - left.optimization.priorityScore ||
+      priority[left.attentionClass] - priority[right.attentionClass] ||
       left.title.localeCompare(right.title)
   })
   const operatorExecutions = executions.filter((row) =>

@@ -11,6 +11,8 @@ import {
 } from "@/lib/seller-os-access-control"
 import type { MayelCommercialIntelligenceV1 } from
   "@/lib/ebay/ebay-mayel-commercial-intelligence-v1"
+import type { RemoteLiveOperatorListingV1 } from
+  "@/lib/ebay/ebay-remote-live-optimization-operator-v1"
 import { supabase } from "@/lib/supabase"
 
 export default function SellerOsMayelPage() {
@@ -19,6 +21,8 @@ export default function SellerOsMayelPage() {
   const [failed, setFailed] = useState(false)
   const [commercialIntelligence, setCommercialIntelligence] = useState<
     Record<string, MayelCommercialIntelligenceV1>>({})
+  const [livePortfolio, setLivePortfolio] = useState<
+    readonly RemoteLiveOperatorListingV1[]>([])
 
   useEffect(() => {
     let active = true
@@ -45,13 +49,14 @@ export default function SellerOsMayelPage() {
           cache: "no-store", headers: { Authorization: `Bearer ${token}` },
         })
       const payload = await response.json() as { success?: boolean
-        dashboard?: { taskListings?: Array<{ ebayItemId?: unknown
-          commercialIntelligence?: MayelCommercialIntelligenceV1 }> } }
+        dashboard?: { listings?: RemoteLiveOperatorListingV1[] } }
       if (!response.ok || payload.success !== true || !active) return
-      const entries = (payload.dashboard?.taskListings ?? []).flatMap((listing) =>
+      const listings = payload.dashboard?.listings ?? []
+      const entries = listings.flatMap((listing) =>
         typeof listing.ebayItemId === "string" && listing.commercialIntelligence
           ? [[listing.ebayItemId, listing.commercialIntelligence] as const] : [])
       setCommercialIntelligence(Object.fromEntries(entries))
+      setLivePortfolio(listings)
     })().catch(() => { /* Visual work remains available when this feed degrades. */ })
     return () => { active = false }
   }, [role])
@@ -85,7 +90,8 @@ export default function SellerOsMayelPage() {
       {(owner || mayel) && <section className="mt-6">
         <MayelVisualWorkstation canOperate={mayel}
           canOwnerAuthorize={owner}
-          commercialIntelligenceByItemId={commercialIntelligence} />
+          commercialIntelligenceByItemId={commercialIntelligence}
+          livePortfolio={livePortfolio} />
       </section>}
     </div>
   </main>

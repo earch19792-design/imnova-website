@@ -7,6 +7,8 @@ import { Check, Clipboard, ShieldCheck, Upload, X } from
 import { supabase } from "@/lib/supabase"
 import type { MayelCommercialIntelligenceV1 } from
   "@/lib/ebay/ebay-mayel-commercial-intelligence-v1"
+import type { RemoteLiveOperatorListingV1 } from
+  "@/lib/ebay/ebay-remote-live-optimization-operator-v1"
 
 type VisualRole = "DETAIL" | "PACKAGE_CONTENTS" | "DIMENSIONS" |
   "PRIMARY_BENEFIT" | "LIFESTYLE" | "HUMAN_USE"
@@ -148,6 +150,36 @@ type PriceDelegation = {
   validationPolicy: Record<string, boolean>
   mayelDirectPriceWrite: false
   sellerOsValidatedPriceExecutionOnly: true
+}
+
+type CommercialDelegation = {
+  fullListingCommercialDelegationActive: boolean
+  mayelContentOptimizationAuthority: boolean
+  mayelKeywordOptimizationAuthority: boolean
+  mayelMarketRevalidationAuthority: boolean
+  ownerPerListingApproval: false
+  authorizationButtonEnabled: boolean
+  firstBlockingPredicate: string | null
+  active: { status: string; ownerConfirmedAt: string | null } | null
+  categoryRecommendationOnlyUntilCertified: true
+}
+
+type PromotionDelegation = {
+  promotionSpendDelegationActive: boolean
+  ownerPerPromotionApproval: false
+  ownerCeilingsRequired: true
+  authorizationButtonEnabled: boolean
+  firstBlockingPredicate: string | null
+  active: { status: string; ownerConfirmedAt: string | null; ceilings: {
+    maxAdSpendPerListing: number
+    maxAdSpendPerDay: number
+    maxPortfolioAdSpendPerDay: number
+    maxAdRatePercent: number
+    minExpectedProfitAfterAds: number
+    minMarginAfterAdsPercent: number
+    minRoiAfterAdsPercent: number
+  } } | null
+  recommendationOnlyWhenCapabilityUnproven: true
 }
 
 const labels: Record<VisualRole, string> = {
@@ -875,12 +907,222 @@ function ValidatedPriceDelegationPanel({ delegation, owner, busy, onDone }: {
   </section>
 }
 
+function CommercialOptimizationDelegationPanel({ delegation, owner, busy,
+  onDone }: { delegation: CommercialDelegation | null; owner: boolean
+    busy: boolean; onDone: () => Promise<void> }) {
+  const active = delegation?.fullListingCommercialDelegationActive === true
+  const [message, setMessage] = useState("")
+  async function submit(action: "AUTHORIZE_COMMERCIAL_OPTIMIZATION_DELEGATION" |
+    "REVOKE_COMMERCIAL_OPTIMIZATION_DELEGATION") {
+    setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, confirmation: action ===
+          "AUTHORIZE_COMMERCIAL_OPTIMIZATION_DELEGATION"
+          ? "AUTORIZAR MAYEL OPTIMIZACION COMERCIAL DE LISTINGS"
+          : "REVOCAR DELEGACION COMERCIAL DE MAYEL" }),
+      })
+      await onDone()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No se pudo actualizar la delegación comercial.")
+    }
+  }
+  return <section className="mt-5 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-5 sm:p-7">
+    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#1d5961]">Contenido y búsqueda</p>
+    <h3 className="mt-2 font-serif text-2xl font-semibold">Optimización comercial del listing</h3>
+    <p className="mt-2 text-sm leading-6 text-[#64675f]">Permite a Mayel optimizar título, descripción, item specifics y keywords únicamente en campos reales de eBay. Seller OS bloquea cualquier fact no demostrado y mantiene categoría como recomendación hasta su certificación separada.</p>
+    <p className="mt-3 text-sm font-semibold">{active
+      ? "Delegación activa · no requiere aprobación rutinaria por listing"
+      : "Esperando una delegación reusable del owner"}</p>
+    {owner && !active && <button type="button" disabled={busy ||
+      delegation?.authorizationButtonEnabled !== true}
+      onClick={() => void submit("AUTHORIZE_COMMERCIAL_OPTIMIZATION_DELEGATION")}
+      className="mt-4 min-h-11 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">
+      Autorizar optimización de contenido
+    </button>}
+    {owner && active && <button type="button" disabled={busy}
+      onClick={() => void submit("REVOKE_COMMERCIAL_OPTIMIZATION_DELEGATION")}
+      className="mt-4 min-h-11 rounded-xl border border-[#1d5961] px-4 text-sm font-semibold text-[#1d5961] disabled:opacity-40">
+      Revocar delegación de contenido
+    </button>}
+    {!active && delegation?.firstBlockingPredicate &&
+      <p className="mt-3 text-xs text-[#704d3c]">Bloqueo: {delegation.firstBlockingPredicate}</p>}
+    <p className="mt-3 text-xs text-[#777a73]">Product Truth obligatorio · keywords sólo en title/item specifics/description · un write acotado · readback oficial.</p>
+    {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
+  </section>
+}
+
+function PromotionSpendDelegationPanel({ delegation, owner, busy, onDone }: {
+  delegation: PromotionDelegation | null; owner: boolean; busy: boolean
+  onDone: () => Promise<void>
+}) {
+  const active = delegation?.promotionSpendDelegationActive === true
+  const [message, setMessage] = useState("")
+  const [limits, setLimits] = useState({ maxAdSpendPerListing: "",
+    maxAdSpendPerDay: "", maxPortfolioAdSpendPerDay: "",
+    maxAdRatePercent: "", minExpectedProfitAfterAds: "",
+    minMarginAfterAdsPercent: "", minRoiAfterAdsPercent: "" })
+  const parsed = Object.fromEntries(Object.entries(limits).map(([key, value]) =>
+    [key, value.trim() === "" ? null : Number(value)])) as Record<string,
+      number | null>
+  const valid = Object.values(parsed).every((value) => value !== null &&
+    Number.isFinite(value)) && Number(parsed.maxAdSpendPerListing) > 0 &&
+    Number(parsed.maxAdSpendPerDay) > 0 &&
+    Number(parsed.maxPortfolioAdSpendPerDay) > 0 &&
+    Number(parsed.maxAdRatePercent) > 0 &&
+    Number(parsed.maxAdRatePercent) <= 100 &&
+    Number(parsed.minExpectedProfitAfterAds) >= 0 &&
+    Number(parsed.minMarginAfterAdsPercent) >= 0 &&
+    Number(parsed.minMarginAfterAdsPercent) <= 100 &&
+    Number(parsed.minRoiAfterAdsPercent) >= 0
+  async function submit(action: "AUTHORIZE_PROMOTION_SPEND_DELEGATION" |
+    "REVOKE_PROMOTION_SPEND_DELEGATION") {
+    setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, confirmation: action ===
+          "AUTHORIZE_PROMOTION_SPEND_DELEGATION"
+          ? "AUTORIZAR MAYEL PROMOCION DENTRO DE LIMITES"
+          : "REVOCAR DELEGACION DE PROMOCION DE MAYEL",
+        ceilings: action === "AUTHORIZE_PROMOTION_SPEND_DELEGATION"
+          ? parsed : undefined }),
+      })
+      await onDone()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No se pudo actualizar la delegación de promoción.")
+    }
+  }
+  const fields = [
+    ["maxAdSpendPerListing", "Máximo por listing · USD"],
+    ["maxAdSpendPerDay", "Máximo por día · USD"],
+    ["maxPortfolioAdSpendPerDay", "Máximo portfolio/día · USD"],
+    ["maxAdRatePercent", "Tasa máxima · %"],
+    ["minExpectedProfitAfterAds", "Profit mínimo después de ads · USD"],
+    ["minMarginAfterAdsPercent", "Margen mínimo después de ads · %"],
+    ["minRoiAfterAdsPercent", "ROI mínimo después de ads · %"],
+  ] as const
+  return <section className="mt-5 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-5 sm:p-7">
+    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8b6c3f]">Promoción y gasto</p>
+    <h3 className="mt-2 font-serif text-2xl font-semibold">Promoted Listings dentro de límites</h3>
+    <p className="mt-2 text-sm leading-6 text-[#64675f]">Sin esta autoridad Seller OS sólo recomienda. La activación exige capacidad oficial, economía completa, ausencia de conflicto y límites explícitos del owner.</p>
+    {active && delegation?.active && <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+      <p className="rounded-xl bg-[#e3ebe1] p-3">Por listing<br/><strong>{commercialMoney(delegation.active.ceilings.maxAdSpendPerListing)}</strong></p>
+      <p className="rounded-xl bg-[#e3ebe1] p-3">Portfolio/día<br/><strong>{commercialMoney(delegation.active.ceilings.maxPortfolioAdSpendPerDay)}</strong></p>
+      <p className="rounded-xl bg-[#e3ebe1] p-3">Tasa máxima<br/><strong>{delegation.active.ceilings.maxAdRatePercent}%</strong></p>
+      <p className="rounded-xl bg-[#e3ebe1] p-3">Profit mínimo<br/><strong>{commercialMoney(delegation.active.ceilings.minExpectedProfitAfterAds)}</strong></p>
+    </div>}
+    {owner && !active && <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {fields.map(([key, label]) => <label key={key}
+        className="text-xs font-semibold text-[#555e58]">{label}
+        <input type="number" min="0" step="0.01" value={limits[key]}
+          onChange={(event) => setLimits((current) => ({ ...current,
+            [key]: event.target.value }))}
+          className="mt-1 min-h-11 w-full rounded-xl border border-[#d9d1c4] bg-white px-3 text-sm font-normal" />
+      </label>)}
+    </div>}
+    {owner && !active && <button type="button" disabled={busy || !valid ||
+      delegation?.authorizationButtonEnabled !== true}
+      onClick={() => void submit("AUTHORIZE_PROMOTION_SPEND_DELEGATION")}
+      className="mt-4 min-h-11 rounded-xl bg-[#8b6c3f] px-4 text-sm font-semibold text-white disabled:opacity-40">
+      Autorizar promoción dentro de estos límites
+    </button>}
+    {owner && active && <button type="button" disabled={busy}
+      onClick={() => void submit("REVOKE_PROMOTION_SPEND_DELEGATION")}
+      className="mt-4 min-h-11 rounded-xl border border-[#8b6c3f] px-4 text-sm font-semibold text-[#7b5d34] disabled:opacity-40">
+      Revocar delegación de promoción
+    </button>}
+    {!active && <p className="mt-3 text-xs text-[#704d3c]">Promoción: sólo recomendación. Ningún límite se inventa y ningún gasto está autorizado.</p>}
+    {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
+  </section>
+}
+
+const opportunityLabels: Record<string, string> = {
+  VISUAL_OPPORTUNITY: "Visual", CONTENT_OPPORTUNITY: "Contenido",
+  KEYWORD_OPPORTUNITY: "Keywords", MARKET_REVALIDATION_REQUIRED: "Revalidar mercado",
+  PRICE_OPPORTUNITY: "Precio", PROMOTION_OPPORTUNITY: "Promoción",
+  PERFORMANCE_PROBLEM: "Performance", HEALTHY: "Sano",
+  INSUFFICIENT_EVIDENCE: "Evidencia insuficiente",
+}
+
+function PortfolioOverview({ listings }: {
+  listings: readonly RemoteLiveOperatorListingV1[]
+}) {
+  const [filter, setFilter] = useState("TODOS")
+  const [search, setSearch] = useState("")
+  const visible = useMemo(() => listings.filter((listing) =>
+    (filter === "TODOS" || listing.optimization.opportunities.includes(
+      filter as never)) && (!search.trim() ||
+      `${listing.title} ${listing.sku ?? ""} ${listing.ebayItemId}`
+        .toLowerCase().includes(search.trim().toLowerCase()))),
+  [filter, listings, search])
+  const needsEvidence = listings.filter((listing) =>
+    listing.optimization.opportunities.includes("INSUFFICIENT_EVIDENCE")).length
+  const needsMarket = listings.filter((listing) =>
+    listing.optimization.opportunities.includes(
+      "MARKET_REVALIDATION_REQUIRED")).length
+  return <section className="mt-7 rounded-[28px] border border-[#cbd9d4] bg-[#f8fbf9] p-5 sm:p-7"
+    data-all-live-listings-visible-to-mayel={listings.length > 0}>
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#1d5961]">Portfolio LIVE completo</p>
+        <h3 className="mt-2 font-serif text-2xl font-semibold">Optimización comercial continua</h3>
+        <p className="mt-2 text-sm text-[#64675f]">{listings.length} listings LIVE visibles · {needsMarket} requieren mercado fresco · {needsEvidence} requieren más autoridad.</p></div>
+      <div className="flex flex-wrap gap-2">
+        <input value={search} onChange={(event) => setSearch(event.target.value)}
+          aria-label="Buscar listing LIVE" placeholder="Buscar listing"
+          className="min-h-11 rounded-xl border border-[#cbd9d4] bg-white px-3 text-sm" />
+        <select value={filter} onChange={(event) => setFilter(event.target.value)}
+          aria-label="Filtrar oportunidad" className="min-h-11 rounded-xl border border-[#cbd9d4] bg-white px-3 text-sm">
+          <option value="TODOS">Todos</option>
+          {Object.entries(opportunityLabels).map(([key, label]) =>
+            <option key={key} value={key}>{label}</option>)}
+        </select>
+      </div>
+    </div>
+    {!listings.length && <p className="mt-5 rounded-xl bg-white p-4 text-sm text-[#704d3c]">La autoridad LIVE no está disponible. No se muestra un cero falso.</p>}
+    <div className="mt-5 space-y-3">{visible.map((listing) => <details
+      key={listing.ebayItemId} className="rounded-2xl border border-[#d9e2de] bg-white p-4">
+      <summary className="cursor-pointer list-none">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><p className="font-semibold text-[#26312d]">{listing.title}</p>
+            <p className="mt-1 text-xs text-[#777a73]">{listing.sku ?? "SKU por comprobar"} · eBay {listing.ebayItemId}</p></div>
+          <div className="flex flex-wrap gap-1.5"><span className="rounded-full bg-[#26312d] px-2.5 py-1 text-[11px] font-semibold text-white">{listing.optimization.status.replaceAll("_", " ")}</span>
+            {listing.optimization.opportunities.map((value) => <span key={value}
+              className="rounded-full bg-[#e3ebe1] px-2.5 py-1 text-[11px] font-semibold text-[#425143]">{opportunityLabels[value]}</span>)}</div>
+        </div>
+      </summary>
+      <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <p className="rounded-xl bg-[#f8fbf9] p-3"><strong>Qué encontró Seller OS</strong><br/>{listing.optimization.whatSellerOsFound}</p>
+        <p className="rounded-xl bg-[#f8fbf9] p-3"><strong>Qué cambió Mayel</strong><br/>{listing.optimization.mayelChanged}</p>
+        <p className="rounded-xl bg-[#f8fbf9] p-3"><strong>Por qué</strong><br/>{listing.optimization.why}</p>
+        <p className="rounded-xl bg-[#f8fbf9] p-3"><strong>Impacto esperado</strong><br/>{listing.optimization.expectedImpact}</p>
+      </div>
+      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Visual</strong><br/>{listing.visualReview.findings.length ? `${listing.visualReview.findings.length} hallazgos` : "Sin oportunidad visual demostrada"}</p>
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Contenido</strong><br/>{listing.ebayGuidance.length ? `${listing.ebayGuidance.length} señales oficiales` : "Por comprobar"}</p>
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Keywords / Search</strong><br/>Title · Item specifics · Description</p>
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Mercado</strong><br/>{listing.commercialIntelligence.market.freshness.replaceAll("_", " ")}</p>
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Precio</strong><br/>{commercialMoney(listing.commercialIntelligence.pricePosition.livePrice)} · {listing.commercialIntelligence.pricePosition.status.replaceAll("_", " ")}</p>
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Rentabilidad</strong><br/>Profit {commercialMoney(listing.commercialIntelligence.economics.expectedProfit.value)} · margen {listing.commercialIntelligence.economics.marginPercent.value ?? "Por comprobar"}{listing.commercialIntelligence.economics.marginPercent.value === null ? "" : "%"}</p>
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Performance</strong><br/>{listing.metrics.impressions ?? "Por comprobar"} impresiones · {listing.metrics.orders ?? "Por comprobar"} órdenes</p>
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Recomendaciones eBay</strong><br/>{listing.ebayGuidance.length ? "Disponibles para revisión" : "No demostradas"}</p>
+        <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Promoción</strong><br/>{listing.optimization.opportunities.includes("PROMOTION_OPPORTUNITY") ? "Recomendación oficial disponible" : "Sin recomendación oficial demostrada"}</p>
+      </div>
+    </details>)}</div>
+  </section>
+}
+
 export function MayelVisualWorkstation({ canOperate,
-  canOwnerAuthorize = false, commercialIntelligenceByItemId = {} }: {
+  canOwnerAuthorize = false, commercialIntelligenceByItemId = {},
+  livePortfolio = [] }: {
   canOperate: boolean
   canOwnerAuthorize?: boolean
   commercialIntelligenceByItemId?: Readonly<Record<string,
     MayelCommercialIntelligenceV1>>
+  livePortfolio?: readonly RemoteLiveOperatorListingV1[]
 }) {
   const [tasks, setTasks] = useState<VisualTask[]>([])
   const [busy, setBusy] = useState(true)
@@ -889,6 +1131,10 @@ export function MayelVisualWorkstation({ canOperate,
   const [delegation, setDelegation] = useState<VisualDelegation | null>(null)
   const [priceDelegation, setPriceDelegation] =
     useState<PriceDelegation | null>(null)
+  const [commercialDelegation, setCommercialDelegation] =
+    useState<CommercialDelegation | null>(null)
+  const [promotionDelegation, setPromotionDelegation] =
+    useState<PromotionDelegation | null>(null)
   const [marketRevalidationByItemId, setMarketRevalidationByItemId] =
     useState<Record<string, MarketRevalidationStatus>>({})
 
@@ -901,6 +1147,10 @@ export function MayelVisualWorkstation({ canOperate,
     setDelegation((payload.delegation as VisualDelegation | undefined) ?? null)
     setPriceDelegation((payload.priceDelegation as PriceDelegation |
       undefined) ?? null)
+    setCommercialDelegation((payload.commercialDelegation as
+      CommercialDelegation | undefined) ?? null)
+    setPromotionDelegation((payload.promotionDelegation as
+      PromotionDelegation | undefined) ?? null)
     const reads = await Promise.allSettled(nextTasks.map(async (task) => {
       const statusPayload = await visualRequest(
         "/api/admin/ebay/live-optimization-operator", {
@@ -972,12 +1222,17 @@ export function MayelVisualWorkstation({ canOperate,
     <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
       <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">ChatGPT manual</span>
       <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">Cero API de imágenes</span>
-      <span className="rounded-full bg-[#f7e9de] px-3 py-2 text-[#704d3c]">eBay sólo con autorización owner</span>
+      <span className="rounded-full bg-[#f7e9de] px-3 py-2 text-[#704d3c]">eBay sólo con autoridad vigente y readback</span>
     </div>
     <FullVisualDelegationPanel delegation={delegation}
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
+    <CommercialOptimizationDelegationPanel delegation={commercialDelegation}
+      owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
     <ValidatedPriceDelegationPanel delegation={priceDelegation}
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
+    <PromotionSpendDelegationPanel delegation={promotionDelegation}
+      owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
+    <PortfolioOverview listings={livePortfolio} />
     {canOperate && <button type="button"
       onClick={() => void acquireNextDelegatedTask()} disabled={busy}
       data-mayel-explicit-work-acquisition
