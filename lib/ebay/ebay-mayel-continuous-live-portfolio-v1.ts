@@ -198,9 +198,11 @@ export async function runMayelContinuousLivePortfolioOptimizationV1(input: {
   priceAnalysisDurable: true as const,
   autoApplyVisualPolicyAuthorized:
     visualAuthority.fullVisualDelegationActive,
-  autoApplyVisualUnderDelegation: false as const,
-  autoApplyVisualBlocker:
-    "SHARED_MANAGEMENT_MODEL_EXECUTOR_NOT_CERTIFIED" as const,
+  autoApplyVisualUnderDelegation:
+    visualAuthority.fullVisualDelegationActive,
+  autoApplyVisualRuntime: "MAYEL_VISUAL_DELEGATED_RUNTIME_V1" as const,
+  autoApplyVisualBlocker: visualAuthority.fullVisualDelegationActive
+    ? null : "FULL_VISUAL_DELEGATION_REQUIRED" as const,
   priceWriteRequiresOneTimeReusableCommercialDelegation: true as const,
   targetProfitMaySetMarketPrice: false as const,
   duplicateTaskCount: visualQueue.duplicateTaskCount,

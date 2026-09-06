@@ -196,6 +196,10 @@ export function buildMayelVisualPhaseBRebaseV1(input: {
   taskSourceImageSetDigest: unknown
   currentOfficialImageUrls: readonly string[]
   approvedAssets: readonly unknown[]
+  appliedMayelOfficialImages?: readonly Readonly<{
+    assetId: string
+    officialUrl: string
+  }>[]
   canonicalPublicAssetUrlAllowed: (url: string) => boolean
 }): MayelVisualPhaseBRebaseV1 {
   const manifest = record(input.visualManifest)
@@ -289,8 +293,35 @@ export function buildMayelVisualPhaseBRebaseV1(input: {
           entry.kind === "MAYEL_ASSET"
             ? approvedAssets.find((asset) => asset.assetId === entry.assetId)
               ?.publicUrl : entry.publicUrl))
+        const manifestAssetIds = new Set([
+          ...previous.map((entry) => uuid(entry.assetId)).filter(
+            (value): value is string => Boolean(value)),
+          ...(Array.isArray(manifest.removedAssetIds)
+            ? manifest.removedAssetIds.map(uuid).filter(
+              (value): value is string => Boolean(value)) : []),
+        ])
+        // A prior verified execution may have converted a durable Mayel asset
+        // into an EPS URL. That URL is managed by the asset intent already;
+        // treating it as an unrelated newly-official image would resurrect a
+        // removed asset or duplicate a selected one during safe rebase.
+        const managedOfficialUrls = new Set(
+          (input.appliedMayelOfficialImages ?? []).flatMap((binding) => {
+            const assetId = uuid(binding.assetId)
+            const officialUrl = exactHttpsUrl(binding.officialUrl)
+            return assetId && officialUrl && manifestAssetIds.has(assetId)
+              ? [officialUrl] : []
+          }),
+        )
+        const intentionallyRemovedOfficialUrls = new Set(
+          (Array.isArray(manifest.removedOfficialImageUrls)
+            ? manifest.removedOfficialImageUrls : [])
+            .map(exactHttpsUrl).filter(
+              (value): value is string => Boolean(value)),
+        )
         const newlyOfficial = currentOfficial.filter((url) =>
-          !represented.has(url)).map((publicUrl) => ({
+          !represented.has(url) && !managedOfficialUrls.has(url)
+          && !intentionallyRemovedOfficialUrls.has(url))
+          .map((publicUrl) => ({
             kind: "CURRENT_OFFICIAL" as const, publicUrl }))
         return [...retained, ...newlyOfficial]
       })(),

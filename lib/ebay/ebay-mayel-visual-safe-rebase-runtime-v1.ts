@@ -42,27 +42,19 @@ export async function runMayelVisualSafeRebaseRecoveryV1(input: Readonly<{
     discoveredCount: 0, claimedCount: 0, rebasedCount: 0, receipts: [],
     marketplaceWrites: 0 as const })
 
-  const [tasks, completed] = await Promise.all([
-    input.supabase.from("ebay_mayel_visual_tasks_v1")
-      .select("id,visual_manifest_digest")
-      .eq("marketplace_account_key", input.accountKey)
-      .eq("status", "OWNER_PREVIEW_READY")
-      .order("updated_at", { ascending: true }).limit(MAX_TASKS_PER_RUN),
-    input.supabase.from("seller_os_operational_learning_ledger_v1")
-      .select("evidence").eq("marketplace_account_key", input.accountKey)
-      .eq("mechanism_version", MAYEL_VISUAL_SAFE_REBASE_RUNTIME_V1)
-      .eq("status", "RESOLVED").limit(100),
-  ])
-  if (tasks.error || completed.error) {
+  const tasks = await input.supabase.from("ebay_mayel_visual_tasks_v1")
+    .select("id,visual_manifest_digest")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("status", "OWNER_PREVIEW_READY")
+    .order("updated_at", { ascending: true }).limit(MAX_TASKS_PER_RUN)
+  if (tasks.error) {
     throw new Error("MAYEL_VISUAL_REBASE_TASK_DISCOVERY_FAILED")
   }
-  const completedTaskIds = new Set((completed.data ?? []).map((row) => {
-    const evidence = row.evidence && typeof row.evidence === "object"
-      ? row.evidence as Record<string, unknown> : {}
-    return String(evidence.taskId ?? "")
-  }).filter(Boolean))
-  const eligibleTasks = (tasks.data ?? []).filter((task) =>
-    !completedTaskIds.has(String(task.id)))
+  // A task can produce many ordered manifests over its lifetime. Completion
+  // of an older rebase must never suppress discovery for a newer manifest.
+  // The durable ledger's exact (old digest + current official digest)
+  // fingerprint is the idempotency authority, not task identity alone.
+  const eligibleTasks = tasks.data ?? []
   const workerId = `mayel-safe-rebase:${randomUUID()}`
   const receipts: Record<string, unknown>[] = []
   let claimedCount = 0

@@ -112,6 +112,15 @@ type ExactPictureSetInput = {
   preparedMayelEpsUrl: string
 }
 
+type DelegatedPictureSetInput = {
+  currentOfficialImageUrls: readonly string[]
+  proposedSourceImageUrls: readonly string[]
+  preparedAssets: readonly Readonly<{
+    sourceUrl: string
+    epsImageUrl: string
+  }>[]
+}
+
 type MediaPreparationResult = Readonly<{
   imageId: string
   epsImageUrl: string
@@ -435,6 +444,59 @@ export function buildExactMayelTradingPictureSetV1(
       .officialImageSetDigest,
     mainImageUnchanged: true as const,
     mayelAssetPresent: true as const,
+    pictureSource: "EPS" as const,
+  })
+}
+
+/**
+ * Resolves a Mayel-controlled ordered gallery into the exact all-EPS set that
+ * Trading accepts. Unlike the historical 1 -> 2 canary contract, this shared
+ * delegated contract supports the complete ordered manifest and a delegated
+ * hero change while retaining the same fail-closed image-only boundary.
+ */
+export function buildDelegatedMayelTradingPictureSetV1(
+  input: DelegatedPictureSetInput,
+) {
+  const current = input.currentOfficialImageUrls.map(
+    normalizeOfficialTradingPictureUrlV1)
+  const proposed = input.proposedSourceImageUrls.map(
+    normalizeOfficialTradingPictureUrlV1)
+  if (current.some((url) => url === null) || current.length < 1
+    || proposed.some((url) => url === null)
+    || proposed.length < 1 || proposed.length > 24) {
+    throw new Error("MAYEL_TRADING_VISUAL_DELEGATED_SET_INVALID")
+  }
+  const prepared = new Map<string, string>()
+  for (const value of input.preparedAssets) {
+    const source = normalizeOfficialTradingPictureUrlV1(value.sourceUrl)
+    const eps = normalizeOfficialTradingPictureUrlV1(value.epsImageUrl)
+    if (!source || !eps
+      || classifyMayelTradingImageHostV1(source) === "EBAY_EPS"
+      || classifyMayelTradingImageHostV1(source) === "OTHER"
+      || classifyMayelTradingImageHostV1(eps) !== "EBAY_EPS"
+      || prepared.has(source)) {
+      throw new Error("MAYEL_TRADING_VISUAL_DELEGATED_SET_INVALID")
+    }
+    prepared.set(source, eps)
+  }
+  const exact = (proposed as string[]).map((url) =>
+    classifyMayelTradingImageHostV1(url) === "EBAY_EPS"
+      ? url : prepared.get(url) ?? "")
+  if (exact.some((url) => classifyMayelTradingImageHostV1(url) !== "EBAY_EPS")
+    || new Set(exact).size !== exact.length
+    || prepared.size < 1
+    || [...prepared.keys()].some((source) => !(proposed as string[])
+      .includes(source))) {
+    throw new Error("MAYEL_TRADING_VISUAL_DELEGATED_SET_INVALID")
+  }
+  const currentUrls = current as string[]
+  return Object.freeze({
+    pictureUrls: Object.freeze(exact),
+    imageSetDigest: buildOfficialTradingPictureReadbackV1(exact)
+      .officialImageSetDigest,
+    mainImageChanged: exact[0] !== currentUrls[0],
+    heroPositionMatchExpected: true as const,
+    preparedAssetCount: prepared.size,
     pictureSource: "EPS" as const,
   })
 }

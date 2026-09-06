@@ -25,6 +25,7 @@ import {
 } from "./ebay-mayel-visual-phase-b-v1"
 import {
   buildExactMayelTradingPictureSetV1,
+  buildDelegatedMayelTradingPictureSetV1,
   buildMayelTradingVisualDryRunV1,
   buildMayelTradingVisualIdempotencyBindingV1,
   classifyMayelTradingImageHostV1,
@@ -38,7 +39,7 @@ import {
 export const MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION =
   "EJECUTAR MAYEL TRADING VISUAL LIVE CANARY V1" as const
 const MAYEL_TRADING_MEDIA_LEDGER_MECHANISM =
-  "MAYEL_TRADING_VISUAL_EXECUTOR_V1" as const
+  "MAYEL_TRADING_VISUAL_EXECUTOR_V2" as const
 const MAYEL_TRADING_MEDIA_LEDGER_INVARIANT =
   "MAYEL_APPROVED_ASSET_HAS_DURABLE_EPS_REPRESENTATION" as const
 
@@ -243,7 +244,8 @@ async function loadContext(input: {
   const [{ data: active, error: activeError },
     { data: assets, error: assetsError },
     { data: execution, error: executionError },
-    { data: anyExecution, error: anyExecutionError }] = await Promise.all([
+    { data: anyExecution, error: anyExecutionError },
+    { data: priorExecutions, error: priorExecutionsError }] = await Promise.all([
     input.supabase.from("ebay_active_listings")
       .select("id,ebay_item_id,ebay_sku,title,listing_status,raw_payload")
       .eq("id", task.active_listing_id).eq("ebay_item_id", task.ebay_item_id)
@@ -257,12 +259,18 @@ async function loadContext(input: {
       .eq("visual_manifest_digest", task.visual_manifest_digest)
       .order("created_at", { ascending: false }).limit(1).maybeSingle(),
     input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
-      .select("id,visual_manifest_digest,phase,marketplace_write_count")
+      .select("id,visual_manifest_digest,phase,final_state,ebay_response_class,marketplace_write_count,canonical_asset_ids,media_eps_url,proposed_final_ordered_image_urls")
       .eq("visual_task_id", task.id)
       .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
+      .select("phase,canonical_asset_ids,media_eps_url,media_assets")
+      .eq("visual_task_id", task.id)
+      .eq("phase", "APPLIED_AND_OFFICIALLY_VERIFIED")
+      .order("created_at", { ascending: false }).limit(24),
   ])
   if (activeError || !active || active.listing_status !== "active"
-    || assetsError || executionError || anyExecutionError) {
+    || assetsError || executionError || anyExecutionError
+    || priorExecutionsError) {
     throw new Error("MAYEL_VISUAL_PHASE_B_DURABLE_CONTEXT_INVALID")
   }
   const sku = text(active.ebay_sku, 50)
@@ -337,6 +345,21 @@ async function loadContext(input: {
     taskSourceImageSetDigest: task.source_image_set_digest,
     currentOfficialImageUrls,
     approvedAssets: assets ?? [],
+    appliedMayelOfficialImages: (priorExecutions ?? []).flatMap((row) => {
+      const mediaAssets = Array.isArray(row.media_assets)
+        ? row.media_assets.map(record) : []
+      const explicit = mediaAssets.flatMap((media) => {
+        const assetId = uuid(media.assetId)
+        const officialUrl = text(media.epsImageUrl, 1_000)
+        return assetId && officialUrl ? [{ assetId, officialUrl }] : []
+      })
+      if (explicit.length) return explicit
+      const assetIds = Array.isArray(row.canonical_asset_ids)
+        ? row.canonical_asset_ids.map(uuid).filter(Boolean) : []
+      const officialUrl = text(row.media_eps_url, 1_000)
+      return assetIds.length === 1 && officialUrl
+        ? [{ assetId: String(assetIds[0]), officialUrl }] : []
+    }),
     canonicalPublicAssetUrlAllowed: canonicalAssetUrlAllowed,
   })
   const managementReady = management.managementModel === "INVENTORY_API_MANAGED"
@@ -379,6 +402,29 @@ async function loadContext(input: {
   }
 }
 
+const SETTLED_MAYEL_VISUAL_EXECUTION_PHASES = new Set([
+  "APPLIED_AND_OFFICIALLY_VERIFIED",
+  "AUTHORIZATION_INVALIDATED",
+  "PREFLIGHT_FAILED",
+  "WRITE_FAILED",
+  "READBACK_MISMATCH",
+])
+
+function priorExecutionBlocksCurrentManifest(context: {
+  task: JsonRecord
+  anyExecution: JsonRecord | null
+}) {
+  const execution = context.anyExecution
+  if (!execution) return false
+  if (text(execution.visual_manifest_digest, 100) ===
+      text(context.task.visual_manifest_digest, 100)) return true
+  // A proven terminal execution belongs to an older immutable manifest and
+  // must not freeze later Mayel work. Unknown/ambiguous readback remains
+  // fail-closed because a listing write may still have taken effect.
+  return !SETTLED_MAYEL_VISUAL_EXECUTION_PHASES.has(
+    text(execution.phase, 80))
+}
+
 function publicExecution(value: JsonRecord | null) {
   if (!value) return null
   return {
@@ -405,7 +451,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
   const safeRebaseAvailable = context.plan.blocker ===
     "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
     && context.rebase.safe
-    && !context.anyExecution
+    && !priorExecutionBlocksCurrentManifest(context)
   const visualOnlyDiff = context.plan.ready
     && context.plan.fieldsToChange.length === 1
     && context.plan.fieldsToChange[0] === "IMAGES_ONLY"
@@ -522,7 +568,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     safeRebaseAvailable,
     rebaseEligible: context.plan.blocker ===
       "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
-      && !context.anyExecution,
+      && !priorExecutionBlocksCurrentManifest(context),
     imageSetChangeClassification: context.rebase.safe
       ? "SAFE_REBASE" : "MATERIAL_CONFLICT",
     currentOfficialImageCount: context.currentOfficialImageUrls.length,
@@ -605,7 +651,7 @@ export async function rebaseMayelVisualPhaseBPreviewV1(input: {
     throw new Error("MAYEL_VISUAL_REBASE_REQUEST_INVALID")
   }
   const context = await loadContext({ ...input, fetchImpl: input.fetchImpl ?? fetch })
-  if (context.anyExecution) {
+  if (priorExecutionBlocksCurrentManifest(context)) {
     throw new Error("MAYEL_VISUAL_REBASE_OWNER_AUTHORIZATION_EXISTS")
   }
   if (context.task.visual_manifest_digest !== input.expectedVisualManifestDigest) {
@@ -720,10 +766,7 @@ async function resolveMayelAssetToDurableEpsV1(input: {
 }) {
   const evidenceFingerprint = digestCanonical({
     account: input.accountKey,
-    taskId: input.taskId,
     itemId: input.itemId,
-    manifestId: input.manifestId,
-    manifestDigest: input.manifestDigest,
     assetId: input.assetId,
     assetSha256: input.assetSha256,
     route: MAYEL_TRADING_MEDIA_PREPARATION_ROUTE,
@@ -1357,4 +1400,297 @@ export async function applyMayelVisualManifestToEbayV1(input: {
   }
   return { ...publicExecution(execution), repeatedRequest: false,
     duplicateMarketplaceWriteCount: 0 }
+}
+
+/**
+ * Normal Seller OS execution path for a Trading-managed ordered Mayel
+ * manifest under the reusable visual delegation. This is intentionally not
+ * exposed as an owner or operator action: the runtime discovers and invokes
+ * it after a fresh official read and an atomic durable claim.
+ */
+export async function executeMayelTradingVisualDelegatedManifestV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  taskId: string
+  fetchImpl?: FetchLike
+}) {
+  if (!uuid(input.taskId)) {
+    throw new Error("MAYEL_TRADING_VISUAL_RUNTIME_TASK_INVALID")
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const context = await loadContext({ ...input, fetchImpl })
+  if (context.execution) return Object.freeze({
+    status: "ALREADY_EXECUTED" as const,
+    execution: publicExecution(context.execution),
+    mediaApiWriteCount: 0,
+    tradingListingWriteCount: 0,
+  })
+  if (priorExecutionBlocksCurrentManifest(context)) {
+    throw new Error("MAYEL_TRADING_VISUAL_PRIOR_EXECUTION_UNSETTLED")
+  }
+  if (context.management.managementModel !== "TRADING_MANAGED"
+    || context.correctEbayApi !== "TRADING_API"
+    || context.officialReadStatus !== "PASS"
+    || context.official?.sourceAuthority ===
+      "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1"
+    || !context.accountIdentityProven || !context.listingIdentityProven
+    || !context.currentImageSetProven || !context.plan.ready
+    || context.plan.fieldsToChange.length !== 1
+    || context.plan.fieldsToChange[0] !== "IMAGES_ONLY"
+    || !context.official?.protectedFields
+    || !uuid(context.task.visual_manifest_id)
+    || !/^sha256:[0-9a-f]{64}$/.test(
+      String(context.plan.visualManifestDigest ?? ""))) {
+    throw new Error(context.plan.blocker
+      ?? "MAYEL_TRADING_VISUAL_RUNTIME_PREFLIGHT_FAILED")
+  }
+  const delegation = await input.supabase.from(
+    "ebay_mayel_visual_delegation_authorities_v1").select("*")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace_id", "EBAY_US").eq("status", "ACTIVE")
+    .is("revoked_at", null).maybeSingle()
+  if (delegation.error || !delegation.data
+    || delegation.data.main_image_authority !== true
+    || delegation.data.owner_per_image_approval !== false
+    || delegation.data.owner_per_listing_visual_approval !== false) {
+    throw new Error("MAYEL_TRADING_VISUAL_DELEGATION_UNAVAILABLE")
+  }
+  const selectedAssets = context.plan.proposedFinalOrderedImageUrls.flatMap(
+    (url) => {
+      const asset = context.assets.find((candidate) =>
+        text(candidate.public_url, 1_000) === url)
+      return asset && uuid(asset.id) && text(asset.output_sha256, 80)
+        && canonicalAssetUrlAllowed(url)
+        ? [{ id: uuid(asset.id), sha256: text(asset.output_sha256, 80), url }]
+        : []
+    })
+  const selectedAssetUrls = new Set(selectedAssets.map((asset) => asset.url))
+  const unresolvedSources = context.plan.proposedFinalOrderedImageUrls.filter(
+    (url) => classifyMayelTradingImageHostV1(url) !== "EBAY_EPS"
+      && !selectedAssetUrls.has(url))
+  if (!selectedAssets.length || unresolvedSources.length
+    || new Set(selectedAssets.map((asset) => asset.id)).size !==
+      selectedAssets.length) {
+    throw new Error("MAYEL_TRADING_VISUAL_ASSET_UNPROVEN")
+  }
+
+  const manifestId = uuid(context.task.visual_manifest_id)
+  const manifestDigest = String(context.plan.visualManifestDigest)
+  const beforeImageDigest = context.plan.currentOfficialImageSetDigest
+  const mediaAssets = [] as Array<Awaited<ReturnType<
+    typeof resolveMayelAssetToDurableEpsV1>> & {
+      assetId: string
+      assetSha256: string
+      sourceUrl: string
+    }>
+  for (const asset of selectedAssets) {
+    const media = await resolveMayelAssetToDurableEpsV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      taskId: input.taskId, itemId: String(context.task.ebay_item_id),
+      manifestId, manifestDigest, assetId: asset.id,
+      assetSha256: asset.sha256, assetUrl: asset.url, fetchImpl,
+    })
+    mediaAssets.push({ ...media, assetId: asset.id,
+      assetSha256: asset.sha256, sourceUrl: asset.url })
+  }
+  const exactSet = buildDelegatedMayelTradingPictureSetV1({
+    currentOfficialImageUrls: context.currentOfficialImageUrls,
+    proposedSourceImageUrls: context.plan.proposedFinalOrderedImageUrls,
+    preparedAssets: mediaAssets.map((media) => ({
+      sourceUrl: media.sourceUrl, epsImageUrl: media.epsImageUrl,
+    })),
+  })
+  const idempotencyBindingDigest =
+    buildMayelTradingVisualIdempotencyBindingV1({
+      accountKey: input.accountKey,
+      itemId: String(context.task.ebay_item_id), manifestId, manifestDigest,
+      beforeImageDigest, proposedImageDigest: exactSet.imageSetDigest,
+    })
+  const executionId = randomUUID()
+  const firstMedia = mediaAssets[0]
+  const mediaWriteCount = mediaAssets.reduce((sum, media) =>
+    sum + media.mediaApiWriteCount, 0)
+  const aggregateMediaReceiptDigest = digestCanonical(mediaAssets.map(
+    (media) => ({ assetId: media.assetId, assetSha256: media.assetSha256,
+      imageId: media.imageId, epsImageUrl: media.epsImageUrl,
+      mediaReceiptDigest: media.mediaReceiptDigest })))
+  const managementEvidenceDigest = context.management.inventoryEvidenceDigest
+    ?? digestCanonical({ model: context.management.managementModel,
+      authority: context.management.managementEvidenceSource,
+      itemId: context.task.ebay_item_id, sku: context.sku })
+  const executionInsert = await input.supabase.from(
+    "ebay_mayel_visual_phase_b_executions_v1").insert({
+      id: executionId,
+      owner_approval_id: delegation.data.id,
+      delegation_authority_id: delegation.data.id,
+      visual_task_id: context.task.id,
+      visual_manifest_id: context.task.visual_manifest_id,
+      active_listing_id: context.task.active_listing_id,
+      listing_package_id: context.task.listing_package_id,
+      owner_user_id: delegation.data.owner_user_id,
+      marketplace_account_key: input.accountKey,
+      marketplace_id: "EBAY_US",
+      ebay_item_id: context.task.ebay_item_id,
+      ebay_sku: context.sku,
+      visual_manifest_digest: manifestDigest,
+      owner_authorization_digest: delegation.data.authority_digest,
+      authorized_current_image_set_digest: beforeImageDigest,
+      proposed_final_ordered_image_urls: exactSet.pictureUrls,
+      main_image_url: exactSet.pictureUrls[0],
+      canonical_asset_ids: selectedAssets.map((asset) => asset.id),
+      canonical_asset_sha256s: selectedAssets.map((asset) => asset.sha256),
+      management_model: "TRADING_MANAGED",
+      management_evidence_digest: managementEvidenceDigest,
+      executor: MAYEL_TRADING_VISUAL_EXECUTOR_V1,
+      phase: "PREFLIGHT", final_state: null,
+      marketplace_write_count: 0,
+      owner_approved_at: delegation.data.owner_confirmed_at,
+      before_image_digest: beforeImageDigest,
+      proposed_image_digest: exactSet.imageSetDigest,
+      idempotency_binding_digest: idempotencyBindingDigest,
+      media_preparation_route: MAYEL_TRADING_MEDIA_PREPARATION_ROUTE,
+      media_image_id: firstMedia.imageId,
+      media_eps_url: firstMedia.epsImageUrl,
+      media_receipt_digest: aggregateMediaReceiptDigest,
+      media_preparation_write_count: mediaWriteCount,
+      media_assets: mediaAssets.map((media) => ({
+        assetId: media.assetId, assetSha256: media.assetSha256,
+        imageId: media.imageId, epsImageUrl: media.epsImageUrl,
+        expirationDate: media.expirationDate,
+        mediaReceiptDigest: media.mediaReceiptDigest,
+        reused: media.reused,
+      })),
+    }).select("*").single()
+  if (executionInsert.error || !executionInsert.data) {
+    if (executionInsert.error?.code === "23505") {
+      return Object.freeze({ status: "ALREADY_CLAIMED" as const,
+        execution: null, mediaApiWriteCount: mediaWriteCount,
+        tradingListingWriteCount: 0 })
+    }
+    throw new Error("MAYEL_TRADING_VISUAL_RUNTIME_EXECUTION_PERSIST_FAILED")
+  }
+  const claimToken = randomUUID()
+  const preflightSnapshot = {
+    currentImageDigest: beforeImageDigest,
+    manifestBaselineDigest: context.plan.currentOfficialImageSetDigest,
+    proposedImageDigest: exactSet.imageSetDigest,
+    visualOnlyDiff: true, unauthorizedFieldDiffCount: 0,
+    listingActive: true, protectedFields: context.official.protectedFields,
+    selectedAssetCount: selectedAssets.length,
+    mainImageChange: exactSet.mainImageChanged,
+  }
+  const claim = await input.supabase.rpc(
+    "claim_ebay_mayel_trading_visual_write_v1", {
+      p_execution_id: executionId,
+      p_idempotency_binding_digest: idempotencyBindingDigest,
+      p_claim_token: claimToken,
+      p_preflight_snapshot: preflightSnapshot,
+    })
+  const claimed = Array.isArray(claim.data) ? claim.data[0] : null
+  if (claim.error || !claimed) {
+    throw new Error("MAYEL_TRADING_VISUAL_DURABLE_CLAIM_FAILED")
+  }
+
+  let tradingToken = ""
+  let write: Awaited<ReturnType<typeof reviseMayelTradingPicturesOnceV1>>
+    | null = null
+  try {
+    tradingToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
+    write = await reviseMayelTradingPicturesOnceV1({
+      accessToken: tradingToken,
+      itemId: String(context.task.ebay_item_id),
+      pictureUrls: exactSet.pictureUrls,
+      durableReviseAttemptCount: 0, idempotencyBindingDigest,
+      durableSingleWriteClaim: { claimed: true, claimToken,
+        idempotencyBindingDigest, reviseCallOrdinal: 1 }, fetchImpl,
+    })
+    if (write.status === "REJECTED") {
+      const failed = await updateExecution({ supabase: input.supabase,
+        executionId, phases: ["EXECUTING"], patch: {
+          phase: "WRITE_FAILED", final_state: "WRITE_FAILED",
+          ebay_response_class: "EBAY_WRITE_REJECTED",
+          last_error_code: write.ebayErrorId
+            ? `EBAY_TRADING_VISUAL_WRITE_REJECTED_${write.ebayErrorId}`
+            : "EBAY_TRADING_VISUAL_WRITE_REJECTED",
+          claim_token: null, lease_expires_at: null,
+        } })
+      return Object.freeze({ status: "WRITE_FAILED" as const,
+        execution: publicExecution(failed), mediaApiWriteCount: mediaWriteCount,
+        tradingListingWriteCount: 1 })
+    }
+    await updateExecution({ supabase: input.supabase, executionId,
+      phases: ["EXECUTING"], patch: {
+        phase: "OFFICIAL_READBACK_PENDING",
+        ebay_response_class: write.status === "ACCEPTED"
+          ? "EBAY_WRITE_ACCEPTED" : "EBAY_WRITE_OUTCOME_UNKNOWN",
+        write_accepted_at: write.status === "ACCEPTED"
+          ? new Date().toISOString() : null,
+      } })
+    const after = await readOfficialActiveListingImageSnapshotV1({
+      accessToken: tradingToken, itemId: String(context.task.ebay_item_id),
+      expectedSku: context.sku, accountKey: input.accountKey, fetchImpl,
+      durableAccountIdentityProven: true,
+    })
+    const differences = protectedFieldDifferences(
+      context.official.protectedFields as JsonRecord,
+      after.protectedFields as JsonRecord)
+    const exactImages = JSON.stringify(after.pictureUrls) ===
+      JSON.stringify(exactSet.pictureUrls)
+    const heroPositionMatch = after.pictureUrls[0] === exactSet.pictureUrls[0]
+    const approvedAssetsPresent = mediaAssets.every((media) =>
+      after.pictureUrls.includes(media.epsImageUrl))
+    const verified = after.listingStatus.toLowerCase() === "active"
+      && exactImages && heroPositionMatch && approvedAssetsPresent
+      && differences.length === 0
+    const terminal = await updateExecution({ supabase: input.supabase,
+      executionId, phases: ["OFFICIAL_READBACK_PENDING"], patch: {
+        phase: verified ? "APPLIED_AND_OFFICIALLY_VERIFIED"
+          : "READBACK_MISMATCH",
+        final_state: verified ? "APPLIED_AND_OFFICIALLY_VERIFIED"
+          : "READBACK_MISMATCH",
+        ebay_response_class: verified && write.status === "AMBIGUOUS"
+          ? "EBAY_WRITE_CONFIRMED_BY_OFFICIAL_READBACK"
+          : write.status === "ACCEPTED" ? "EBAY_WRITE_ACCEPTED"
+            : "EBAY_WRITE_OUTCOME_UNKNOWN",
+        postwrite_snapshot: {
+          listingActive: after.listingStatus.toLowerCase() === "active",
+          officialOrderedImageSetMatch: exactImages,
+          nonAuthorizedFieldsUnchanged: differences.length === 0,
+          heroPositionMatch, mainImageUnchanged:
+            after.pictureUrls[0] === context.currentOfficialImageUrls[0],
+          approvedAssetsPresent, mayelAssetPresent: approvedAssetsPresent,
+          afterImageCount: after.pictureUrls.length,
+          afterImageDigest:
+            after.tradingPictureReadback?.officialImageSetDigest ?? null,
+          unauthorizedFieldDiffCount: differences.length,
+          unauthorizedFieldDiffs: differences,
+          protectedFields: after.protectedFields,
+        },
+        postwrite_readback_at: new Date().toISOString(),
+        applied_verified_at: verified ? new Date().toISOString() : null,
+        last_error_code: verified ? null
+          : "MAYEL_TRADING_VISUAL_OFFICIAL_READBACK_MISMATCH",
+        claim_token: null, lease_expires_at: null,
+      } })
+    return Object.freeze({ status: verified
+      ? "APPLIED_AND_OFFICIALLY_VERIFIED" as const
+      : "READBACK_MISMATCH" as const,
+    execution: publicExecution(terminal), mediaApiWriteCount: mediaWriteCount,
+    tradingListingWriteCount: 1 })
+  } catch (error) {
+    const errorCode = error instanceof Error
+      ? text(error.message, 160) : "MAYEL_TRADING_VISUAL_READBACK_FAILED"
+    await updateExecution({ supabase: input.supabase, executionId,
+      phases: ["EXECUTING", "OFFICIAL_READBACK_PENDING"], patch: {
+        phase: "READBACK_FAILED", final_state: "READBACK_FAILED",
+        ebay_response_class: write?.status === "ACCEPTED"
+          ? "EBAY_WRITE_ACCEPTED" : "EBAY_WRITE_OUTCOME_UNKNOWN",
+        last_error_code: errorCode,
+        postwrite_readback_at: new Date().toISOString(),
+        claim_token: null, lease_expires_at: null,
+      } }).catch(() => null)
+    throw error
+  } finally {
+    tradingToken = ""
+  }
 }

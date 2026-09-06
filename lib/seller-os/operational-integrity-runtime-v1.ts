@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { runMayelVisualSafeRebaseRecoveryV1 } from
   "../ebay/ebay-mayel-visual-safe-rebase-runtime-v1"
+import { runMayelVisualDelegatedRuntimeV1 } from
+  "../ebay/ebay-mayel-visual-delegated-runtime-v1"
 import { runMayelContinuousLivePortfolioOptimizationV1 } from
   "../ebay/ebay-mayel-continuous-live-portfolio-v1"
 import { runSellerOsEconomicEvidenceRefreshV1 } from
@@ -46,6 +48,26 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
   const mayelVisualSafeRebase = await runMayelVisualSafeRebaseRecoveryV1({
     supabase: input.supabase, accountKey: input.accountKey,
   })
+  let mayelVisualDelegatedExecution: Awaited<ReturnType<
+    typeof runMayelVisualDelegatedRuntimeV1>> | Readonly<{
+      status: "DEGRADED"
+      failureClass: string
+      listingWriteCount: 0
+      mediaWriteCount: 0
+    }>
+  try {
+    mayelVisualDelegatedExecution = await runMayelVisualDelegatedRuntimeV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+    })
+  } catch (error) {
+    const code = error instanceof Error ? error.message : ""
+    mayelVisualDelegatedExecution = Object.freeze({
+      status: "DEGRADED" as const,
+      failureClass: /^[A-Z][A-Z0-9_:+.-]{2,319}$/.test(code)
+        ? code : "MAYEL_VISUAL_DELEGATED_RUNTIME_FAILED",
+      listingWriteCount: 0 as const, mediaWriteCount: 0 as const,
+    })
+  }
   const mayelContinuousPortfolio =
     await runMayelContinuousLivePortfolioOptimizationV1({
       supabase: input.supabase, accountKey: input.accountKey, now: input.now,
@@ -82,16 +104,22 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
     durableReceipt: receipt,
     recovery,
     mayelVisualSafeRebase,
+    mayelVisualDelegatedExecution,
     mayelContinuousPortfolio,
     economicEvidenceRefresh,
     safety: Object.freeze({
-      marketplaceWrites: 0 as const,
+      marketplaceWrites:
+        mayelVisualDelegatedExecution.listingWriteCount,
       productDecisions: 0 as const,
       categorySelections: 0 as const,
       publisherDispatches: 0 as const,
       genericRecoveryOnly: true as const,
       businessFactWrites: 0 as const,
       mayelManifestRebaseCount: mayelVisualSafeRebase.rebasedCount,
+      mayelVisualListingWriteCount:
+        mayelVisualDelegatedExecution.listingWriteCount,
+      mayelVisualMediaWriteCount:
+        mayelVisualDelegatedExecution.mediaWriteCount,
       mayelContinuousPortfolioMarketplaceWrites:
         mayelContinuousPortfolio.marketplaceWrites,
       economicEvidenceRefreshMarketplaceWrites: 0 as const,
