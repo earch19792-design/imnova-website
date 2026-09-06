@@ -42,6 +42,12 @@ function fingerprint(value: unknown) {
     .digest("hex")}`
 }
 
+function safeFailureClass(error: unknown) {
+  const value = error instanceof Error ? error.message : ""
+  return /^[A-Z][A-Z0-9_]{2,159}$/.test(value)
+    ? value : "MAYEL_COMMERCIAL_FEED_READ_FAILED"
+}
+
 async function marketNeed(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -118,30 +124,37 @@ export async function runMayelContinuousLivePortfolioOptimizationV1(input: {
         planId: null, created: false })
       continue
     }
-    const status = await readMayelLiveMarketRevalidationStatusV1({
-      supabase: input.supabase, accountKey: input.accountKey, itemId,
-    })
-    if (status.state !== "READY_TO_REQUEST") {
-      research.push({ itemId, state: status.state, planId: status.planId,
-        created: false })
-      continue
+    try {
+      const status = await readMayelLiveMarketRevalidationStatusV1({
+        supabase: input.supabase, accountKey: input.accountKey, itemId,
+      })
+      if (status.state !== "READY_TO_REQUEST") {
+        research.push({ itemId, state: status.state, planId: status.planId,
+          created: false })
+        continue
+      }
+      const need = await marketNeed({ ...input, itemId, now })
+      if (!need.required || newPlans >= MAX_NEW_RESEARCH_PLANS_PER_CYCLE) {
+        research.push({ itemId, state: need.required
+          ? "LISTO_PARA_REVALIDAR" : need.reason,
+        planId: null, created: false })
+        continue
+      }
+      const started = await startMayelLiveMarketRevalidationV1({
+        supabase: input.supabase, accountKey: input.accountKey,
+        actorId: operator.remoteUserId, itemId,
+        idempotencyKey: stableKey({ itemId,
+          latestResearchAt: need.latestResearchAt }),
+      })
+      newPlans += 1
+      research.push({ itemId, state: "WAITING_FOR_WORKER",
+        planId: started.plan.id, created: true })
+    } catch (error) {
+      research.push({ itemId, state: "COMMERCIAL_FEED_DEGRADED",
+        planId: null, created: false,
+        failureClass: safeFailureClass(error),
+        visualWorkBlocked: false })
     }
-    const need = await marketNeed({ ...input, itemId, now })
-    if (!need.required || newPlans >= MAX_NEW_RESEARCH_PLANS_PER_CYCLE) {
-      research.push({ itemId, state: need.required
-        ? "LISTO_PARA_REVALIDAR" : need.reason,
-      planId: null, created: false })
-      continue
-    }
-    const started = await startMayelLiveMarketRevalidationV1({
-      supabase: input.supabase, accountKey: input.accountKey,
-      actorId: operator.remoteUserId, itemId,
-      idempotencyKey: stableKey({ itemId,
-        latestResearchAt: need.latestResearchAt }),
-    })
-    newPlans += 1
-    research.push({ itemId, state: "WAITING_FOR_WORKER",
-      planId: started.plan.id, created: true })
   }
   const receiptAt = now.toISOString()
   const evidenceFingerprint = fingerprint({ accountKey: input.accountKey,
@@ -179,6 +192,7 @@ export async function runMayelContinuousLivePortfolioOptimizationV1(input: {
   visualQueue, research: Object.freeze(research),
   newResearchPlanCount: newPlans,
   mayelCanWorkWhileEbayUnavailable: true as const,
+  commercialFeedFailureBlocksVisualWork: false as const,
   visualProposalsDurable: true as const,
   marketAnalysisDurable: true as const,
   priceAnalysisDurable: true as const,
