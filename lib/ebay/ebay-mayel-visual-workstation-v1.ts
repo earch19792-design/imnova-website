@@ -7,6 +7,8 @@ export const MAYEL_PRODUCT_EVIDENCE_PACK_VERSION =
 export const MAYEL_CHATGPT_VISUAL_PROMPT_VERSION =
   "MAYEL_CHATGPT_VISUAL_PROMPT_V1"
 export const MAYEL_VISUAL_MANIFEST_VERSION = "MAYEL_VISUAL_MANIFEST_V1"
+export const MAYEL_ORDERED_VISUAL_MANIFEST_VERSION =
+  "MAYEL_ORDERED_VISUAL_MANIFEST_V2"
 
 export const MAYEL_VISUAL_OUTPUT_ROLES = Object.freeze([
   "DETAIL",
@@ -102,9 +104,64 @@ export type MayelSourceImageReferenceV1 = Readonly<{
   url: string | null
   storagePath: string | null
   authority: "AUTHORIZED_LUNA_SOURCE_PACK" |
-    "APPROVED_CANONICAL_LISTING_ASSET"
+    "APPROVED_CANONICAL_LISTING_ASSET" |
+    "OFFICIAL_EBAY_CURRENT_LISTING_IMAGE"
   position: number
 }>
+
+export function buildMayelCurrentLiveVisualEvidencePackV1(input: {
+  ebayItemId: string
+  sku: string | null
+  title: string | null
+  currentImageUrl: string
+  observedAt: string | null
+}) {
+  const itemId = text(input.ebayItemId, 20)
+  const currentImageUrl = text(input.currentImageUrl, 3000)
+  if (!itemId || !/^\d{9,20}$/.test(itemId) || !currentImageUrl ||
+      !/^https:\/\//.test(currentImageUrl)) {
+    throw new Error("MAYEL_VISUAL_CURRENT_LIVE_IDENTITY_INCOMPLETE")
+  }
+  const identityMaterial = { ebayItemId: itemId,
+    sku: text(input.sku, 100), title: text(input.title, 500),
+    currentImageUrl, observedAt: text(input.observedAt, 80),
+    authority: "OFFICIAL_EBAY_CURRENT_LIVE_LISTING" }
+  const digest = mayelVisualDigestV1(identityMaterial)
+  const sourceImageSet = Object.freeze([{ referenceId: `EBAY_ITEM_${itemId}`,
+    sha256: digest.slice(7), url: currentImageUrl, storagePath: null,
+    authority: "OFFICIAL_EBAY_CURRENT_LISTING_IMAGE" as const, position: 0 }])
+  return Object.freeze({
+    contractVersion: MAYEL_PRODUCT_EVIDENCE_PACK_VERSION,
+    ebayItemId: itemId,
+    sku: text(input.sku, 100) ?? "UNPROVEN",
+    lunaProductId: "UNPROVEN",
+    lunaVariantId: "UNPROVEN",
+    productTitle: text(input.title, 500) ?? `Listing ${itemId}`,
+    category: null,
+    productType: Object.freeze([]), brand: Object.freeze([]),
+    color: Object.freeze([]), materialsProven: Object.freeze([]),
+    packageContentsProven: Object.freeze([]),
+    quantityOrPackCount: Object.freeze([]), dimensionsProven: Object.freeze([]),
+    allowedProductBenefits: Object.freeze([]), allowedUseCases: Object.freeze([]),
+    prohibitedOrUnprovenClaims: Object.freeze([
+      "All commercial product facts are UNPROVEN for visual creation; do not infer them.",
+      "Do not add accessories, parts, dimensions, materials, logos, functions, certifications, or benefits that are not visible in the official source image.",
+    ]),
+    sourceImageSet,
+    sourceImageSetDigest: mayelVisualDigestV1(sourceImageSet.map((image) => ({
+      referenceId: image.referenceId, sha256: image.sha256,
+      authority: image.authority, position: image.position }))),
+    productTruthVersion: "OFFICIAL_EBAY_CURRENT_LIVE_VISUAL_IDENTITY_V1",
+    productTruthDigest: digest,
+    semantics: Object.freeze({ unknownIsNotNone: true as const,
+      unprovenIsNotFalse: true as const,
+      missingEvidenceIsNotPermissionToInfer: true as const,
+      generatedImageIsProductTruthAuthority: false as const,
+      creativeWorkAllowed: true as const,
+      factClaimRestrictedWhenUnproven: true as const,
+      sellerOsProtectsFactsNotAesthetics: true as const }),
+  }) satisfies MayelProductEvidencePackV1
+}
 
 export type MayelProductEvidencePackV1 = Readonly<{
   contractVersion: typeof MAYEL_PRODUCT_EVIDENCE_PACK_VERSION
@@ -413,6 +470,94 @@ export function buildMayelVisualManifestV1(input: {
     officialImageCapacity,
     capacityExceeded,
     ownerDecisionRequiredBeforeAuthorization: capacityExceeded,
+    fieldsToChange: ["IMAGES_ONLY"],
+  }
+  return Object.freeze({ ...material,
+    visualManifestDigest: mayelVisualDigestV1(material) })
+}
+
+export type MayelOrderedVisualImageV2 = Readonly<{
+  kind: "CURRENT_OFFICIAL" | "MAYEL_ASSET"
+  publicUrl: string
+  assetId: string | null
+  outputSha256: string | null
+}>
+
+export function buildMayelOrderedVisualManifestV2(input: {
+  visualTaskId: string
+  ebayItemId: string
+  currentImages: readonly string[]
+  assets: readonly MayelApprovedVisualAssetV1[]
+  finalOrder: readonly Readonly<{ kind: "CURRENT_OFFICIAL" | "MAYEL_ASSET"
+    publicUrl?: string | null; assetId?: string | null }>[]
+  productTruthDigest: string
+  sourceImageSetDigest: string
+}) {
+  const currentImages = [...new Set(input.currentImages.filter((url) =>
+    /^https:\/\//.test(url)))]
+  const assetsById = new Map(input.assets.map((asset) =>
+    [asset.assetId, asset]))
+  const allowedCurrent = new Set(currentImages)
+  const finalOrderedImageSet: MayelOrderedVisualImageV2[] = []
+  for (const requested of input.finalOrder) {
+    if (requested.kind === "CURRENT_OFFICIAL") {
+      const publicUrl = requested.publicUrl ?? ""
+      if (!allowedCurrent.has(publicUrl)) {
+        throw new Error("MAYEL_VISUAL_ORDER_CURRENT_IMAGE_INVALID")
+      }
+      finalOrderedImageSet.push(Object.freeze({ kind: requested.kind,
+        publicUrl, assetId: null, outputSha256: null }))
+      continue
+    }
+    const asset = requested.assetId ? assetsById.get(requested.assetId) : null
+    if (!asset) throw new Error("MAYEL_VISUAL_ORDER_ASSET_INVALID")
+    finalOrderedImageSet.push(Object.freeze({ kind: requested.kind,
+      publicUrl: asset.publicUrl, assetId: asset.assetId,
+      outputSha256: asset.outputSha256 }))
+  }
+  if (!finalOrderedImageSet.length || finalOrderedImageSet.length > 24 ||
+      new Set(finalOrderedImageSet.map((entry) => entry.publicUrl)).size !==
+        finalOrderedImageSet.length) {
+    throw new Error("MAYEL_VISUAL_FINAL_ORDER_INVALID")
+  }
+  const selectedHero = finalOrderedImageSet[0]
+  const currentHero = currentImages[0] ?? null
+  const removedOfficialImageUrls = currentImages.filter((url) =>
+    !finalOrderedImageSet.some((entry) => entry.publicUrl === url))
+  const removedAssetIds = input.assets.filter((asset) =>
+    !finalOrderedImageSet.some((entry) => entry.assetId === asset.assetId))
+    .map((asset) => asset.assetId)
+  const proposedOrderedImages = finalOrderedImageSet.map((entry, position) => ({
+    position, role: position === 0 ? "MAYEL_SELECTED_HERO" :
+      entry.kind === "MAYEL_ASSET" ? "MAYEL_SECONDARY" : "CURRENT_SECONDARY",
+    assetId: entry.assetId, outputSha256: entry.outputSha256,
+    publicUrl: entry.publicUrl,
+  }))
+  const material = {
+    contractVersion: MAYEL_ORDERED_VISUAL_MANIFEST_VERSION,
+    visualTaskId: input.visualTaskId, ebayItemId: input.ebayItemId,
+    currentMainImage: currentHero,
+    currentSecondaryImages: currentImages.slice(1),
+    currentOfficialImageSet: currentImages,
+    proposedOrderedImages,
+    finalOrderedImageSet,
+    selectedHeroAssetId: selectedHero.assetId,
+    keepOldHeroAsSecondary: Boolean(currentHero &&
+      selectedHero.publicUrl !== currentHero &&
+      finalOrderedImageSet.some((entry) => entry.publicUrl === currentHero)),
+    removedAssetIds,
+    removedOfficialImageUrls,
+    productTruthDigest: input.productTruthDigest,
+    sourceImageSetDigest: input.sourceImageSetDigest,
+    mainImageChange: Boolean(currentHero && selectedHero.publicUrl !== currentHero),
+    orderControlledByMayel: true,
+    backendSilentReorder: false,
+    mayelMainImageAuthority: true,
+    ownerPerImageApproval: false,
+    ownerPerListingVisualApproval: false,
+    officialImageCapacity: 24,
+    capacityExceeded: false,
+    ownerDecisionRequiredBeforeAuthorization: false,
     fieldsToChange: ["IMAGES_ONLY"],
   }
   return Object.freeze({ ...material,

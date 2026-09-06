@@ -113,6 +113,11 @@ export async function runMayelContinuousLivePortfolioOptimizationV1(input: {
   for (const outcome of visualQueue.outcomes) {
     if (outcome.eligible !== true || typeof outcome.itemId !== "string") continue
     const itemId = outcome.itemId
+    if (outcome.priority !== "HIGH") {
+      research.push({ itemId, state: "VISUAL_ELIGIBLE_MARKET_RESEARCH_NOT_PRIORITIZED",
+        planId: null, created: false })
+      continue
+    }
     const status = await readMayelLiveMarketRevalidationStatusV1({
       supabase: input.supabase, accountKey: input.accountKey, itemId,
     })

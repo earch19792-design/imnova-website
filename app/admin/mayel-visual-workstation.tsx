@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Check, Clipboard, ShieldCheck, Upload, X } from
+import { Check, ChevronLeft, ChevronRight, Clipboard, ShieldCheck, Star,
+  Trash2, Upload, X } from
   "lucide-react"
 
 import { supabase } from "@/lib/supabase"
@@ -556,32 +557,25 @@ function HumanQa({ task, output, busy, onDone }: {
 
 function UploadPanel({ task, busy, onDone }: { task: VisualTask;
   busy: boolean; onDone: () => Promise<void> }) {
-  const [uploads, setUploads] = useState<{ file: File; role: VisualRole }[]>([])
+  const [uploads, setUploads] = useState<File[]>([])
   const [rights, setRights] = useState(false)
   const [message, setMessage] = useState("")
-  const availableSlots = task.promptSlots.filter((slot) =>
-    slot.creativeWorkAllowed === true && !task.outputs.some((output) =>
-      output.mayel_output_role === slot.role && output.status !== "rejected"))
-
-  const selectionValid = uploads.length > 0 &&
-    new Set(uploads.map((entry) => entry.role)).size === uploads.length &&
-    uploads.every((entry) => availableSlots.some((slot) =>
-      slot.role === entry.role))
+  const activeCount = task.outputs.filter((output) =>
+    output.status !== "rejected").length
+  const remaining = Math.max(0, 6 - activeCount)
+  const selectionValid = uploads.length > 0 && uploads.length <= remaining
 
   async function upload() {
     if (!rights || !selectionValid) return
     setMessage("")
     try {
-      for (const entry of uploads) {
-        const form = new FormData()
-        form.set("action", "UPLOAD_OUTPUT")
-        form.set("visualTaskId", task.visualTaskId)
-        form.set("outputRole", entry.role)
-        form.set("rightsConfirmed", "true")
-        form.set("file", entry.file)
-        await visualRequest("/api/admin/ebay/mayel-visual-workstation",
-          { method: "POST", body: form })
-      }
+      const form = new FormData()
+      form.set("action", "UPLOAD_OUTPUT_BATCH")
+      form.set("visualTaskId", task.visualTaskId)
+      form.set("rightsConfirmed", "true")
+      uploads.forEach((file) => form.append("files", file))
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation",
+        { method: "POST", body: form })
       setUploads([])
       setRights(false)
       await onDone()
@@ -591,7 +585,7 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
     }
   }
 
-  if (!availableSlots.length) return null
+  if (remaining < 1) return null
   return <section className="rounded-2xl border border-dashed border-[#1d5961]/45 bg-[#f0f5f3] p-5">
     <div className="flex items-center gap-2"><Upload className="h-5 w-5 text-[#1d5961]" />
       <h4 className="font-semibold">Subir imágenes creadas por Mayel</h4></div>
@@ -605,26 +599,17 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
       <input type="file" multiple accept="image/jpeg,image/png,image/webp"
         onChange={(event) => {
           const chosen = Array.from(event.target.files ?? [])
-            .slice(0, Math.min(6, availableSlots.length))
-          setUploads(chosen.map((file, index) => ({ file,
-            role: availableSlots[index]?.role ?? "DETAIL" })))
+            .slice(0, Math.min(6, remaining))
+          setUploads(chosen)
         }}
         className="mt-2 block min-h-12 w-full rounded-xl border border-[#cfc7ba] bg-white p-2 text-sm" />
     </label>
-    {uploads.length > 0 && <div className="mt-3 space-y-2">{uploads.map((entry, index) =>
-      <div key={`${entry.file.name}-${index}`}
-        className="grid gap-2 rounded-xl bg-white p-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center">
-        <span className="truncate text-xs text-[#555a54]">{entry.file.name}</span>
-        <select value={entry.role} onChange={(event) =>
-          setUploads((current) => current.map((candidate, candidateIndex) =>
-            candidateIndex === index ? { ...candidate,
-              role: event.target.value as VisualRole } : candidate))}
-          className="min-h-11 rounded-xl border border-[#cfc7ba] bg-white px-3 text-sm">
-          {availableSlots.map((slot) => <option key={slot.role}
-            value={slot.role}>{labels[slot.role]}</option>)}
-        </select>
+    {uploads.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{uploads.map((file, index) =>
+      <div key={`${file.name}-${index}`}
+        className="rounded-xl bg-white p-3">
+        <span className="block truncate text-xs font-semibold text-[#555a54]">{index + 1}. {file.name}</span>
+        <span className="mt-1 block text-[11px] text-[#777a73]">Subiendo → cuarentena → revisión automática</span>
       </div>)}</div>}
-    {uploads.length > 1 && !selectionValid && <p className="mt-2 text-xs font-semibold text-[#8b4937]">Asigna un tipo distinto a cada archivo.</p>}
     <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-[#555a54]">
       <input type="checkbox" checked={rights}
         onChange={(event) => setRights(event.target.checked)} className="mt-1" />
@@ -632,7 +617,7 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
     </label>
     <button type="button" disabled={busy || !rights || !selectionValid}
       onClick={() => void upload()}
-      className="mt-4 inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40"><Upload className="h-4 w-4" />Subir a cuarentena</button>
+      className="mt-4 inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40"><Upload className="h-4 w-4" />Subir imágenes</button>
     {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
   </section>
 }
@@ -642,6 +627,130 @@ function evidenceValues(pack: Record<string, unknown>, key: string) {
   return Array.isArray(value)
     ? value.map(String).map((entry) => entry.trim()).filter(Boolean)
     : typeof value === "string" && value.trim() ? [value.trim()] : []
+}
+
+type OrderedGalleryEntry = {
+  key: string
+  kind: "CURRENT_OFFICIAL" | "MAYEL_ASSET"
+  publicUrl: string
+  assetId: string | null
+}
+
+function OrderedGalleryManager({ task, busy, onDone }: { task: VisualTask
+  busy: boolean; onDone: () => Promise<void> }) {
+  const approved = useMemo(() => task.outputs.filter((output) =>
+    output.status === "approved" && output.previewUrl), [task.outputs])
+  const initialOrder = useMemo(() => {
+    const manifestOrder = Array.isArray(task.visualManifest?.proposedOrderedImages)
+      ? task.visualManifest?.proposedOrderedImages as Record<string, unknown>[]
+      : []
+    const fromManifest = manifestOrder.flatMap((entry) => {
+      const publicUrl = typeof entry.publicUrl === "string"
+        ? entry.publicUrl : null
+      if (!publicUrl) return []
+      const assetId = typeof entry.assetId === "string" ? entry.assetId : null
+      return [{ key: assetId ? `asset:${assetId}` : `current:${publicUrl}`,
+        kind: assetId ? "MAYEL_ASSET" as const :
+          "CURRENT_OFFICIAL" as const,
+        publicUrl, assetId }]
+    })
+    if (fromManifest.length) return fromManifest
+    return [
+      ...task.currentImages.map((publicUrl) => ({
+        key: `current:${publicUrl}`, kind: "CURRENT_OFFICIAL" as const,
+        publicUrl, assetId: null })),
+      ...approved.map((output) => ({ key: `asset:${output.id}`,
+        kind: "MAYEL_ASSET" as const, publicUrl: output.previewUrl as string,
+        assetId: output.id })),
+    ]
+  }, [approved, task.currentImages, task.visualManifest])
+  const [order, setOrder] = useState<OrderedGalleryEntry[]>(initialOrder)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [message, setMessage] = useState("")
+  useEffect(() => setOrder(initialOrder), [initialOrder])
+
+  if (!approved.length) return null
+  function move(from: number, to: number) {
+    if (to < 0 || to >= order.length || from === to) return
+    setOrder((current) => {
+      const next = [...current]
+      const [entry] = next.splice(from, 1)
+      next.splice(to, 0, entry)
+      return next
+    })
+  }
+  function useAsMain(index: number, removeOldHero: boolean) {
+    setOrder((current) => {
+      const selected = current[index]
+      if (!selected) return current
+      const oldHero = task.currentImages[0]
+      const rest = current.filter((_, candidate) => candidate !== index)
+        .filter((entry) => !removeOldHero || entry.publicUrl !== oldHero)
+      return [selected, ...rest]
+    })
+  }
+  async function save() {
+    setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "SAVE_ORDERED_GALLERY",
+          visualTaskId: task.visualTaskId,
+          expectedVisualManifestDigest: task.visualManifestDigest,
+          finalOrder: order.map((entry) => entry.kind === "MAYEL_ASSET"
+            ? { kind: entry.kind, assetId: entry.assetId }
+            : { kind: entry.kind, publicUrl: entry.publicUrl }) }),
+      })
+      await onDone()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No pudimos guardar este orden.")
+    }
+  }
+  return <section className="mt-7 rounded-2xl border border-[#cbd9d4] bg-[#f8fbf9] p-5"
+    data-mayel-ordered-six-image-workflow>
+    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#1d5961]">Así quedará en eBay</p>
+    <h4 className="mt-2 font-serif text-xl font-semibold">Ordena la galería</h4>
+    <p className="mt-2 text-sm text-[#64675f]">La posición 1 será la imagen principal. Arrastra en desktop o usa las flechas táctiles en iPad.</p>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{order.map((entry, index) => {
+      const currentHero = entry.publicUrl === task.currentImages[0]
+      return <article key={entry.key} draggable
+        onDragStart={() => setDragIndex(index)}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={() => { if (dragIndex !== null) move(dragIndex, index)
+          setDragIndex(null) }}
+        className="rounded-2xl border border-[#d9e2de] bg-white p-3">
+        <img src={entry.publicUrl} alt={`Imagen ${index + 1} de la galería propuesta`}
+          className="aspect-square w-full rounded-xl bg-[#f4efe7] object-contain" />
+        <p className="mt-3 text-xs font-semibold">{index + 1} · {index === 0
+          ? "PRINCIPAL" : "SECUNDARIA"}</p>
+        {currentHero && <p className="mt-1 text-[11px] text-[#617159]">Principal actual en eBay</p>}
+        {entry.kind === "MAYEL_ASSET" && <p className="mt-1 text-[11px] text-[#617159]">Lista para usar · aprobada por Mayel</p>}
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {index > 0 && <button type="button" disabled={busy}
+            onClick={() => useAsMain(index, false)}
+            className="min-h-11 rounded-xl bg-[#1d5961] px-3 text-xs font-semibold text-white"><Star className="mr-1 inline h-3.5 w-3.5" />Usar como principal</button>}
+          {entry.kind === "MAYEL_ASSET" && index > 0 && task.currentImages[0] &&
+            <button type="button" disabled={busy}
+              onClick={() => useAsMain(index, true)}
+              className="min-h-11 rounded-xl border border-[#1d5961] px-3 text-xs font-semibold text-[#1d5961]">Reemplazar principal</button>}
+          <button type="button" disabled={busy || index === 0}
+            aria-label="Mover a la izquierda" onClick={() => move(index, index - 1)}
+            className="min-h-11 min-w-11 rounded-xl border border-[#cbd9d4] disabled:opacity-35"><ChevronLeft className="mx-auto h-4 w-4" /></button>
+          <button type="button" disabled={busy || index === order.length - 1}
+            aria-label="Mover a la derecha" onClick={() => move(index, index + 1)}
+            className="min-h-11 min-w-11 rounded-xl border border-[#cbd9d4] disabled:opacity-35"><ChevronRight className="mx-auto h-4 w-4" /></button>
+          {order.length > 1 && <button type="button" disabled={busy}
+            onClick={() => setOrder((current) => current.filter((_, candidate) => candidate !== index))}
+            className="min-h-11 rounded-xl border border-[#b75d43] px-3 text-xs font-semibold text-[#8b4937]"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{entry.kind === "MAYEL_ASSET" ? "Eliminar de la propuesta" : "Retirar de la nueva galería"}</button>}
+        </div>
+      </article>})}</div>
+    <button type="button" disabled={busy || !order.length}
+      onClick={() => void save()}
+      className="mt-4 min-h-12 rounded-xl bg-[#26312d] px-5 text-sm font-semibold text-white disabled:opacity-40">Usar este orden</button>
+    <p className="mt-2 text-xs text-[#617159]">Mayel controla el orden final. Seller OS no lo reordena silenciosamente y sólo prepara un cambio visual.</p>
+    {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
+  </section>
 }
 
 function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
@@ -678,14 +787,14 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Vista previa del owner · publicación activa</p>
     <h4 className="mt-2 font-serif text-xl font-semibold">Imágenes actuales y propuesta</h4>
     <p className="mt-2 text-sm text-[#5f645e]">Item {task.ebayItemId} · {task.productTitle}</p>
-    <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. La propuesta histórica conserva la principal actual; la delegación global también permite que Mayel proponga sustituirla.</p>
+    <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. Mayel decide la principal y el orden exacto dentro de la delegación visual activa.</p>
     <p className="mt-2 text-xs text-[#617159]">Control de calidad de Mayel: {task.outputs.filter((output) => output.status === "approved").length} aprobada(s) · {delegationActive ? "cubierta por delegación visual global" : "esperando delegación visual global"}.</p>
     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{proposed.map((entry, index) =>
       <figure key={`${entry.assetId ?? "current"}-${index}`}
         className="rounded-xl border border-[#d6dfd1] bg-white p-2">
         <img src={String(entry.publicUrl ?? "")} alt="Imagen propuesta para revisión del owner"
           className="aspect-square w-full rounded-lg object-contain" />
-        <figcaption className="mt-2 text-[10px] font-semibold text-[#617159]">{index === 0 ? "Principal actual · conservada en esta propuesta" : labels[entry.role as VisualRole] ?? "Secundaria actual"}</figcaption>
+        <figcaption className="mt-2 text-[10px] font-semibold text-[#617159]">{index === 0 ? "Principal propuesta" : `${index + 1} · Secundaria`}</figcaption>
       </figure>)}</div>
     <div className="mt-4 grid gap-2 rounded-xl bg-white p-3 text-xs text-[#5f645e] sm:grid-cols-2">
       <p>Cuenta eBay: {accountIdentityCurrent ? "comprobada" : "por comprobar"}</p>
@@ -705,8 +814,9 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
           ? "Trading API" : "por resolver"}</p>
       <p>Imágenes oficiales actuales: {phaseB?.currentImageSetProven
         ? "comprobadas" : "por comprobar"}</p>
-      <p>Manifest de Mayel: {phaseB?.mayelManifestValid
-        ? "listo" : "requiere reconciliación"}</p>
+      <p>Galería de Mayel: {phaseB?.mayelManifestValid
+        ? "lista" : phaseB?.safeRebaseAvailable
+          ? "reconciliándose automáticamente" : "preparando cambio"}</p>
       <p>Cambio propuesto: {phaseB?.visualOnlyDiff
         && phaseB?.unauthorizedFieldDiffCount === 0
         ? "sólo visual · otros campos protegidos" : "no comprobado"}</p>
@@ -1061,8 +1171,11 @@ const opportunityLabels: Record<string, string> = {
   INSUFFICIENT_EVIDENCE: "Evidencia insuficiente",
 }
 
-function PortfolioOverview({ listings }: {
+function PortfolioOverview({ listings, canOperate, busy, onOpen }: {
   listings: readonly RemoteLiveOperatorListingV1[]
+  canOperate: boolean
+  busy: boolean
+  onOpen: (itemId: string) => Promise<void>
 }) {
   const [filter, setFilter] = useState("TODOS")
   const [search, setSearch] = useState("")
@@ -1077,12 +1190,18 @@ function PortfolioOverview({ listings }: {
   const needsMarket = listings.filter((listing) =>
     listing.optimization.opportunities.includes(
       "MARKET_REVALIDATION_REQUIRED")).length
+  const visualEligible = listings.filter((listing) =>
+    listing.optimization.visualEligibility === "ELIGIBLE").length
+  const visualPriority = listings.filter((listing) =>
+    listing.optimization.visualPriority === "HIGH").length
   return <section className="mt-7 rounded-[28px] border border-[#cbd9d4] bg-[#f8fbf9] p-5 sm:p-7"
     data-all-live-listings-visible-to-mayel={listings.length > 0}>
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#1d5961]">Portfolio LIVE completo</p>
         <h3 className="mt-2 font-serif text-2xl font-semibold">Optimización comercial continua</h3>
-        <p className="mt-2 text-sm text-[#64675f]">{listings.length} listings LIVE visibles · {needsMarket} requieren mercado fresco · {needsEvidence} requieren más autoridad.</p></div>
+        <p className="mt-2 text-sm text-[#64675f]">Todos los listings LIVE ({listings.length}) · {visualEligible} elegibles para enriquecimiento visual.</p>
+        <p className="mt-1 text-sm font-semibold text-[#1d5961]">Prioridad para mejorar ahora ({visualPriority})</p>
+        <p className="mt-1 text-xs text-[#777a73]">Mercado y economía ordenan la prioridad; no bloquean el trabajo visual. {needsMarket} requieren mercado fresco · {needsEvidence} tienen facts restringidos.</p></div>
       <div className="flex flex-wrap gap-2">
         <input value={search} onChange={(event) => setSearch(event.target.value)}
           aria-label="Buscar listing LIVE" placeholder="Buscar listing"
@@ -1103,6 +1222,8 @@ function PortfolioOverview({ listings }: {
           <div><p className="font-semibold text-[#26312d]">{listing.title}</p>
             <p className="mt-1 text-xs text-[#777a73]">{listing.sku ?? "SKU por comprobar"} · eBay {listing.ebayItemId}</p></div>
           <div className="flex flex-wrap gap-1.5"><span className="rounded-full bg-[#26312d] px-2.5 py-1 text-[11px] font-semibold text-white">{listing.optimization.status.replaceAll("_", " ")}</span>
+            <span className="rounded-full bg-[#dceee9] px-2.5 py-1 text-[11px] font-semibold text-[#1d5961]">{listing.optimization.visualEligibility === "ELIGIBLE" ? "Elegible visual" : "Bloqueado visual"}</span>
+            <span className="rounded-full bg-[#f7e9de] px-2.5 py-1 text-[11px] font-semibold text-[#704d3c]">Prioridad {listing.optimization.visualPriority === "HIGH" ? "alta" : listing.optimization.visualPriority === "MEDIUM" ? "media" : "normal"}</span>
             {listing.optimization.opportunities.map((value) => <span key={value}
               className="rounded-full bg-[#e3ebe1] px-2.5 py-1 text-[11px] font-semibold text-[#425143]">{opportunityLabels[value]}</span>)}</div>
         </div>
@@ -1124,6 +1245,10 @@ function PortfolioOverview({ listings }: {
         <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Recomendaciones eBay</strong><br/>{listing.ebayGuidance.length ? "Disponibles para revisión" : "No demostradas"}</p>
         <p className="rounded-xl border border-[#e0e5e2] p-3"><strong>Promoción</strong><br/>{listing.optimization.opportunities.includes("PROMOTION_OPPORTUNITY") ? "Recomendación oficial disponible" : "Sin recomendación oficial demostrada"}</p>
       </div>
+      {canOperate && listing.optimization.visualEligibility === "ELIGIBLE" &&
+        <button type="button" disabled={busy}
+          onClick={() => void onOpen(listing.ebayItemId)}
+          className="mt-4 min-h-11 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">Abrir en Estación visual</button>}
     </details>)}</div>
   </section>
 }
@@ -1140,7 +1265,6 @@ export function MayelVisualWorkstation({ canOperate,
   const [tasks, setTasks] = useState<VisualTask[]>([])
   const [busy, setBusy] = useState(true)
   const [message, setMessage] = useState("")
-  const [canaryAvailable, setCanaryAvailable] = useState<boolean | null>(null)
   const [delegation, setDelegation] = useState<VisualDelegation | null>(null)
   const [priceDelegation, setPriceDelegation] =
     useState<PriceDelegation | null>(null)
@@ -1200,21 +1324,20 @@ export function MayelVisualWorkstation({ canOperate,
     return () => { active = false }
   }, [canOperate, load])
 
-  async function acquireNextDelegatedTask() {
+  async function openVisualListing(ebayItemId: string) {
     if (!canOperate || busy) return
     setBusy(true)
     setMessage("")
     try {
-      const result = await visualRequest(
+      await visualRequest(
         "/api/admin/ebay/mayel-visual-workstation", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "ENSURE_NEXT_TASK" }),
+          body: JSON.stringify({ action: "ENSURE_VISUAL_TASK", ebayItemId }),
         })
-      setCanaryAvailable(result.phaseACanaryAvailable === true)
       await load()
     } catch (error) {
       setMessage(error instanceof Error ? error.message :
-        "No pudimos reclamar el siguiente trabajo delegado.")
+        "No pudimos abrir este listing en la Estación visual.")
     } finally {
       setBusy(false)
     }
@@ -1245,18 +1368,12 @@ export function MayelVisualWorkstation({ canOperate,
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
     <PromotionSpendDelegationPanel delegation={promotionDelegation}
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
-    <PortfolioOverview listings={livePortfolio} />
-    {canOperate && <button type="button"
-      onClick={() => void acquireNextDelegatedTask()} disabled={busy}
-      data-mayel-explicit-work-acquisition
-      className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">
-      Buscar siguiente trabajo delegado
-    </button>}
+    <PortfolioOverview listings={livePortfolio} canOperate={canOperate}
+      busy={busy} onOpen={openVisualListing} />
     {message && <p className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]">{message}</p>}
     {!busy && !tasks.length && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7">
       <h3 className="font-serif text-2xl font-semibold">No hay una oportunidad visual lista</h3>
       <p className="mt-2 text-sm leading-6 text-[#64675f]">Seller OS no fabricará una tarea. Aparecerá aquí cuando una publicación activa tenga identidad, verdad del producto, imágenes autorizadas y una oportunidad visual demostrada.</p>
-      {canaryAvailable === false && <p className="mt-3 text-xs font-semibold text-[#74866d]">Prueba física de Fase A no disponible por ahora.</p>}
     </div>}
     <div className="mt-6 space-y-7">{tasks.map((task) => <article
       key={task.visualTaskId}
@@ -1300,6 +1417,8 @@ export function MayelVisualWorkstation({ canOperate,
           <HumanQa key={output.id} task={task} output={output} busy={busy}
             onDone={refresh} />)}</div>
       </section>}
+      {canOperate && <OrderedGalleryManager task={task} busy={busy}
+        onDone={refresh} />}
       <div className="mt-6"><OwnerPreview task={task}
         canOwnerAuthorize={canOwnerAuthorize} delegation={delegation} /></div>
       <details className="mt-5 rounded-xl border border-[#e0d9ce] p-3 text-xs text-[#6f736c]">

@@ -1,5 +1,7 @@
 import {
+  buildMayelOrderedVisualManifestV2,
   buildMayelVisualManifestV1,
+  MAYEL_ORDERED_VISUAL_MANIFEST_VERSION,
   MAYEL_VISUAL_OUTPUT_ROLES,
   mayelVisualDigestV1,
 } from "./ebay-mayel-visual-workstation-v1"
@@ -49,7 +51,7 @@ export type MayelVisualPhaseBPlanV1 = Readonly<{
   proposedFinalOrderedImageUrls: readonly string[]
   canonicalAssetIds: readonly string[]
   canonicalAssetSha256s: readonly string[]
-  mainImageProtected: true
+  mainImageProtected: boolean
   mainImageChanged: boolean
   fieldsToChange: readonly ["IMAGES_ONLY"]
   capacityExceeded: boolean
@@ -110,7 +112,10 @@ export function buildMayelVisualPhaseBPlanV1(input: {
   })
   const approvedById = new Map(approvedAssets.map((asset) => [asset.id, asset]))
   const manifestAssets = proposedEntries.filter((entry) => entry.assetId !== null)
-  const manifestAssetsValid = manifestAssets.length === approvedAssets.length
+  const orderedContract = manifest.contractVersion ===
+    MAYEL_ORDERED_VISUAL_MANIFEST_VERSION
+  const manifestAssetsValid = (!orderedContract &&
+    manifestAssets.length === approvedAssets.length || orderedContract)
     && manifestAssets.every((entry) => {
       const id = uuid(entry.assetId)
       const asset = id ? approvedById.get(id) : null
@@ -122,12 +127,22 @@ export function buildMayelVisualPhaseBPlanV1(input: {
   const capacityExceeded = proposedUrls.length > 24
   const mainImageChanged = Boolean(currentOfficial[0]
     && proposedUrls[0] !== currentOfficial[0])
-  const sharedContractValid = manifest.contractVersion === "MAYEL_VISUAL_MANIFEST_V1"
+  const v1ContractValid = manifest.contractVersion === "MAYEL_VISUAL_MANIFEST_V1"
     && manifest.visualTaskId === input.visualTaskId
     && manifest.ebayItemId === input.ebayItemId
     && manifest.currentMainImagePreserved === true
     && manifest.separateExplicitOwnerApprovalRequiredForMainImage === true
     && JSON.stringify(manifest.fieldsToChange) === '["IMAGES_ONLY"]'
+  const v2ContractValid = orderedContract
+    && manifest.visualTaskId === input.visualTaskId
+    && manifest.ebayItemId === input.ebayItemId
+    && manifest.orderControlledByMayel === true
+    && manifest.backendSilentReorder === false
+    && manifest.mayelMainImageAuthority === true
+    && manifest.ownerPerImageApproval === false
+    && manifest.ownerPerListingVisualApproval === false
+    && JSON.stringify(manifest.fieldsToChange) === '["IMAGES_ONLY"]'
+  const sharedContractValid = (v1ContractValid || v2ContractValid)
     && /^sha256:[0-9a-f]{64}$/.test(storedDigest)
     && storedDigest === embeddedDigest && storedDigest === recomputedDigest
   let blocker: string | null = null
@@ -138,8 +153,10 @@ export function buildMayelVisualPhaseBPlanV1(input: {
   } else if (!positionsValid || !allProposedValid
     || new Set(proposedUrls).size !== proposedUrls.length
     || !manifestAssetsValid) blocker = "MAYEL_VISUAL_FINAL_IMAGE_SET_INVALID"
-  else if (mainImageChanged) blocker = "MAYEL_VISUAL_MAIN_IMAGE_CHANGE_NOT_AUTHORIZED"
-  else if (currentOfficial.some((url) => !proposedUrls.includes(url))) {
+  else if (!orderedContract && mainImageChanged) {
+    blocker = "MAYEL_VISUAL_MAIN_IMAGE_CHANGE_NOT_AUTHORIZED"
+  } else if (!orderedContract && currentOfficial.some((url) =>
+    !proposedUrls.includes(url))) {
     blocker = "MAYEL_VISUAL_CURRENT_IMAGE_REMOVAL_NOT_AUTHORIZED"
   } else if (capacityExceeded) blocker = "MAYEL_VISUAL_IMAGE_CAPACITY_DECISION_REQUIRED"
   return Object.freeze({
@@ -157,7 +174,7 @@ export function buildMayelVisualPhaseBPlanV1(input: {
     canonicalAssetIds: Object.freeze(approvedAssets.map((asset) => asset.id)),
     canonicalAssetSha256s: Object.freeze(approvedAssets.map((asset) =>
       asset.outputSha256)),
-    mainImageProtected: true,
+    mainImageProtected: !orderedContract,
     mainImageChanged,
     fieldsToChange: Object.freeze(["IMAGES_ONLY"] as const),
     capacityExceeded,
@@ -233,8 +250,8 @@ export function buildMayelVisualPhaseBRebaseV1(input: {
     || currentOfficial.length !== input.currentOfficialImageUrls.length
     || new Set(currentOfficial).size !== currentOfficial.length) {
     blocker = "MAYEL_VISUAL_REBASE_OFFICIAL_IMAGE_SET_INVALID"
-  } else if (approvedAssets.some((asset) =>
-    currentOfficial.includes(asset.publicUrl))) {
+  } else if (manifest.contractVersion !== MAYEL_ORDERED_VISUAL_MANIFEST_VERSION
+    && approvedAssets.some((asset) => currentOfficial.includes(asset.publicUrl))) {
     blocker = "MAYEL_VISUAL_REBASE_ASSET_ALREADY_OFFICIAL"
   }
   if (blocker) return Object.freeze({ safe: false, blocker, manifest: null,
@@ -243,14 +260,51 @@ export function buildMayelVisualPhaseBRebaseV1(input: {
     mayelReworkRequired: blocker ===
       "MAYEL_VISUAL_REBASE_EVIDENCE_BINDING_CONFLICT",
     mainImagePreserved: false })
-  const rebasedManifest = buildMayelVisualManifestV1({
-    visualTaskId: input.visualTaskId,
-    ebayItemId: input.ebayItemId,
-    currentImages: currentOfficial,
-    assets: approvedAssets,
-    productTruthDigest: taskProductTruthDigest,
-    sourceImageSetDigest: taskSourceImageSetDigest,
-  })
+  const rebasedManifest = manifest.contractVersion ===
+    MAYEL_ORDERED_VISUAL_MANIFEST_VERSION
+    ? buildMayelOrderedVisualManifestV2({
+      visualTaskId: input.visualTaskId,
+      ebayItemId: input.ebayItemId,
+      currentImages: currentOfficial,
+      assets: approvedAssets,
+      finalOrder: (() => {
+        const retained: Array<{
+          kind: "MAYEL_ASSET"; assetId: string
+        } | { kind: "CURRENT_OFFICIAL"; publicUrl: string }> = []
+        const previous = Array.isArray(manifest.proposedOrderedImages)
+          ? manifest.proposedOrderedImages.map(record) : []
+        for (const entry of previous) {
+          const assetId = uuid(entry.assetId)
+          if (assetId && approvedAssets.some((asset) =>
+            asset.assetId === assetId)) {
+            retained.push({ kind: "MAYEL_ASSET", assetId })
+            continue
+          }
+          const publicUrl = exactHttpsUrl(entry.publicUrl)
+          if (publicUrl && currentOfficial.includes(publicUrl)) {
+            retained.push({ kind: "CURRENT_OFFICIAL", publicUrl })
+          }
+        }
+        const represented = new Set(retained.map((entry) =>
+          entry.kind === "MAYEL_ASSET"
+            ? approvedAssets.find((asset) => asset.assetId === entry.assetId)
+              ?.publicUrl : entry.publicUrl))
+        const newlyOfficial = currentOfficial.filter((url) =>
+          !represented.has(url)).map((publicUrl) => ({
+            kind: "CURRENT_OFFICIAL" as const, publicUrl }))
+        return [...retained, ...newlyOfficial]
+      })(),
+      productTruthDigest: taskProductTruthDigest,
+      sourceImageSetDigest: taskSourceImageSetDigest,
+    })
+    : buildMayelVisualManifestV1({
+      visualTaskId: input.visualTaskId,
+      ebayItemId: input.ebayItemId,
+      currentImages: currentOfficial,
+      assets: approvedAssets,
+      productTruthDigest: taskProductTruthDigest,
+      sourceImageSetDigest: taskSourceImageSetDigest,
+    })
   const rebasedPlan = buildMayelVisualPhaseBPlanV1({
     visualTaskId: input.visualTaskId,
     ebayItemId: input.ebayItemId,

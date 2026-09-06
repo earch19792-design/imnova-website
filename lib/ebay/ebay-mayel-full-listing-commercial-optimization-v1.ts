@@ -14,6 +14,10 @@ export type MayelListingOptimizationStatusV1 = "MEJORANDO" |
   "REVALIDANDO" | "LISTO_PARA_APLICAR" | "APLICADO" |
   "OBSERVANDO_RESULTADO" | "BLOQUEADO_POR_ECONOMIA" | "POR_COMPROBAR"
 
+export type MayelVisualEligibilityV1 = "ELIGIBLE" | "BLOCKED_IDENTITY" |
+  "BLOCKED_POLICY" | "BLOCKED_RIGHTS" | "BLOCKED_UNSAFE_EXECUTION"
+export type MayelVisualPriorityV1 = "HIGH" | "MEDIUM" | "NORMAL"
+
 type Guidance = Readonly<{ category: string; recommendation: string
   exactListingAssociation: boolean }>
 
@@ -29,6 +33,7 @@ type OptimizationInput = Readonly<{
   ebayGuidance: readonly Guidance[]
   durableVisualProposalPresent: boolean
   durableVisualChangeApplied: boolean
+  highVisualPriority?: boolean
 }>
 
 function guidanceText(input: readonly Guidance[]) {
@@ -143,6 +148,13 @@ export function buildMayelFullListingOptimizationStateV1(
     contractVersion: MAYEL_FULL_LISTING_COMMERCIAL_OPTIMIZATION_VERSION,
     opportunities: Object.freeze(opportunities),
     priorityScore: priorityScore(opportunities), status,
+    visualEligibility: (exactAuthority ? "ELIGIBLE" :
+      "BLOCKED_IDENTITY") as MayelVisualEligibilityV1,
+    visualPriority: (input.highVisualPriority ? "HIGH" :
+      input.visualFindings.length > 0 ? "MEDIUM" :
+        "NORMAL") as MayelVisualPriorityV1,
+    evidenceMissingBlocksGeneralVisualWork: false as const,
+    factClaimRestrictedWhenUnproven: !input.productTruthSupported,
     whatSellerOsFound, mayelChanged, why, expectedImpact,
     economicImpact: Object.freeze({
       status: intelligence.economics.status,

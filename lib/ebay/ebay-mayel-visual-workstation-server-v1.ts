@@ -6,8 +6,9 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
   buildMayelChatGptVisualPromptV1,
+  buildMayelCurrentLiveVisualEvidencePackV1,
+  buildMayelOrderedVisualManifestV2,
   buildMayelProductEvidencePackV1,
-  buildMayelVisualManifestV1,
   deriveMayelVisualPromptSnapshotV1,
   MAYEL_CHATGPT_VISUAL_PROMPT_VERSION,
   MAYEL_PRODUCT_EVIDENCE_PACK_VERSION,
@@ -20,6 +21,10 @@ import {
 } from "./ebay-mayel-visual-workstation-v1"
 import { normalizeMayelVisualQuarantineOutputV1 } from
   "./ebay-image-optimization-service"
+import { loadSellerOsAssistantMonitorV1 } from
+  "./ebay-seller-os-assistant-runtime"
+import { currentLiveListingsForMonitorV1 } from
+  "./ebay-seller-os-live-portfolio-integrity-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -30,6 +35,15 @@ const ACTIVE_EXPERIMENT_STATES = ["READY", "RUNNING", "WAITING_FOR_EVIDENCE",
   "READY_TO_EVALUATE", "PAUSED_FOR_EXTERNAL_SIGNAL"]
 const OPEN_TASK_STATES = ["PROMPT_READY", "OUTPUTS_UPLOADED",
   "MAYEL_REVIEW_PENDING", "OWNER_PREVIEW_READY"]
+
+type AuthoritativeLiveVisualListingV1 = Readonly<{
+  itemId: string
+  title: string | null
+  sku: string | null
+  currentImageUrl: string
+  observedAt: string | null
+  highVisualPriority: boolean
+}>
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -102,6 +116,23 @@ function currentImageUrls(packageDataValue: unknown) {
     ? packageData.imageUrls : []
   return [...new Set(values.map(httpsUrl)
     .filter((value): value is string => Boolean(value)))].slice(0, 24)
+}
+
+async function authoritativeLiveVisualListingsV1() {
+  const monitor = await loadSellerOsAssistantMonitorV1()
+  return currentLiveListingsForMonitorV1(monitor).flatMap((listing) => {
+    const itemId = text(listing.identity.itemId, 20)
+    const currentImageUrl = httpsUrl(listing.identity.primaryImageUrl)
+    const decision = monitor.backend.decisions.find((entry) =>
+      entry.listingKey === listing.key)
+    return itemId && currentImageUrl ? [Object.freeze({ itemId,
+      title: text(listing.identity.title, 500),
+      sku: text(listing.identity.sku, 100), currentImageUrl,
+      observedAt: text(listing.identity.lastObservedAt, 80),
+      highVisualPriority: (decision?.reasonCodes ?? []).includes(
+        "LOW_CTR_WITH_SUFFICIENT_IMPRESSIONS"),
+    })] : []
+  })
 }
 
 export type MayelVisualWorkstationTaskV1 = Readonly<{
@@ -195,6 +226,7 @@ export async function ensureMayelVisualTaskV1(input: {
   accountKey: string
   actorUserId: string
   targetItemId?: string | null
+  authoritativeListing?: AuthoritativeLiveVisualListingV1 | null
 }) {
   const existing = await existingOpenTask(input)
   if (existing) return { created: false,
@@ -255,14 +287,68 @@ export async function ensureMayelVisualTaskV1(input: {
     if (linkError || activeError || experimentError || duplicateError) {
       throw new Error("MAYEL_VISUAL_ELIGIBILITY_READ_FAILED")
     }
-    if (!link || !active || experiment || duplicateTask ||
-        link.connector_listing_id !== active.id) continue
-    const { data: listingPackage, error: packageError } = await input.supabase
-      .from("ebay_listing_packages").select("id,opportunity_id,candidate_key,status,package_data")
-      .eq("opportunity_id", link.opportunity_id).eq("status", "approved")
-      .order("updated_at", { ascending: false }).limit(1).maybeSingle()
+    if (experiment || duplicateTask) continue
+    const linkedPreparationAvailable = Boolean(link && active &&
+      link.connector_listing_id === active.id)
+    const packageRead = linkedPreparationAvailable && link
+      ? await input.supabase.from("ebay_listing_packages")
+        .select("id,opportunity_id,candidate_key,status,package_data")
+        .eq("opportunity_id", link.opportunity_id).eq("status", "approved")
+        .order("updated_at", { ascending: false }).limit(1).maybeSingle()
+      : { data: null, error: null }
+    const { data: listingPackage, error: packageError } = packageRead
     if (packageError) throw new Error("MAYEL_VISUAL_PACKAGE_READ_FAILED")
-    if (!listingPackage || listingPackage.candidate_key !== link.candidate_key) continue
+    const linkedPackageAvailable = Boolean(linkedPreparationAvailable &&
+      listingPackage && listingPackage.candidate_key === link?.candidate_key)
+    if (!linkedPackageAvailable) {
+      const authoritative = input.authoritativeListing?.itemId === itemId
+        ? input.authoritativeListing
+        : (await authoritativeLiveVisualListingsV1()).find((listing) =>
+          listing.itemId === itemId) ?? null
+      if (!authoritative) continue
+      const evidencePack = buildMayelCurrentLiveVisualEvidencePackV1({
+        ebayItemId: itemId, sku: authoritative.sku,
+        title: authoritative.title,
+        currentImageUrl: authoritative.currentImageUrl,
+        observedAt: authoritative.observedAt,
+      })
+      const prompt = buildMayelChatGptVisualPromptV1(evidencePack)
+      const row = {
+        marketplace_account_key: input.accountKey, ebay_item_id: itemId,
+        active_listing_id: active?.id ?? null,
+        manual_listing_link_id: null, opportunity_id: null,
+        listing_package_id: null, candidate_key: `mayel-live:${itemId}`,
+        assigned_operator_user_id: input.actorUserId,
+        selection_authority: "SELLER_OS_AUTHORITATIVE_LIVE_VISUAL_PORTFOLIO",
+        selection_signal: { signalType: "CURRENT_LIVE_VISUAL_ELIGIBILITY",
+          priorityClass: authoritative.highVisualPriority ? "HIGH" : "NORMAL",
+          observedAt: authoritative.observedAt,
+          productTruthSupported: false,
+          creativeWorkAllowed: true, factClaimRestricted: true },
+        evidence_pack_version: MAYEL_PRODUCT_EVIDENCE_PACK_VERSION,
+        evidence_pack: evidencePack,
+        product_truth_version: evidencePack.productTruthVersion,
+        product_truth_digest: evidencePack.productTruthDigest,
+        source_image_references: evidencePack.sourceImageSet,
+        source_image_set_digest: evidencePack.sourceImageSetDigest,
+        current_image_set: [authoritative.currentImageUrl],
+        prompt_contract_version: MAYEL_CHATGPT_VISUAL_PROMPT_VERSION,
+        prompt_text: prompt.text, prompt_digest: prompt.digest,
+        status: "PROMPT_READY",
+      }
+      const createdRead = await input.supabase
+        .from("ebay_mayel_visual_tasks_v1").insert(row).select("*").single()
+      if (!createdRead.error && createdRead.data) return { created: true,
+        task: createdRead.data, canaryAvailable: true }
+      if (createdRead.error?.code === "23505") {
+        const reconciled = await existingOpenTask(input)
+        if (reconciled) return { created: false,
+          task: await reconcileCanonicalPrompt({ ...input, task: reconciled }),
+          canaryAvailable: true }
+      }
+      throw new Error("MAYEL_VISUAL_TASK_CREATE_FAILED")
+    }
+    if (!link || !active || !listingPackage) continue
     const { data: sourcePack, error: sourceError } = await input.supabase
       .from("luna_catalog_authorized_source_packs")
       .select("id,source_assets,source_pack_hash")
@@ -336,25 +422,15 @@ export async function ensureMayelVisualPortfolioTasksV1(input: {
   limit?: number
 }) {
   const limit = Math.max(1, Math.min(input.limit ?? 100, 200))
-  const { data: listings, error, count } = await input.supabase
-    .from("ebay_active_listings")
-    .select("id,ebay_item_id", { count: "exact" })
-    .eq("account_key", input.accountKey).eq("listing_status", "active")
-    .order("ebay_item_id", { ascending: true }).limit(limit)
-  if (error) throw new Error("MAYEL_VISUAL_PORTFOLIO_DISCOVERY_FAILED")
-  const itemIds = (listings ?? []).flatMap((row) => {
-    const itemId = text(row.ebay_item_id, 20)
-    return itemId ? [itemId] : []
-  })
-  if (!itemIds.length) return Object.freeze({ discoveredCount: count ?? 0,
+  const authoritative = await authoritativeLiveVisualListingsV1()
+  const listings = authoritative.slice(0, limit)
+  const count = authoritative.length
+  const itemIds = listings.map((listing) => listing.itemId)
+  if (!itemIds.length) return Object.freeze({ discoveredCount: count,
     boundedCount: 0, prequalifiedCount: 0, eligibleCount: 0,
     createdCount: 0, reusedCount: 0, duplicateTaskCount: 0,
     partial: false, outcomes: Object.freeze([]), marketplaceWrites: 0 as const })
-  const [linksRead, experimentsRead, openTasksRead] = await Promise.all([
-    input.supabase.from("ebay_manual_listing_links")
-      .select("ebay_item_id,connector_listing_id,opportunity_id,candidate_key")
-      .eq("account_key", input.accountKey).eq("verification_status", "verified")
-      .in("ebay_item_id", itemIds),
+  const [experimentsRead, openTasksRead] = await Promise.all([
     input.supabase.from("ebay_listing_experiments_v1")
       .select("ebay_item_id").eq("account_key", input.accountKey)
       .in("ebay_item_id", itemIds).in("lifecycle_status",
@@ -364,35 +440,16 @@ export async function ensureMayelVisualPortfolioTasksV1(input: {
       .eq("marketplace_account_key", input.accountKey)
       .in("ebay_item_id", itemIds).in("status", OPEN_TASK_STATES),
   ])
-  if (linksRead.error || experimentsRead.error || openTasksRead.error) {
+  if (experimentsRead.error || openTasksRead.error) {
     throw new Error("MAYEL_VISUAL_PORTFOLIO_ELIGIBILITY_READ_FAILED")
   }
-  const links = new Map((linksRead.data ?? []).map((row) =>
-    [String(row.ebay_item_id), row]))
   const experiments = new Set((experimentsRead.data ?? []).map((row) =>
     String(row.ebay_item_id)))
   const openTasks = new Map((openTasksRead.data ?? []).map((row) =>
     [String(row.ebay_item_id), row]))
-  const opportunityIds = [...new Set((linksRead.data ?? []).flatMap((row) =>
-    typeof row.opportunity_id === "string" ? [row.opportunity_id] : []))]
-  const packagesRead = opportunityIds.length
-    ? await input.supabase.from("ebay_listing_packages")
-      .select("id,opportunity_id,candidate_key,updated_at")
-      .in("opportunity_id", opportunityIds).eq("status", "approved")
-      .order("updated_at", { ascending: false })
-    : { data: [], error: null }
-  if (packagesRead.error) throw new Error(
-    "MAYEL_VISUAL_PORTFOLIO_PACKAGE_READ_FAILED")
-  const packages = new Map<string, Record<string, unknown>>()
-  for (const row of packagesRead.data ?? []) {
-    const opportunityId = text(row.opportunity_id, 80)
-    if (opportunityId && !packages.has(opportunityId)) {
-      packages.set(opportunityId, row)
-    }
-  }
   const outcomes: Record<string, unknown>[] = []
-  for (const listing of listings ?? []) {
-    const itemId = text(listing.ebay_item_id, 20)
+  for (const listing of listings) {
+    const itemId = listing.itemId
     if (!itemId) continue
     const existing = openTasks.get(itemId)
     if (existing && existing.assigned_operator_user_id !== input.actorUserId) {
@@ -400,30 +457,14 @@ export async function ensureMayelVisualPortfolioTasksV1(input: {
         created: false, blocker: "MAYEL_TASK_ASSIGNEE_MISMATCH" })
       continue
     }
-    const link = links.get(itemId)
-    if (!existing && (!link || link.connector_listing_id !== listing.id)) {
-      outcomes.push({ itemId, eligible: false, taskId: null, created: false,
-        blocker: "EXACT_VERIFIED_LIVE_LISTING_LINK_REQUIRED" })
-      continue
-    }
-    if (!existing && experiments.has(itemId)) {
-      outcomes.push({ itemId, eligible: false, taskId: null, created: false,
-        blocker: "ACTIVE_EXPERIMENT_CONFLICT" })
-      continue
-    }
-    const opportunityId = link ? text(link.opportunity_id, 80) : null
-    const listingPackage = opportunityId ? packages.get(opportunityId) : null
-    if (!existing && (!listingPackage ||
-        listingPackage.candidate_key !== link?.candidate_key)) {
-      outcomes.push({ itemId, eligible: false, taskId: null, created: false,
-        blocker: "CURRENT_APPROVED_LISTING_PACKAGE_REQUIRED" })
-      continue
-    }
     try {
       const result = await ensureMayelVisualTaskV1({ ...input,
-        targetItemId: itemId })
+        targetItemId: itemId, authoritativeListing: listing })
       outcomes.push({ itemId, eligible: result.canaryAvailable,
-        taskId: result.task?.id ?? null, created: result.created })
+        visualEligibility: "ELIGIBLE", taskId: result.task?.id ?? null,
+        created: result.created,
+        priority: listing.highVisualPriority ? "HIGH" : "NORMAL",
+        activeExperimentPresent: experiments.has(itemId) })
     } catch (error) {
       outcomes.push({ itemId, eligible: false, taskId: null, created: false,
         blocker: error instanceof Error ? error.message :
@@ -628,6 +669,112 @@ export async function uploadMayelVisualOutputV1(input: {
   return asset
 }
 
+export async function uploadMayelVisualOutputBatchV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorUserId: string
+  taskId: string
+  files: readonly Readonly<{ declaredMimeType: string; file: Buffer }>[]
+  rightsConfirmed: boolean
+}) {
+  if (input.rightsConfirmed !== true || input.files.length < 1 ||
+      input.files.length > 6) {
+    input.files.forEach((entry) => entry.file.fill(0))
+    throw new Error("MAYEL_VISUAL_BATCH_UPLOAD_CONTRACT_INVALID")
+  }
+  const current = await input.supabase.from("ebay_listing_image_assets")
+    .select("mayel_output_role").eq("mayel_visual_task_id", input.taskId)
+    .in("status", ["pending_review", "approved"])
+  if (current.error) throw new Error("MAYEL_VISUAL_OUTPUT_COUNT_FAILED")
+  const used = new Set((current.data ?? []).map((row) =>
+    String(row.mayel_output_role)))
+  const available = MAYEL_VISUAL_OUTPUT_ROLES.filter((role) => !used.has(role))
+  if (input.files.length > available.length) {
+    input.files.forEach((entry) => entry.file.fill(0))
+    throw new Error("MAYEL_VISUAL_OUTPUT_LIMIT_REACHED")
+  }
+  const results: Record<string, unknown>[] = []
+  for (let index = 0; index < input.files.length; index += 1) {
+    const entry = input.files[index]
+    try {
+      const asset = await uploadMayelVisualOutputV1({ ...input,
+        role: available[index], declaredMimeType: entry.declaredMimeType,
+        file: entry.file })
+      results.push({ fileIndex: index, status: "QUARANTINED",
+        assetId: asset.id, outputSha256: asset.output_sha256 })
+    } catch (error) {
+      entry.file.fill(0)
+      results.push({ fileIndex: index, status: "FAILED",
+        error: error instanceof Error ? error.message :
+          "MAYEL_VISUAL_UPLOAD_FAILED" })
+    }
+  }
+  return Object.freeze({ results: Object.freeze(results),
+    acceptedCount: results.filter((entry) => entry.status ===
+      "QUARANTINED").length,
+    failedCount: results.filter((entry) => entry.status === "FAILED").length,
+    marketplaceWrites: 0 as const })
+}
+
+export async function saveMayelOrderedGalleryIntentV2(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorUserId: string
+  taskId: string
+  expectedVisualManifestDigest?: string | null
+  finalOrder: readonly Readonly<{ kind: "CURRENT_OFFICIAL" | "MAYEL_ASSET"
+    publicUrl?: string | null; assetId?: string | null }>[]
+}) {
+  const task = await taskForActor(input)
+  const assetsRead = await input.supabase.from("ebay_listing_image_assets")
+    .select("id,mayel_output_role,output_sha256,public_url")
+    .eq("mayel_visual_task_id", input.taskId).eq("status", "approved")
+    .eq("mayel_approval_status", "APPROVED")
+  if (assetsRead.error) throw new Error(
+    "MAYEL_VISUAL_MANIFEST_ASSET_READ_FAILED")
+  const assets = (assetsRead.data ?? []).flatMap((row) => {
+    const role = text(row.mayel_output_role, 40) as MayelVisualOutputRole | null
+    const publicUrl = httpsUrl(row.public_url)
+    const outputSha256 = sha(row.output_sha256)
+    return uuid(row.id) && role && MAYEL_VISUAL_OUTPUT_ROLES.includes(role) &&
+      publicUrl && outputSha256 ? [{ assetId: row.id, role, outputSha256,
+        publicUrl }] : []
+  })
+  const manifest = buildMayelOrderedVisualManifestV2({
+    visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
+    currentImages: Array.isArray(task.current_image_set)
+      ? task.current_image_set.flatMap((url) => {
+        const normalized = httpsUrl(url)
+        return normalized ? [normalized] : []
+      }) : [],
+    assets, finalOrder: input.finalOrder,
+    productTruthDigest: String(task.product_truth_digest),
+    sourceImageSetDigest: String(task.source_image_set_digest),
+  })
+  let update = input.supabase.from("ebay_mayel_visual_tasks_v1")
+    .update({ status: "OWNER_PREVIEW_READY", visual_manifest: manifest,
+      visual_manifest_digest: manifest.visualManifestDigest,
+      updated_at: new Date().toISOString() })
+    .eq("id", input.taskId).eq("marketplace_account_key", input.accountKey)
+    .eq("assigned_operator_user_id", input.actorUserId)
+  if (input.expectedVisualManifestDigest) {
+    update = update.eq("visual_manifest_digest",
+      input.expectedVisualManifestDigest)
+  }
+  const persisted = await update.select("visual_manifest_digest").maybeSingle()
+  if (persisted.error || !persisted.data ||
+      persisted.data.visual_manifest_digest !== manifest.visualManifestDigest) {
+    throw new Error("MAYEL_VISUAL_ORDER_PERSISTENCE_CONFLICT")
+  }
+  return Object.freeze({ manifest,
+    visualManifestDigest: manifest.visualManifestDigest,
+    selectedHeroAssetId: manifest.selectedHeroAssetId,
+    keepOldHeroAsSecondary: manifest.keepOldHeroAsSecondary,
+    removedAssetIds: manifest.removedAssetIds,
+    finalOrderedImageCount: manifest.finalOrderedImageSet.length,
+    marketplaceWrites: 0 as const })
+}
+
 async function reconcilePublicUpload(input: { supabase: SupabaseClient
   path: string; bytes: Buffer; outputSha256: string }) {
   const upload = await input.supabase.storage.from(PUBLIC_BUCKET)
@@ -657,6 +804,43 @@ async function removeUncommittedPublicUpload(input: {
   }
 }
 
+function orderedIntentForManifest(input: { task: JsonRecord
+  currentImages: readonly string[]
+  assets: readonly { assetId: string; role: MayelVisualOutputRole
+    outputSha256: string; publicUrl: string }[] }) {
+  const assetIds = new Set(input.assets.map((asset) => asset.assetId))
+  const currentUrls = new Set(input.currentImages)
+  const previous = Array.isArray(record(input.task.visual_manifest)
+    .proposedOrderedImages)
+    ? record(input.task.visual_manifest).proposedOrderedImages as unknown[] : []
+  const retained: Array<{ kind: "MAYEL_ASSET"; assetId: string } |
+    { kind: "CURRENT_OFFICIAL"; publicUrl: string }> = []
+  for (const value of previous) {
+    const entry = record(value)
+    const assetId = uuid(entry.assetId)
+    if (assetId && assetIds.has(assetId)) {
+      retained.push({ kind: "MAYEL_ASSET", assetId })
+      continue
+    }
+    const publicUrl = httpsUrl(entry.publicUrl)
+    if (publicUrl && currentUrls.has(publicUrl)) {
+      retained.push({ kind: "CURRENT_OFFICIAL", publicUrl })
+    }
+  }
+  const representedAssets = new Set(retained.flatMap((entry) =>
+    entry.kind === "MAYEL_ASSET" ? [entry.assetId] : []))
+  const representedCurrent = new Set(retained.flatMap((entry) =>
+    entry.kind === "CURRENT_OFFICIAL" ? [entry.publicUrl] : []))
+  return [
+    ...retained,
+    ...input.currentImages.filter((url) => !representedCurrent.has(url))
+      .map((publicUrl) => ({ kind: "CURRENT_OFFICIAL" as const, publicUrl })),
+    ...input.assets.filter((asset) => !representedAssets.has(asset.assetId))
+      .map((asset) => ({ kind: "MAYEL_ASSET" as const,
+        assetId: asset.assetId })),
+  ]
+}
+
 async function refreshManifest(input: { supabase: SupabaseClient
   task: JsonRecord }) {
   const { data: rows, error } = await input.supabase
@@ -674,13 +858,15 @@ async function refreshManifest(input: { supabase: SupabaseClient
         publicUrl }] : []
   })
   if (!assets.length) return null
-  const manifest = buildMayelVisualManifestV1({
+  const currentImages = Array.isArray(input.task.current_image_set)
+    ? input.task.current_image_set.filter((url): url is string =>
+      Boolean(httpsUrl(url))) : []
+  const manifest = buildMayelOrderedVisualManifestV2({
     visualTaskId: String(input.task.id),
     ebayItemId: String(input.task.ebay_item_id),
-    currentImages: Array.isArray(input.task.current_image_set)
-      ? input.task.current_image_set.filter((url): url is string =>
-        Boolean(httpsUrl(url)))
-      : [], assets,
+    currentImages, assets,
+    finalOrder: orderedIntentForManifest({ task: input.task,
+      currentImages, assets }),
     productTruthDigest: String(input.task.product_truth_digest),
     sourceImageSetDigest: String(input.task.source_image_set_digest) })
   const { error: updateError } = await input.supabase
@@ -716,13 +902,15 @@ async function manifestForApproval(input: {
   assets.push({ assetId: input.asset.id,
     role: input.asset.mayel_output_role,
     outputSha256: input.asset.output_sha256, publicUrl: input.publicUrl })
-  return buildMayelVisualManifestV1({
+  const currentImages = Array.isArray(input.task.current_image_set)
+    ? input.task.current_image_set.filter((url): url is string =>
+      Boolean(httpsUrl(url))) : []
+  return buildMayelOrderedVisualManifestV2({
     visualTaskId: String(input.task.id),
     ebayItemId: String(input.task.ebay_item_id),
-    currentImages: Array.isArray(input.task.current_image_set)
-      ? input.task.current_image_set.filter((url): url is string =>
-        Boolean(httpsUrl(url)))
-      : [], assets,
+    currentImages, assets,
+    finalOrder: orderedIntentForManifest({ task: input.task,
+      currentImages, assets }),
     productTruthDigest: String(input.task.product_truth_digest),
     sourceImageSetDigest: String(input.task.source_image_set_digest),
   })

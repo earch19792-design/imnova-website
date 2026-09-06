@@ -971,6 +971,10 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
         exactListingAssociation: row.associationStatus !== "UNPROVEN",
       })),
       durableVisualProposalPresent: preparedProposal !== null,
+      highVisualPriority: [
+        ...(decision?.reasonCodes ?? []),
+        ...(canonicalException?.reasonCodes ?? []),
+      ].includes("LOW_CTR_WITH_SUFFICIENT_IMPRESSIONS"),
       // The legacy safe-mutation canary certifies a title-only path. It is not
       // evidence that a Mayel visual proposal was applied, so keep this false
       // until the visual executor leaves its own official readback receipt.

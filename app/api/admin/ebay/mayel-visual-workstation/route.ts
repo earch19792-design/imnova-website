@@ -10,6 +10,8 @@ import {
   ensureMayelVisualTaskV1,
   readMayelVisualWorkstationV1,
   reviewMayelVisualOutputV1,
+  saveMayelOrderedGalleryIntentV2,
+  uploadMayelVisualOutputBatchV1,
   uploadMayelVisualOutputV1,
 } from "@/lib/ebay/ebay-mayel-visual-workstation-server-v1"
 import {
@@ -381,6 +383,30 @@ export async function POST(request: Request) {
       const form = await request.formData()
       const action = form.get("action")
       const taskId = uuid(form.get("visualTaskId"))
+      if (action === "UPLOAD_OUTPUT_BATCH") {
+        const files = form.getAll("files").filter((entry): entry is File =>
+          entry instanceof File && entry.size > 0)
+        if (!taskId || files.length < 1 || files.length > 6 ||
+            form.get("rightsConfirmed") !== "true") {
+          return json({ success: false,
+            error: "MAYEL_VISUAL_BATCH_UPLOAD_CONTRACT_INVALID" }, 400)
+        }
+        const buffers = await Promise.all(files.map(async (file) => ({
+          declaredMimeType: file.type,
+          file: Buffer.from(await file.arrayBuffer()),
+        })))
+        try {
+          const result = await uploadMayelVisualOutputBatchV1({
+            supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+            actorUserId: auth.userId, taskId, files: buffers,
+            rightsConfirmed: true })
+          return json({ success: true, outcome: result.failedCount === 0
+            ? "VISUAL_BATCH_QUARANTINED" : "VISUAL_BATCH_PARTIAL",
+          ...result })
+        } finally {
+          buffers.forEach((entry) => entry.file.fill(0))
+        }
+      }
       const role = String(form.get("outputRole") ?? "")
       const file = form.get("file")
       if (action !== "UPLOAD_OUTPUT" || !taskId ||
@@ -583,6 +609,56 @@ export async function POST(request: Request) {
         promptGenerationMode: "DETERMINISTIC_TEMPLATE_FIRST",
         openAiTextCallCount: 0, openAiImageApiCallCount: 0,
         marketplaceWrites: 0 })
+    }
+    if (action === "ENSURE_VISUAL_TASK") {
+      const targetItemId = typeof body?.ebayItemId === "string"
+        ? body.ebayItemId.trim() : ""
+      if (!/^\d{9,20}$/.test(targetItemId)) return json({ success: false,
+        error: "MAYEL_VISUAL_TARGET_ITEM_INVALID" }, 400)
+      const result = await ensureMayelVisualTaskV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        actorUserId: auth.userId, targetItemId })
+      return json({ success: true, outcome: result.created
+        ? "VISUAL_TASK_CREATED" : result.canaryAvailable
+          ? "EXISTING_VISUAL_TASK_REUSED" : "VISUAL_TASK_NOT_ELIGIBLE",
+      visualTaskId: result.task?.id ?? null,
+      visualEligibility: result.canaryAvailable ? "ELIGIBLE" :
+        "BLOCKED_IDENTITY", marketplaceWrites: 0 })
+    }
+    if (action === "SAVE_ORDERED_GALLERY") {
+      const taskId = uuid(body?.visualTaskId)
+      const finalOrder = Array.isArray(body?.finalOrder) ? body.finalOrder : []
+      const parsedOrder: Array<{ kind: "CURRENT_OFFICIAL"; publicUrl: string } |
+        { kind: "MAYEL_ASSET"; assetId: string }> = []
+      for (const value of finalOrder) {
+        if (!value || typeof value !== "object") continue
+        const entry = value as Record<string, unknown>
+        if (entry.kind === "CURRENT_OFFICIAL" && typeof entry.publicUrl ===
+            "string") {
+          parsedOrder.push({ kind: "CURRENT_OFFICIAL",
+            publicUrl: entry.publicUrl })
+          continue
+        }
+        const assetId = uuid(entry.assetId)
+        if (entry.kind === "MAYEL_ASSET" && assetId) {
+          parsedOrder.push({ kind: "MAYEL_ASSET", assetId })
+        }
+      }
+      if (!taskId || parsedOrder.length !== finalOrder.length ||
+          parsedOrder.length < 1 || parsedOrder.length > 24) {
+        return json({ success: false,
+          error: "MAYEL_VISUAL_ORDER_CONTRACT_INVALID" }, 400)
+      }
+      const result = await saveMayelOrderedGalleryIntentV2({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        actorUserId: auth.userId, taskId, finalOrder: parsedOrder,
+        expectedVisualManifestDigest:
+          typeof body?.expectedVisualManifestDigest === "string"
+            ? body.expectedVisualManifestDigest : null,
+      })
+      return json({ success: true,
+        outcome: "MAYEL_ORDERED_GALLERY_INTENT_PERSISTED",
+        gallery: result, marketplaceWrites: 0 })
     }
     if (action === "REVIEW_OUTPUT") {
       const taskId = uuid(body?.visualTaskId)
