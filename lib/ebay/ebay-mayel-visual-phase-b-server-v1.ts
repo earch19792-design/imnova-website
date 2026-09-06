@@ -6,7 +6,10 @@ import {
   readOfficialActiveListingImageSnapshotV1,
   verifyOfficialOrderedImageSetV1,
 } from "./ebay-active-listing-image-revision-service"
+import { readCanonicalEbayListingManagementResourcesV1 } from
+  "./ebay-account-policy-readonly-gateway"
 import {
+  classifyEbayListingManagementModelEvidenceV1,
   executeEbayInventoryManagedImageMutationV1,
   prepareEbayActiveListingManagementExecutorV1,
 } from "./ebay-draft-only-gateway"
@@ -95,6 +98,66 @@ function stable(value: unknown): unknown {
     .map(([key, entry]) => [key, stable(entry)]))
 }
 
+async function readCanonicalListingManagementEvidence(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  sku: string
+  itemId: string
+  fetchImpl: FetchLike
+}) {
+  const observedAt = new Date().toISOString()
+  const [{ data: vaultRefreshToken, error: vaultError },
+    { data: profile, error: profileError }] = await Promise.all([
+    input.supabase.rpc("get_ebay_account_policy_readonly_refresh_token_v1", {
+      p_account_key: input.accountKey,
+    }),
+    input.supabase.from("ebay_account_policy_profiles")
+      .select("verified_at,expires_at,verification_source")
+      .eq("account_key", input.accountKey)
+      .eq("marketplace_id", "EBAY_US")
+      .eq("verification_source", "EBAY_ACCOUNT_API_GET")
+      .gt("expires_at", observedAt)
+      .maybeSingle(),
+  ])
+  if (vaultError) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_OAUTH_VAULT_READ_FAILED")
+  }
+  if (profileError) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_ACCOUNT_PROFILE_READ_FAILED")
+  }
+  const refreshToken = text(vaultRefreshToken, 4_096)
+  const durableVerifiedAt = text(profile?.verified_at, 80)
+  const durableExpiresAt = text(profile?.expires_at, 80)
+  if (!refreshToken || !durableVerifiedAt || !durableExpiresAt
+    || Date.parse(durableExpiresAt) <= Date.now()) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_ACCOUNT_AUTHORITY_UNPROVEN")
+  }
+  const resources = await readCanonicalEbayListingManagementResourcesV1({
+    sku: input.sku,
+    durableAccountIdentityProven: true,
+    refreshTokenOverride: refreshToken,
+    fetchImpl: input.fetchImpl,
+  })
+  const management = classifyEbayListingManagementModelEvidenceV1({
+    sku: input.sku,
+    itemId: input.itemId,
+    inventory: resources.inventory,
+    offers: resources.offers,
+  })
+  return Object.freeze({
+    ...management,
+    managementEvidenceSource: [
+      management.managementEvidenceSource,
+      resources.sourceAuthority,
+      "FRESH_VERIFIED_EBAY_ACCOUNT_POLICY_PROFILE_V1",
+    ].join("+"),
+    managementObservedAt: resources.observedAt,
+    durableAccountIdentityObservedAt: durableVerifiedAt,
+    accountIdentityProven: true as const,
+    marketplaceId: resources.marketplaceId,
+  })
+}
+
 async function loadContext(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -137,9 +200,13 @@ async function loadContext(input: {
   if (!sku) throw new Error("MAYEL_VISUAL_PHASE_B_EBAY_SKU_MISSING")
   const [accessToken, management] = await Promise.all([
     getEbayTradingReadOnlyAccessToken(input.fetchImpl),
-    prepareEbayActiveListingManagementExecutorV1({
-      sku, itemId: String(task.ebay_item_id), accountKey: input.accountKey,
-    }, input.fetchImpl),
+    readCanonicalListingManagementEvidence({
+      supabase: input.supabase,
+      sku,
+      itemId: String(task.ebay_item_id),
+      accountKey: input.accountKey,
+      fetchImpl: input.fetchImpl,
+    }),
   ])
   const official = await readOfficialActiveListingImageSnapshotV1({
     accessToken, itemId: String(task.ebay_item_id), expectedSku: sku,
@@ -182,7 +249,19 @@ async function loadContext(input: {
     assets: (assets ?? []) as JsonRecord[], execution: execution as JsonRecord | null,
     anyExecution: anyExecution as JsonRecord | null,
     official, currentOfficialImageUrls, plan, management, sku,
-    managementReady, managementBlocker, rebase }
+    managementReady, managementBlocker, rebase,
+    accountIdentityProven: management.accountIdentityProven
+      && official.authenticatedUserId.toLowerCase() ===
+        official.sellerUserId.toLowerCase(),
+    listingIdentityProven: official.itemId === String(task.ebay_item_id)
+      && official.ebaySku === sku
+      && official.listingStatus.toLowerCase() === "active",
+    currentImageSetProven: currentOfficialImageUrls.length > 0
+      && official.pictureUrls.length > 0,
+    correctEbayApi: management.managementModel === "INVENTORY_API_MANAGED"
+      ? "INVENTORY_API" : management.managementModel === "TRADING_MANAGED"
+        ? "TRADING_API" : null,
+  }
 }
 
 function publicExecution(value: JsonRecord | null) {
@@ -212,6 +291,19 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
     && context.rebase.safe
     && !context.anyExecution
+  const visualOnlyDiff = context.plan.ready
+    && context.plan.fieldsToChange.length === 1
+    && context.plan.fieldsToChange[0] === "IMAGES_ONLY"
+  const mayelManifestValid = context.plan.ready
+  const unauthorizedFieldDiffCount = visualOnlyDiff ? 0 : null
+  const safeToExecuteVisualChange = context.accountIdentityProven
+    && context.listingIdentityProven
+    && context.currentImageSetProven
+    && mayelManifestValid
+    && visualOnlyDiff
+    && unauthorizedFieldDiffCount === 0
+    && context.managementReady
+    && !context.execution
   const preview = {
     contractVersion: "MAYEL_VISUAL_WORKSTATION_PHASE_B_V1",
     visualManifestId: uuid(context.task.visual_manifest_id),
@@ -236,6 +328,17 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     marketplace: "EBAY_US",
     managementModel: context.management.managementModel,
     managementModelAuthority: context.management.managementEvidenceSource,
+    managementObservedAt: context.management.managementObservedAt,
+    accountIdentityProven: context.accountIdentityProven,
+    listingIdentityProven: context.listingIdentityProven,
+    correctEbayApi: context.correctEbayApi,
+    correctEbayApiResolved: context.correctEbayApi !== null,
+    currentImageSetProven: context.currentImageSetProven,
+    mayelManifestValid,
+    visualOnlyDiff,
+    unauthorizedFieldDiffCount,
+    safeToExecuteVisualChange,
+    readyForMayelPhysicalCanary: safeToExecuteVisualChange,
     managementDiagnostics: {
       inventoryHttpStatus: context.management.inventoryHttpStatus,
       offersHttpStatus: context.management.offersHttpStatus,
@@ -283,6 +386,14 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     offersReadComplete: context.management.offersReadComplete,
     exactPublishedOfferCount: context.management.exactPublishedOfferCount,
     groupedInventoryItem: context.management.groupedInventoryItem,
+    accountIdentityProven: context.accountIdentityProven,
+    listingIdentityProven: context.listingIdentityProven,
+    correctEbayApi: context.correctEbayApi,
+    currentImageSetProven: context.currentImageSetProven,
+    mayelManifestValid,
+    visualOnlyDiff,
+    unauthorizedFieldDiffCount,
+    safeToExecuteVisualChange,
     planBlocker: context.plan.blocker,
     safeRebaseAvailable,
     rebaseBlocker: context.rebase.blocker,

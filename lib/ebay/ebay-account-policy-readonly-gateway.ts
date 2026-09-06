@@ -140,8 +140,77 @@ function assertAllowedGet(url: URL, method: string) {
     && [...url.searchParams.keys()].every((key) => key === "limit" || key === "offset")
     && /^\d{1,3}$/.test(url.searchParams.get("limit") ?? "")
     && /^\d{1,9}$/.test(url.searchParams.get("offset") ?? "")
-  if (!optedInPrograms && !privilege && !subscriptions && !policies && !locations) {
+  const inventoryItem = method === "GET"
+    && url.origin === API_ORIGIN
+    && /^\/sell\/inventory\/v1\/inventory_item\/[^/]{1,300}$/.test(url.pathname)
+    && url.search === ""
+  const offersBySku = method === "GET"
+    && url.origin === API_ORIGIN
+    && url.pathname === "/sell/inventory/v1/offer"
+    && [...url.searchParams.keys()].every((key) =>
+      key === "sku" || key === "limit")
+    && (url.searchParams.get("sku")?.length ?? 0) >= 1
+    && (url.searchParams.get("sku")?.length ?? 0) <= 50
+    && url.searchParams.get("limit") === "100"
+  if (!optedInPrograms && !privilege && !subscriptions && !policies &&
+    !locations && !inventoryItem && !offersBySku) {
     throw new Error("EBAY_ACCOUNT_POLICY_READONLY_ENDPOINT_BLOCKED")
+  }
+}
+
+async function refreshAccessToken(
+  config: GatewayConfig,
+  fetchImpl: typeof fetch,
+) {
+  let response: Response | null = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      response = await fetchImpl(TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${config.clientId}:${config.clientSecret}`,
+            "utf8",
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: config.refreshToken,
+          scope: EBAY_READONLY_SCOPES.join(" "),
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+      if (!TRANSIENT_STATUSES.has(response.status) || attempt === 1) break
+    } catch {
+      response = null
+      if (attempt === 1) break
+    }
+  }
+  if (!response) {
+    throw new Error("EBAY_ACCOUNT_POLICY_READONLY_REQUEST_FAILED")
+  }
+  const body = record(await response.json().catch(() => ({})))
+  if (!response.ok || typeof body.access_token !== "string" ||
+    !body.access_token) {
+    const oauthError = typeof body.error === "string"
+      ? body.error.trim().toLowerCase()
+      : ""
+    if (oauthError === "invalid_scope") {
+      throw new Error("EBAY_ACCOUNT_POLICY_READONLY_SCOPE_REAUTH_REQUIRED")
+    }
+    if (oauthError === "invalid_grant") {
+      throw new Error("EBAY_ACCOUNT_POLICY_REFRESH_TOKEN_INVALID")
+    }
+    if (oauthError === "invalid_client") {
+      throw new Error("EBAY_ACCOUNT_POLICY_CLIENT_CREDENTIALS_INVALID")
+    }
+    throw new Error(`EBAY_ACCOUNT_POLICY_READONLY_OAUTH_${response.status}`)
+  }
+  return {
+    token: body.access_token,
+    expiresInSeconds: Number(body.expires_in),
   }
 }
 
@@ -207,56 +276,11 @@ async function authenticatedToken(
   }
   authenticationCache.delete(key)
 
-  let response: Response | null = null
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      response = await fetchImpl(TOKEN_ENDPOINT, {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${config.clientId}:${config.clientSecret}`,
-            "utf8",
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: config.refreshToken,
-          scope: EBAY_READONLY_SCOPES.join(" "),
-        }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      })
-      if (!TRANSIENT_STATUSES.has(response.status) || attempt === 1) break
-    } catch {
-      response = null
-      if (attempt === 1) break
-    }
-  }
-  if (!response) {
-    throw new Error("EBAY_ACCOUNT_POLICY_READONLY_REQUEST_FAILED")
-  }
-  const body = record(await response.json().catch(() => ({})))
-  if (!response.ok || typeof body.access_token !== "string" || !body.access_token) {
-    const oauthError = typeof body.error === "string"
-      ? body.error.trim().toLowerCase()
-      : ""
-    if (oauthError === "invalid_scope") {
-      throw new Error("EBAY_ACCOUNT_POLICY_READONLY_SCOPE_REAUTH_REQUIRED")
-    }
-    if (oauthError === "invalid_grant") {
-      throw new Error("EBAY_ACCOUNT_POLICY_REFRESH_TOKEN_INVALID")
-    }
-    if (oauthError === "invalid_client") {
-      throw new Error("EBAY_ACCOUNT_POLICY_CLIENT_CREDENTIALS_INVALID")
-    }
-    throw new Error(`EBAY_ACCOUNT_POLICY_READONLY_OAUTH_${response.status}`)
-  }
-
-  const token = body.access_token
+  const refreshed = await refreshAccessToken(config, fetchImpl)
+  const token = refreshed.token
   await verifyEbayCommercialOfficialAccount(token, fetchImpl)
   const actualFingerprint = config.expectedAccountFingerprint
-  const expiresInSeconds = Number(body.expires_in)
+  const expiresInSeconds = refreshed.expiresInSeconds
   const authenticated: CachedAuthentication = {
     token,
     actualFingerprint,
@@ -271,6 +295,53 @@ async function authenticatedToken(
     authenticationCache.set(key, authenticated)
   }
   return authenticated
+}
+
+export async function readCanonicalEbayListingManagementResourcesV1(input: {
+  sku: string
+  durableAccountIdentityProven: boolean
+  refreshTokenOverride?: string
+  fetchImpl?: typeof fetch
+}) {
+  const sku = input.sku.trim()
+  if (!sku || sku.length > 50 || /[\u0000-\u001f\u007f]/.test(sku)) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_IDENTITY_INVALID")
+  }
+  if (!input.durableAccountIdentityProven) {
+    throw new Error("EBAY_LISTING_MANAGEMENT_ACCOUNT_IDENTITY_UNPROVEN")
+  }
+  const config = gatewayConfig(input.refreshTokenOverride)
+  if (!config.configured) {
+    throw new Error(config.oauthConfigured
+      ? "EBAY_ACCOUNT_POLICY_IDENTITY_UNBOUND"
+      : "EBAY_ACCOUNT_POLICY_READONLY_OAUTH_MISSING")
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  let token = (await refreshAccessToken(config, fetchImpl)).token
+  try {
+    const inventoryUrl = new URL(
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
+      API_ORIGIN,
+    )
+    const offersUrl = new URL("/sell/inventory/v1/offer", API_ORIGIN)
+    offersUrl.searchParams.set("sku", sku)
+    offersUrl.searchParams.set("limit", "100")
+    const [inventory, offers] = await Promise.all([
+      read(token, inventoryUrl, fetchImpl),
+      read(token, offersUrl, fetchImpl),
+    ])
+    return Object.freeze({
+      inventory,
+      offers,
+      marketplaceId: MARKETPLACE_ID,
+      accountFingerprint: config.expectedAccountFingerprint,
+      sourceAuthority:
+        "FRESH_ACCOUNT_BOUND_EBAY_INVENTORY_READONLY_V1" as const,
+      observedAt: new Date().toISOString(),
+    })
+  } finally {
+    token = ""
+  }
 }
 
 function normalizedPolicyId(value: unknown) {

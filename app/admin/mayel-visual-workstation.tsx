@@ -60,6 +60,17 @@ type VisualTask = {
     marketplace?: string
     managementModel?: string
     managementModelAuthority?: string
+    managementObservedAt?: string
+    accountIdentityProven?: boolean
+    listingIdentityProven?: boolean
+    correctEbayApi?: "INVENTORY_API" | "TRADING_API" | null
+    correctEbayApiResolved?: boolean
+    currentImageSetProven?: boolean
+    mayelManifestValid?: boolean
+    visualOnlyDiff?: boolean
+    unauthorizedFieldDiffCount?: number | null
+    safeToExecuteVisualChange?: boolean
+    readyForMayelPhysicalCanary?: boolean
     managementDiagnostics?: {
       inventoryHttpStatus?: number
       offersHttpStatus?: number
@@ -424,6 +435,22 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
       <p>Imagen principal: {delegationActive
         ? "Mayel puede modificarla bajo delegación activa"
         : "incluida en la delegación visual pendiente"}</p>
+    </div>
+    <div className="mt-3 grid gap-2 rounded-xl border border-[#d6dfd1] bg-white p-3 text-xs text-[#5f645e] sm:grid-cols-2">
+      <p>Identidad del listing: {phaseB?.listingIdentityProven
+        ? "comprobada oficialmente" : "por comprobar"}</p>
+      <p>API correcta: {phaseB?.correctEbayApi === "INVENTORY_API"
+        ? "Inventory API" : phaseB?.correctEbayApi === "TRADING_API"
+          ? "Trading API" : "por resolver"}</p>
+      <p>Imágenes oficiales actuales: {phaseB?.currentImageSetProven
+        ? "comprobadas" : "por comprobar"}</p>
+      <p>Manifest de Mayel: {phaseB?.mayelManifestValid
+        ? "reconciliado" : "requiere reconciliación"}</p>
+      <p>Cambio propuesto: {phaseB?.visualOnlyDiff
+        && phaseB?.unauthorizedFieldDiffCount === 0
+        ? "sólo visual · otros campos protegidos" : "no comprobado"}</p>
+      <p>Canary físico: {phaseB?.readyForMayelPhysicalCanary
+        ? "listo para ejecución de Seller OS" : "todavía bloqueado"}</p>
     </div>
     {phaseB?.managementModel === "MANAGEMENT_MODEL_UNPROVEN" &&
       <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
