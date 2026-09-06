@@ -176,6 +176,35 @@ async function readCanonicalListingManagementEvidence(input: {
   })
 }
 
+function reconcileManagementWithOfficialTradingListing(
+  management: Awaited<ReturnType<
+    typeof readCanonicalListingManagementEvidence>>,
+  official: Awaited<ReturnType<
+    typeof readOfficialActiveListingImageSnapshotV1>> | null,
+) {
+  const tradingListingProven = Boolean(official
+    && official.listingStatus.toLowerCase() === "active"
+    && ["fixedpriceitem", "storesfixedprice"].includes(
+      official.listingType.toLowerCase()))
+  const noInventoryOfferControlsListing = management.offersReadComplete
+    && management.exactPublishedOfferCount === 0
+    && management.otherPublishedOfferCount === 0
+    && management.publishedOfferCount === 0
+  if (management.managementModel !== "MANAGEMENT_MODEL_UNPROVEN"
+    || !tradingListingProven || !noInventoryOfferControlsListing) {
+    return management
+  }
+  return Object.freeze({
+    ...management,
+    managementModel: "TRADING_MANAGED" as const,
+    managementEvidenceSource: [
+      "OFFICIAL_TRADING_GET_ITEM_ACTIVE_OWNED_FIXED_PRICE",
+      "NO_PUBLISHED_INVENTORY_OFFER_LINKAGE",
+      management.managementEvidenceSource,
+    ].join("+"),
+  })
+}
+
 async function loadContext(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -216,7 +245,7 @@ async function loadContext(input: {
   }
   const sku = text(active.ebay_sku, 50)
   if (!sku) throw new Error("MAYEL_VISUAL_PHASE_B_EBAY_SKU_MISSING")
-  const [accessToken, management] = await Promise.all([
+  const [accessToken, baseManagement] = await Promise.all([
     getEbayTradingReadOnlyAccessToken(input.fetchImpl),
     readCanonicalListingManagementEvidence({
       supabase: input.supabase,
@@ -233,11 +262,14 @@ async function loadContext(input: {
     official = await readOfficialActiveListingImageSnapshotV1({
       accessToken, itemId: String(task.ebay_item_id), expectedSku: sku,
       accountKey: input.accountKey, fetchImpl: input.fetchImpl,
+      durableAccountIdentityProven: baseManagement.accountIdentityProven,
     })
   } catch (error) {
     officialReadFailureClass = error instanceof Error
       ? text(error.message, 160) : "EBAY_ACTIVE_IMAGE_REVISION_OFFICIAL_READ_FAILED"
   }
+  const management = reconcileManagementWithOfficialTradingListing(
+    baseManagement, official)
   const inventoryImageUrls = Array.isArray(record(
     record(management.inventoryItemPayload).product).imageUrls)
     ? record(record(management.inventoryItemPayload).product).imageUrls as unknown[]
@@ -382,6 +414,9 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
         context.management.inventoryItemAuthoritativelyAbsent,
       offersReadComplete: context.management.offersReadComplete,
       exactPublishedOfferCount: context.management.exactPublishedOfferCount,
+      otherPublishedOfferCount: context.management.otherPublishedOfferCount,
+      publishedOfferCount: context.management.publishedOfferCount,
+      totalOfferCount: context.management.totalOfferCount,
       groupedInventoryItem: context.management.groupedInventoryItem,
       resourceErrors: context.management.resourceErrors,
     },

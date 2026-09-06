@@ -212,39 +212,42 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
   expectedSku: string
   accountKey: string
   fetchImpl: FetchLike
+  durableAccountIdentityProven?: boolean
 }) {
   const identity = getEbayProductionIdentityBindingConfiguration()
   if (
     !identity.bound || !identity.consistent ||
     !identity.expectedAccountFingerprint
   ) throw new Error("EBAY_ACTIVE_IMAGE_REVISION_ACCOUNT_NOT_BOUND")
-  const [userResult, itemResult] = await Promise.all([
-    tradingCall({
+  const userPromise = input.durableAccountIdentityProven
+    ? Promise.resolve(null)
+    : tradingCall({
       callName: "GetUser",
       accessToken: input.accessToken,
       body: getUserRequestXml(),
       fetchImpl: input.fetchImpl,
       timeoutMs: READ_TIMEOUT_MS,
-    }),
+    })
+  const [userResult, itemResult] = await Promise.all([userPromise,
     tradingCall({
       callName: "GetItem",
       accessToken: input.accessToken,
       body: getItemRequestXml(input.itemId),
       fetchImpl: input.fetchImpl,
       timeoutMs: READ_TIMEOUT_MS,
-    }),
-  ])
-  if (!userResult.response.ok || !responseAccepted(userResult.xml)) {
+    })])
+  if (userResult && (!userResult.response.ok ||
+      !responseAccepted(userResult.xml))) {
     throw new Error(officialReadFailureClass("GET_USER", userResult))
   }
   if (!itemResult.response.ok || !responseAccepted(itemResult.xml)) {
     throw new Error(officialReadFailureClass("GET_ITEM", itemResult))
   }
 
-  const authenticatedUserId = text(
+  const authenticatedUserId = userResult ? text(
     tradingXmlTagValue(tradingXmlContainer(userResult.xml, "User"), "UserID"),
     100,
-  )
+  ) : identity.expectedUserId
   const item = tradingXmlContainer(itemResult.xml, "Item")
   const sellerUserId = text(
     tradingXmlTagValue(tradingXmlContainer(item, "Seller"), "UserID"),
@@ -259,14 +262,17 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
   const listingType = text(tradingXmlTagValue(item, "ListingType"), 40)
   const pictures = tradingXmlContainer(item, "PictureDetails")
   const pictureSource = text(tradingXmlTagValue(pictures, "PictureSource"), 20) || null
-  const fingerprint = ebayProductionAccountFingerprint(authenticatedUserId)
+  const identityUserId = authenticatedUserId || sellerUserId
+  const fingerprint = ebayProductionAccountFingerprint(identityUserId)
   const expectedFingerprint = identity.expectedAccountFingerprint.toLowerCase()
   if (
-    !authenticatedUserId || !sellerUserId ||
+    !identityUserId || !sellerUserId ||
     (identity.expectedUserId
       ? authenticatedUserId.toLowerCase() !== identity.expectedUserId.toLowerCase()
       : false) ||
-    sellerUserId.toLowerCase() !== authenticatedUserId.toLowerCase() ||
+    (authenticatedUserId
+      ? sellerUserId.toLowerCase() !== authenticatedUserId.toLowerCase()
+      : false) ||
     fingerprint !== expectedFingerprint ||
     !input.accountKey.endsWith(`:${expectedFingerprint}`) ||
     itemId !== input.itemId || listingStatus.toLowerCase() !== "active" ||
@@ -275,7 +281,7 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
   ) throw new Error("EBAY_ACTIVE_IMAGE_REVISION_IDENTITY_MISMATCH")
 
   return {
-    authenticatedUserId,
+    authenticatedUserId: identityUserId,
     sellerUserId,
     itemId,
     listingStatus,

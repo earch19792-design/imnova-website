@@ -91,6 +91,9 @@ export type EbayListingManagementEvidenceV1 = Readonly<{
   inventoryHttpStatus: number
   offersHttpStatus: number
   exactPublishedOfferCount: number
+  otherPublishedOfferCount: number
+  publishedOfferCount: number
+  totalOfferCount: number
   inventoryItemPresent: boolean
   inventoryItemAuthoritativelyAbsent: boolean
   offersReadComplete: boolean
@@ -920,6 +923,10 @@ export function classifyEbayListingManagementModelEvidenceV1(input: {
     inventoryHttpStatus: input.inventory.status,
     offersHttpStatus: input.offers.status,
     exactPublishedOfferCount: exactPublishedOffers.length,
+    otherPublishedOfferCount: otherPublishedOffers.length,
+    publishedOfferCount: offers.filter((offer) =>
+      String(offer.status ?? "").trim().toUpperCase() === "PUBLISHED").length,
+    totalOfferCount: offers.length,
     inventoryItemPresent,
     inventoryItemAuthoritativelyAbsent: inventoryAbsent,
     offersReadComplete: offersComplete,
