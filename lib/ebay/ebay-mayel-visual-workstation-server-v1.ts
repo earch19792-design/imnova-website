@@ -862,9 +862,6 @@ export async function readMayelVisualWorkstationV1(input: {
     }
     const { evidence, prompt: promptContract, storedMatchesCanonical } =
       canonicalPromptForTask(task)
-    if (!storedMatchesCanonical) {
-      throw new Error("MAYEL_VISUAL_PROMPT_RECONCILIATION_REQUIRED")
-    }
     const sourceImages = []
     for (const rawSource of (Array.isArray(task.source_image_references)
       ? task.source_image_references : [])) {
@@ -881,8 +878,9 @@ export async function readMayelVisualWorkstationV1(input: {
       sku: String(evidence.sku ?? ""),
       productTitle: String(evidence.productTitle ?? ""),
       status: String(task.status), evidencePack: evidence,
-      prompt: String(task.prompt_text),
+      prompt: promptContract.text,
       promptSlots: promptContract.slots,
+      promptReconciliationRequired: !storedMatchesCanonical,
       promptVersion: String(task.prompt_contract_version),
       promptDigest: String(task.prompt_digest),
       sourceImageSetDigest: String(task.source_image_set_digest),
