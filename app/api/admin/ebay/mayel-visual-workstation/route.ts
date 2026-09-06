@@ -215,6 +215,7 @@ export async function GET(request: Request) {
     console.info("MAYEL_FULL_VISUAL_DELEGATION_READ_MODEL_V1", {
       ownerAuthenticated: ownerView,
       accountIdentityProven: delegation.globalAccountIdentityProven,
+      identityFailureClass: delegation.identityFailureClass,
       workspaceReady: delegation.predicates.find((predicate) =>
         predicate.code === "MAYEL_WORKSPACE_READY")?.pass === true,
       scopeValid: delegation.predicates.find((predicate) =>
