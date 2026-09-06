@@ -755,7 +755,8 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
       setMessage("")
     } catch {
       setReadState("RETRYING")
-      setMessage("No pude actualizar ahora. Puedes seguir viendo el último estado disponible.")
+      setView("VISUAL")
+      setMessage("El resumen comercial no está disponible ahora. La Estación visual sigue disponible y no necesitas hacer nada técnico.")
     }
   }, [])
 
@@ -880,8 +881,17 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
           <OperatorNavigation view={view}
           onChange={setView} onLogout={logout} /></div>
         {message && <p aria-live="polite" className="mt-4 rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium text-[#704d3c]">{message}</p>}
-        {!dashboard && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7 text-sm text-[#6f736c]">{readState === "RETRYING" ? "Esta vista no está disponible ahora. No necesitas hacer nada." : "Preparando tu espacio…"}</div>}
-        {dashboard && <div className="mt-7 space-y-7">
+        {!dashboard && view !== "VISUAL" && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7 text-sm text-[#6f736c]">{readState === "RETRYING" ? "El resumen comercial no está disponible ahora. La Estación visual continúa funcionando." : "Preparando tu espacio…"}</div>}
+        {view === "VISUAL" && <div className="mt-7 space-y-5"
+          data-mayel-workspace-independent-from-trading="true">
+          <section className="rounded-2xl border border-[#cbd9d4] bg-[#eef5f1] p-4 text-sm leading-6 text-[#36534a]">
+            <p className="font-semibold">Mayel · Estación visual disponible</p>
+            <p className="mt-1">Puedes preparar, subir y revisar recursos visuales. La aplicación y el readback en eBay se validan por separado antes de ejecutar cualquier cambio.</p>
+          </section>
+          <MayelVisualWorkstation canOperate={canAct}
+            canOwnerAuthorize={embeddedForOwner} />
+        </div>}
+        {dashboard && view !== "VISUAL" && <div className="mt-7 space-y-7">
           {!dashboard.capabilities.safeLiveTitleCanary &&
             <p className="rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-sm font-medium leading-6 text-[#704d3c]">Puedes revisar las propuestas, pero aplicar esta mejora todavía no está disponible.</p>}
 
@@ -930,9 +940,6 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
             <div className="mt-6"><ListingCollection listings={suggestedListings}
               canAct={canAct} onRefresh={load} /></div>
           </section>}
-
-          {view === "VISUAL" && <MayelVisualWorkstation
-            canOperate={canAct} canOwnerAuthorize={embeddedForOwner} />}
 
           {view === "RESULTS" && <>
             <SalesChart dashboard={dashboard} />
