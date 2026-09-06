@@ -988,9 +988,22 @@ export async function executeMayelTradingVisualLiveCanaryV1(input: {
       media_preparation_write_count: media.mediaApiWriteCount,
     }).select("*").single()
   if (executionInsert.error || !executionInsert.data) {
-    throw new Error(executionInsert.error?.code === "23505"
+    const databaseCode = text(executionInsert.error?.code, 10)
+    const constraint = text(executionInsert.error?.message, 500)
+      .match(/constraint\s+"([a-z0-9_]{3,120})"/i)?.[1]
+      ?.toUpperCase() ?? null
+    console.warn("MAYEL_TRADING_VISUAL_EXECUTION_INSERT_REJECTED", {
+      databaseCode: databaseCode || null, constraint,
+      mediaApiWriteCount: media.mediaApiWriteCount,
+      tradingListingWriteCount: 0,
+    })
+    throw new Error(databaseCode === "23505"
       ? "MAYEL_TRADING_VISUAL_DUPLICATE_EXECUTION_BLOCKED"
-      : "MAYEL_TRADING_VISUAL_EXECUTION_PERSIST_FAILED")
+      : constraint
+        ? `MAYEL_TRADING_VISUAL_EXECUTION_PERSIST_FAILED_${constraint}`
+        : databaseCode
+          ? `MAYEL_TRADING_VISUAL_EXECUTION_PERSIST_FAILED_${databaseCode}`
+          : "MAYEL_TRADING_VISUAL_EXECUTION_PERSIST_FAILED")
   }
   const claimToken = randomUUID()
   const preflightSnapshot = {
