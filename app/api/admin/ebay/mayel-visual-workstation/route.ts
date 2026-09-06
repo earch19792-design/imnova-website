@@ -13,11 +13,18 @@ import {
   uploadMayelVisualOutputV1,
 } from "@/lib/ebay/ebay-mayel-visual-workstation-server-v1"
 import {
-  applyMayelVisualManifestToEbayV1,
-  MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION,
   readMayelVisualPhaseBPreviewV1,
   rebaseMayelVisualPhaseBPreviewV1,
 } from "@/lib/ebay/ebay-mayel-visual-phase-b-server-v1"
+import {
+  authorizeMayelFullVisualDelegationV1,
+  readMayelFullVisualDelegationV1,
+  revokeMayelFullVisualDelegationV1,
+} from "@/lib/ebay/ebay-mayel-full-visual-delegation-server-v1"
+import {
+  MAYEL_FULL_VISUAL_DELEGATION_CONFIRMATION,
+  MAYEL_FULL_VISUAL_DELEGATION_REVOKE_CONFIRMATION,
+} from "@/lib/ebay/ebay-mayel-full-visual-delegation-v1"
 import { MAYEL_VISUAL_OUTPUT_ROLES } from
   "@/lib/ebay/ebay-mayel-visual-workstation-v1"
 import { getEbaySellerAccountScopeConfiguration } from
@@ -169,7 +176,11 @@ export async function GET(request: Request) {
           blocker: safeCode(error), marketplaceWritesOnGet: 0 } }
       }
     })) : workstation.tasks
+    const delegation = await readMayelFullVisualDelegationV1({ supabase,
+      accountKey: accountKey(), ownerAuthenticated: ownerView,
+      taskDiagnostics: tasks })
     return json({ success: true, workstation: { ...workstation, tasks },
+      delegation,
       accessRole: auth.accessRole,
       phase: "B_OWNER_GATED", marketplaceWrites: 0,
       openAiImageApiCalls: 0 })
@@ -224,6 +235,42 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null) as
       Record<string, unknown> | null
     const action = typeof body?.action === "string" ? body.action : ""
+    if (action === "AUTHORIZE_FULL_VISUAL_DELEGATION") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
+      if (body?.confirmation !== MAYEL_FULL_VISUAL_DELEGATION_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_VISUAL_DELEGATION_CONFIRMATION_INVALID" }, 400)
+      }
+      const outcome = await authorizeMayelFullVisualDelegationV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId,
+      })
+      return json({ success: true,
+        outcome: outcome.idempotent
+          ? "FULL_VISUAL_DELEGATION_ALREADY_ACTIVE"
+          : "FULL_VISUAL_DELEGATION_ACTIVATED",
+        delegation: outcome.authority, marketplaceWrites: 0 })
+    }
+    if (action === "REVOKE_FULL_VISUAL_DELEGATION") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
+      if (body?.confirmation !==
+          MAYEL_FULL_VISUAL_DELEGATION_REVOKE_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_VISUAL_DELEGATION_REVOCATION_CONFIRMATION_INVALID" },
+        400)
+      }
+      const outcome = await revokeMayelFullVisualDelegationV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId,
+      })
+      return json({ success: true,
+        outcome: outcome.idempotent
+          ? "FULL_VISUAL_DELEGATION_ALREADY_INACTIVE"
+          : "FULL_VISUAL_DELEGATION_REVOKED",
+        delegation: outcome.authority, marketplaceWrites: 0 })
+    }
     if (action === "REBASE_VISUAL_MANIFEST") {
       if (!ownerRole) return json({ success: false,
         error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
@@ -244,22 +291,10 @@ export async function POST(request: Request) {
     if (action === "APPLY_VISUAL_MANIFEST") {
       if (!ownerRole) return json({ success: false,
         error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
-      const taskId = uuid(body?.visualTaskId)
-      const digest = typeof body?.visualManifestDigest === "string"
-        ? body.visualManifestDigest.trim() : ""
-      if (!taskId || !/^sha256:[0-9a-f]{64}$/.test(digest)
-        || body?.confirmation !== MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION) {
-        return json({ success: false,
-          error: "MAYEL_VISUAL_PHASE_B_OWNER_AUTHORIZATION_INVALID" }, 400)
-      }
-      const execution = await applyMayelVisualManifestToEbayV1({
-        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
-        ownerUserId: auth.userId, taskId, visualManifestDigest: digest,
-        confirmation: MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION,
-      })
-      return json({ success: true, outcome: execution?.finalState
-        ?? execution?.phase ?? "OWNER_APPROVED", execution,
-        marketplaceWrites: execution?.marketplaceWriteCount ?? 0 })
+      return json({ success: false,
+        error: "MAYEL_VISUAL_LEGACY_PER_LISTING_AUTHORIZATION_DISABLED",
+        operatorMessage: "La delegación visual reutilizable reemplaza la autorización por listing. Seller OS ejecutará únicamente cuando el listing tenga una ruta segura demostrada.",
+        marketplaceWrites: 0 }, 409)
     }
     if (!mayelRole) return json({ success: false,
       error: "MAYEL_VISUAL_OPERATOR_AUTHORITY_REQUIRED" }, 403)

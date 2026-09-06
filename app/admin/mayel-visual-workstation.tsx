@@ -84,6 +84,30 @@ type VisualTask = {
   }
 }
 
+type DelegationPredicate = {
+  code: string
+  pass: boolean | null
+  requiredForDelegation: boolean
+  humanMessage: string
+}
+
+type VisualDelegation = {
+  authorizationButtonRendered: boolean
+  authorizationButtonDisabled: boolean
+  authorizationButtonEnabled: boolean
+  disableReason: string | null
+  firstBlockingPredicate: string | null
+  predicates: DelegationPredicate[]
+  fullVisualDelegationActive: boolean
+  active: { status: string; ownerConfirmedAt: string | null;
+    mainImageAuthority: boolean; ownerPerImageApproval: boolean;
+    ownerPerListingVisualApproval: boolean } | null
+  scope: { allowedActions: string[]; forbiddenActions: string[];
+    mainImageAuthority: boolean; ownerPerImageApproval: boolean;
+    ownerPerListingVisualApproval: boolean }
+  taskExecutionReadinessIsSeparate: boolean
+}
+
 const labels: Record<VisualRole, string> = {
   DETAIL: "Detalle", PACKAGE_CONTENTS: "Contenido del paquete",
   DIMENSIONS: "Dimensiones", PRIMARY_BENEFIT: "Beneficio principal",
@@ -100,6 +124,25 @@ const rejectionReasons = [
   ["ROLE_MISMATCH", "No corresponde al tipo de imagen"],
   ["OTHER_SAFE_REASON", "Otra razón segura"],
 ] as const
+
+const visualScopeLabels: Record<string, string> = {
+  MAIN_IMAGE: "imagen principal",
+  SECONDARY_IMAGES: "imágenes secundarias",
+  IMAGE_REPLACEMENT: "sustituir imágenes",
+  IMAGE_REMOVAL: "retirar imágenes",
+  IMAGE_REORDER: "orden visual",
+  CROP: "recorte",
+  BACKGROUND: "fondo",
+  LIGHTING: "iluminación",
+  COLOR_CORRECTION: "corrección de color",
+  QUALITY_ENHANCEMENT: "mejora de calidad",
+  DETAIL_IMAGES: "imágenes de detalle",
+  SCALE_IMAGES: "imágenes de escala",
+  LIFESTYLE_IMAGES: "imágenes de contexto",
+  PACKAGE_CONTENT_IMAGES: "contenido del paquete",
+  VISUAL_SEQUENCE_OPTIMIZATION: "secuencia visual",
+  LIVE_LISTING_VISUAL_OPTIMIZATION: "optimización visual de listings LIVE",
+}
 
 async function visualRequest(path: string, init?: RequestInit) {
   const { data, error } = await supabase.auth.getSession()
@@ -301,13 +344,10 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
   </section>
 }
 
-function OwnerPreview({ task, canOwnerAuthorize, busy, onDone }: {
+function OwnerPreview({ task, canOwnerAuthorize }: {
   task: VisualTask
   canOwnerAuthorize: boolean
-  busy: boolean
-  onDone: () => Promise<void>
 }) {
-  const [message, setMessage] = useState("")
   if (!task.visualManifest) return null
   const phaseB = task.phaseB
   const proposed = Array.isArray(task.visualManifest.proposedOrderedImages)
@@ -319,40 +359,6 @@ function OwnerPreview({ task, canOwnerAuthorize, busy, onDone }: {
         ? task.evidencePack[key] as unknown[] : []
       return values.length ? [`${key}: ${values.join(" · ")}`] : []
     })
-  async function authorize() {
-    if (!phaseB?.ownerCtaAvailable || !phaseB.visualManifestDigest) return
-    setMessage("")
-    try {
-      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "APPLY_VISUAL_MANIFEST",
-          visualTaskId: task.visualTaskId,
-          visualManifestDigest: phaseB.visualManifestDigest,
-          confirmation: "AUTORIZAR ACTUALIZACION DE IMAGENES" }),
-      })
-      await onDone()
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message :
-        "No se pudo ejecutar la actualización autorizada.")
-    }
-  }
-  async function rebasePreview() {
-    const digest = phaseB?.visualManifestDigest ?? task.visualManifestDigest
-    if (!phaseB?.safeRebaseAvailable || !digest) return
-    setMessage("")
-    try {
-      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "REBASE_VISUAL_MANIFEST",
-          visualTaskId: task.visualTaskId,
-          expectedVisualManifestDigest: digest }),
-      })
-      await onDone()
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message :
-        "No se pudo actualizar la vista previa con el estado vigente de eBay.")
-    }
-  }
   const phase = phaseB?.execution?.phase
   const applied = phaseB?.execution?.appliedAndOfficiallyVerified === true
   return <section className="rounded-2xl border border-[#74866d]/35 bg-[#f4f7f1] p-5">
@@ -395,18 +401,11 @@ function OwnerPreview({ task, canOwnerAuthorize, busy, onDone }: {
       <ul className="mt-2 space-y-1">{factEntries.map((entry) =>
         <li key={entry}>{entry}</li>)}</ul>
     </details>}
-    {canOwnerAuthorize && !phase && <button type="button"
-      disabled={busy || phaseB?.ownerCtaAvailable !== true}
-      onClick={() => void authorize()}
-      className="mt-4 min-h-12 w-full rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">
-      Autorizar actualización de imágenes
-    </button>}
-    {canOwnerAuthorize && !phase && phaseB?.safeRebaseAvailable &&
-      <button type="button" disabled={busy}
-        onClick={() => void rebasePreview()}
-        className="mt-3 min-h-12 w-full rounded-xl border border-[#1d5961] bg-white px-4 text-sm font-semibold text-[#1d5961] disabled:opacity-40">
-        Actualizar vista previa con las imágenes vigentes de eBay
-      </button>}
+    {canOwnerAuthorize && !phase && <p className="mt-4 rounded-xl bg-white p-3 text-sm text-[#5f645e]">
+      La delegación visual general se administra arriba. Seller OS ejecutará
+      esta propuesta sólo cuando la validación específica del listing esté
+      completa; no necesitas aprobarla imagen por imagen.
+    </p>}
     {canOwnerAuthorize && !phase && phaseB?.mayelAssetPreserved &&
       <p className="mt-2 text-xs text-[#617159]">La imagen aprobada por Mayel permanece conservada; no requiere volver a subirla ni aprobarla.</p>}
     {phase && <p className={`mt-4 rounded-xl p-3 text-sm font-semibold ${applied ? "bg-[#e3ebe1] text-[#425143]" : "bg-[#f7e9de] text-[#704d3c]"}`}>
@@ -416,6 +415,100 @@ function OwnerPreview({ task, canOwnerAuthorize, busy, onDone }: {
     {canOwnerAuthorize && !phaseB?.ownerCtaAvailable && !phase &&
       <p className="mt-3 text-xs font-semibold text-[#704d3c]">La actualización permanece bloqueada de forma segura: {phaseB?.blocker ?? "preflight no disponible"}.</p>}
     {!canOwnerAuthorize && <p className="mt-2 text-xs font-semibold text-[#704d3c]">Mayel prepara y aprueba los recursos. La decisión final pertenece al owner.</p>}
+  </section>
+}
+
+function FullVisualDelegationPanel({ delegation, owner, busy, onDone }: {
+  delegation: VisualDelegation | null
+  owner: boolean
+  busy: boolean
+  onDone: () => Promise<void>
+}) {
+  const [message, setMessage] = useState("")
+  const active = delegation?.fullVisualDelegationActive === true
+  async function submit(action: "AUTHORIZE_FULL_VISUAL_DELEGATION" |
+    "REVOKE_FULL_VISUAL_DELEGATION") {
+    setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, confirmation: action ===
+          "AUTHORIZE_FULL_VISUAL_DELEGATION"
+          ? "AUTORIZAR MAYEL CONTROL VISUAL"
+          : "REVOCAR DELEGACION VISUAL DE MAYEL" }),
+      })
+      await onDone()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No pudimos guardar la delegación visual.")
+    }
+  }
+  return <section className="mt-6 rounded-[28px] border border-[#b8c8bc] bg-[#f4f7f1] p-5 shadow-[0_18px_50px_rgba(55,45,32,0.06)] sm:p-7">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#617159]">Delegación owner</p>
+        <h3 className="mt-2 font-serif text-2xl font-semibold">Control visual completo de Mayel</h3>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-[#5f645e]">
+          Una sola autorización reutilizable para que Mayel decida y prepare
+          mejoras visuales. Seller OS conserva la validación del producto,
+          la seguridad del listing y el readback oficial.
+        </p>
+      </div>
+      <span className={`rounded-full px-3 py-2 text-xs font-semibold ${active
+        ? "bg-[#dce9df] text-[#36533d]" : "bg-[#eee9e1] text-[#6f6253]"}`}>
+        {active ? "DELEGACIÓN ACTIVA" : "ESPERANDO DELEGACIÓN"}
+      </span>
+    </div>
+    <div className="mt-5 grid gap-4 lg:grid-cols-2">
+      <div className="rounded-2xl bg-white p-4">
+        <h4 className="text-sm font-semibold">Mayel puede decidir</h4>
+        <p className="mt-2 text-xs leading-5 text-[#64675f]">
+          {(delegation?.scope.allowedActions ?? []).map((action) =>
+            visualScopeLabels[action] ?? action).join(" · ") ||
+            "Cargando alcance visual…"}
+        </p>
+      </div>
+      <div className="rounded-2xl bg-white p-4">
+        <h4 className="text-sm font-semibold">Siempre protegido</h4>
+        <p className="mt-2 text-xs leading-5 text-[#64675f]">
+          Precio, cantidad, categoría, condición, policies, identidad del
+          producto, publicación, pedidos, mensajes, devoluciones y gasto.
+        </p>
+      </div>
+    </div>
+    <div className="mt-4 rounded-2xl border border-[#d6dfd1] bg-white p-4 text-sm">
+      <p><strong>Imagen principal:</strong> incluida en la delegación visual.</p>
+      <p className="mt-1"><strong>Aprobaciones rutinarias:</strong> no se pedirán por imagen ni por listing.</p>
+      <p className="mt-1"><strong>Ejecución:</strong> cada cambio seguirá exigiendo producto/variante exactos, derechos, compliance, modelo de gestión y readback oficial.</p>
+    </div>
+    {!active && delegation?.disableReason && <p className="mt-4 rounded-xl bg-[#f7e9de] p-3 text-sm font-semibold text-[#704d3c]">
+      {delegation.disableReason}
+    </p>}
+    {owner && !active && <button type="button"
+      disabled={busy || delegation?.authorizationButtonEnabled !== true}
+      onClick={() => void submit("AUTHORIZE_FULL_VISUAL_DELEGATION")}
+      className="mt-4 min-h-12 w-full rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">
+      AUTORIZAR MAYEL · CONTROL VISUAL
+    </button>}
+    {owner && active && <button type="button" disabled={busy}
+      onClick={() => void submit("REVOKE_FULL_VISUAL_DELEGATION")}
+      className="mt-4 min-h-12 w-full rounded-xl border border-[#9a5a4a] bg-white px-4 text-sm font-semibold text-[#8b4937] disabled:opacity-40">
+      Revocar delegación
+    </button>}
+    {!owner && <p className="mt-4 text-xs font-semibold text-[#704d3c]">
+      Sólo el owner puede conceder o revocar esta delegación.
+    </p>}
+    <details className="mt-4 rounded-xl border border-[#d6dfd1] bg-white p-3 text-xs text-[#64675f]">
+      <summary className="cursor-pointer font-semibold">Ver comprobaciones de autoridad</summary>
+      <ul className="mt-3 space-y-2">{(delegation?.predicates ?? [])
+        .map((predicate) => <li key={predicate.code}
+          className="flex items-start justify-between gap-3">
+          <span>{predicate.humanMessage}</span>
+          <span className="shrink-0 font-semibold">{predicate.pass === true
+            ? "Comprobado" : predicate.pass === false ? "Bloqueado" :
+              "Se comprueba por listing"}</span>
+        </li>)}</ul>
+    </details>
     {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
   </section>
 }
@@ -428,12 +521,14 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
   const [busy, setBusy] = useState(true)
   const [message, setMessage] = useState("")
   const [canaryAvailable, setCanaryAvailable] = useState<boolean | null>(null)
+  const [delegation, setDelegation] = useState<VisualDelegation | null>(null)
 
   const load = useCallback(async () => {
     const payload = await visualRequest(
       "/api/admin/ebay/mayel-visual-workstation")
     const workstation = payload.workstation as { tasks?: VisualTask[] } | undefined
     setTasks(workstation?.tasks ?? [])
+    setDelegation((payload.delegation as VisualDelegation | undefined) ?? null)
   }, [])
 
   useEffect(() => {
@@ -489,6 +584,8 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
       <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">Cero API de imágenes</span>
       <span className="rounded-full bg-[#f7e9de] px-3 py-2 text-[#704d3c]">eBay sólo con autorización owner</span>
     </div>
+    <FullVisualDelegationPanel delegation={delegation}
+      owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
     {canOperate && <button type="button"
       onClick={() => void acquireNextDelegatedTask()} disabled={busy}
       data-mayel-explicit-work-acquisition
@@ -538,7 +635,7 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
             onDone={refresh} />)}</div>
       </section>}
       <div className="mt-6"><OwnerPreview task={task}
-        canOwnerAuthorize={canOwnerAuthorize} busy={busy} onDone={refresh} /></div>
+        canOwnerAuthorize={canOwnerAuthorize} /></div>
       <details className="mt-5 rounded-xl border border-[#e0d9ce] p-3 text-xs text-[#6f736c]">
         <summary className="cursor-pointer py-2 font-semibold">Provenance técnica</summary>
         <p className="mt-2 break-all">Visual Task ID: {task.visualTaskId}</p>
@@ -549,7 +646,9 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
     </article>)}</div>
     {busy && <p className="mt-6 rounded-2xl border border-[#d9d1c4] bg-[#fffdf8] p-6 text-sm text-[#6f736c]">Preparando la estación visual…</p>}
     <footer className="mt-7 rounded-2xl border border-[#d6bca8] bg-[#f7e9de] p-4 text-xs leading-5 text-[#704d3c]">
-      La imagen principal sigue protegida. La Fase B sólo puede cambiar imágenes después de una autorización owner exacta y de una lectura oficial concordante.
+      La delegación incluye la imagen principal, pero nunca sustituye la
+      comprobación de producto/variante, derechos, compliance, gestión del
+      listing ni readback oficial antes y después de cada cambio.
     </footer>
   </section>
 }
