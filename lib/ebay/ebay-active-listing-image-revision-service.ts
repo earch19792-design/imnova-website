@@ -8,6 +8,8 @@ import {
   tradingXmlContainer,
   tradingXmlTagValue,
 } from "./ebay-manual-listing-trading-readonly"
+import { getEbayBaseApplicationTokenV1 } from
+  "./ebay-seller-keyword-demand-gateway"
 import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
@@ -39,6 +41,7 @@ export type OfficialListingSnapshot = {
   pictureUrls: string[]
   externalPictureUrls: string[]
   observedAt: string
+  sourceAuthority?: string
 }
 
 type ImageVerification = {
@@ -213,7 +216,7 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
   accountKey: string
   fetchImpl: FetchLike
   durableAccountIdentityProven?: boolean
-}) {
+}): Promise<OfficialListingSnapshot> {
   const identity = getEbayProductionIdentityBindingConfiguration()
   if (
     !identity.bound || !identity.consistent ||
@@ -292,6 +295,75 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
     externalPictureUrls: xmlTagValues(pictures, "ExternalPictureURL"),
     observedAt: new Date().toISOString(),
   } satisfies OfficialListingSnapshot
+}
+
+export async function readOfficialActiveListingBrowseSnapshotV1(input: {
+  itemId: string
+  accountKey: string
+  fetchImpl: FetchLike
+}): Promise<OfficialListingSnapshot> {
+  const identity = getEbayProductionIdentityBindingConfiguration()
+  if (!identity.bound || !identity.consistent ||
+      !identity.expectedAccountFingerprint ||
+      !/^\d{9,20}$/.test(input.itemId)) {
+    throw new Error("EBAY_ACTIVE_IMAGE_BROWSE_IDENTITY_UNBOUND")
+  }
+  let token = await getEbayBaseApplicationTokenV1()
+  try {
+    const url = new URL(
+      "https://api.ebay.com/buy/browse/v1/item/get_item_by_legacy_id")
+    url.searchParams.set("legacy_item_id", input.itemId)
+    const response = await input.fetchImpl(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}`,
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        "Accept-Language": "en-US" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+    })
+    const body = record(await response.json().catch(() => ({})))
+    if (!response.ok) {
+      const errors = Array.isArray(body.errors) ? body.errors.map(record) : []
+      const errorId = text(errors[0]?.errorId, 20)
+      throw new Error(`EBAY_ACTIVE_IMAGE_BROWSE_HTTP_${response.status}`
+        + (/^\d{1,20}$/.test(errorId) ? `_EBAY_ERROR_${errorId}` : ""))
+    }
+    const sellerUserId = text(record(body.seller).username, 100)
+    const legacyItemId = text(body.legacyItemId, 20)
+      || text(body.itemId, 100).match(/^v1\|(\d{9,20})\|/)?.[1] || ""
+    const fingerprint = ebayProductionAccountFingerprint(sellerUserId)
+    const buyingOptions = Array.isArray(body.buyingOptions)
+      ? body.buyingOptions.map((value) => text(value, 40).toUpperCase()) : []
+    const main = text(record(body.image).imageUrl, 500)
+    const additional = Array.isArray(body.additionalImages)
+      ? body.additionalImages.map((value) => text(record(value).imageUrl, 500))
+        .filter(Boolean) : []
+    const pictureUrls = [...new Set([main, ...additional].filter(Boolean))]
+    if (!sellerUserId || legacyItemId !== input.itemId
+      || fingerprint !== identity.expectedAccountFingerprint.toLowerCase()
+      || !input.accountKey.endsWith(`:${fingerprint}`)
+      || !buyingOptions.includes("FIXED_PRICE")
+      || pictureUrls.length === 0) {
+      throw new Error("EBAY_ACTIVE_IMAGE_BROWSE_IDENTITY_MISMATCH")
+    }
+    return {
+      authenticatedUserId: sellerUserId,
+      sellerUserId,
+      itemId: legacyItemId,
+      listingStatus: "Active",
+      // Browse proves the exact legacy Item and seller, but does not expose SKU.
+      // Do not project the locally expected SKU as official evidence.
+      ebaySku: "",
+      listingType: "FixedPriceItem",
+      pictureSource: "BROWSE_OFFICIAL",
+      pictureUrls,
+      externalPictureUrls: pictureUrls,
+      observedAt: new Date().toISOString(),
+      sourceAuthority: "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1",
+    } satisfies OfficialListingSnapshot
+  } finally {
+    token = ""
+  }
 }
 
 function sameUrls(left: string[], right: string[]) {

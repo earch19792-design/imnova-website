@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
+  readOfficialActiveListingBrowseSnapshotV1,
   readOfficialActiveListingImageSnapshotV1,
   verifyOfficialOrderedImageSetV1,
 } from "./ebay-active-listing-image-revision-service"
@@ -198,7 +199,8 @@ function reconcileManagementWithOfficialTradingListing(
     ...management,
     managementModel: "TRADING_MANAGED" as const,
     managementEvidenceSource: [
-      "OFFICIAL_TRADING_GET_ITEM_ACTIVE_OWNED_FIXED_PRICE",
+      official?.sourceAuthority
+        ?? "OFFICIAL_TRADING_GET_ITEM_ACTIVE_OWNED_FIXED_PRICE",
       "NO_PUBLISHED_INVENTORY_OFFER_LINKAGE",
       management.managementEvidenceSource,
     ].join("+"),
@@ -258,6 +260,7 @@ async function loadContext(input: {
   let official: Awaited<ReturnType<
     typeof readOfficialActiveListingImageSnapshotV1>> | null = null
   let officialReadFailureClass: string | null = null
+  let tradingReadFailureClass: string | null = null
   try {
     official = await readOfficialActiveListingImageSnapshotV1({
       accessToken, itemId: String(task.ebay_item_id), expectedSku: sku,
@@ -267,6 +270,22 @@ async function loadContext(input: {
   } catch (error) {
     officialReadFailureClass = error instanceof Error
       ? text(error.message, 160) : "EBAY_ACTIVE_IMAGE_REVISION_OFFICIAL_READ_FAILED"
+    tradingReadFailureClass = officialReadFailureClass
+    if (officialReadFailureClass.endsWith("_EBAY_ERROR_518")) {
+      try {
+        official = await readOfficialActiveListingBrowseSnapshotV1({
+          itemId: String(task.ebay_item_id),
+          accountKey: input.accountKey, fetchImpl: input.fetchImpl,
+        })
+        officialReadFailureClass = null
+      } catch (fallbackError) {
+        const fallbackClass = fallbackError instanceof Error
+          ? text(fallbackError.message, 160)
+          : "EBAY_ACTIVE_IMAGE_BROWSE_OFFICIAL_READ_FAILED"
+        officialReadFailureClass = [tradingReadFailureClass, fallbackClass]
+          .filter(Boolean).join("+")
+      }
+    }
   }
   const management = reconcileManagementWithOfficialTradingListing(
     baseManagement, official)
@@ -308,7 +327,8 @@ async function loadContext(input: {
     && management.exactPublishedOfferCount === 1
   const tradingManagedIdentityProven = management.managementModel ===
     "TRADING_MANAGED" && official?.itemId === String(task.ebay_item_id)
-    && official.ebaySku === sku
+    && (official.sourceAuthority === "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1"
+      || official.ebaySku === sku)
     && official.listingStatus.toLowerCase() === "active"
   return { task: task as JsonRecord, active: active as JsonRecord,
     assets: (assets ?? []) as JsonRecord[], execution: execution as JsonRecord | null,
@@ -324,8 +344,13 @@ async function loadContext(input: {
     correctEbayApi: management.managementModel === "INVENTORY_API_MANAGED"
       ? "INVENTORY_API" : management.managementModel === "TRADING_MANAGED"
         ? "TRADING_API" : null,
-    officialReadStatus: official ? "PASS" : "FAILED",
+    officialReadStatus: official?.sourceAuthority ===
+      "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1"
+      ? "PASS_BROWSE_FALLBACK" : official ? "PASS" : "FAILED",
+    officialReadAuthority: official?.sourceAuthority
+      ?? (official ? "EBAY_TRADING_GET_ITEM_V1" : null),
     officialReadFailureClass,
+    tradingReadFailureClass,
   }
 }
 
@@ -399,7 +424,9 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     correctEbayApi: context.correctEbayApi,
     correctEbayApiResolved: context.correctEbayApi !== null,
     officialReadStatus: context.officialReadStatus,
+    officialReadAuthority: context.officialReadAuthority,
     officialReadFailureClass: context.officialReadFailureClass,
+    tradingReadFailureClass: context.tradingReadFailureClass,
     currentImageSetProven: context.currentImageSetProven,
     mayelManifestValid,
     visualOnlyDiff,
@@ -464,7 +491,9 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     listingIdentityProven: context.listingIdentityProven,
     correctEbayApi: context.correctEbayApi,
     officialReadStatus: context.officialReadStatus,
+    officialReadAuthority: context.officialReadAuthority,
     officialReadFailureClass: context.officialReadFailureClass,
+    tradingReadFailureClass: context.tradingReadFailureClass,
     currentImageSetProven: context.currentImageSetProven,
     mayelManifestValid,
     visualOnlyDiff,
