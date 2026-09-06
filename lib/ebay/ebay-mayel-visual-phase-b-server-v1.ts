@@ -39,13 +39,18 @@ import {
 export const MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION =
   "EJECUTAR MAYEL TRADING VISUAL LIVE CANARY V1" as const
 const MAYEL_TRADING_MEDIA_LEDGER_MECHANISM =
-  "MAYEL_TRADING_VISUAL_EXECUTOR_V4" as const
+  "MAYEL_TRADING_VISUAL_EXECUTOR_V5" as const
 const MAYEL_TRADING_MEDIA_LEGACY_LEDGER_MECHANISMS = [
+  "MAYEL_TRADING_VISUAL_EXECUTOR_V4",
   "MAYEL_TRADING_VISUAL_EXECUTOR_V3",
   "MAYEL_TRADING_VISUAL_EXECUTOR_V2",
 ] as const
 const MAYEL_TRADING_MEDIA_LEDGER_INVARIANT =
   "MAYEL_APPROVED_ASSET_HAS_DURABLE_EPS_REPRESENTATION" as const
+const MAYEL_TRADING_MEDIA_MAX_CREATE_CALLS = 2
+const MAYEL_TRADING_MEDIA_IDENTITY_RETRY_DELAY_MS = 15 * 60 * 1_000
+const MAYEL_TRADING_MEDIA_IDENTITY_ERROR =
+  "MAYEL_TRADING_MEDIA_IMAGE_ID_MISSING" as const
 
 export const MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION =
   "AUTORIZAR ACTUALIZACION DE IMAGENES"
@@ -777,7 +782,7 @@ async function resolveMayelAssetToDurableEpsV1(input: {
   })
   const current = await input.supabase.from(
     "seller_os_operational_learning_ledger_v1")
-    .select("id,status,evidence,recovery_attempt_count")
+    .select("id,status,evidence,recovery_attempt_count,last_observed_at,lease_owner,lease_expires_at")
     .eq("marketplace_account_key", input.accountKey)
     .eq("invariant_code", MAYEL_TRADING_MEDIA_LEDGER_INVARIANT)
     .eq("mechanism_version", MAYEL_TRADING_MEDIA_LEDGER_MECHANISM)
@@ -829,13 +834,20 @@ async function resolveMayelAssetToDurableEpsV1(input: {
       mechanism_version: MAYEL_TRADING_MEDIA_LEDGER_MECHANISM,
       evidence_fingerprint: evidenceFingerprint,
       recovery_policy_version: MAYEL_TRADING_MEDIA_LEDGER_MECHANISM,
-      // This purpose-built one-shot claim is the only dispatcher. Generic
-      // recovery must never repeat an ambiguous Media creation request.
-      retry_safety: "ENGINEERING_REQUIRED",
-      recovery_class: "ENGINEERING_REQUIRED",
+      // A 201 response that omits every usable Media identity is recoverable
+      // only by one delayed re-preparation. Listing writes remain impossible
+      // until an exact EPS identity has been durably read back.
+      retry_safety: "SAFE_BOUNDED_MEDIA_REPREPARATION",
+      recovery_class: "AUTO_RECOVERABLE",
       recovery_outcome: "OBSERVED",
-      regression_guard: { mediaCreateMaxCalls: 1,
-        ambiguousMediaCreateRetryAllowed: false },
+      regression_guard: {
+        mediaCreateMaxCalls: MAYEL_TRADING_MEDIA_MAX_CREATE_CALLS,
+        identityLossRetryDelaySeconds:
+          MAYEL_TRADING_MEDIA_IDENTITY_RETRY_DELAY_MS / 1_000,
+        identityLossOnlyRetry: true,
+        ambiguousListingWriteRetryAllowed: false,
+        listingWriteRequiresDurableEpsReadback: true,
+      },
       evidence: baseEvidence,
       status: "OPEN", first_observed_at: observedAt,
       last_observed_at: observedAt, resolved_at: null,
@@ -845,28 +857,64 @@ async function resolveMayelAssetToDurableEpsV1(input: {
   if (inserted.error) {
     throw new Error("MAYEL_TRADING_MEDIA_LEDGER_PERSIST_FAILED")
   }
-  const reread = inserted.data ? inserted : await input.supabase.from(
+  const reread = await input.supabase.from(
     "seller_os_operational_learning_ledger_v1")
-    .select("id").eq("marketplace_account_key", input.accountKey)
+    .select("id,status,evidence,recovery_attempt_count,last_observed_at,lease_owner,lease_expires_at")
+    .eq("marketplace_account_key", input.accountKey)
     .eq("invariant_code", MAYEL_TRADING_MEDIA_LEDGER_INVARIANT)
     .eq("mechanism_version", MAYEL_TRADING_MEDIA_LEDGER_MECHANISM)
     .eq("evidence_fingerprint", evidenceFingerprint).maybeSingle()
   if (reread.error || !reread.data?.id) {
     throw new Error("MAYEL_TRADING_MEDIA_LEDGER_READBACK_FAILED")
   }
+
+  const priorAttempts = Number(reread.data.recovery_attempt_count ?? 0)
+  const priorPreparation = record(record(reread.data.evidence)
+    .mediaPreparation)
+  const priorErrorClass = text(priorPreparation.errorClass, 160)
+  const priorObservedAt = Date.parse(text(reread.data.last_observed_at, 100))
+  const retryDue = priorAttempts === 1
+    && priorErrorClass === MAYEL_TRADING_MEDIA_IDENTITY_ERROR
+    && Number.isFinite(priorObservedAt)
+    && Date.now() - priorObservedAt >=
+      MAYEL_TRADING_MEDIA_IDENTITY_RETRY_DELAY_MS
+  if (reread.data.status !== "OPEN") {
+    throw new Error("MAYEL_TRADING_MEDIA_DURABLE_READBACK_INVALID")
+  }
+  if (priorAttempts >= MAYEL_TRADING_MEDIA_MAX_CREATE_CALLS) {
+    throw new Error("MAYEL_TRADING_MEDIA_RETRY_EXHAUSTED")
+  }
+  if (priorAttempts > 0 && !retryDue) {
+    throw new Error(priorErrorClass === MAYEL_TRADING_MEDIA_IDENTITY_ERROR
+      ? "MAYEL_TRADING_MEDIA_RETRY_NOT_DUE"
+      : "MAYEL_TRADING_MEDIA_RETRY_UNSAFE")
+  }
+
+  const priorLeaseOwner = text(reread.data.lease_owner, 160)
+  const priorLeaseExpiresAt = text(reread.data.lease_expires_at, 100)
+  if (priorLeaseOwner && (!priorLeaseExpiresAt
+    || Date.parse(priorLeaseExpiresAt) > Date.now())) {
+    throw new Error("MAYEL_TRADING_MEDIA_ALREADY_CLAIMED")
+  }
   const workerId = `mayel-media:${randomUUID()}`
-  const claimed = await input.supabase.from(
+  let claimQuery = input.supabase.from(
     "seller_os_operational_learning_ledger_v1").update({
       lease_owner: workerId,
       lease_expires_at: new Date(Date.now() + 120_000).toISOString(),
-      recovery_attempt_count: 1,
+      recovery_attempt_count: priorAttempts + 1,
       recovery_outcome: "CLAIMED",
+      retry_safety: "SAFE_BOUNDED_MEDIA_REPREPARATION",
+      recovery_class: "AUTO_RECOVERABLE",
       updated_at: new Date().toISOString(),
     }).eq("id", String(reread.data.id)).eq("status", "OPEN")
-    .eq("recovery_attempt_count", 0).is("lease_owner", null)
-    .select("id").maybeSingle()
+    .eq("recovery_attempt_count", priorAttempts)
+  claimQuery = priorLeaseOwner
+    ? claimQuery.eq("lease_owner", priorLeaseOwner)
+      .eq("lease_expires_at", priorLeaseExpiresAt)
+    : claimQuery.is("lease_owner", null).is("lease_expires_at", null)
+  const claimed = await claimQuery.select("id").maybeSingle()
   if (claimed.error || !claimed.data) {
-    throw new Error("MAYEL_TRADING_MEDIA_SECOND_WRITE_BLOCKED")
+    throw new Error("MAYEL_TRADING_MEDIA_ATOMIC_CLAIM_LOST")
   }
 
   let accessToken = ""
@@ -901,11 +949,24 @@ async function resolveMayelAssetToDurableEpsV1(input: {
   } catch (error) {
     const errorClass = error instanceof Error
       ? text(error.message, 160) : "MAYEL_TRADING_MEDIA_PREPARATION_FAILED"
+    const identityMissing = errorClass === MAYEL_TRADING_MEDIA_IDENTITY_ERROR
+    const retryExhausted = priorAttempts + 1 >=
+      MAYEL_TRADING_MEDIA_MAX_CREATE_CALLS
     await input.supabase.from(
       "seller_os_operational_learning_ledger_v1").update({
         evidence: { ...baseEvidence, mediaPreparation: {
-          status: "FAILED_OR_AMBIGUOUS", errorClass } },
-        recovery_outcome: "ENGINEERING_REQUIRED",
+          status: "FAILED_OR_AMBIGUOUS", errorClass,
+          attemptCount: priorAttempts + 1,
+          retryAfter: identityMissing && !retryExhausted
+            ? new Date(Date.now() +
+              MAYEL_TRADING_MEDIA_IDENTITY_RETRY_DELAY_MS).toISOString()
+            : null } },
+        retry_safety: identityMissing && !retryExhausted
+          ? "SAFE_BOUNDED_MEDIA_REPREPARATION" : "ENGINEERING_REQUIRED",
+        recovery_class: identityMissing && !retryExhausted
+          ? "AUTO_RECOVERABLE" : "ENGINEERING_REQUIRED",
+        recovery_outcome: identityMissing && !retryExhausted
+          ? "STILL_VIOLATED" : "ENGINEERING_REQUIRED",
         last_observed_at: new Date().toISOString(),
         lease_owner: null, lease_expires_at: null,
         updated_at: new Date().toISOString(),
