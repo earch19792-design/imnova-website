@@ -466,9 +466,21 @@ export async function ensureMayelVisualPortfolioTasksV1(input: {
         priority: listing.highVisualPriority ? "HIGH" : "NORMAL",
         activeExperimentPresent: experiments.has(itemId) })
     } catch (error) {
-      outcomes.push({ itemId, eligible: false, taskId: null, created: false,
-        blocker: error instanceof Error ? error.message :
-          "MAYEL_VISUAL_PORTFOLIO_ITEM_FAILED" })
+      const failureClass = error instanceof Error ? error.message :
+        "MAYEL_VISUAL_PORTFOLIO_ITEM_FAILED"
+      if (existing && failureClass ===
+          "MAYEL_VISUAL_PROMPT_RECONCILIATION_REVIEW_REQUIRED") {
+        outcomes.push({ itemId, eligible: true,
+          visualEligibility: "ELIGIBLE", taskId: existing.id,
+          created: false, priority: listing.highVisualPriority
+            ? "HIGH" : "NORMAL",
+          taskReadiness: "REQUIRES_PROMPT_REVIEW",
+          nonGatingCondition: failureClass,
+          activeExperimentPresent: experiments.has(itemId) })
+        continue
+      }
+      outcomes.push({ itemId, eligible: false, taskId: existing?.id ?? null,
+        created: false, blocker: failureClass })
     }
   }
   const taskIds = outcomes.flatMap((row) => typeof row.taskId === "string"
