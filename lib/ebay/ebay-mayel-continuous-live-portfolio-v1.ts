@@ -177,8 +177,11 @@ export async function runMayelContinuousLivePortfolioOptimizationV1(input: {
   visualProposalsDurable: true as const,
   marketAnalysisDurable: true as const,
   priceAnalysisDurable: true as const,
-  autoApplyVisualUnderDelegation:
+  autoApplyVisualPolicyAuthorized:
     visualAuthority.fullVisualDelegationActive,
+  autoApplyVisualUnderDelegation: false as const,
+  autoApplyVisualBlocker:
+    "SHARED_MANAGEMENT_MODEL_EXECUTOR_NOT_CERTIFIED" as const,
   priceWriteRequiresOneTimeReusableCommercialDelegation: true as const,
   targetProfitMaySetMarketPrice: false as const,
   duplicateTaskCount: visualQueue.duplicateTaskCount,
