@@ -44,9 +44,29 @@ export type OfficialListingSnapshot = {
   pictureUrls: string[]
   externalPictureUrls: string[]
   tradingPictureReadback: OfficialTradingPictureReadbackV1 | null
+  protectedFields: OfficialTradingProtectedFieldsV1 | null
   observedAt: string
   sourceAuthority?: string
 }
+
+export type OfficialTradingProtectedFieldsV1 = Readonly<{
+  title: string
+  price: string
+  currency: string
+  quantity: string
+  quantitySold: string
+  categoryId: string
+  conditionId: string
+  sku: string
+  descriptionDigest: string
+  itemSpecificsDigest: string
+  shippingDigest: string
+  returnPolicyDigest: string
+  paymentMethodsDigest: string
+  shippingProfileId: string
+  paymentProfileId: string
+  returnProfileId: string
+}>
 
 export type OfficialTradingPictureReadbackV1 = Readonly<{
   authority: "EBAY_TRADING_GET_ITEM_PICTURE_DETAILS_V1"
@@ -228,8 +248,21 @@ function getItemRequestXml(itemId: string) {
       "Item.ItemID",
       "Item.Seller.UserID",
       "Item.SellingStatus.ListingStatus",
-        "Item.SKU",
-        "Item.ListingType",
+      "Item.Title",
+      "Item.SKU",
+      "Item.ListingType",
+      "Item.Quantity",
+      "Item.SellingStatus.QuantitySold",
+      "Item.SellingStatus.CurrentPrice",
+      "Item.Currency",
+      "Item.PrimaryCategory.CategoryID",
+      "Item.ConditionID",
+      "Item.Description",
+      "Item.ItemSpecifics",
+      "Item.ShippingDetails",
+      "Item.ReturnPolicy",
+      "Item.PaymentMethods",
+      "Item.SellerProfiles",
       "Item.PictureDetails",
         "Item.PictureDetails.PictureSource",
         "Item.PictureDetails.PictureURL",
@@ -237,6 +270,50 @@ function getItemRequestXml(itemId: string) {
         "Item.PictureDetails.GalleryURL",
     ].map((selector) => `<OutputSelector>${selector}</OutputSelector>`).join("") +
     "</GetItemRequest>"
+}
+
+function protectedXmlDigest(value: string) {
+  return `sha256:${sha256(value.replace(/>\s+</g, "><").trim())}`
+}
+
+function protectedFieldsFromTradingItem(
+  item: string,
+): OfficialTradingProtectedFieldsV1 {
+  const selling = tradingXmlContainer(item, "SellingStatus")
+  const primaryCategory = tradingXmlContainer(item, "PrimaryCategory")
+  const sellerProfiles = tradingXmlContainer(item, "SellerProfiles")
+  const shippingProfile = tradingXmlContainer(
+    sellerProfiles, "SellerShippingProfile")
+  const paymentProfile = tradingXmlContainer(
+    sellerProfiles, "SellerPaymentProfile")
+  const returnProfile = tradingXmlContainer(
+    sellerProfiles, "SellerReturnProfile")
+  return Object.freeze({
+    title: text(tradingXmlTagValue(item, "Title"), 240),
+    price: text(tradingXmlTagValue(selling, "CurrentPrice"), 40),
+    currency: text(tradingXmlTagValue(item, "Currency"), 12),
+    quantity: text(tradingXmlTagValue(item, "Quantity"), 20),
+    quantitySold: text(tradingXmlTagValue(selling, "QuantitySold"), 20),
+    categoryId: text(tradingXmlTagValue(primaryCategory, "CategoryID"), 20),
+    conditionId: text(tradingXmlTagValue(item, "ConditionID"), 20),
+    sku: text(tradingXmlTagValue(item, "SKU"), 50),
+    descriptionDigest: protectedXmlDigest(
+      tradingXmlContainer(item, "Description")),
+    itemSpecificsDigest: protectedXmlDigest(
+      tradingXmlContainer(item, "ItemSpecifics")),
+    shippingDigest: protectedXmlDigest(
+      tradingXmlContainer(item, "ShippingDetails")),
+    returnPolicyDigest: protectedXmlDigest(
+      tradingXmlContainer(item, "ReturnPolicy")),
+    paymentMethodsDigest: protectedXmlDigest(
+      xmlTagValues(item, "PaymentMethods").join("\u0000")),
+    shippingProfileId: text(tradingXmlTagValue(
+      shippingProfile, "ShippingProfileID"), 40),
+    paymentProfileId: text(tradingXmlTagValue(
+      paymentProfile, "PaymentProfileID"), 40),
+    returnProfileId: text(tradingXmlTagValue(
+      returnProfile, "ReturnProfileID"), 40),
+  })
 }
 
 function uploadSiteHostedPictureRequestXml(imageUrl: string, position: number) {
@@ -353,6 +430,7 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
   const tradingPictureReadback = buildOfficialTradingPictureReadbackV1(
     xmlTagValues(pictures, "PictureURL"),
   )
+  const protectedFields = protectedFieldsFromTradingItem(item)
   const identityUserId = authenticatedUserId || sellerUserId
   const fingerprint = ebayProductionAccountFingerprint(identityUserId)
   const expectedFingerprint = identity.expectedAccountFingerprint.toLowerCase()
@@ -383,6 +461,7 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
     pictureUrls: [...tradingPictureReadback.canonicalDigestInput],
     externalPictureUrls: xmlTagValues(pictures, "ExternalPictureURL"),
     tradingPictureReadback,
+    protectedFields,
     observedAt: new Date().toISOString(),
   } satisfies OfficialListingSnapshot
 }
@@ -452,6 +531,7 @@ export async function readOfficialActiveListingBrowseSnapshotV1(input: {
       // Browse remains useful corroboration, but it never becomes the Trading
       // PictureDetails authority or enters its official ordered-set digest.
       tradingPictureReadback: null,
+      protectedFields: null,
       observedAt: new Date().toISOString(),
       sourceAuthority: "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1",
     } satisfies OfficialListingSnapshot

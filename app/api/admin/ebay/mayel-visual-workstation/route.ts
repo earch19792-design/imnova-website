@@ -1,6 +1,6 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+export const maxDuration = 120
 
 import { NextResponse } from "next/server"
 
@@ -13,6 +13,8 @@ import {
   uploadMayelVisualOutputV1,
 } from "@/lib/ebay/ebay-mayel-visual-workstation-server-v1"
 import {
+  executeMayelTradingVisualLiveCanaryV1,
+  MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION,
   readMayelVisualPhaseBPreviewV1,
   rebaseMayelVisualPhaseBPreviewV1,
 } from "@/lib/ebay/ebay-mayel-visual-phase-b-server-v1"
@@ -312,13 +314,43 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorize(request)
-  if (!auth) return json({ success: false,
+  const validation = await validateSellerOsApiRequest(request)
+  if (!validation.ok) return json({ success: false,
     error: "MAYEL_VISUAL_WORKSTATION_FORBIDDEN" }, 403)
   if (boundaryBlocked(request)) return json({ success: false,
     error: "MAYEL_VISUAL_WORKSTATION_DEDICATED_PREPROD_ONLY" }, 403)
   const contentType = request.headers.get("content-type") ?? ""
   try {
+    if (validation.authenticationMode === "service_role") {
+      if (!contentType.startsWith("application/json")) return json({
+        success: false,
+        error: "MAYEL_TRADING_VISUAL_CANARY_REQUEST_INVALID" }, 400)
+      const body = await request.json().catch(() => null) as
+        Record<string, unknown> | null
+      if (body?.action !== "EXECUTE_TRADING_VISUAL_CANARY_V1"
+        || body?.confirmation !==
+          MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_TRADING_VISUAL_CANARY_REQUEST_INVALID" }, 400)
+      }
+      const result = await executeMayelTradingVisualLiveCanaryV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        taskId: String(body.visualTaskId ?? ""),
+        expectedItemId: String(body.expectedItemId ?? ""),
+        expectedManifestId: String(body.expectedManifestId ?? ""),
+        expectedBeforeImageDigest: String(
+          body.expectedBeforeImageDigest ?? ""),
+        confirmation: String(body.confirmation ?? ""),
+      })
+      return json({ success: true, outcome:
+        result.mayelVisualE2ePhysicalPass === true
+          ? "MAYEL_TRADING_VISUAL_E2E_PHYSICAL_PASS"
+          : "MAYEL_TRADING_VISUAL_CANARY_TERMINAL_NOT_VERIFIED",
+      canary: result })
+    }
+    const auth = await authorize(request)
+    if (!auth) return json({ success: false,
+      error: "MAYEL_VISUAL_WORKSTATION_FORBIDDEN" }, 403)
     const mayelRole = auth.accessRole ===
       SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator
     const ownerRole = auth.accessRole === SELLER_OS_ACCESS_ROLES.owner

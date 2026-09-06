@@ -446,6 +446,24 @@ async function accessToken(
   return authenticated.token
 }
 
+/**
+ * Account-bound production token for the Commerce Media API. The Media API
+ * shares the certified sell.inventory OAuth grant, but it is deliberately
+ * exposed as a separate capability so callers cannot confuse asset ingestion
+ * with an Inventory API listing mutation.
+ */
+export async function getEbayProductionMediaAccessTokenV1(
+  fetchImpl: typeof fetch = fetch,
+) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  if (config.target !== "PRODUCTION" || !config.enabled
+    || !config.environmentAllowed || !config.identityBound
+    || !config.identityConfigurationConsistent) {
+    throw new Error("EBAY_MEDIA_PRODUCTION_AUTHORITY_UNAVAILABLE")
+  }
+  return accessToken(config, fetchImpl)
+}
+
 const FORBIDDEN_WRITE_PATHS = [
   /^\/sell\/inventory\/v1\/offer\/[^/]+\/publish$/,
   /^\/sell\/inventory\/v1\/offer\/[^/]+\/publish_offer$/,

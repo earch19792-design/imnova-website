@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -12,6 +12,7 @@ import { readCanonicalEbayListingManagementResourcesV1 } from
 import {
   classifyEbayListingManagementModelEvidenceV1,
   executeEbayInventoryManagedImageMutationV1,
+  getEbayProductionMediaAccessTokenV1,
   getEbayDraftOnlyGatewayConfig,
   prepareEbayActiveListingManagementExecutorV1,
 } from "./ebay-draft-only-gateway"
@@ -22,8 +23,24 @@ import {
   buildMayelVisualPhaseBPlanV1,
   ebayOfficialImageSetDigestV1,
 } from "./ebay-mayel-visual-phase-b-v1"
-import { buildMayelTradingVisualDryRunV1 } from
+import {
+  buildExactMayelTradingPictureSetV1,
+  buildMayelTradingVisualDryRunV1,
+  buildMayelTradingVisualIdempotencyBindingV1,
+  classifyMayelTradingImageHostV1,
+  MAYEL_TRADING_MEDIA_PREPARATION_ROUTE,
+  MAYEL_TRADING_VISUAL_EXECUTOR_V1,
+  prepareMayelAssetWithEbayMediaV1,
+  reviseMayelTradingPicturesOnceV1,
+} from
   "./ebay-mayel-trading-visual-executor-v1"
+
+export const MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION =
+  "EJECUTAR MAYEL TRADING VISUAL LIVE CANARY V1" as const
+const MAYEL_TRADING_MEDIA_LEDGER_MECHANISM =
+  "MAYEL_TRADING_VISUAL_EXECUTOR_V1" as const
+const MAYEL_TRADING_MEDIA_LEDGER_INVARIANT =
+  "MAYEL_APPROVED_ASSET_HAS_DURABLE_EPS_REPRESENTATION" as const
 
 export const MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION =
   "AUTORIZAR ACTUALIZACION DE IMAGENES"
@@ -662,6 +679,448 @@ async function updateExecution(input: { supabase: SupabaseClient
   const { data, error } = await query.select("*").maybeSingle()
   if (error || !data) throw new Error("MAYEL_VISUAL_PHASE_B_LEDGER_UPDATE_FAILED")
   return data as JsonRecord
+}
+
+function digestCanonical(value: unknown) {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(stable(value))).digest("hex")}`
+}
+
+function protectedFieldDifferences(
+  before: JsonRecord | null,
+  after: JsonRecord | null,
+) {
+  if (!before || !after) return ["PROTECTED_SNAPSHOT_UNAVAILABLE"]
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .sort()
+  return keys.filter((key) => JSON.stringify(before[key]) !==
+    JSON.stringify(after[key])).map((key) => key.toUpperCase())
+}
+
+function validDurableEps(value: unknown) {
+  const media = record(value)
+  const epsImageUrl = text(media.epsImageUrl, 1_000)
+  const expirationDate = text(media.expirationDate, 100) || null
+  return Boolean(text(media.imageId, 200)
+    && classifyMayelTradingImageHostV1(epsImageUrl) === "EBAY_EPS"
+    && (!expirationDate || Date.parse(expirationDate) > Date.now() + 60_000))
+}
+
+async function resolveMayelAssetToDurableEpsV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  taskId: string
+  itemId: string
+  manifestId: string
+  manifestDigest: string
+  assetId: string
+  assetSha256: string
+  assetUrl: string
+  fetchImpl: FetchLike
+}) {
+  const evidenceFingerprint = digestCanonical({
+    account: input.accountKey,
+    taskId: input.taskId,
+    itemId: input.itemId,
+    manifestId: input.manifestId,
+    manifestDigest: input.manifestDigest,
+    assetId: input.assetId,
+    assetSha256: input.assetSha256,
+    route: MAYEL_TRADING_MEDIA_PREPARATION_ROUTE,
+  })
+  const existing = await input.supabase.from(
+    "seller_os_operational_learning_ledger_v1")
+    .select("id,status,evidence,recovery_attempt_count")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("invariant_code", MAYEL_TRADING_MEDIA_LEDGER_INVARIANT)
+    .eq("mechanism_version", MAYEL_TRADING_MEDIA_LEDGER_MECHANISM)
+    .eq("evidence_fingerprint", evidenceFingerprint).maybeSingle()
+  if (existing.error) {
+    throw new Error("MAYEL_TRADING_MEDIA_LEDGER_READ_FAILED")
+  }
+  const existingMedia = record(record(existing.data?.evidence)
+    .mediaPreparation)
+  if (existing.data?.status === "RESOLVED"
+    && validDurableEps(existingMedia)) {
+    return Object.freeze({
+      ledgerId: String(existing.data.id),
+      mediaApiWriteCount: 0 as const,
+      imageId: text(existingMedia.imageId, 200),
+      epsImageUrl: text(existingMedia.epsImageUrl, 1_000),
+      expirationDate: text(existingMedia.expirationDate, 100) || null,
+      sourceImageDigest: text(existingMedia.sourceImageDigest, 80),
+      mediaReceiptDigest: text(existingMedia.mediaReceiptDigest, 80),
+      reused: true as const,
+    })
+  }
+
+  const observedAt = new Date().toISOString()
+  const baseEvidence = {
+    taskId: input.taskId, itemId: input.itemId,
+    manifestId: input.manifestId, manifestDigest: input.manifestDigest,
+    assetId: input.assetId, assetSha256: input.assetSha256,
+    route: MAYEL_TRADING_MEDIA_PREPARATION_ROUTE,
+  }
+  const inserted = await input.supabase.from(
+    "seller_os_operational_learning_ledger_v1").upsert({
+      marketplace_account_key: input.accountKey,
+      failure_class: "MAYEL_EPS_ASSET_NOT_PREPARED",
+      invariant_code: MAYEL_TRADING_MEDIA_LEDGER_INVARIANT,
+      mechanism_version: MAYEL_TRADING_MEDIA_LEDGER_MECHANISM,
+      evidence_fingerprint: evidenceFingerprint,
+      recovery_policy_version: MAYEL_TRADING_MEDIA_LEDGER_MECHANISM,
+      // This purpose-built one-shot claim is the only dispatcher. Generic
+      // recovery must never repeat an ambiguous Media creation request.
+      retry_safety: "ENGINEERING_REQUIRED",
+      recovery_class: "ENGINEERING_REQUIRED",
+      recovery_outcome: "OBSERVED",
+      regression_guard: { mediaCreateMaxCalls: 1,
+        ambiguousMediaCreateRetryAllowed: false },
+      evidence: baseEvidence,
+      status: "OPEN", first_observed_at: observedAt,
+      last_observed_at: observedAt, resolved_at: null,
+    }, { onConflict:
+      "marketplace_account_key,invariant_code,evidence_fingerprint,mechanism_version",
+      ignoreDuplicates: true }).select("id").maybeSingle()
+  if (inserted.error) {
+    throw new Error("MAYEL_TRADING_MEDIA_LEDGER_PERSIST_FAILED")
+  }
+  const reread = inserted.data ? inserted : await input.supabase.from(
+    "seller_os_operational_learning_ledger_v1")
+    .select("id").eq("marketplace_account_key", input.accountKey)
+    .eq("invariant_code", MAYEL_TRADING_MEDIA_LEDGER_INVARIANT)
+    .eq("mechanism_version", MAYEL_TRADING_MEDIA_LEDGER_MECHANISM)
+    .eq("evidence_fingerprint", evidenceFingerprint).maybeSingle()
+  if (reread.error || !reread.data?.id) {
+    throw new Error("MAYEL_TRADING_MEDIA_LEDGER_READBACK_FAILED")
+  }
+  const workerId = `mayel-media:${randomUUID()}`
+  const claimed = await input.supabase.from(
+    "seller_os_operational_learning_ledger_v1").update({
+      lease_owner: workerId,
+      lease_expires_at: new Date(Date.now() + 120_000).toISOString(),
+      recovery_attempt_count: 1,
+      recovery_outcome: "CLAIMED",
+      updated_at: new Date().toISOString(),
+    }).eq("id", String(reread.data.id)).eq("status", "OPEN")
+    .eq("recovery_attempt_count", 0).is("lease_owner", null)
+    .select("id").maybeSingle()
+  if (claimed.error || !claimed.data) {
+    throw new Error("MAYEL_TRADING_MEDIA_SECOND_WRITE_BLOCKED")
+  }
+
+  let accessToken = ""
+  try {
+    accessToken = await getEbayProductionMediaAccessTokenV1(input.fetchImpl)
+    const prepared = await prepareMayelAssetWithEbayMediaV1({
+      accessToken, sourceImageUrl: input.assetUrl,
+      approvedMayelStorageUrl: canonicalAssetUrlAllowed,
+      fetchImpl: input.fetchImpl,
+    })
+    const mediaPreparation = { imageId: prepared.imageId,
+      epsImageUrl: prepared.epsImageUrl,
+      expirationDate: prepared.expirationDate,
+      sourceImageDigest: prepared.sourceImageDigest,
+      mediaReceiptDigest: prepared.mediaReceiptDigest }
+    const completed = await input.supabase.from(
+      "seller_os_operational_learning_ledger_v1").update({
+        evidence: { ...baseEvidence, mediaPreparation },
+        status: "RESOLVED", recovery_outcome: "RECOVERED",
+        resolved_at: new Date().toISOString(),
+        last_observed_at: new Date().toISOString(),
+        lease_owner: null, lease_expires_at: null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", String(claimed.data.id)).eq("lease_owner", workerId)
+      .select("id,status,evidence").maybeSingle()
+    if (completed.error || completed.data?.status !== "RESOLVED"
+      || !validDurableEps(record(completed.data.evidence).mediaPreparation)) {
+      throw new Error("MAYEL_TRADING_MEDIA_DURABLE_READBACK_FAILED")
+    }
+    return Object.freeze({ ledgerId: String(completed.data.id),
+      mediaApiWriteCount: 1 as const, ...prepared, reused: false as const })
+  } catch (error) {
+    const errorClass = error instanceof Error
+      ? text(error.message, 160) : "MAYEL_TRADING_MEDIA_PREPARATION_FAILED"
+    await input.supabase.from(
+      "seller_os_operational_learning_ledger_v1").update({
+        evidence: { ...baseEvidence, mediaPreparation: {
+          status: "FAILED_OR_AMBIGUOUS", errorClass } },
+        recovery_outcome: "ENGINEERING_REQUIRED",
+        last_observed_at: new Date().toISOString(),
+        lease_owner: null, lease_expires_at: null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", String(claimed.data.id)).eq("lease_owner", workerId)
+    throw error
+  } finally {
+    accessToken = ""
+  }
+}
+
+export async function executeMayelTradingVisualLiveCanaryV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  taskId: string
+  expectedItemId: string
+  expectedManifestId: string
+  expectedBeforeImageDigest: string
+  confirmation: string
+  fetchImpl?: FetchLike
+}) {
+  if (!uuid(input.taskId) || !uuid(input.expectedManifestId)
+    || !/^\d{9,20}$/.test(input.expectedItemId)
+    || !/^sha256:[0-9a-f]{64}$/.test(input.expectedBeforeImageDigest)
+    || input.confirmation !== MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION) {
+    throw new Error("MAYEL_TRADING_VISUAL_CANARY_REQUEST_INVALID")
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const context = await loadContext({ ...input, fetchImpl })
+  if (context.execution || context.anyExecution) {
+    return Object.freeze({ repeatedRequest: true,
+      execution: publicExecution(context.execution ?? context.anyExecution),
+      mediaApiWriteCount: 0, tradingListingWriteCount: 0,
+      totalEbayWriteOperations: 0,
+      mayelVisualE2ePhysicalPass:
+        (context.execution ?? context.anyExecution)?.phase ===
+          "APPLIED_AND_OFFICIALLY_VERIFIED" })
+  }
+  if (String(context.task.ebay_item_id) !== input.expectedItemId
+    || uuid(context.task.visual_manifest_id) !== input.expectedManifestId
+    || context.management.managementModel !== "TRADING_MANAGED"
+    || context.correctEbayApi !== "TRADING_API"
+    || context.officialReadStatus !== "PASS"
+    || context.official?.sourceAuthority ===
+      "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1"
+    || !context.accountIdentityProven || !context.listingIdentityProven
+    || !context.currentImageSetProven || !context.plan.ready
+    || typeof context.plan.visualManifestDigest !== "string"
+    || !/^sha256:[0-9a-f]{64}$/.test(context.plan.visualManifestDigest)
+    || context.plan.currentOfficialImageSetDigest !==
+      input.expectedBeforeImageDigest
+    || context.currentOfficialImageUrls.length !== 1
+    || context.plan.proposedFinalOrderedImageUrls.length !== 2
+    || context.plan.proposedFinalOrderedImageUrls[0] !==
+      context.currentOfficialImageUrls[0]
+    || context.plan.fieldsToChange.length !== 1
+    || context.plan.fieldsToChange[0] !== "IMAGES_ONLY"
+    || !context.official?.protectedFields) {
+    throw new Error(context.plan.currentOfficialImageSetDigest !==
+      input.expectedBeforeImageDigest
+      ? "SAFE_REBASE_REQUIRED" : "MAYEL_TRADING_VISUAL_CANARY_PREFLIGHT_FAILED")
+  }
+  const delegation = await input.supabase.from(
+    "ebay_mayel_visual_delegation_authorities_v1").select("*")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace_id", "EBAY_US").eq("status", "ACTIVE")
+    .is("revoked_at", null).maybeSingle()
+  if (delegation.error || !delegation.data
+    || delegation.data.main_image_authority !== true
+    || delegation.data.owner_per_image_approval !== false
+    || delegation.data.owner_per_listing_visual_approval !== false) {
+    throw new Error("MAYEL_TRADING_VISUAL_DELEGATION_UNAVAILABLE")
+  }
+  const mayelUrl = context.plan.newMayelSecondaryImages[0]
+  const manifestDigest = context.plan.visualManifestDigest
+  const asset = context.assets.find((candidate) =>
+    text(candidate.public_url, 1_000) === mayelUrl)
+  if (!asset || !uuid(asset.id) || !text(asset.output_sha256, 80)
+    || !canonicalAssetUrlAllowed(mayelUrl)) {
+    throw new Error("MAYEL_TRADING_VISUAL_ASSET_UNPROVEN")
+  }
+  const before = context.official
+  const media = await resolveMayelAssetToDurableEpsV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    taskId: input.taskId, itemId: input.expectedItemId,
+    manifestId: input.expectedManifestId,
+    manifestDigest,
+    assetId: uuid(asset.id), assetSha256: text(asset.output_sha256, 80),
+    assetUrl: mayelUrl, fetchImpl,
+  })
+  const exactSet = buildExactMayelTradingPictureSetV1({
+    currentOfficialImageUrls: context.currentOfficialImageUrls,
+    proposedSourceImageUrls: context.plan.proposedFinalOrderedImageUrls,
+    mayelAssetUrl: mayelUrl, preparedMayelEpsUrl: media.epsImageUrl,
+  })
+  const idempotencyBindingDigest =
+    buildMayelTradingVisualIdempotencyBindingV1({
+      accountKey: input.accountKey, itemId: input.expectedItemId,
+      manifestId: input.expectedManifestId,
+      manifestDigest,
+      beforeImageDigest: input.expectedBeforeImageDigest,
+      proposedImageDigest: exactSet.imageSetDigest,
+    })
+  const executionId = randomUUID()
+  const managementEvidenceDigest = context.management.inventoryEvidenceDigest
+    ?? digestCanonical({ model: context.management.managementModel,
+      authority: context.management.managementEvidenceSource,
+      itemId: input.expectedItemId, sku: context.sku })
+  const executionInsert = await input.supabase.from(
+    "ebay_mayel_visual_phase_b_executions_v1").insert({
+      id: executionId,
+      owner_approval_id: delegation.data.id,
+      delegation_authority_id: delegation.data.id,
+      visual_task_id: context.task.id,
+      visual_manifest_id: context.task.visual_manifest_id,
+      active_listing_id: context.task.active_listing_id,
+      listing_package_id: context.task.listing_package_id,
+      owner_user_id: delegation.data.owner_user_id,
+      marketplace_account_key: input.accountKey,
+      marketplace_id: "EBAY_US", ebay_item_id: input.expectedItemId,
+      ebay_sku: context.sku,
+      visual_manifest_digest: manifestDigest,
+      owner_authorization_digest: delegation.data.authority_digest,
+      authorized_current_image_set_digest: input.expectedBeforeImageDigest,
+      proposed_final_ordered_image_urls: exactSet.pictureUrls,
+      main_image_url: context.currentOfficialImageUrls[0],
+      canonical_asset_ids: context.plan.canonicalAssetIds,
+      canonical_asset_sha256s: context.plan.canonicalAssetSha256s,
+      management_model: "TRADING_MANAGED",
+      management_evidence_digest: managementEvidenceDigest,
+      executor: MAYEL_TRADING_VISUAL_EXECUTOR_V1,
+      phase: "PREFLIGHT", final_state: null,
+      marketplace_write_count: 0,
+      owner_approved_at: delegation.data.owner_confirmed_at,
+      before_image_digest: input.expectedBeforeImageDigest,
+      proposed_image_digest: exactSet.imageSetDigest,
+      idempotency_binding_digest: idempotencyBindingDigest,
+      media_preparation_route: MAYEL_TRADING_MEDIA_PREPARATION_ROUTE,
+      media_image_id: media.imageId, media_eps_url: media.epsImageUrl,
+      media_receipt_digest: media.mediaReceiptDigest,
+      media_preparation_write_count: media.mediaApiWriteCount,
+    }).select("*").single()
+  if (executionInsert.error || !executionInsert.data) {
+    throw new Error(executionInsert.error?.code === "23505"
+      ? "MAYEL_TRADING_VISUAL_DUPLICATE_EXECUTION_BLOCKED"
+      : "MAYEL_TRADING_VISUAL_EXECUTION_PERSIST_FAILED")
+  }
+  const claimToken = randomUUID()
+  const preflightSnapshot = {
+    currentImageDigest: input.expectedBeforeImageDigest,
+    manifestBaselineDigest: context.plan.currentOfficialImageSetDigest,
+    proposedImageDigest: exactSet.imageSetDigest,
+    visualOnlyDiff: true, unauthorizedFieldDiffCount: 0,
+    listingActive: true, protectedFields: before.protectedFields,
+    mediaLedgerId: media.ledgerId,
+  }
+  const claim = await input.supabase.rpc(
+    "claim_ebay_mayel_trading_visual_write_v1", {
+      p_execution_id: executionId,
+      p_idempotency_binding_digest: idempotencyBindingDigest,
+      p_claim_token: claimToken, p_preflight_snapshot: preflightSnapshot,
+    })
+  const claimed = Array.isArray(claim.data) ? claim.data[0] : null
+  if (claim.error || !claimed) {
+    throw new Error("MAYEL_TRADING_VISUAL_DURABLE_CLAIM_FAILED")
+  }
+
+  let tradingToken = ""
+  let write
+  try {
+    tradingToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
+    write = await reviseMayelTradingPicturesOnceV1({
+      accessToken: tradingToken, itemId: input.expectedItemId,
+      pictureUrls: exactSet.pictureUrls, durableReviseAttemptCount: 0,
+      idempotencyBindingDigest,
+      durableSingleWriteClaim: { claimed: true, claimToken,
+        idempotencyBindingDigest, reviseCallOrdinal: 1 }, fetchImpl,
+    })
+    if (write.status === "REJECTED") {
+      const failed = await updateExecution({ supabase: input.supabase,
+        executionId, phases: ["EXECUTING"], patch: {
+          phase: "WRITE_FAILED", final_state: "WRITE_FAILED",
+          ebay_response_class: "EBAY_WRITE_REJECTED",
+          last_error_code: write.ebayErrorId
+            ? `EBAY_TRADING_VISUAL_WRITE_REJECTED_${write.ebayErrorId}`
+            : "EBAY_TRADING_VISUAL_WRITE_REJECTED",
+          claim_token: null, lease_expires_at: null,
+        } })
+      return Object.freeze({ execution: publicExecution(failed),
+        before, after: null, media, write,
+        mediaApiWriteCount: media.mediaApiWriteCount,
+        tradingListingWriteCount: 1,
+        totalEbayWriteOperations: media.mediaApiWriteCount + 1,
+        mayelVisualE2ePhysicalPass: false })
+    }
+    await updateExecution({ supabase: input.supabase,
+      executionId, phases: ["EXECUTING"], patch: {
+        phase: "OFFICIAL_READBACK_PENDING",
+        ebay_response_class: write.status === "ACCEPTED"
+          ? "EBAY_WRITE_ACCEPTED" : "EBAY_WRITE_OUTCOME_UNKNOWN",
+        write_accepted_at: write.status === "ACCEPTED"
+          ? new Date().toISOString() : null,
+      } })
+    const after = await readOfficialActiveListingImageSnapshotV1({
+      accessToken: tradingToken, itemId: input.expectedItemId,
+      expectedSku: context.sku, accountKey: input.accountKey, fetchImpl,
+      durableAccountIdentityProven: true,
+    })
+    const differences = protectedFieldDifferences(
+      before.protectedFields as JsonRecord,
+      after.protectedFields as JsonRecord)
+    const exactImages = JSON.stringify(after.pictureUrls) ===
+      JSON.stringify(exactSet.pictureUrls)
+    const mainImageUnchanged = after.pictureUrls[0] === before.pictureUrls[0]
+    const mayelAssetPresent = after.pictureUrls[1] === media.epsImageUrl
+    const verified = after.listingStatus.toLowerCase() === "active"
+      && after.pictureUrls.length === 2 && exactImages
+      && mainImageUnchanged && mayelAssetPresent && differences.length === 0
+    const terminal = await updateExecution({ supabase: input.supabase,
+      executionId, phases: ["OFFICIAL_READBACK_PENDING"], patch: {
+        phase: verified ? "APPLIED_AND_OFFICIALLY_VERIFIED"
+          : "READBACK_MISMATCH",
+        final_state: verified ? "APPLIED_AND_OFFICIALLY_VERIFIED"
+          : "READBACK_MISMATCH",
+        ebay_response_class: verified && write.status === "AMBIGUOUS"
+          ? "EBAY_WRITE_CONFIRMED_BY_OFFICIAL_READBACK"
+          : write.status === "ACCEPTED" ? "EBAY_WRITE_ACCEPTED"
+            : "EBAY_WRITE_OUTCOME_UNKNOWN",
+        postwrite_snapshot: {
+          listingActive: after.listingStatus.toLowerCase() === "active",
+          officialOrderedImageSetMatch: exactImages,
+          nonAuthorizedFieldsUnchanged: differences.length === 0,
+          mainImageUnchanged, mayelAssetPresent,
+          afterImageCount: after.pictureUrls.length,
+          afterImageDigest:
+            after.tradingPictureReadback?.officialImageSetDigest ?? null,
+          unauthorizedFieldDiffCount: differences.length,
+          unauthorizedFieldDiffs: differences,
+          protectedFields: after.protectedFields,
+        },
+        postwrite_readback_at: new Date().toISOString(),
+        applied_verified_at: verified ? new Date().toISOString() : null,
+        last_error_code: verified ? null
+          : "MAYEL_TRADING_VISUAL_OFFICIAL_READBACK_MISMATCH",
+        claim_token: null, lease_expires_at: null,
+      } })
+    return Object.freeze({ execution: publicExecution(terminal),
+      before, after, media, write,
+      beforeImageDigest: before.tradingPictureReadback?.officialImageSetDigest,
+      afterImageDigest: after.tradingPictureReadback?.officialImageSetDigest,
+      beforeHeroUrlSha256: before.tradingPictureReadback?.images[0]?.urlSha256,
+      afterHeroUrlSha256: after.tradingPictureReadback?.images[0]?.urlSha256,
+      mainImageChanged: !mainImageUnchanged, mayelAssetPresent,
+      protectedFieldDifferences: Object.freeze(differences),
+      unauthorizedFieldDiffCount: differences.length,
+      mediaApiWriteCount: media.mediaApiWriteCount,
+      tradingListingWriteCount: 1,
+      totalEbayWriteOperations: media.mediaApiWriteCount + 1,
+      ebayAck: write.ack, ebayError: write.ebayErrorId,
+      mayelVisualE2ePhysicalPass: verified,
+    })
+  } catch (error) {
+    const errorCode = error instanceof Error
+      ? text(error.message, 160) : "MAYEL_TRADING_VISUAL_READBACK_FAILED"
+    await updateExecution({ supabase: input.supabase,
+      executionId, phases: ["EXECUTING", "OFFICIAL_READBACK_PENDING"],
+      patch: { phase: "READBACK_FAILED", final_state: "READBACK_FAILED",
+        ebay_response_class: write?.status === "ACCEPTED"
+          ? "EBAY_WRITE_ACCEPTED" : "EBAY_WRITE_OUTCOME_UNKNOWN",
+        last_error_code: errorCode,
+        postwrite_readback_at: new Date().toISOString(),
+        claim_token: null, lease_expires_at: null } }).catch(() => null)
+    throw error
+  } finally {
+    tradingToken = ""
+  }
 }
 
 export async function applyMayelVisualManifestToEbayV1(input: {
