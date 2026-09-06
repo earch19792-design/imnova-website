@@ -153,12 +153,52 @@ function json(payload: Record<string, unknown>, status = 200) {
 }
 
 export async function GET(request: Request) {
-  const auth = await authorize(request)
-  if (!auth) return json({ success: false,
+  const validation = await validateSellerOsApiRequest(request)
+  if (!validation.ok) return json({ success: false,
     error: "MAYEL_VISUAL_WORKSTATION_FORBIDDEN" }, 403)
   if (boundaryBlocked(request)) return json({ success: false,
     error: "MAYEL_VISUAL_WORKSTATION_DEDICATED_PREPROD_ONLY" }, 403)
   try {
+    if (validation.authenticationMode === "service_role") {
+      const url = new URL(request.url)
+      const taskId = uuid(url.searchParams.get("diagnosticTaskId"))
+      if (!taskId || url.searchParams.get("mode") !==
+          "MANAGEMENT_READBACK_V1") {
+        return json({ success: false,
+          error: "MAYEL_VISUAL_MANAGEMENT_READBACK_REQUEST_INVALID" }, 400)
+      }
+      const phaseB = await readMayelVisualPhaseBPreviewV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(), taskId,
+      })
+      return json({ success: true, diagnostic: {
+        contractVersion: phaseB.contractVersion,
+        managementModel: phaseB.managementModel,
+        managementModelAuthority: phaseB.managementModelAuthority,
+        managementObservedAt: phaseB.managementObservedAt,
+        accountIdentityProven: phaseB.accountIdentityProven,
+        listingIdentityProven: phaseB.listingIdentityProven,
+        correctEbayApi: phaseB.correctEbayApi,
+        correctEbayApiResolved: phaseB.correctEbayApiResolved,
+        currentImageSetProven: phaseB.currentImageSetProven,
+        currentOfficialImageCount: phaseB.currentOfficialImageCount,
+        mayelManifestValid: phaseB.mayelManifestValid,
+        visualOnlyDiff: phaseB.visualOnlyDiff,
+        unauthorizedFieldDiffCount: phaseB.unauthorizedFieldDiffCount,
+        safeToExecuteVisualChange: phaseB.safeToExecuteVisualChange,
+        readyForMayelPhysicalCanary: phaseB.readyForMayelPhysicalCanary,
+        blocker: phaseB.blocker,
+        managementDiagnostics: phaseB.managementDiagnostics,
+      }, marketplaceWrites: 0 })
+    }
+    const roleAllowed = validation.accessRole === SELLER_OS_ACCESS_ROLES.owner ||
+      validation.accessRole ===
+        SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator
+    if (!validation.userId || !roleAllowed ||
+        validation.authenticationMode !== "seller_os_user") {
+      return json({ success: false,
+        error: "MAYEL_VISUAL_WORKSTATION_FORBIDDEN" }, 403)
+    }
+    const auth = validation
     const workstation = await readMayelVisualWorkstationV1({
       supabase: getSupabaseAdminClient(), accountKey: accountKey(),
       actorUserId: auth.userId,
