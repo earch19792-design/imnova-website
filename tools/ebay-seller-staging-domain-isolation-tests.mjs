@@ -173,6 +173,12 @@ test("route and bundle surface regress downward", () => {
   const lunaQuickPickApi = exists(
     "app/api/admin/ebay/luna-quick-pick/route.ts",
   )
+  const productJourneyPage = exists(
+    "app/admin/ebay/product-journey/page.tsx",
+  )
+  const productJourneyApi = exists(
+    "app/api/admin/ebay/product-journey/route.ts",
+  )
   assert.equal(
     temporarySellerOauthPage,
     temporarySellerOauthApi,
@@ -203,6 +209,11 @@ test("route and bundle surface regress downward", () => {
     lunaQuickPickApi,
     "Luna Quick Pick UI/API must be added and retired together",
   )
+  assert.equal(
+    productJourneyPage,
+    productJourneyApi,
+    "Product Journey read model UI/API must be added and retired together",
+  )
   // The read-only monitor, Market Research, Commercial Operational Readiness,
   // Decisions, Experiments, Learning, Luna Capture, Copilot, and Strategic
   // Review workspaces add nine intentional pages. Their protected surfaces
@@ -213,12 +224,13 @@ test("route and bundle surface regress downward", () => {
   // Operational IA adds four deliberate canonical pages: Listing Quality,
   // Sales, Postventa and Mayel. Publisher completion adds one canonical
   // control-plane page while keeping Quick Pick as its preparation route.
+  // Product Journey adds one canonical read-only product detail page.
   // Their old routes/runtimes remain intact.
   assert.ok(
     countNamed("app", "page.tsx") <= 28 + Number(temporarySellerOauthPage) +
       Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
       Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage) +
-      Number(lunaQuickPickPage),
+      Number(lunaQuickPickPage) + Number(productJourneyPage),
     "page route count regressed",
   )
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
@@ -245,11 +257,12 @@ test("route and bundle surface regress downward", () => {
   // The old product/community domain remains at zero.
   // The current isolated base also includes prior publisher recovery surfaces;
   // this WO adds the read-only Publisher cohort and POST-only batch runtime.
+  // Product Journey adds one authenticated read-only projection API.
   assert.ok(
     countNamed("app/api", "route.ts") <= 99 + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
-      Number(lunaQuickPickApi),
+      Number(lunaQuickPickApi) + Number(productJourneyApi),
     "API route count regressed",
   )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)

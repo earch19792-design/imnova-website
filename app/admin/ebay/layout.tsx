@@ -10,6 +10,7 @@ import { SellerOsMobileNav } from "./components/seller-os-mobile-nav"
 
 function activeArea(pathname: string): SellerOsAreaId {
   if (pathname.includes("/quick-pick") ||
+      pathname.includes("/product-journey") ||
       pathname.includes("/listing-workspace") ||
       pathname.includes("/listings/register")) return "publish"
   if (pathname.includes("/opportunity") ||

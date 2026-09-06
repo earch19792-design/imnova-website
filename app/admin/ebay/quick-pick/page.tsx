@@ -744,6 +744,13 @@ export default function LunaQuickPickPage() {
                 : publisherByCandidate.get(card.candidateKey ?? "")?.batchRuntime
                   .blocked ? "BLOQUEADO" : card.state}</span></div>
 
+          {card.candidateKey && <a
+            href={`/admin/ebay/product-journey?candidateId=${
+              encodeURIComponent(card.candidateKey)}`}
+            className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-cyan-200/25 px-3 text-xs font-black text-cyan-50 hover:border-cyan-100">
+            Ver recorrido completo
+          </a>}
+
           {publisherByCandidate.get(card.candidateKey ?? "")?.batchRuntime
               .status && <p data-publisher-child-runtime
             className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.05] p-2 text-xs text-cyan-50">

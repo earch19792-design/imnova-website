@@ -70,6 +70,17 @@ export type SellerOsOperationalIntegrityInputV1 = Readonly<{
     insufficientSampleProducesTrend: boolean
     staleDataPresentedCurrent: boolean
   }>
+  productJourney?: Readonly<{
+    traceAvailable: boolean
+    everyStageHasHumanStatus: boolean
+    everyStageHasSourceAuthority: boolean
+    everyStageHasFreshness: boolean
+    everyStageHasOutputOrExplicitFailure: boolean
+    technicalDetailsSecondary: boolean
+    falseZeroCount: number
+    falseCompletedCount: number
+    ownerTechnicalRecoveryCount: number
+  }>
   actions?: readonly Readonly<{
     capability: string
     uiReady: boolean
@@ -311,6 +322,53 @@ export function auditSellerOsOperationalIntegrityV1(
       evidence: { candidateCount: candidates.candidateCount,
         provenanceClassifiedCount: candidates.provenanceClassifiedCount },
       regressionGuard: { unknownProvenanceMustBeExplicit: true },
+    }))
+  }
+
+  const journey = input.productJourney
+  if (journey) for (const [code, failureClass, passes] of [
+    ["PRODUCT_JOURNEY_TRACE_AVAILABLE",
+      "PRODUCT_JOURNEY_TRACE_UNAVAILABLE", journey.traceAvailable],
+    ["EVERY_STAGE_HAS_HUMAN_STATUS",
+      "PRODUCT_JOURNEY_HUMAN_STATUS_MISSING",
+      journey.everyStageHasHumanStatus],
+    ["EVERY_STAGE_HAS_SOURCE_AUTHORITY",
+      "PRODUCT_JOURNEY_SOURCE_AUTHORITY_MISSING",
+      journey.everyStageHasSourceAuthority],
+    ["EVERY_STAGE_HAS_FRESHNESS",
+      "PRODUCT_JOURNEY_FRESHNESS_MISSING", journey.everyStageHasFreshness],
+    ["EVERY_STAGE_HAS_OUTPUT_OR_EXPLICIT_FAILURE",
+      "PRODUCT_JOURNEY_OUTPUT_OR_FAILURE_MISSING",
+      journey.everyStageHasOutputOrExplicitFailure],
+    ["PRODUCT_JOURNEY_TECHNICAL_DETAILS_SECONDARY",
+      "PRODUCT_JOURNEY_TECHNICAL_DETAILS_PRIMARY",
+      journey.technicalDetailsSecondary],
+    ["PRODUCT_JOURNEY_UNKNOWN_MUST_NOT_RENDER_AS_ZERO",
+      "PRODUCT_JOURNEY_FALSE_ZERO", journey.falseZeroCount === 0],
+    ["PRODUCT_JOURNEY_NO_FAKE_COMPLETED",
+      "PRODUCT_JOURNEY_FALSE_COMPLETED", journey.falseCompletedCount === 0],
+    ["PRODUCT_JOURNEY_OWNER_TECHNICAL_RECOVERY_FORBIDDEN",
+      "OWNER_PRODUCT_TECHNICAL_RECOVERY_REQUIRED",
+      journey.ownerTechnicalRecoveryCount === 0],
+  ] as const) {
+    checks.push(check({ invariantCode: code,
+      status: passes ? "PASS" : "VIOLATION", failureClass,
+      retrySafety: "ENGINEERING_REQUIRED",
+      recoveryClass: "ENGINEERING_REQUIRED",
+      evidence: { traceAvailable: journey.traceAvailable,
+        everyStageHasHumanStatus: journey.everyStageHasHumanStatus,
+        everyStageHasSourceAuthority: journey.everyStageHasSourceAuthority,
+        everyStageHasFreshness: journey.everyStageHasFreshness,
+        everyStageHasOutputOrExplicitFailure:
+          journey.everyStageHasOutputOrExplicitFailure,
+        technicalDetailsSecondary: journey.technicalDetailsSecondary,
+        falseZeroCount: journey.falseZeroCount,
+        falseCompletedCount: journey.falseCompletedCount,
+        ownerTechnicalRecoveryCount: journey.ownerTechnicalRecoveryCount },
+      regressionGuard: { noParallelRuntime: true,
+        reuseDurableEvidenceOnly: true, unknownIsNotZero: true,
+        physicalPassRequiresDurableExecutionAndReadback: true,
+        ownerTechnicalRecoveryActions: 0 },
     }))
   }
 
