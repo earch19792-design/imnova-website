@@ -65,6 +65,8 @@ type VisualTask = {
     listingIdentityProven?: boolean
     correctEbayApi?: "INVENTORY_API" | "TRADING_API" | null
     correctEbayApiResolved?: boolean
+    officialReadStatus?: "PASS" | "FAILED"
+    officialReadFailureClass?: string | null
     currentImageSetProven?: boolean
     mayelManifestValid?: boolean
     visualOnlyDiff?: boolean

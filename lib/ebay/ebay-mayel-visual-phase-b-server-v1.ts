@@ -208,10 +208,18 @@ async function loadContext(input: {
       fetchImpl: input.fetchImpl,
     }),
   ])
-  const official = await readOfficialActiveListingImageSnapshotV1({
-    accessToken, itemId: String(task.ebay_item_id), expectedSku: sku,
-    accountKey: input.accountKey, fetchImpl: input.fetchImpl,
-  })
+  let official: Awaited<ReturnType<
+    typeof readOfficialActiveListingImageSnapshotV1>> | null = null
+  let officialReadFailureClass: string | null = null
+  try {
+    official = await readOfficialActiveListingImageSnapshotV1({
+      accessToken, itemId: String(task.ebay_item_id), expectedSku: sku,
+      accountKey: input.accountKey, fetchImpl: input.fetchImpl,
+    })
+  } catch (error) {
+    officialReadFailureClass = error instanceof Error
+      ? text(error.message, 160) : "EBAY_ACTIVE_IMAGE_REVISION_OFFICIAL_READ_FAILED"
+  }
   const inventoryImageUrls = Array.isArray(record(
     record(management.inventoryItemPayload).product).imageUrls)
     ? record(record(management.inventoryItemPayload).product).imageUrls as unknown[]
@@ -219,7 +227,7 @@ async function loadContext(input: {
   const currentOfficialImageUrls = management.managementModel ===
     "INVENTORY_API_MANAGED"
     ? inventoryImageUrls.map((value) => text(value, 1_000)).filter(Boolean)
-    : official.pictureUrls
+    : official?.pictureUrls ?? []
   const plan = buildMayelVisualPhaseBPlanV1({
     visualTaskId: String(task.id),
     ebayItemId: String(task.ebay_item_id),
@@ -245,22 +253,29 @@ async function loadContext(input: {
     ? "MAYEL_VISUAL_TRADING_EXECUTOR_EXPLICITLY_GATED_SINGLE_WRITE_CONTRACT"
     : management.managementModel === "MANAGEMENT_MODEL_UNPROVEN"
       ? "MAYEL_VISUAL_MANAGEMENT_MODEL_UNPROVEN" : null
+  const inventoryManagedIdentityProven = management.managementModel ===
+    "INVENTORY_API_MANAGED" && management.inventoryItemPresent
+    && management.exactPublishedOfferCount === 1
+  const tradingManagedIdentityProven = management.managementModel ===
+    "TRADING_MANAGED" && official?.itemId === String(task.ebay_item_id)
+    && official.ebaySku === sku
+    && official.listingStatus.toLowerCase() === "active"
   return { task: task as JsonRecord, active: active as JsonRecord,
     assets: (assets ?? []) as JsonRecord[], execution: execution as JsonRecord | null,
     anyExecution: anyExecution as JsonRecord | null,
     official, currentOfficialImageUrls, plan, management, sku,
     managementReady, managementBlocker, rebase,
-    accountIdentityProven: management.accountIdentityProven
-      && official.authenticatedUserId.toLowerCase() ===
-        official.sellerUserId.toLowerCase(),
-    listingIdentityProven: official.itemId === String(task.ebay_item_id)
-      && official.ebaySku === sku
-      && official.listingStatus.toLowerCase() === "active",
+    accountIdentityProven: management.accountIdentityProven,
+    listingIdentityProven: inventoryManagedIdentityProven
+      || tradingManagedIdentityProven,
     currentImageSetProven: currentOfficialImageUrls.length > 0
-      && official.pictureUrls.length > 0,
+      && (management.managementModel === "INVENTORY_API_MANAGED"
+        || (official?.pictureUrls.length ?? 0) > 0),
     correctEbayApi: management.managementModel === "INVENTORY_API_MANAGED"
       ? "INVENTORY_API" : management.managementModel === "TRADING_MANAGED"
         ? "TRADING_API" : null,
+    officialReadStatus: official ? "PASS" : "FAILED",
+    officialReadFailureClass,
   }
 }
 
@@ -333,6 +348,8 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     listingIdentityProven: context.listingIdentityProven,
     correctEbayApi: context.correctEbayApi,
     correctEbayApiResolved: context.correctEbayApi !== null,
+    officialReadStatus: context.officialReadStatus,
+    officialReadFailureClass: context.officialReadFailureClass,
     currentImageSetProven: context.currentImageSetProven,
     mayelManifestValid,
     visualOnlyDiff,
@@ -365,7 +382,10 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     rebaseBlocker: context.rebase.blocker,
     ownerCtaAvailable: context.plan.ready && context.managementReady
       && !context.execution,
-    blocker: context.plan.blocker ?? context.managementBlocker,
+    blocker: !context.listingIdentityProven
+      && context.officialReadFailureClass
+      ? context.officialReadFailureClass
+      : context.plan.blocker ?? context.managementBlocker,
     tradingExecutorExplicitlyGated:
       context.management.managementModel === "TRADING_MANAGED",
     execution: publicExecution(context.execution),
@@ -389,6 +409,8 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     accountIdentityProven: context.accountIdentityProven,
     listingIdentityProven: context.listingIdentityProven,
     correctEbayApi: context.correctEbayApi,
+    officialReadStatus: context.officialReadStatus,
+    officialReadFailureClass: context.officialReadFailureClass,
     currentImageSetProven: context.currentImageSetProven,
     mayelManifestValid,
     visualOnlyDiff,

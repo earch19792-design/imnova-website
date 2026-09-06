@@ -179,6 +179,8 @@ export async function GET(request: Request) {
         listingIdentityProven: phaseB.listingIdentityProven,
         correctEbayApi: phaseB.correctEbayApi,
         correctEbayApiResolved: phaseB.correctEbayApiResolved,
+        officialReadStatus: phaseB.officialReadStatus,
+        officialReadFailureClass: phaseB.officialReadFailureClass,
         currentImageSetProven: phaseB.currentImageSetProven,
         currentOfficialImageCount: phaseB.currentOfficialImageCount,
         mayelManifestValid: phaseB.mayelManifestValid,
