@@ -346,7 +346,7 @@ export async function readMayelLiveMarketRevalidationStatusV1(input: {
     result.requestState === "COMPLETED"
   return Object.freeze({ connectorAvailable: true as const,
     state: completed ? "COMPLETED" as const :
-      planRead.data.status === "ACTIVE" ? "IN_PROGRESS" as const
+      planRead.data.status === "ACTIVE" ? "WAITING_FOR_WORKER" as const
         : "PENDING_RESUME" as const,
     itemId, planId: planRead.data.id,
     requestPersisted: true, nextResearchPlanCreated: true,

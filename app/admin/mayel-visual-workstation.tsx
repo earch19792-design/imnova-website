@@ -199,7 +199,8 @@ type TaskCommercialTab = "VISUAL" | "MERCADO" | "RENTABILIDAD" |
 
 type MarketRevalidationStatus = Readonly<{
   connectorAvailable: boolean
-  state: "READY_TO_REQUEST" | "IN_PROGRESS" | "PENDING_RESUME" | "COMPLETED"
+  state: "READY_TO_REQUEST" | "WAITING_FOR_WORKER" | "PENDING_RESUME" |
+    "COMPLETED"
   planId: string | null
   result: Readonly<{
     exactComparableCount?: number | null
@@ -236,8 +237,11 @@ function portfolioTaskStatus(task: VisualTask,
   if (task.phaseB?.applicationStatus === "WAITING_FOR_EBAY") {
     return "ESPERANDO EBAY"
   }
-  if (["IN_PROGRESS", "PENDING_RESUME"].includes(market?.state ?? "")) {
-    return "REVALIDANDO MERCADO"
+  if (market?.state === "WAITING_FOR_WORKER") {
+    return "LISTO PARA REVALIDAR"
+  }
+  if (market?.state === "PENDING_RESUME") {
+    return "REVALIDACIÓN PENDIENTE"
   }
   if (task.phaseB?.safeToExecuteVisualChange) return "LISTO PARA APLICAR"
   return "MEJORANDO"
@@ -266,7 +270,8 @@ function TaskCommercialContext({ intelligence, revalidationStatus, ebayItemId,
   async function revalidateMarket() {
     if (!canOperate || revalidationBusy ||
         revalidationStatus?.connectorAvailable !== true ||
-        revalidationStatus.state === "IN_PROGRESS") return
+        ["WAITING_FOR_WORKER", "PENDING_RESUME"].includes(
+          revalidationStatus.state)) return
     setRevalidationBusy(true)
     setRevalidationMessage("")
     try {
@@ -328,14 +333,15 @@ function TaskCommercialContext({ intelligence, revalidationStatus, ebayItemId,
             ? "No hubo comparables exactos suficientes; Seller OS no fabricó un precio."
             : "Seller OS completó la investigación automática y guardó el resultado.")}</p>
       </>}
-      {revalidationStatus?.state === "IN_PROGRESS" &&
-        <p className="rounded-xl bg-[#edf3f1] p-3">Investigación automática en curso. El plan y la solicitud están guardados.</p>}
+      {revalidationStatus?.state === "WAITING_FOR_WORKER" &&
+        <p className="rounded-xl bg-[#edf3f1] p-3">Plan listo y guardado. Product Research lo tomará cuando su worker esté disponible.</p>}
       {revalidationStatus?.state === "PENDING_RESUME" &&
         <p className="rounded-xl bg-[#f7e9de] p-3">La investigación quedó guardada y Seller OS debe reanudarla de forma segura.</p>}
       <button type="button"
         disabled={!canOperate || revalidationBusy ||
           revalidationStatus?.connectorAvailable !== true ||
-          revalidationStatus.state === "IN_PROGRESS"}
+          ["WAITING_FOR_WORKER", "PENDING_RESUME"].includes(
+            revalidationStatus.state)}
         onClick={() => void revalidateMarket()}
         title={!canOperate ? "Disponible para Mayel dentro de su workspace" :
           revalidationStatus?.connectorAvailable !== true

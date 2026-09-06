@@ -135,7 +135,7 @@ export async function runMayelContinuousLivePortfolioOptimizationV1(input: {
         latestResearchAt: need.latestResearchAt }),
     })
     newPlans += 1
-    research.push({ itemId, state: "REVALIDANDO_MERCADO",
+    research.push({ itemId, state: "WAITING_FOR_WORKER",
       planId: started.plan.id, created: true })
   }
   const receiptAt = now.toISOString()
