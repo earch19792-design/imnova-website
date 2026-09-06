@@ -39,6 +39,30 @@ export type MayelCommercialFieldV1 = Readonly<{
   limitationCode: string | null
 }>
 
+export type MayelEconomicRefreshJobV1 = Readonly<{
+  ebay_item_id: string
+  evidence_type: string
+  status: string
+  failure_class?: string | null
+  next_retry_at?: string | null
+  updated_at?: string | null
+}>
+
+export type MayelEconomicReadbackV1 = Readonly<{
+  ebay_item_id: string
+  status: string
+  live_price?: number | string | null
+  luna_cost?: number | string | null
+  luna_shipping?: number | string | null
+  expected_ebay_fee?: number | string | null
+  other_explicit_costs?: number | string | null
+  expected_profit?: number | string | null
+  margin_percent?: number | string | null
+  roi_percent?: number | string | null
+  calculated_at?: string | null
+  missing_economic_inputs?: readonly string[] | null
+}>
+
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord : {}
@@ -200,6 +224,8 @@ export function buildMayelCommercialIntelligenceV1(input: Readonly<{
   marketEvidenceLimitationCode?: string | null
   qualityRecommendations: readonly EbayListingQualityRecommendation[]
   decisionReasonCodes?: readonly string[]
+  economicRefreshJobs?: readonly MayelEconomicRefreshJobV1[]
+  economicReadbacks?: readonly MayelEconomicReadbackV1[]
   now?: Date
 }>) {
   const now = input.now ?? new Date()
@@ -285,19 +311,88 @@ export function buildMayelCommercialIntelligenceV1(input: Readonly<{
     "net_profit", "margin", "roi"] as const
   const availableEconomicFieldCount = economicKeys.filter((key) =>
     metric(input.listing, key).status === "AVAILABLE").length
-  const economicsStatus: MayelCommercialCapabilityStatus =
+  const legacyEconomicsStatus: MayelCommercialCapabilityStatus =
     availableEconomicFieldCount === economicKeys.length ? "AVAILABLE" :
       availableEconomicFieldCount > 0 ? "PARTIAL" : "UNAVAILABLE"
+  const refreshJobs = (input.economicRefreshJobs ?? []).filter((row) =>
+    row.ebay_item_id === itemId)
+  const refreshReadback = (input.economicReadbacks ?? []).find((row) =>
+    row.ebay_item_id === itemId) ?? null
+  const jobByType = new Map(refreshJobs.map((row) =>
+    [row.evidence_type, row]))
+  const refreshField = (key: keyof MayelEconomicReadbackV1,
+    evidenceType: string): MayelCommercialFieldV1 => {
+    const value = number(refreshReadback?.[key])
+    const job = jobByType.get(evidenceType)
+    const available = value !== null && job?.status === "FRESH"
+    return Object.freeze({ value: available ? value : null,
+      status: available ? "AVAILABLE" as const : "UNAVAILABLE" as const,
+      source: available ? "SELLER_OS_ECONOMIC_EVIDENCE_REFRESH_V1" : null,
+      observedAt: date(refreshReadback?.calculated_at),
+      freshness: available ? "FRESH" as const : job?.status === "STALE"
+        ? "STALE" as const : "UNKNOWN" as const,
+      limitationCode: available ? null : text(job?.failure_class, 180) ??
+        (job ? `ECONOMIC_EVIDENCE_${job.status}` :
+          "ECONOMIC_REFRESH_AUTHORITY_NOT_AVAILABLE"),
+    })
+  }
+  const refreshAvailable = Boolean(refreshReadback)
+  const refreshedInputs = refreshAvailable ? {
+    livePrice: refreshField("live_price", "EBAY_LIVE_PRICE"),
+    supplierCost: refreshField("luna_cost", "LUNA_CURRENT_COST"),
+    shippingCost: refreshField("luna_shipping", "LUNA_CURRENT_SHIPPING"),
+    ebayFees: refreshField("expected_ebay_fee", "EXPECTED_EBAY_FEE"),
+    otherCostsOrReserves: refreshField("other_explicit_costs",
+      "OTHER_EXPLICIT_COSTS"),
+  } : null
+  const derivedField = (key: "expected_profit" | "margin_percent" |
+    "roi_percent"): MayelCommercialFieldV1 => {
+    const value = number(refreshReadback?.[key])
+    const available = refreshReadback?.status === "PROVEN" && value !== null
+    return Object.freeze({ value: available ? value : null,
+      status: available ? "AVAILABLE" as const : "UNAVAILABLE" as const,
+      source: available ? "SELLER_OS_LIVE_PRICE_ECONOMICS_V1" : null,
+      observedAt: date(refreshReadback?.calculated_at),
+      freshness: available ? "FRESH" as const : "UNKNOWN" as const,
+      limitationCode: available ? null : "ECONOMIC_INPUTS_NOT_ALL_PROVEN" })
+  }
+  const economicsStatus: MayelCommercialCapabilityStatus = refreshAvailable
+    ? refreshReadback?.status === "PROVEN" ? "AVAILABLE"
+      : refreshReadback?.status === "PARTIAL" ? "PARTIAL" : "UNAVAILABLE"
+    : legacyEconomicsStatus
   const economics = Object.freeze({
     status: economicsStatus,
-    livePrice: metric(input.listing, "listing_price"),
-    supplierCost: metric(input.listing, "supplier_cost"),
-    shippingCost: metric(input.listing, "shipping"),
-    ebayFees: metric(input.listing, "fees"),
-    otherCostsOrReserves: metric(input.listing, "promoted_fees"),
-    expectedProfit: metric(input.listing, "net_profit"),
-    marginPercent: metric(input.listing, "margin"),
-    roi: metric(input.listing, "roi"),
+    livePrice: refreshedInputs?.livePrice ??
+      metric(input.listing, "listing_price"),
+    supplierCost: refreshedInputs?.supplierCost ??
+      metric(input.listing, "supplier_cost"),
+    shippingCost: refreshedInputs?.shippingCost ??
+      metric(input.listing, "shipping"),
+    ebayFees: refreshedInputs?.ebayFees ?? metric(input.listing, "fees"),
+    otherCostsOrReserves: refreshedInputs?.otherCostsOrReserves ??
+      metric(input.listing, "promoted_fees"),
+    expectedProfit: refreshAvailable ? derivedField("expected_profit") :
+      metric(input.listing, "net_profit"),
+    marginPercent: refreshAvailable ? derivedField("margin_percent") :
+      metric(input.listing, "margin"),
+    roi: refreshAvailable ? derivedField("roi_percent") :
+      metric(input.listing, "roi"),
+    refresh: Object.freeze(refreshJobs.map((row) => Object.freeze({
+      evidenceType: row.evidence_type,
+      status: row.status,
+      humanStatus: row.status === "FRESH" ? "actualizado"
+        : row.status === "REFRESHING" ? "actualizando"
+          : row.status === "WAITING_FOR_WORKER" ? "esperando worker"
+            : row.status === "FAILED_RETRYABLE" ? "recuperando"
+              : row.status === "STALE" ? "evidencia vencida"
+                : row.status === "SOURCE_UNAVAILABLE"
+                  ? "fuente no disponible" : "por comprobar",
+      limitationCode: row.failure_class ?? null,
+      nextRetryAt: row.next_retry_at ?? null,
+      updatedAt: row.updated_at ?? null,
+    }))),
+    utilityHumanStatus: refreshReadback?.status === "PROVEN"
+      ? "actualizada" : "esperando evidencia económica",
     unknownNeverRenderedAsZero: true as const,
   })
   return Object.freeze({

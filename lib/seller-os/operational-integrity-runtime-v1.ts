@@ -4,6 +4,8 @@ import { runMayelVisualSafeRebaseRecoveryV1 } from
   "../ebay/ebay-mayel-visual-safe-rebase-runtime-v1"
 import { runMayelContinuousLivePortfolioOptimizationV1 } from
   "../ebay/ebay-mayel-continuous-live-portfolio-v1"
+import { runSellerOsEconomicEvidenceRefreshV1 } from
+  "./economic-evidence-refresh-runtime-v1"
 
 import { persistSellerOsOperationalIntegrityAuditV1,
   recoverSellerOsOperationalIntegrityV1 } from
@@ -48,6 +50,29 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
     await runMayelContinuousLivePortfolioOptimizationV1({
       supabase: input.supabase, accountKey: input.accountKey, now: input.now,
     })
+  let economicEvidenceRefresh: Awaited<ReturnType<
+    typeof runSellerOsEconomicEvidenceRefreshV1>> | Readonly<{
+      contractVersion: typeof import("./economic-evidence-refresh-v1")
+        .SELLER_OS_ECONOMIC_EVIDENCE_REFRESH_V1
+      status: "FAILED_RETRYABLE"
+      reasonCode: string
+      marketplaceWrites: 0
+    }>
+  try {
+    economicEvidenceRefresh = await runSellerOsEconomicEvidenceRefreshV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      accountAlias: input.accountAlias, now: input.now,
+    })
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : ""
+    economicEvidenceRefresh = Object.freeze({
+      contractVersion: "SELLER_OS_ECONOMIC_EVIDENCE_REFRESH_V1" as const,
+      status: "FAILED_RETRYABLE" as const,
+      reasonCode: /^[A-Z][A-Z0-9_]{2,159}$/.test(reason)
+        ? reason : "SELLER_OS_ECONOMIC_EVIDENCE_REFRESH_FAILED",
+      marketplaceWrites: 0 as const,
+    })
+  }
   return Object.freeze({
     contractVersion: SELLER_OS_OPERATIONAL_INTEGRITY_RUNTIME_V1,
     status: initial.audit.status,
@@ -58,6 +83,7 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
     recovery,
     mayelVisualSafeRebase,
     mayelContinuousPortfolio,
+    economicEvidenceRefresh,
     safety: Object.freeze({
       marketplaceWrites: 0 as const,
       productDecisions: 0 as const,
@@ -68,6 +94,7 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
       mayelManifestRebaseCount: mayelVisualSafeRebase.rebasedCount,
       mayelContinuousPortfolioMarketplaceWrites:
         mayelContinuousPortfolio.marketplaceWrites,
+      economicEvidenceRefreshMarketplaceWrites: 0 as const,
     }),
   })
 }

@@ -288,6 +288,25 @@ export async function GET(request: Request) {
       throw new Error("REMOTE_FEED_FALSE_ZERO_REJECTED")
     }
     const currentLiveListings = currentLiveListingsForMonitorV1(monitor)
+    const currentItemIds = currentLiveListings.map((listing) =>
+      listing.identity.itemId)
+    const [economicJobs, economicReadbacks] = await Promise.all([
+      supabase.from("seller_os_economic_evidence_refresh_jobs_v1")
+        .select("ebay_item_id,evidence_type,status,failure_class,next_retry_at,updated_at")
+        .eq("marketplace_account_key", account.accountKey)
+        .in("ebay_item_id", currentItemIds).limit(500),
+      supabase.from("seller_os_live_economics_readbacks_v1")
+        .select("ebay_item_id,status,live_price,luna_cost,luna_shipping,expected_ebay_fee,other_explicit_costs,expected_profit,margin_percent,roi_percent,calculated_at,missing_economic_inputs")
+        .eq("marketplace_account_key", account.accountKey)
+        .in("ebay_item_id", currentItemIds)
+        .order("calculated_at", { ascending: false }).limit(500),
+    ])
+    if (economicJobs.error || economicReadbacks.error) {
+      throw new Error("MAYEL_ECONOMIC_REFRESH_READ_MODEL_UNAVAILABLE")
+    }
+    const latestEconomicReadbacks = [...new Map(
+      (economicReadbacks.data ?? []).map((row) =>
+        [row.ebay_item_id, row] as const)).values()]
     const marketEvidence = await mayelMarketEvidence(
       supabase,
       account.accountKey,
@@ -323,6 +342,8 @@ export async function GET(request: Request) {
       marketEvidence: marketEvidence.rows,
       marketEvidenceReadStatus: marketEvidence.status,
       marketEvidenceLimitationCode: marketEvidence.limitationCode,
+      economicRefreshJobs: economicJobs.data ?? [],
+      economicReadbacks: latestEconomicReadbacks,
       safeMutationCanary,
       improvementExecutions: executions.data ?? [],
       operatorUserId: auth.validation.userId,

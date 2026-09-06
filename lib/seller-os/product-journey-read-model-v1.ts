@@ -222,6 +222,25 @@ export async function readSellerOsProductJourneyV1(input: Readonly<{
     !packageId || entry.package_id === packageId) ?? batchChildren[0] ?? null
   const publication = latest(rows(publicationRead.data))
   const activeListing = record(activeListingRead.data)
+  const activeItemId = text(activeListing.ebay_item_id, 30)
+  const [economicJobsRead, economicsReadbackRead] = activeItemId
+    ? await Promise.all([
+      input.supabase.from("seller_os_economic_evidence_refresh_jobs_v1")
+        .select("evidence_type,status,last_evidence_id,failure_class,next_retry_at,updated_at")
+        .eq("marketplace_account_key", input.accountKey)
+        .eq("ebay_item_id", activeItemId).order("evidence_type"),
+      input.supabase.from("seller_os_live_economics_readbacks_v1")
+        .select("status,live_price,luna_cost,luna_shipping,expected_ebay_fee,other_explicit_costs,expected_profit,margin_percent,roi_percent,missing_economic_inputs,formula_version,calculated_at")
+        .eq("marketplace_account_key", input.accountKey)
+        .eq("ebay_item_id", activeItemId)
+        .order("calculated_at", { ascending: false }).limit(1).maybeSingle(),
+    ]) : [{ data: [], error: null }, { data: null, error: null }]
+  if (economicJobsRead.error) {
+    throw new Error("PRODUCT_JOURNEY_ECONOMIC_REFRESH_READ_FAILED")
+  }
+  if (economicsReadbackRead.error) {
+    throw new Error("PRODUCT_JOURNEY_ECONOMICS_READBACK_READ_FAILED")
+  }
   const journey = buildSellerOsProductJourneyV1({
     now: (input.now ?? new Date()).toISOString(), queue, card,
     listingPackage, approval: latest(rows(approvalRead.data)),
@@ -269,7 +288,21 @@ export async function readSellerOsProductJourneyV1(input: Readonly<{
     shippingClaim: record(shippingClaimRead.data), research,
     queueEvents: rows(queueEventsRead.data),
   })
-  return Object.freeze({ ...journey, evidenceInventory: Object.freeze({
+  return Object.freeze({ ...journey,
+    economicEvidenceRefresh: activeItemId ? Object.freeze({
+      contractVersion: "SELLER_OS_ECONOMIC_EVIDENCE_REFRESH_V1",
+      itemId: activeItemId,
+      authorities: Object.freeze(rows(economicJobsRead.data).map((entry) =>
+        Object.freeze({ evidenceType: entry.evidence_type,
+          status: entry.status, evidenceId: entry.last_evidence_id,
+          limitationCode: entry.failure_class,
+          nextRetryAt: entry.next_retry_at, updatedAt: entry.updated_at }))),
+      economics: economicsReadbackRead.data ?? null,
+      automaticRecomputation: true,
+      ownerTechnicalActionRequired: false,
+      marketplaceWrites: 0,
+    }) : null,
+    evidenceInventory: Object.freeze({
     reusedExistingAuthorities: Object.freeze([
       "ebay_luna_opportunity_queue.assessment",
       "marketplace_product_research_*",
@@ -282,6 +315,9 @@ export async function readSellerOsProductJourneyV1(input: Readonly<{
       "seller_os_publisher_batch_children_v1",
       "ebay_authorized_listing_publications",
       "ebay_active_listings",
+      "seller_os_economic_evidence_refresh_jobs_v1",
+      "seller_os_live_economic_evidence_v1",
+      "seller_os_live_economics_readbacks_v1",
     ]),
     queueEventCount: rows(queueEventsRead.data).length,
     imageAssetCount: rows(imageAssetsRead.data).length,

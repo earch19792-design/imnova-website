@@ -27,6 +27,7 @@ import {
 } from "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
 import {
   persistLunaChromeShippingCaptureV1,
+  tryPersistEconomicLiveListingShippingCaptureV1,
   persistLunaChromeLiveListingShippingCaptureV1,
   persistLunaProductPageOosV1,
   persistLunaShippingRuntimeTraceV1,
@@ -198,11 +199,25 @@ export async function POST(req: Request) {
     }
     if (body.action === "certify_capture") {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const capture = listingAiRecord(body.capture) as
+        LunaShippingCapturePostV1
+      const economicResult =
+        await tryPersistEconomicLiveListingShippingCaptureV1({
+          supabase: auth.supabase, accountKey: auth.accountKey,
+          capture, sessionSecret: sessionSecret(),
+        })
+      if (economicResult) return listingAiResponse({ success: true,
+        result: { ...economicResult,
+          economicsContinuation: { applicable: true,
+            status: "SCHEDULED_BY_ECONOMIC_REFRESH_RUNTIME",
+            economicsResumed: false, marketplaceWrites: 0 },
+          postShippingContinuation: null },
+        safety: { cookieAccess: false, credentialAccess: false,
+          lunaPurchases: 0, marketplaceWrites: 0,
+          automaticEconomicWorkerClaim: true } })
       const result = await persistLunaChromeShippingCaptureV1({
         supabase: auth.supabase, accountKey: auth.accountKey,
-        capture: listingAiRecord(body.capture) as
-          LunaShippingCapturePostV1,
-        sessionSecret: sessionSecret(),
+        capture, sessionSecret: sessionSecret(),
       })
       let economicsContinuation: unknown
       try {

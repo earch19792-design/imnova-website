@@ -403,6 +403,19 @@ function TaskCommercialContext({ intelligence, revalidationStatus, ebayItemId,
           <strong>{["Margen", "ROI"].includes(String(label)) && value !== null
             ? `${value}%` : commercialMoney(value as number | null)}</strong>
         </p>)}
+      {(intelligence?.economics.refresh?.length ?? 0) > 0 &&
+        <div className="col-span-2 rounded-xl border border-[#d9d1c4] bg-[#f8f6f1] p-3 sm:col-span-4">
+          <p className="font-semibold">Actualización automática</p>
+          <div className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
+            {intelligence!.economics.refresh.map((row) =>
+              <p key={row.evidenceType}>{({ EBAY_LIVE_PRICE: "Precio eBay",
+                LUNA_CURRENT_COST: "Costo Luna",
+                LUNA_CURRENT_SHIPPING: "Envío",
+                EXPECTED_EBAY_FEE: "Fee eBay",
+                OTHER_EXPLICIT_COSTS: "Otros costos" } as Record<string,string>)[row.evidenceType] ?? row.evidenceType} · {row.humanStatus}</p>)}
+          </div>
+          <p className="mt-2 text-xs">Utilidad · {intelligence!.economics.utilityHumanStatus}. Seller OS reintenta lo recuperable sin clic técnico.</p>
+        </div>}
     </div>}
     {tab === "RECOMENDACIONES" && <div className="mt-4 space-y-2 text-sm text-[#4f5752]">
       {(intelligence?.ebayRecommendations.officialListingQuality ?? []).map(

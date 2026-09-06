@@ -11,6 +11,8 @@ import {
   buildMayelCommercialIntelligenceV1,
   type MayelCommercialIntelligenceV1,
   type MayelMarketEvidenceRowV1,
+  type MayelEconomicRefreshJobV1,
+  type MayelEconomicReadbackV1,
 } from "./ebay-mayel-commercial-intelligence-v1"
 import type { SellerOsHeroVisualReviewV1 } from
   "./ebay-seller-os-visual-quality-v1"
@@ -816,6 +818,8 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
   marketEvidence?: readonly MayelMarketEvidenceRowV1[]
   marketEvidenceReadStatus?: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE"
   marketEvidenceLimitationCode?: string | null
+  economicRefreshJobs?: readonly MayelEconomicRefreshJobV1[]
+  economicReadbacks?: readonly MayelEconomicReadbackV1[]
   safeMutationCanary?: RemoteOperatorSafeMutationCanaryV1 | null
   improvementExecutions?: readonly unknown[]
   operatorUserId?: string | null
@@ -942,6 +946,8 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       marketEvidence: input.marketEvidence ?? [],
       marketEvidenceReadStatus: input.marketEvidenceReadStatus,
       marketEvidenceLimitationCode: input.marketEvidenceLimitationCode,
+      economicRefreshJobs: input.economicRefreshJobs,
+      economicReadbacks: input.economicReadbacks,
       qualityRecommendations: qualityReport.recommendations,
       decisionReasonCodes: decision?.reasonCodes ?? [],
     })
