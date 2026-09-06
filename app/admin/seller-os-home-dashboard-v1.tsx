@@ -306,10 +306,28 @@ export function SellerOsHomeDashboardV1() {
           <div className="flex min-h-11 items-center justify-between rounded-xl bg-black/20 px-3"><dt>Datos por confirmar</dt><dd><Value value={facts} /></dd></div>
           <div className="flex min-h-11 items-center justify-between rounded-xl bg-black/20 px-3"><dt>Fallos o bloqueos reales</dt><dd><Value value={blocked} /></dd></div>
         </dl>
-        <a href="/admin/ebay/publish"
-          className="mt-3 inline-flex min-h-11 items-center text-sm font-black text-emerald-100">
-          Abrir Publicar <ArrowRight className="ml-2" size={15} />
-        </a>
+        <div data-product-journey-entry
+          className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.055] p-3">
+          <p className="text-xs font-black uppercase tracking-[0.15em] text-cyan-100/65">
+            Recorrido por producto
+          </p>
+          <p className="mt-2 text-sm font-black text-white">
+            Producto → Mercado → Rentabilidad → Anuncio → Tu aprobación → Publicación → LIVE
+          </p>
+          <p className="mt-1 text-xs leading-5 text-white/50">
+            Abre cualquier producto para ver qué comprobó Seller OS, qué falta y si puede continuar. La evidencia técnica queda detrás del detalle.
+          </p>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-3">
+          <a href="/admin/ebay/publish"
+            className="inline-flex min-h-11 items-center text-sm font-black text-emerald-100">
+            Abrir Publicar <ArrowRight className="ml-2" size={15} />
+          </a>
+          <a href="/admin/ebay/publish#quick-pick-ready"
+            className="inline-flex min-h-11 items-center rounded-xl border border-cyan-200/20 px-3 text-sm font-black text-cyan-100">
+            Ver recorridos de productos <ArrowRight className="ml-2" size={15} />
+          </a>
+        </div>
       </section>
 
       <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"
