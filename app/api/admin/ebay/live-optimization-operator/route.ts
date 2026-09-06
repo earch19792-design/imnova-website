@@ -36,6 +36,11 @@ import { buildProactiveExceptionQueueV1 } from
   "@/lib/ebay/ebay-seller-os-portfolio-intelligence-v1"
 import { loadEbayPromotionRecommendationSafeExecutionV1 } from
   "@/lib/ebay/ebay-promotion-recommendation-safe-execution-v1"
+import {
+  completeMayelLiveMarketRevalidationV1,
+  readMayelLiveMarketRevalidationPlanV1,
+  startMayelLiveMarketRevalidationV1,
+} from "@/lib/ebay/ebay-mayel-live-market-revalidation-v1"
 import { currentLiveListingsForMonitorV1 } from
   "@/lib/ebay/ebay-seller-os-live-portfolio-integrity-v1"
 import {
@@ -378,6 +383,69 @@ export async function POST(request: Request) {
   { status: 403 })
   const body = await jsonBody(request)
   const action = typeof body?.action === "string" ? body.action : ""
+  if (action === "START_MARKET_REVALIDATION") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await startMayelLiveMarketRevalidationV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        actorId: auth.validation.userId,
+        itemId: body?.ebayItemId,
+        idempotencyKey: request.headers.get("Idempotency-Key"),
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0,
+          promotionWrites: 0, sendOffers: 0, buyerMessages: 0 } },
+      { headers: { "Cache-Control": "private, no-store",
+        "X-Seller-OS-Mayel-Market-Revalidation": "RESEARCH_REQUIRED" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error),
+        operatorMessage:
+          "No pude iniciar la investigación automática. No se cambió nada en eBay." },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "READ_MARKET_REVALIDATION_PLAN") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await readMayelLiveMarketRevalidationPlanV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        planId: body?.planId,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "COMPLETE_MARKET_REVALIDATION") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await completeMayelLiveMarketRevalidationV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        actorId: auth.validation.userId, planId: body?.planId,
+        capture: body?.productResearchCapture as never,
+        soldRows: body?.mainSearchSoldRows,
+        soldFilterAutomated: body?.soldFilterAutomated,
+        paginationAutomated: body?.paginationAutomated,
+        extensionMarketplaceWrites: body?.extensionMarketplaceWrites,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0,
+          promotionWrites: 0, sendOffers: 0, buyerMessages: 0 } },
+      { headers: { "Cache-Control": "private, no-store",
+        "X-Seller-OS-Mayel-Market-Revalidation": "COMPLETED" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error),
+        operatorMessage:
+          "La evidencia quedó protegida, pero Seller OS no pudo cerrar todavía la revalidación." },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
   if (action === "READ_EBAY_PROMOTION_RECOMMENDATION") {
     const ebayItemId = typeof body?.ebayItemId === "string" &&
       /^\d{9,20}$/.test(body.ebayItemId.trim())

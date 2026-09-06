@@ -198,10 +198,14 @@ function commercialDate(value: string | null | undefined) {
     timeZone: "America/Managua" }).format(new Date(value))
 }
 
-function TaskCommercialContext({ intelligence }: {
+function TaskCommercialContext({ intelligence, ebayItemId, canOperate }: {
   intelligence?: MayelCommercialIntelligenceV1
+  ebayItemId: string
+  canOperate: boolean
 }) {
   const [tab, setTab] = useState<TaskCommercialTab>("VISUAL")
+  const [revalidationBusy, setRevalidationBusy] = useState(false)
+  const [revalidationMessage, setRevalidationMessage] = useState("")
   const tabs = [["VISUAL", "Visual"], ["MERCADO", "Mercado"],
     ["RENTABILIDAD", "Rentabilidad"],
     ["RECOMENDACIONES", "Recomendaciones eBay"]] as const
@@ -211,6 +215,33 @@ function TaskCommercialContext({ intelligence }: {
     POR_DEBAJO_DEL_MERCADO: "Por debajo del mercado",
     MERCADO_POR_COMPROBAR: "Mercado por comprobar",
     EVIDENCIA_VENCIDA: "Evidencia vencida",
+  }
+  async function revalidateMarket() {
+    if (!canOperate || revalidationBusy ||
+        intelligence?.revalidation.status !== "AVAILABLE") return
+    setRevalidationBusy(true)
+    setRevalidationMessage("")
+    try {
+      const payload = await visualRequest(
+        "/api/admin/ebay/live-optimization-operator", {
+          method: "POST",
+          headers: { "Content-Type": "application/json",
+            "Idempotency-Key": crypto.randomUUID() },
+          body: JSON.stringify({ action: "START_MARKET_REVALIDATION",
+            ebayItemId }),
+        })
+      const result = payload.result as { continuationUrl?: unknown } | undefined
+      if (typeof result?.continuationUrl !== "string" ||
+          !result.continuationUrl.startsWith(
+            "/admin/ebay/opportunity-queue/research?")) {
+        throw new Error("MARKET_REVALIDATION_CONTINUATION_INVALID")
+      }
+      window.location.assign(result.continuationUrl)
+    } catch (error) {
+      setRevalidationMessage(error instanceof Error ? error.message :
+        "No se pudo iniciar la investigación automática.")
+      setRevalidationBusy(false)
+    }
   }
   return <section className="mt-6 rounded-2xl border border-[#cbd9d4] bg-[#f8fbf9] p-4"
     data-commercial-feed-blocks-visual="false">
@@ -238,12 +269,22 @@ function TaskCommercialContext({ intelligence }: {
         </div>
         <p className="rounded-xl bg-[#edf3f1] p-3">{intelligence.interpretation.explanation}</p>
       </>}
-      <button type="button" disabled
-        title="El enlace durable desde un listing LIVE al plan Product Research aún no está comprobado"
-        className="min-h-11 rounded-xl border border-[#1d5961]/30 px-4 font-semibold text-[#1d5961] opacity-55">
-        Revalidar mercado
+      <button type="button"
+        disabled={!canOperate || revalidationBusy ||
+          intelligence?.revalidation.status !== "AVAILABLE"}
+        onClick={() => void revalidateMarket()}
+        title={!canOperate ? "Disponible para Mayel dentro de su workspace" :
+          intelligence?.revalidation.status !== "AVAILABLE"
+            ? "Seller OS todavía no tiene autoridad suficiente para crear el plan"
+            : "Seller OS elegirá y ejecutará el plan de investigación"}
+        className="min-h-11 rounded-xl border border-[#1d5961]/30 px-4 font-semibold text-[#1d5961] disabled:opacity-55">
+        {revalidationBusy ? "Iniciando investigación…" : "Revalidar mercado"}
       </button>
-      <p className="text-xs">Solicitud visible; ejecución cerrada hasta comprobar el conector durable. Seller OS elegirá queries, páginas y filtros.</p>
+      <p className="text-xs">Seller OS elige queries, páginas y filtros Sold; Mayel no realiza investigación manual ni cambia eBay.</p>
+      {revalidationMessage && <p role="alert"
+        className="rounded-xl bg-[#f7e9de] p-3 text-xs text-[#704d3c]">
+        {revalidationMessage}
+      </p>}
     </div>}
     {tab === "RENTABILIDAD" && <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
       {[["Precio LIVE", intelligence?.economics.livePrice.value ?? null],
@@ -807,7 +848,8 @@ export function MayelVisualWorkstation({ canOperate,
       </div>
       <div className="mt-6"><SourceGallery task={task} /></div>
       <TaskCommercialContext intelligence={
-        commercialIntelligenceByItemId[task.ebayItemId]} />
+        commercialIntelligenceByItemId[task.ebayItemId]}
+        ebayItemId={task.ebayItemId} canOperate={canOperate} />
       {canOperate && <section className="mt-6 rounded-2xl bg-[#26312d] p-5 text-white">
         <div className="flex items-start gap-3"><Clipboard className="mt-1 h-5 w-5 shrink-0 text-[#acd2ca]" />
           <div><h4 className="font-semibold">Prompt individual listo para copiar</h4>

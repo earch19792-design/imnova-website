@@ -9,11 +9,16 @@ import {
   SELLER_OS_ACCESS_ROLES,
   type SellerOsAccessRole,
 } from "@/lib/seller-os-access-control"
+import type { MayelCommercialIntelligenceV1 } from
+  "@/lib/ebay/ebay-mayel-commercial-intelligence-v1"
+import { supabase } from "@/lib/supabase"
 
 export default function SellerOsMayelPage() {
   const router = useRouter()
   const [role, setRole] = useState<SellerOsAccessRole | null>(null)
   const [failed, setFailed] = useState(false)
+  const [commercialIntelligence, setCommercialIntelligence] = useState<
+    Record<string, MayelCommercialIntelligenceV1>>({})
 
   useEffect(() => {
     let active = true
@@ -27,6 +32,29 @@ export default function SellerOsMayelPage() {
     }).catch(() => { if (active) setFailed(true) })
     return () => { active = false }
   }, [router])
+
+  useEffect(() => {
+    if (!role) return
+    let active = true
+    void (async () => {
+      const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      if (!token) return
+      const response = await fetch(
+        "/api/admin/ebay/live-optimization-operator", {
+          cache: "no-store", headers: { Authorization: `Bearer ${token}` },
+        })
+      const payload = await response.json() as { success?: boolean
+        dashboard?: { taskListings?: Array<{ ebayItemId?: unknown
+          commercialIntelligence?: MayelCommercialIntelligenceV1 }> } }
+      if (!response.ok || payload.success !== true || !active) return
+      const entries = (payload.dashboard?.taskListings ?? []).flatMap((listing) =>
+        typeof listing.ebayItemId === "string" && listing.commercialIntelligence
+          ? [[listing.ebayItemId, listing.commercialIntelligence] as const] : [])
+      setCommercialIntelligence(Object.fromEntries(entries))
+    })().catch(() => { /* Visual work remains available when this feed degrades. */ })
+    return () => { active = false }
+  }, [role])
 
   const owner = role === SELLER_OS_ACCESS_ROLES.owner
   const mayel = role ===
@@ -42,8 +70,9 @@ export default function SellerOsMayelPage() {
           Trabajo delegado, imágenes y resultados
         </h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-[#64675f]">
-          La delegación visual tiene una cola propia. Mayel produce y revisa;
-          el owner conserva las decisiones comerciales protegidas.
+          Mayel decide y aprueba los cambios visuales dentro de su delegación.
+          Seller OS los valida y aplica de forma segura; las decisiones
+          comerciales protegidas permanecen fuera de ese alcance.
         </p>
       </header>
       {!role && !failed && <p className="mt-6 rounded-2xl border border-[#d9d1c4] bg-white p-5">
@@ -55,7 +84,8 @@ export default function SellerOsMayelPage() {
       </p>}
       {(owner || mayel) && <section className="mt-6">
         <MayelVisualWorkstation canOperate={mayel}
-          canOwnerAuthorize={owner} />
+          canOwnerAuthorize={owner}
+          commercialIntelligenceByItemId={commercialIntelligence} />
       </section>}
     </div>
   </main>

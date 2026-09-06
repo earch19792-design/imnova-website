@@ -108,18 +108,21 @@ function evidenceTitle(identity: JsonRecord) {
     180)
 }
 
-function pricePosition(action: string | null, fresh: boolean) {
-  if (!fresh) return "EVIDENCIA_VENCIDA" as const
-  if (action === "LOWER_TO_CONFIRMED_SOLD_BAND") {
-    return "POR_ENCIMA_DEL_MERCADO" as const
+function pricePosition(input: Readonly<{ livePrice: number | null
+  minimum: number | null; maximum: number | null
+  acceptedCount: number; sufficient: boolean; fresh: boolean }>) {
+  if (input.acceptedCount > 0 && !input.fresh) {
+    return "EVIDENCIA_VENCIDA" as const
   }
-  if (action === "RAISE_TO_CONFIRMED_SOLD_BAND") {
-    return "POR_DEBAJO_DEL_MERCADO" as const
+  // One row is evidence, but not a defensible market distribution. Fail
+  // closed instead of deriving a price from the desired margin.
+  if (!input.sufficient || input.minimum === null ||
+      input.maximum === null || input.livePrice === null) {
+    return "MERCADO_POR_COMPROBAR" as const
   }
-  if (action === "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND") {
-    return "DENTRO_DEL_MERCADO" as const
-  }
-  return "MERCADO_POR_COMPROBAR" as const
+  if (input.livePrice > input.maximum) return "POR_ENCIMA_DEL_MERCADO" as const
+  if (input.livePrice < input.minimum) return "POR_DEBAJO_DEL_MERCADO" as const
+  return "DENTRO_DEL_MERCADO" as const
 }
 
 function commercialInterpretation(input: Readonly<{
@@ -208,11 +211,6 @@ export function buildMayelCommercialIntelligenceV1(input: Readonly<{
     ? competitorWatch.profiles.map(record) : []
   const profile = profiles.find((row) => text(row.listing_id, 30) === itemId)
     ?? null
-  const priceEvents = Array.isArray(competitorWatch.priceRecommendations)
-    ? competitorWatch.priceRecommendations.map(record) : []
-  const priceEvent = priceEvents.find((row) =>
-    text(row.listingId, 30) === itemId) ?? null
-  const priceRecommendation = record(priceEvent?.priceRecommendation)
   const allRows = supplierVariantId ? input.marketEvidence.filter((value) =>
     text(value.matched_supplier_variant_id, 100) === supplierVariantId) : []
   const reviewedRows = allRows.filter((value) =>
@@ -269,8 +267,17 @@ export function buildMayelCommercialIntelligenceV1(input: Readonly<{
         ? rejected.length || input.marketEvidenceReadStatus === "PARTIAL"
           ? "PARTIAL" : "AVAILABLE"
         : accepted.length ? "PARTIAL" : "UNAVAILABLE"
-  const position = pricePosition(text(priceRecommendation.action, 100),
-    evidenceFresh)
+  const livePrice = metric(input.listing, "listing_price").value
+  const soldMinimum = soldPrices.length ? Math.min(...soldPrices) : null
+  const soldMaximum = soldPrices.length ? Math.max(...soldPrices) : null
+  const confirmedFreshSoldQuantity = freshAccepted.reduce((sum, row) =>
+    sum + (row.soldQuantity ?? 0), 0)
+  const sufficientExactEvidence = freshAccepted.length >= 2 ||
+    confirmedFreshSoldQuantity >= 2
+  const position = pricePosition({ livePrice, minimum: soldMinimum,
+    maximum: soldMaximum, acceptedCount: accepted.length,
+    sufficient: sufficientExactEvidence,
+    fresh: evidenceFresh })
   const quality = input.qualityRecommendations.filter((row) =>
     row.listingKey === input.listing.key &&
     row.associationStatus !== "UNPROVEN")
@@ -316,9 +323,9 @@ export function buildMayelCommercialIntelligenceV1(input: Readonly<{
         ? accepted.length : null,
       rejectedComparableCount: reviewedRows.length ||
           marketStatus !== "UNAVAILABLE" ? rejected.length : null,
-      soldPriceMinimum: soldPrices.length ? Math.min(...soldPrices) : null,
+      soldPriceMinimum: soldMinimum,
       soldPriceMedian: median(soldPrices),
-      soldPriceMaximum: soldPrices.length ? Math.max(...soldPrices) : null,
+      soldPriceMaximum: soldMaximum,
       soldQuantityEvidence: soldQuantities.length
         ? soldQuantities.reduce((sum, value) => sum + value, 0) : null,
       acceptedComparables: Object.freeze(accepted.slice(0, 8)),
@@ -330,8 +337,8 @@ export function buildMayelCommercialIntelligenceV1(input: Readonly<{
       status: position,
       livePrice: metric(input.listing, "listing_price").value,
       soldRangeBasis: "CONFIRMED_SOLD_LANDED_WHEN_SHIPPING_PROVEN",
-      defensibleSellerOsPrice: number(priceRecommendation.proposedItemPrice),
-      marketPriceAuthority: freshAccepted.length
+      defensibleSellerOsPrice: sufficientExactEvidence ? median(soldPrices) : null,
+      marketPriceAuthority: sufficientExactEvidence
         ? "FRESH_CONFIRMED_SOLD_EVIDENCE" as const
         : "UNPROVEN" as const,
       costStackUsedToInventMarketPrice: false as const,
@@ -376,13 +383,12 @@ export function buildMayelCommercialIntelligenceV1(input: Readonly<{
     }),
     revalidation: Object.freeze({
       visible: true as const,
-      status: "PARTIAL" as const,
+      status: "AVAILABLE" as const,
       requestAuthority: true as const,
       sellerOsChoosesResearchPlan: true as const,
       ipadExtensionRequired: false as const,
-      durableWorkerContinuationAvailable: false as const,
-      limitationCode:
-        "LIVE_LISTING_TO_DURABLE_PRODUCT_RESEARCH_PLAN_CONNECTOR_UNPROVEN",
+      durableWorkerContinuationAvailable: true as const,
+      limitationCode: null,
     }),
     authority: Object.freeze({
       mayelViewEconomics: true as const,

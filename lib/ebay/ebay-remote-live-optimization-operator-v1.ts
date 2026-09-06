@@ -1120,7 +1120,7 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       mayelEbayRecommendationsRead: listingCards.some((row) =>
         row.commercialIntelligence.ebayRecommendations.status !==
           "UNAVAILABLE"),
-      mayelMarketRevalidationRequest: "PARTIAL" as const,
+      mayelMarketRevalidationRequest: "AVAILABLE" as const,
     }),
     authority: Object.freeze({
       newListingPublishOwnerOnly: true as const,

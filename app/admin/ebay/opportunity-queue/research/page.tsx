@@ -6,6 +6,8 @@ import { useState } from "react"
 
 import { Loop2Top20OpportunityPool } from "../../mobile-review/loop2-top20-opportunity-pool"
 import { SmartStockingListingIntakeCard } from "./smart-stocking-listing-intake-card"
+import { MayelMarketRevalidationRunner } from
+  "./mayel-market-revalidation-runner"
 import type { MarketOpportunityResearchV1 } from "@/lib/ebay/ebay-market-opportunity-research-v1"
 import type { CommercialIntelligenceUpgradeV1, ItemIdCanonicalFamilyBridgeV1 } from
   "@/lib/ebay/ebay-commercial-intelligence-upgrade-v1"
@@ -125,6 +127,7 @@ export default function MarketResearchPage() {
 
   return (
     <main className="min-h-screen bg-[#07111d] text-slate-100">
+      <MayelMarketRevalidationRunner />
       <div className="mx-auto max-w-[1500px] px-5 py-6 lg:px-8">
         <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-white/10 pb-5">
           <div>

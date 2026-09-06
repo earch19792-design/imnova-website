@@ -875,10 +875,14 @@ export async function importProductResearchBrowserCapture(input: {
   accountKey: string
   actorId: string
   capture: ProductResearchBrowserCapture
+  exactTargets?: readonly ProductResearchCaptureTarget[]
   visualContext?: { categoryId?: string | null }
   now?: Date
 }) {
-  const { runId, targets } = await latestCaptureTargets(input.supabase, input.accountKey)
+  const targetContext = input.exactTargets?.length
+    ? { runId: null, targets: [...input.exactTargets] }
+    : await latestCaptureTargets(input.supabase, input.accountKey)
+  const { runId, targets } = targetContext
   const parsed = parseProductResearchBrowserCapture({ capture: input.capture, targets })
   const { data: duplicateBatch, error: duplicateBatchError } = await input.supabase
     .from("marketplace_product_research_capture_batches")
