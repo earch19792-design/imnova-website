@@ -59,6 +59,16 @@ export type ReadonlySyncStateRow = {
   targeted_luna_last_success_at: string | null
   targeted_luna_last_error_at: string | null
   targeted_luna_last_error_code: string | null
+  current_live_source_state: string | null
+  current_live_last_attempt_at: string | null
+  current_live_next_retry_at: string | null
+  current_live_last_error_code: string | null
+  last_certified_live_scope_id: string | null
+  last_certified_live_item_ids: unknown
+  last_certified_live_count: number | string | null
+  last_certified_live_observed_at: string | null
+  last_certified_live_fresh_until: string | null
+  last_certified_live_source_authority: string | null
 }
 
 export type ReadonlyIdentityVerificationRow = {
@@ -409,7 +419,7 @@ async function readSyncState(
 ) : Promise<ReadonlySourceResult<ReadonlySyncStateRow>> {
   const { data, error } = await supabase
     .from("ebay_active_listing_sync_state")
-    .select("account_key,latest_generation,latest_started_at,latest_committed_generation,latest_committed_at,targeted_luna_last_success_run_id,targeted_luna_last_success_at,targeted_luna_last_error_at,targeted_luna_last_error_code")
+    .select("account_key,latest_generation,latest_started_at,latest_committed_generation,latest_committed_at,targeted_luna_last_success_run_id,targeted_luna_last_success_at,targeted_luna_last_error_at,targeted_luna_last_error_code,current_live_source_state,current_live_last_attempt_at,current_live_next_retry_at,current_live_last_error_code,last_certified_live_scope_id,last_certified_live_item_ids,last_certified_live_count,last_certified_live_observed_at,last_certified_live_fresh_until,last_certified_live_source_authority")
     .eq("account_key", accountKey)
     .limit(1)
   if (error) {

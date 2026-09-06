@@ -20,6 +20,9 @@ import {
   type ReadonlyRegistryListingRow,
   type ReadonlySourceResult,
 } from "./commercial-monitor-readonly-repository"
+import { readCurrentLiveAuthorityV1,
+  type CurrentLiveAuthorityProjectionV1 } from
+  "./ebay-current-live-authority-v1"
 
 export const SELLER_OS_DASHBOARD_COMMERCIAL_HEALTH_VERSION =
   "SELLER_OS_DASHBOARD_COMMERCIAL_HEALTH_V1" as const
@@ -323,8 +326,18 @@ function stockProjection(input: {
   accountAlias: string | null
   now: Date
   stockRuns: readonly StockAutomationRunRow[]
+  currentLiveAuthority?: CurrentLiveAuthorityProjectionV1 | null
 }) {
-  const receipt = canonicalCurrentLiveReceipt(input.stockRuns, input.now)
+  const legacyReceipt = canonicalCurrentLiveReceipt(input.stockRuns, input.now)
+  const authority = input.currentLiveAuthority ?? null
+  const receipt = authority ? {
+    itemIds: authority.currentState === "CURRENT_FRESH"
+      ? [...authority.currentItemIds] : [],
+    scopeCount: authority.currentListingCount,
+    observedAt: authority.currentObservedAt,
+    fresh: authority.currentState === "CURRENT_FRESH",
+    authority: authority.sourceAuthority,
+  } : legacyReceipt
   const registryByItemId = new Map(input.registry.rows.map((row) =>
     [row.ebay_item_id, row]))
   const currentLiveItemIds = receipt?.itemIds ?? []
@@ -355,25 +368,45 @@ function stockProjection(input: {
   const sourceAvailable = receipt?.fresh === true &&
     input.decisions.status === "AVAILABLE" && input.jobs.status === "AVAILABLE" &&
     input.observations.status === "AVAILABLE"
-  const complete = currentLiveItemIds.length > 0 && sourceAvailable &&
-    certifiedCount === currentLiveItemIds.length &&
-    freshCount === currentLiveItemIds.length &&
-    staleCount === 0 && unknownCount === 0
+  const complete = sourceAvailable && (
+    currentLiveItemIds.length === 0
+      ? authority?.authoritativeZero === true
+      : certifiedCount === currentLiveItemIds.length &&
+        freshCount === currentLiveItemIds.length && staleCount === 0 &&
+        unknownCount === 0
+  )
   return Object.freeze({
-    scopeCount: currentLiveItemIds.length,
-    certifiedCount,
-    freshCount,
-    staleCount,
-    unknownCount,
-    riskCount,
+    scopeCount: authority?.currentState === "CURRENT_UNAVAILABLE"
+      ? null : currentLiveItemIds.length,
+    certifiedCount: authority?.currentState === "CURRENT_UNAVAILABLE"
+      ? null : certifiedCount,
+    freshCount: authority?.currentState === "CURRENT_UNAVAILABLE"
+      ? null : freshCount,
+    staleCount: authority?.currentState === "CURRENT_UNAVAILABLE"
+      ? null : staleCount,
+    unknownCount: authority?.currentState === "CURRENT_UNAVAILABLE"
+      ? null : unknownCount,
+    riskCount: authority?.currentState === "CURRENT_UNAVAILABLE"
+      ? null : riskCount,
     dashboardStatus: complete ? "READY" as const
-      : currentLiveItemIds.length === 0
+      : authority?.currentState === "CURRENT_UNAVAILABLE"
+        ? "DEGRADED" as const : currentLiveItemIds.length === 0
         ? "WAITING" as const : "DEGRADED" as const,
     coverageComplete: complete,
     cohortAuthority: receipt?.authority ?? null,
     cohortObservedAt: receipt?.observedAt ?? null,
     cohortReceiptFresh: receipt?.fresh ?? false,
     currentLiveItemIds: Object.freeze([...currentLiveItemIds]),
+    currentAuthorityState: authority?.currentState ??
+      (receipt?.fresh ? "CURRENT_FRESH" : "CURRENT_UNAVAILABLE"),
+    lastCertifiedState: authority?.lastCertifiedState ??
+      (receipt?.fresh ? "LAST_CERTIFIED_AVAILABLE"
+        : receipt ? "LAST_CERTIFIED_STALE" : "NO_CERTIFIED_HISTORY"),
+    lastCertifiedLiveCount: authority?.lastCertifiedListingCount ??
+      receipt?.scopeCount ?? null,
+    lastCertifiedAt: authority?.lastCertifiedAt ?? receipt?.observedAt ?? null,
+    sourceFailureCode: authority?.sourceFailureCode ?? null,
+    nextRetryAt: authority?.nextRetryAt ?? null,
   })
 }
 
@@ -385,6 +418,7 @@ export function deriveSellerOsDashboardCommercialHealthV1(input: Readonly<{
   snapshots: ReadonlySourceResult<ReadonlyCommercialSnapshotRow>
   runs: readonly RunRow[]
   stockRuns: readonly StockAutomationRunRow[]
+  currentLiveAuthority?: CurrentLiveAuthorityProjectionV1 | null
   accountAlias: string | null
   postSale?: unknown
   now?: Date
@@ -492,7 +526,9 @@ export function deriveSellerOsDashboardCommercialHealthV1(input: Readonly<{
   return Object.freeze({
     contractVersion: SELLER_OS_DASHBOARD_COMMERCIAL_HEALTH_VERSION,
     observedAt: now.toISOString(),
-    activeListings: currentLiveItemIds.length,
+    activeListings: input.currentLiveAuthority?.currentState ===
+      "CURRENT_UNAVAILABLE" ? null : currentLiveItemIds.length,
+    currentLiveAuthority: input.currentLiveAuthority ?? null,
     stockGuard,
     orders,
     analytics,
@@ -514,7 +550,7 @@ export async function getSellerOsDashboardCommercialHealthV1(input: Readonly<{
 }>) {
   const now = input.now ?? new Date()
   const [registry, decisions, jobs, observations, runRows, stockRunRows,
-    postSale] =
+    postSale, currentLiveAuthority] =
     await Promise.all([
       readRegistry(input.supabase, input.accountKey),
       readCanonicalLunaLinkageDecisions(input.supabase, input.accountKey),
@@ -534,16 +570,19 @@ export async function getSellerOsDashboardCommercialHealthV1(input: Readonly<{
         .order("started_at", { ascending: false })
         .limit(50),
       loadSellerOsPostSaleDashboardSnapshotV1().catch(() => null),
+      readCurrentLiveAuthorityV1({ supabase: input.supabase,
+        accountKey: input.accountKey, now }),
     ])
   if (runRows.error) throw new Error("DASHBOARD_READER_HISTORY_UNAVAILABLE")
   if (stockRunRows.error) {
     throw new Error("DASHBOARD_CURRENT_LIVE_RECEIPT_UNAVAILABLE")
   }
-  const receipt = canonicalCurrentLiveReceipt(
-    (stockRunRows.data ?? []) as StockAutomationRunRow[], now)
-  const snapshots = receipt
+  const snapshotItemIds = currentLiveAuthority.currentState === "CURRENT_FRESH"
+    ? currentLiveAuthority.currentItemIds
+    : currentLiveAuthority.lastCertifiedItemIds
+  const snapshots = snapshotItemIds.length > 0
     ? await readCommercialSnapshots(input.supabase, input.accountKey,
-        receipt.itemIds)
+        [...snapshotItemIds])
     : {
         source: "COMMERCIAL_SNAPSHOT_REGISTRY",
         status: "ERROR" as const,
@@ -557,6 +596,7 @@ export async function getSellerOsDashboardCommercialHealthV1(input: Readonly<{
     stockRuns: (stockRunRows.data ?? []) as StockAutomationRunRow[],
     accountAlias: input.accountAlias,
     postSale,
+    currentLiveAuthority,
     now,
   })
 }

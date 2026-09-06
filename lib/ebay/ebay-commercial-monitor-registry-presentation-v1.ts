@@ -145,8 +145,11 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
   monitor: CommercialMonitorGetDto,
 ) {
   const integrity = monitor.backend.livePortfolioIntegrity
-  const liveCount = integrity.canonicalCohort.listingCount
-  const liveSet = new Set(integrity.canonicalCohort.itemIds)
+  const authority = monitor.backend.currentLiveAuthority
+  const currentAvailable = authority.currentState === "CURRENT_FRESH" &&
+    authority.currentListingCount !== null
+  const liveCount = currentAvailable ? authority.currentListingCount : null
+  const liveSet = new Set(currentAvailable ? authority.currentItemIds : [])
   const liveListings = selectCanonicalCurrentLiveListingsV1(monitor)
   const monitoredItemIds = new Set(
     monitor.backend.monitorCoverage.monitoredItemIds.filter((itemId) =>
@@ -157,7 +160,7 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
   )
   const lunaLinkedCertified = liveListings.filter((listing) =>
     listing.stock.supplierLinkageStatus === "CERTIFIED").length
-  const canonicalParity =
+  const canonicalParity = currentAvailable && liveCount !== null &&
     integrity.canonicalCohort.identityStatus === "CERTIFIED" &&
     liveListings.length === liveCount &&
     monitor.backend.monitorCoverage.status === "AVAILABLE" &&
@@ -165,9 +168,12 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
       integrity.canonicalCohort.scopeId &&
     monitor.backend.monitorCoverage.currentLiveScopeCount === liveCount &&
     integrity.stockCohort.currentLiveItemCount === liveCount
-  const unlinkedLive = liveCount - lunaLinkedCertified
-  const unmonitoredLive = liveCount - monitoredItemIds.size
-  const liveWithoutStockguard = stockguardMissingItemIds.size
+  const unlinkedLive = liveCount === null ? null
+    : liveCount - lunaLinkedCertified
+  const unmonitoredLive = liveCount === null ? null
+    : liveCount - monitoredItemIds.size
+  const liveWithoutStockguard = currentAvailable
+    ? stockguardMissingItemIds.size : null
   const freshEvidenceItemIds = new Set(liveListings.filter((listing) =>
     listing.stock.freshness?.status === "FRESH")
     .map((listing) => listing.identity.itemId))
@@ -177,7 +183,8 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
     listing.stock.freshness?.status === "FRESH")
     .map((listing) => listing.identity.itemId))
   const attentionItemIds = new Set([
-    ...integrity.canonicalCohort.itemIds.filter((itemId) =>
+    ...(currentAvailable ? integrity.canonicalCohort.itemIds : [])
+      .filter((itemId) =>
       !protectedItemIds.has(itemId)),
     ...liveListings.filter((listing) =>
       listing.stock.state === "STOCK_UNKNOWN" ||
@@ -193,31 +200,39 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
     monitorAndInventoryCanonicalParity: canonicalParity,
     currentLiveInvariantPass,
     status: canonicalParity ? "AVAILABLE" as const : "UNPROVEN" as const,
-    scopeId: integrity.canonicalCohort.scopeId,
-    observedAt: integrity.canonicalCohort.observedAt,
+    currentAuthorityState: authority.currentState,
+    lastCertifiedState: authority.lastCertifiedState,
+    lastCertifiedLiveCount: authority.lastCertifiedListingCount,
+    lastCertifiedAt: authority.lastCertifiedAt,
+    sourceFailureCode: authority.sourceFailureCode,
+    nextRetryAt: authority.nextRetryAt,
+    scopeId: authority.scopeId ?? integrity.canonicalCohort.scopeId,
+    observedAt: authority.currentObservedAt,
     liveCount,
-    exactSupplierLinked: lunaLinkedCertified,
+    exactSupplierLinked: currentAvailable ? lunaLinkedCertified : null,
     needsLinkage: unlinkedLive,
-    lunaLinkedCertified,
+    lunaLinkedCertified: currentAvailable ? lunaLinkedCertified : null,
     unlinkedLive,
-    monitoredLive: monitoredItemIds.size,
+    monitoredLive: currentAvailable ? monitoredItemIds.size : null,
     unmonitoredLive,
-    stockguardEnrolledLive: liveCount - stockguardMissingItemIds.size,
-    stockGuardEnrolled: liveCount - stockguardMissingItemIds.size,
+    stockguardEnrolledLive: liveCount === null ? null
+      : liveCount - stockguardMissingItemIds.size,
+    stockGuardEnrolled: liveCount === null ? null
+      : liveCount - stockguardMissingItemIds.size,
     liveWithoutStockguard,
-    freshEvidenceLive: freshEvidenceItemIds.size,
-    stockguardProtectedLive: protectedItemIds.size,
-    stockguardRequiresAttention: attentionItemIds.size,
-    inStockSignal: liveListings.filter((listing) =>
-      listing.stock.state === "IN_STOCK_SIGNAL").length,
-    certifiedOosLive: liveListings.filter((listing) =>
-      listing.stock.state === "CERTIFIED_OOS").length,
-    stockUnknown: liveListings.filter((listing) =>
-      listing.stock.state === "STOCK_UNKNOWN").length,
-    identityMismatch: liveListings.filter((listing) =>
+    freshEvidenceLive: currentAvailable ? freshEvidenceItemIds.size : null,
+    stockguardProtectedLive: currentAvailable ? protectedItemIds.size : null,
+    stockguardRequiresAttention: currentAvailable ? attentionItemIds.size : null,
+    inStockSignal: currentAvailable ? liveListings.filter((listing) =>
+      listing.stock.state === "IN_STOCK_SIGNAL").length : null,
+    certifiedOosLive: currentAvailable ? liveListings.filter((listing) =>
+      listing.stock.state === "CERTIFIED_OOS").length : null,
+    stockUnknown: currentAvailable ? liveListings.filter((listing) =>
+      listing.stock.state === "STOCK_UNKNOWN").length : null,
+    identityMismatch: currentAvailable ? liveListings.filter((listing) =>
       listing.stock.supplierLinkageStatus === "CERTIFIED" &&
       listing.stock.limitationCode ===
-        CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH).length,
+        CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH).length : null,
     definitions: Object.freeze({
       linkedMeansSupplierLinkageCertifiedOnly: true as const,
       linkedDoesNotRequireInStock: true as const,

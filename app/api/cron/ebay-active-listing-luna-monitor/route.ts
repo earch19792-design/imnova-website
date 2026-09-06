@@ -40,6 +40,8 @@ import {
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { getSellerOsStockGuardRuntimeBoundary } from
   "@/lib/ebay/environment-boundaries"
+import { readCurrentLiveAuthorityV1 } from
+  "@/lib/ebay/ebay-current-live-authority-v1"
 
 const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
   "366608128809",
@@ -282,6 +284,36 @@ export async function POST(req: Request) {
         accountKey,
         accountAlias: account.accountAlias,
       })
+      const liveAuthority = await readCurrentLiveAuthorityV1({ supabase,
+        accountKey, live })
+      if (liveAuthority.currentState !== "CURRENT_FRESH") {
+        const failureCode = liveAuthority.sourceFailureCode ??
+          "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE"
+        const { error: leaseFinishError } = await supabase.rpc(
+          "finish_ebay_targeted_luna_monitor_run",
+          { p_account_key: accountKey, p_run_id: runId, p_success: false,
+            p_error_code: failureCode },
+        )
+        if (leaseFinishError) throw new Error(
+          "TARGETED_LUNA_MONITOR_FINISH_FAILED")
+        leaseOwned = false
+        await finishSellerAutomationRun(supabase, runId, {
+          status: "partial",
+          claimedTasks: 0,
+          successfulTasks: 0,
+          failedTasks: 0,
+          metrics: { stage: "LUNA_PRODUCTION_STOCK_POLLING_V1",
+            accountKey, activation, currentLiveCount: null,
+            currentLiveAuthority: liveAuthority,
+            failureClass: "CURRENT_LIVE_AUTHORITY_UNAVAILABLE",
+            falseZeroPrevented: true },
+        })
+        return NextResponse.json({ success: false, status: "degraded",
+          currentLiveAuthority: liveAuthority,
+          ownerActionRequired: false,
+          safety: { marketplaceWrites: 0, lunaWrites: 0,
+            falseZeroPrevented: true } }, { status: 503 })
+      }
       const analyticsLastKnownGood = await persistAnalyticsLastKnownGoodV1({
         supabase,
         accountKey,

@@ -11,6 +11,7 @@ import type {
   EbayListingQualityRecommendation,
   EbayLiveCertificationReadModel,
   DataQualityCode,
+  CurrentLiveAuthorityReadModelV1,
   OperationalReviewBurdenV2,
 } from "./commercial-monitor-readonly-contract"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
@@ -955,6 +956,7 @@ function capabilityFromLiveStatus(
 }
 
 export function buildCommercialMonitorBackendV1(input: {
+  currentLiveAuthority?: CurrentLiveAuthorityReadModelV1
   liveCertification: EbayLiveCertificationReadModel
   listings: CommercialListingReadModel[]
   decisions?: Array<CommercialListingDecisionV1>
@@ -1122,9 +1124,40 @@ export function buildCommercialMonitorBackendV1(input: {
     createUnavailableSellerOsSaleAlertsReadV1(
       "DASHBOARD_CANONICAL_SALE_ALERTS_NOT_COLLECTED",
     )
+  const currentLiveAuthority = input.currentLiveAuthority ?? {
+    contractVersion: "SELLER_OS_CURRENT_LIVE_AUTHORITY_RECOVERY_V1" as const,
+    currentState: activeListingsProven
+      ? "CURRENT_FRESH" as const : "CURRENT_UNAVAILABLE" as const,
+    currentListingCount: activeListingsProven ? primaryListings.length : null,
+    currentItemIds: activeListingsProven
+      ? primaryListings.map((listing) => listing.identity.itemId) : [],
+    currentObservedAt: activeListingsProven
+      ? livePortfolioIntegrity.canonicalCohort.observedAt : null,
+    authoritativeZero: activeListingsProven && primaryListings.length === 0,
+    lastCertifiedState: activeListingsProven
+      ? "LAST_CERTIFIED_AVAILABLE" as const : "NO_CERTIFIED_HISTORY" as const,
+    lastCertifiedListingCount: activeListingsProven
+      ? primaryListings.length : null,
+    lastCertifiedItemIds: activeListingsProven
+      ? primaryListings.map((listing) => listing.identity.itemId) : [],
+    lastCertifiedAt: activeListingsProven
+      ? livePortfolioIntegrity.canonicalCohort.observedAt : null,
+    lastCertifiedFreshUntil: null,
+    scopeId: activeListingsProven
+      ? livePortfolioIntegrity.canonicalCohort.scopeId : null,
+    sourceAuthority: activeListingsProven
+      ? "EBAY_TRADING_GET_MY_EBAY_SELLING_PLUS_GET_ITEM_CERTIFICATION" as const
+      : null,
+    sourceFailureCode: activeListingsProven
+      ? null : "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE",
+    nextRetryAt: null,
+    ownerActionRequired: false as const,
+    marketplaceWrites: 0 as const,
+  }
   return {
     contractVersion: "COMMERCIAL_MONITOR_BACKEND_V1",
     mode: "READ_ONLY",
+    currentLiveAuthority,
     capabilities: {
       sellerAccountBinding: input.liveCertification.account.bindingMatched
         ? "AVAILABLE"

@@ -118,9 +118,9 @@ function currentImageUrls(packageDataValue: unknown) {
     .filter((value): value is string => Boolean(value)))].slice(0, 24)
 }
 
-async function authoritativeLiveVisualListingsV1() {
+async function authoritativeLiveVisualPortfolioV1() {
   const monitor = await loadSellerOsAssistantMonitorV1()
-  return currentLiveListingsForMonitorV1(monitor).flatMap((listing) => {
+  const listings = currentLiveListingsForMonitorV1(monitor).flatMap((listing) => {
     const itemId = text(listing.identity.itemId, 20)
     const currentImageUrl = httpsUrl(listing.identity.primaryImageUrl)
     const decision = monitor.backend.decisions.find((entry) =>
@@ -133,6 +133,21 @@ async function authoritativeLiveVisualListingsV1() {
         "LOW_CTR_WITH_SUFFICIENT_IMPRESSIONS"),
     })] : []
   })
+  return Object.freeze({
+    currentState: monitor.backend.currentLiveAuthority.currentState,
+    lastCertifiedState:
+      monitor.backend.currentLiveAuthority.lastCertifiedState,
+    lastCertifiedListingCount:
+      monitor.backend.currentLiveAuthority.lastCertifiedListingCount,
+    lastCertifiedAt: monitor.backend.currentLiveAuthority.lastCertifiedAt,
+    sourceFailureCode:
+      monitor.backend.currentLiveAuthority.sourceFailureCode,
+    listings: Object.freeze(listings),
+  })
+}
+
+async function authoritativeLiveVisualListingsV1() {
+  return (await authoritativeLiveVisualPortfolioV1()).listings
 }
 
 export type MayelVisualWorkstationTaskV1 = Readonly<{
@@ -422,14 +437,21 @@ export async function ensureMayelVisualPortfolioTasksV1(input: {
   limit?: number
 }) {
   const limit = Math.max(1, Math.min(input.limit ?? 100, 200))
-  const authoritative = await authoritativeLiveVisualListingsV1()
+  const portfolio = await authoritativeLiveVisualPortfolioV1()
+  const authoritative = portfolio.listings
   const listings = authoritative.slice(0, limit)
-  const count = authoritative.length
+  const count = portfolio.currentState === "CURRENT_FRESH"
+    ? authoritative.length : null
   const itemIds = listings.map((listing) => listing.itemId)
   if (!itemIds.length) return Object.freeze({ discoveredCount: count,
     boundedCount: 0, prequalifiedCount: 0, eligibleCount: 0,
     createdCount: 0, reusedCount: 0, duplicateTaskCount: 0,
-    partial: false, outcomes: Object.freeze([]), marketplaceWrites: 0 as const })
+    partial: false, outcomes: Object.freeze([]),
+    currentLiveAuthorityState: portfolio.currentState,
+    lastCertifiedLiveCount: portfolio.lastCertifiedListingCount,
+    lastCertifiedAt: portfolio.lastCertifiedAt,
+    sourceFailureCode: portfolio.sourceFailureCode,
+    ownerActionRequired: false as const, marketplaceWrites: 0 as const })
   const [experimentsRead, openTasksRead] = await Promise.all([
     input.supabase.from("ebay_listing_experiments_v1")
       .select("ebay_item_id").eq("account_key", input.accountKey)
@@ -495,6 +517,11 @@ export async function ensureMayelVisualPortfolioTasksV1(input: {
       row.created === false).length,
     duplicateTaskCount: taskIds.length - new Set(taskIds).size,
     partial: typeof count === "number" && count > limit,
+    currentLiveAuthorityState: portfolio.currentState,
+    lastCertifiedLiveCount: portfolio.lastCertifiedListingCount,
+    lastCertifiedAt: portfolio.lastCertifiedAt,
+    sourceFailureCode: portfolio.sourceFailureCode,
+    ownerActionRequired: false as const,
     outcomes: Object.freeze(outcomes), marketplaceWrites: 0 as const })
 }
 

@@ -30,6 +30,8 @@ import {
 } from "@/lib/ebay/ebay-live-presale-economics-v1"
 import { loadEbayPromotionRecommendationSafeExecutionV1 } from
   "@/lib/ebay/ebay-promotion-recommendation-safe-execution-v1"
+import { runCurrentLiveAuthorityRecoveryV1 } from
+  "@/lib/ebay/ebay-current-live-authority-recovery-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -311,6 +313,24 @@ export async function POST(req: Request) {
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) throw new Error("COMMERCIAL_MONITOR_ACCOUNT_SCOPE_REQUIRED")
     const supabase = getSupabaseAdminClient()
+    let currentLiveAuthorityRecovery: Awaited<ReturnType<
+      typeof runCurrentLiveAuthorityRecoveryV1>> | {
+        status: "FAILED_RETRYABLE"
+        error: string
+        marketplaceWrites: 0
+      }
+    try {
+      currentLiveAuthorityRecovery = await runCurrentLiveAuthorityRecoveryV1({
+        supabase, accountKey,
+        accountAlias: getEbaySellerAccountScopeConfiguration().accountAlias,
+      })
+    } catch (error) {
+      currentLiveAuthorityRecovery = {
+        status: "FAILED_RETRYABLE",
+        error: safeCode(error),
+        marketplaceWrites: 0,
+      }
+    }
     const lanes = await getDueCommercialMonitorLanes(supabase, accountKey)
     const run = await runEbayCommercialMonitor(supabase, {
       triggerSource: "schedule",
@@ -319,7 +339,8 @@ export async function POST(req: Request) {
       dispatchWhatsApp: false,
       dryRunWhatsApp: true,
     })
-    return NextResponse.json({ success: true, schedule, lanes, run })
+    return NextResponse.json({ success: true, schedule, lanes,
+      currentLiveAuthorityRecovery, run })
   } catch (error) {
     const code = safeCode(error)
     return NextResponse.json(

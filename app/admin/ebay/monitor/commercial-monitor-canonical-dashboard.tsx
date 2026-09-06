@@ -451,6 +451,11 @@ export function CommercialMonitorCanonicalDashboard({
           </div>
         </section>
 
+        {monitor.backend.currentLiveAuthority.currentState ===
+          "CURRENT_UNAVAILABLE" && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950"><p className="font-black">eBay no está disponible ahora.</p><p className="mt-1 text-sm">{monitor.backend.currentLiveAuthority.lastCertifiedListingCount === null
+          ? "Todavía no existe una cohorte LIVE certificada bajo el contrato durable."
+          : `Última lectura certificada: ${monitor.backend.currentLiveAuthority.lastCertifiedListingCount} listings · ${formatTimestamp(monitor.backend.currentLiveAuthority.lastCertifiedAt)}.`}</p><p className="mt-1 text-sm text-amber-800">Seller OS conserva esa evidencia y reintentará automáticamente. No necesitas hacer nada.</p></section>}
+
         <section aria-labelledby="live-portfolio-kpis-heading">
           <div className="mb-3">
             <p className={`${type.sectionEyebrow} text-cyan-800`}>Portafolio LIVE actual</p>
@@ -498,14 +503,14 @@ export function CommercialMonitorCanonicalDashboard({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className={`${type.cardLabel} text-slate-500`}>Inventario protegido</p>
-                <p className="mt-1 text-3xl font-black text-slate-950">{canonicalLive.stockguardProtectedLive} de {canonicalLive.liveCount}</p>
+                <p className="mt-1 text-3xl font-black text-slate-950">{formatValue(canonicalLive.stockguardProtectedLive)} de {formatValue(canonicalLive.liveCount)}</p>
               </div>
               <ShieldCheck className="text-emerald-700" size={28} />
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-xl bg-emerald-50 p-3"><strong className="text-xl text-emerald-900">{canonicalLive.lunaLinkedCertified}</strong><p className={`${type.helper} mt-1 text-emerald-800`}>vinculados</p></div>
-              <div className="rounded-xl bg-cyan-50 p-3"><strong className="text-xl text-cyan-900">{canonicalLive.freshEvidenceLive}</strong><p className={`${type.helper} mt-1 text-cyan-800`}>con evidencia fresca</p></div>
-              <div className={`rounded-xl p-3 ${canonicalLive.stockguardRequiresAttention === 0 ? "bg-slate-50" : "bg-amber-50"}`}><strong className="text-xl text-slate-900">{canonicalLive.stockguardRequiresAttention}</strong><p className={`${type.helper} mt-1 text-slate-700`}>requieren atención</p></div>
+              <div className="rounded-xl bg-emerald-50 p-3"><strong className="text-xl text-emerald-900">{formatValue(canonicalLive.lunaLinkedCertified)}</strong><p className={`${type.helper} mt-1 text-emerald-800`}>vinculados</p></div>
+              <div className="rounded-xl bg-cyan-50 p-3"><strong className="text-xl text-cyan-900">{formatValue(canonicalLive.freshEvidenceLive)}</strong><p className={`${type.helper} mt-1 text-cyan-800`}>con evidencia fresca</p></div>
+              <div className={`rounded-xl p-3 ${canonicalLive.stockguardRequiresAttention === 0 ? "bg-slate-50" : "bg-amber-50"}`}><strong className="text-xl text-slate-900">{formatValue(canonicalLive.stockguardRequiresAttention)}</strong><p className={`${type.helper} mt-1 text-slate-700`}>requieren atención</p></div>
             </div>
           </div>
         </section>

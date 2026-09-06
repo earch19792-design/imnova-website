@@ -361,6 +361,7 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
     business: Object.freeze({
       liveAuthority,
       activeListings: liveAuthority ? count(health?.activeListings) : null,
+      currentLiveAuthority: health?.currentLiveAuthority ?? null,
       liveAttention: liveAuthority ? count(stockGuard.riskCount) : null,
       orderAuthority,
       officialOrders: orderAuthority ? count(orders.officialOrderCount) : null,
@@ -441,11 +442,29 @@ export function auditSellerOsOperationalSnapshotV1(
   const sales = record(insights.sales)
   const categories = record(insights.categories)
   const marketOpportunity = record(insights.marketOpportunity)
+  const currentLiveAuthority = record(
+    snapshot.business.currentLiveAuthority)
   const salesWindows = Array.isArray(sales.windows)
     ? sales.windows.map(record) : []
   const ninetyDays = salesWindows.find((window) => window.days === 90)
   const integrityInput: SellerOsOperationalIntegrityInputV1 = {
     observedAt: snapshot.observedAt,
+    currentLiveAuthority: ["CURRENT_FRESH", "CURRENT_UNAVAILABLE"].includes(
+        String(currentLiveAuthority.currentState)) ? {
+      currentState: currentLiveAuthority.currentState as
+        "CURRENT_FRESH" | "CURRENT_UNAVAILABLE",
+      currentListingCount: count(currentLiveAuthority.currentListingCount),
+      authoritativeZero: currentLiveAuthority.authoritativeZero === true,
+      lastCertifiedState: (["LAST_CERTIFIED_AVAILABLE",
+        "LAST_CERTIFIED_STALE", "NO_CERTIFIED_HISTORY"].includes(
+          String(currentLiveAuthority.lastCertifiedState))
+        ? currentLiveAuthority.lastCertifiedState
+        : "NO_CERTIFIED_HISTORY") as "LAST_CERTIFIED_AVAILABLE" |
+          "LAST_CERTIFIED_STALE" | "NO_CERTIFIED_HISTORY",
+      lastCertifiedListingCount:
+        count(currentLiveAuthority.lastCertifiedListingCount),
+      presentedCurrentCount: snapshot.business.activeListings,
+    } : undefined,
     ready: {
       authorityAvailable: snapshot.publication.authorityAvailable,
       authoritativeCount: snapshot.publication.authoritativeReadyCount,

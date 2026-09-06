@@ -86,15 +86,22 @@ export default function StockGuardPage() {
     exact: exactSupplierEvidence(listing), risk: stockRisk(listing) })), [liveListings])
   const canonicalInventory = useMemo(() => monitor
     ? buildCanonicalLiveListingDashboardMetricsV1(monitor) : null, [monitor])
-  const exactCount = canonicalInventory?.exactSupplierLinked ?? 0
-  const needsLinkCount = canonicalInventory?.needsLinkage ?? 0
-  const stockRiskCount = rows.filter((row) => ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK",
-    "LOW_STOCK_CONFIRMED"].includes(row.risk)).length
-  const staleCount = rows.filter((row) => row.risk === "STALE_EVIDENCE").length
-  const unknownCount = canonicalInventory?.stockUnknown ?? 0
-  const actionableCount = rows.filter((row) =>
+  const currentLiveAvailable = canonicalInventory?.currentAuthorityState ===
+    "CURRENT_FRESH"
+  const exactCount = currentLiveAvailable
+    ? canonicalInventory?.exactSupplierLinked ?? null : null
+  const needsLinkCount = currentLiveAvailable
+    ? canonicalInventory?.needsLinkage ?? 0 : 0
+  const needsLinkDisplay = currentLiveAvailable ? needsLinkCount : null
+  const stockRiskCount = currentLiveAvailable ? rows.filter((row) => ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK",
+    "LOW_STOCK_CONFIRMED"].includes(row.risk)).length : null
+  const staleCount = currentLiveAvailable
+    ? rows.filter((row) => row.risk === "STALE_EVIDENCE").length : null
+  const unknownCount = currentLiveAvailable
+    ? canonicalInventory?.stockUnknown ?? null : null
+  const actionableCount = currentLiveAvailable ? rows.filter((row) =>
     row.listing.stock.state !== "STOCK_UNKNOWN" &&
-    row.risk !== "NO_PROVEN_RISK" && row.risk !== "STOCK_UNKNOWN").length
+    row.risk !== "NO_PROVEN_RISK" && row.risk !== "STOCK_UNKNOWN").length : null
   const visibleRows = rows.filter((row) => filter === "ALL" ||
     filter === "NEEDS_SUPPLIER_LINK" && !row.exact ||
     filter === "EXACT_PROVEN" && row.exact ||
@@ -104,8 +111,8 @@ export default function StockGuardPage() {
     filter === "UNKNOWN" && row.listing.stock.state === "STOCK_UNKNOWN" ||
     filter === "ACTIONABLE" && row.listing.stock.state !== "STOCK_UNKNOWN" &&
       row.risk !== "NO_PROVEN_RISK" && row.risk !== "STOCK_UNKNOWN")
-  const filters: Array<[PortfolioFilter, string, number]> = [
-    ["ALL", "Todo", rows.length], ["NEEDS_SUPPLIER_LINK", "Necesita vínculo", needsLinkCount],
+  const filters: Array<[PortfolioFilter, string, number | null]> = [
+    ["ALL", "Todo", currentLiveAvailable ? rows.length : null], ["NEEDS_SUPPLIER_LINK", "Necesita vínculo", needsLinkDisplay],
     ["EXACT_PROVEN", "Exacto comprobado", exactCount], ["STOCK_RISK", "Riesgo de stock", stockRiskCount],
     ["STALE", "Evidencia vencida", staleCount], ["UNKNOWN", "Desconocido", unknownCount],
     ["ACTIONABLE", "Accionable", actionableCount],
@@ -118,6 +125,7 @@ export default function StockGuardPage() {
         <div className="flex items-center gap-2"><Link href="/admin/ebay/copilot?surface=STOCK" className="rounded-lg border border-violet-200 px-3 py-2 text-sm font-black text-violet-700">Preguntar al Copilot</Link><span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700"><ShieldCheck size={15} />Solo lectura</span><button onClick={() => void load()} disabled={loading} className="rounded-lg border border-slate-200 p-2 text-slate-600 disabled:opacity-40" aria-label="Actualizar Stock Guard"><RefreshCw size={16} /></button></div>
       </header>
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">La lectura se detuvo de forma segura: {error}</div>}
+      {canonicalInventory?.currentAuthorityState === "CURRENT_UNAVAILABLE" && <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-black">Estado LIVE no comprobable ahora.</p><p className="mt-1">Conservamos la última evidencia certificada{canonicalInventory.lastCertifiedLiveCount === null ? ". Aún no existe una cohorte certificada bajo este contrato." : `: ${canonicalInventory.lastCertifiedLiveCount} listings · ${shown(canonicalInventory.lastCertifiedAt)}.`}</p><p className="mt-1 text-amber-800">Seller OS reintentará automáticamente. No necesitas hacer nada.</p></section>}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
         <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Paridad canónica</p><p className={`mt-2 font-black ${canonicalInventory?.monitorAndInventoryCanonicalParity ? "text-emerald-700" : "text-amber-800"}`}>{canonicalInventory?.monitorAndInventoryCanonicalParity ? "Monitor = Inventory" : "No comprobada"}</p></article>
         <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Publicaciones live canónicas</p><p className="mt-2 text-xl font-black">{canonicalInventory?.liveCount ?? "—"}</p></article>
@@ -131,7 +139,7 @@ export default function StockGuardPage() {
         <article className="rounded-xl border border-cyan-200 bg-white p-4"><p className="text-[13px] font-black text-cyan-800">Accionable</p><p className="mt-2 text-xl font-black">{monitor ? actionableCount : "—"}</p><p className="mt-1 text-[13px] text-slate-500">Excluye STOCK_UNKNOWN</p></article>
       </section>
       {monitor && needsLinkCount > 0 && <section className="rounded-2xl border border-cyan-200 bg-cyan-50 p-5"><div className="flex gap-3"><Link2 className="shrink-0 text-cyan-700" /><div><h2 className="text-lg font-black">Listing necesita vinculación</h2><p className="mt-1 text-sm text-cyan-950">Seller OS vincula automáticamente sólo una identidad exacta y determinista. Estas excepciones permanecen abiertas porque falta una coincidencia única o existe un conflicto.</p><p className="mt-3 text-sm font-bold">No se infiere identidad por similitud de título. Resuelve la identidad exacta mediante el intake manual existente.</p><Link href="/admin/ebay/listings/register" className="mt-3 inline-flex min-h-10 items-center rounded-lg bg-cyan-800 px-3 text-sm font-black text-white">Resolver</Link></div></div></section>}
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-200 px-4 py-3"><div className="flex items-center justify-between"><div><h2 className="text-lg font-black">Portafolio activo</h2><p className="text-sm text-slate-500">Una fila por Item ID autoritativo de Trading</p></div><span className="text-sm font-bold text-slate-500">{loading ? "Leyendo…" : `${visibleRows.length} de ${rows.length} publicaciones`}</span></div><div className="mt-3 flex flex-wrap gap-2" aria-label="Filtros del portafolio de Stock Guard">{filters.map(([value, label, count]) => <button type="button" key={value} onClick={() => setFilter(value)} aria-pressed={filter === value} className={`rounded-full border px-3 py-1.5 text-[13px] font-black ${filter === value ? "border-cyan-600 bg-cyan-50 text-cyan-800" : "border-slate-200 text-slate-500"}`}>{label} · {count}</button>)}</div></div>
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-200 px-4 py-3"><div className="flex items-center justify-between"><div><h2 className="text-lg font-black">Portafolio activo</h2><p className="text-sm text-slate-500">Una fila por Item ID autoritativo de Trading</p></div><span className="text-sm font-bold text-slate-500">{loading ? "Leyendo…" : currentLiveAvailable ? `${visibleRows.length} de ${rows.length} publicaciones` : "Estado LIVE no disponible"}</span></div><div className="mt-3 flex flex-wrap gap-2" aria-label="Filtros del portafolio de Stock Guard">{filters.map(([value, label, count]) => <button type="button" key={value} onClick={() => setFilter(value)} aria-pressed={filter === value} className={`rounded-full border px-3 py-1.5 text-[13px] font-black ${filter === value ? "border-cyan-600 bg-cyan-50 text-cyan-800" : "border-slate-200 text-slate-500"}`}>{label} · {shown(count)}</button>)}</div></div>
         <div className="divide-y divide-slate-100">
           {visibleRows.map(({ listing, risk }) => {
             const inventoryPresentation =
@@ -177,7 +185,8 @@ export default function StockGuardPage() {
               </article>
             )
           })}
-          {!loading && visibleRows.length === 0 && <div className="flex items-center gap-3 p-6 text-sm text-slate-500"><Box />Ninguna publicación coincide con este filtro de evidencia.</div>}
+          {!loading && currentLiveAvailable && visibleRows.length === 0 && <div className="flex items-center gap-3 p-6 text-sm text-slate-500"><Box />Ninguna publicación coincide con este filtro de evidencia.</div>}
+          {!loading && !currentLiveAvailable && <div className="flex items-center gap-3 p-6 text-sm text-slate-500"><Box />La cohorte LIVE actual no está disponible. La última evidencia certificada se conserva sin presentarla como estado fresco.</div>}
         </div>
       </section>
       <p className="flex items-center gap-2 rounded-xl bg-slate-900 p-3 text-sm text-white"><PackageCheck size={15} />0 escrituras en eBay · 0 escrituras de inventario · 0 escrituras del registro · sólo recomendaciones</p>

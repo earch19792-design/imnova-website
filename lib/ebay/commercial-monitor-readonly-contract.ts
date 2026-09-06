@@ -1542,6 +1542,28 @@ export type CanonicalCurrentLiveCohortV1 = {
   identityStatus: "CERTIFIED" | "PARTIAL" | "UNPROVEN"
 }
 
+export type CurrentLiveAuthorityReadModelV1 = {
+  contractVersion: "SELLER_OS_CURRENT_LIVE_AUTHORITY_RECOVERY_V1"
+  currentState: "CURRENT_FRESH" | "CURRENT_UNAVAILABLE"
+  currentListingCount: number | null
+  currentItemIds: readonly string[]
+  currentObservedAt: string | null
+  authoritativeZero: boolean
+  lastCertifiedState: "LAST_CERTIFIED_AVAILABLE" |
+    "LAST_CERTIFIED_STALE" | "NO_CERTIFIED_HISTORY"
+  lastCertifiedListingCount: number | null
+  lastCertifiedItemIds: readonly string[]
+  lastCertifiedAt: string | null
+  lastCertifiedFreshUntil: string | null
+  scopeId: string | null
+  sourceAuthority:
+    "EBAY_TRADING_GET_MY_EBAY_SELLING_PLUS_GET_ITEM_CERTIFICATION" | null
+  sourceFailureCode: string | null
+  nextRetryAt: string | null
+  ownerActionRequired: false
+  marketplaceWrites: 0
+}
+
 export type CrossModuleLivePortfolioIntegrityV1 = {
   contractVersion: "CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_V1_2026_08_13"
   hardeningVersion: "CROSS_MODULE_INTEGRITY_HARDENING_V2_2026_08_13"
@@ -1674,6 +1696,7 @@ export type OperationalReviewBurdenV2 = {
 export type CommercialMonitorBackendV1 = {
   contractVersion: "COMMERCIAL_MONITOR_BACKEND_V1"
   mode: "READ_ONLY"
+  currentLiveAuthority: CurrentLiveAuthorityReadModelV1
   capabilities: {
     sellerAccountBinding: CommercialMonitorCapabilityStatus
     tradingDiscovery: CommercialMonitorCapabilityStatus

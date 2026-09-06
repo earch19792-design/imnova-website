@@ -90,6 +90,8 @@ import { buildSellerOsRecentSalesFeedV1 } from
   "./ebay-sales-order-read-model-v1"
 import { buildSellerOsSaleAlertsReadV1,
   type SellerOsSaleAlertsReadV1 } from "./ebay-sale-alerts-read-v1"
+import { resolveCurrentLiveAuthorityV1 } from
+  "./ebay-current-live-authority-v1"
 import {
   classifyStoredAnalyticsEvidence,
   classifyTargetedLunaSnapshotContract,
@@ -3818,6 +3820,7 @@ function baseReport(input: {
   liveAnalytics?: EbayCommercialMonitorLiveReadonlyResult["analytics"] | null
   historicalSnapshots?: ReadonlyCommercialSnapshotRow[]
   saleAlerts: SellerOsSaleAlertsReadV1
+  currentLiveAuthority: ReturnType<typeof resolveCurrentLiveAuthorityV1>
 }) : CommercialMonitorGetDto {
   return {
     contractVersion: COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION,
@@ -3837,6 +3840,7 @@ function baseReport(input: {
     learning: input.learning,
     timeline: input.timeline,
     backend: buildCommercialMonitorBackendV1({
+      currentLiveAuthority: input.currentLiveAuthority,
       liveCertification: input.liveCertification,
       listings: input.listings,
       alertCandidates: input.alertCandidates,
@@ -4109,6 +4113,9 @@ function unconfiguredReport(
     liveCertification: liveCertificationProjection(live),
     orderFacts: orderFactsProjection(live),
     saleAlerts: canonicalSaleAlertsProjection(live),
+    currentLiveAuthority: resolveCurrentLiveAuthorityV1({
+      accountKey: "ACCOUNT_SCOPE_UNCONFIGURED", live, now,
+    }),
   }))
 }
 
@@ -4140,6 +4147,12 @@ export async function getCommercialMonitorReadonly(
     ...live,
     analytics: analyticsAuthority.analytics,
   }
+  const currentLiveAuthority = resolveCurrentLiveAuthorityV1({
+    accountKey: scope.accountKey,
+    live: effectiveLive,
+    stored: storedSources.syncState.rows[0] ?? null,
+    now,
+  })
   const sources = withLiveReadonlyEvidence({
     stored: storedSources,
     live: effectiveLive,
@@ -4241,6 +4254,7 @@ export async function getCommercialMonitorReadonly(
     registryCertification,
     orderFacts: orderFactsProjection(effectiveLive, storedSources),
     saleAlerts: canonicalSaleAlertsProjection(effectiveLive),
+    currentLiveAuthority,
     liveAnalytics: effectiveLive.analytics,
     historicalSnapshots: sources.commercialSnapshots.rows,
   }))

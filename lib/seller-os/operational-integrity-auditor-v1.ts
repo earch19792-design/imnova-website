@@ -45,6 +45,15 @@ export type SellerOsOperationalIntegrityInputV1 = Readonly<{
     authoritativeValue: number | null
     presentedValue: number | null
   }>[]
+  currentLiveAuthority?: Readonly<{
+    currentState: "CURRENT_FRESH" | "CURRENT_UNAVAILABLE"
+    currentListingCount: number | null
+    authoritativeZero: boolean
+    lastCertifiedState: "LAST_CERTIFIED_AVAILABLE" |
+      "LAST_CERTIFIED_STALE" | "NO_CERTIFIED_HISTORY"
+    lastCertifiedListingCount: number | null
+    presentedCurrentCount: number | null
+  }>
   workers?: readonly Readonly<{
     worker: string
     authorityAvailable: boolean
@@ -174,6 +183,30 @@ export function auditSellerOsOperationalIntegrityV1(
   input: SellerOsOperationalIntegrityInputV1,
 ) {
   const checks: SellerOsOperationalIntegrityCheckV1[] = []
+  if (input.currentLiveAuthority) {
+    const authority = input.currentLiveAuthority
+    const unavailableSafe = authority.currentState !== "CURRENT_UNAVAILABLE" ||
+      authority.currentListingCount === null &&
+      authority.presentedCurrentCount === null &&
+      authority.authoritativeZero === false
+    const freshSafe = authority.currentState !== "CURRENT_FRESH" ||
+      authority.currentListingCount !== null &&
+      authority.presentedCurrentCount === authority.currentListingCount &&
+      (authority.currentListingCount !== 0 || authority.authoritativeZero)
+    checks.push(check({
+      invariantCode: "CURRENT_SOURCE_FAILURE_DOES_NOT_ZERO_COHORT",
+      status: unavailableSafe && freshSafe ? "PASS" : "VIOLATION",
+      failureClass: "CURRENT_LIVE_AUTHORITY_FALSE_ZERO",
+      retrySafety: "SAFE_IDEMPOTENT_RUNTIME_RESUME",
+      recoveryClass: "AUTO_RECOVERABLE",
+      evidence: { ...authority },
+      regressionGuard: {
+        currentUnavailableIsNotZero: true,
+        authoritativeZeroRequiresCertifiedFreshRead: true,
+        lastCertifiedCohortRemainsSeparate: true,
+      },
+    }))
+  }
   const ready = input.ready
   if (ready) {
     const availability = countStatus(ready.authorityAvailable,
