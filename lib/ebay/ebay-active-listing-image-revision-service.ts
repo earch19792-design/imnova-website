@@ -118,6 +118,15 @@ function responseAccepted(xml: string) {
   return ack === "success" || ack === "warning"
 }
 
+function officialReadFailureClass(
+  callName: "GET_USER" | "GET_ITEM",
+  result: { response: Response; xml: string },
+) {
+  const ebayError = text(tradingXmlTagValue(result.xml, "ErrorCode"), 20)
+  return `EBAY_ACTIVE_IMAGE_REVISION_${callName}_HTTP_${result.response.status}`
+    + (/^\d{1,20}$/.test(ebayError) ? `_EBAY_ERROR_${ebayError}` : "")
+}
+
 function getUserRequestXml() {
   return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
     "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
@@ -225,10 +234,12 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
       timeoutMs: READ_TIMEOUT_MS,
     }),
   ])
-  if (
-    !userResult.response.ok || !responseAccepted(userResult.xml) ||
-    !itemResult.response.ok || !responseAccepted(itemResult.xml)
-  ) throw new Error("EBAY_ACTIVE_IMAGE_REVISION_OFFICIAL_READ_FAILED")
+  if (!userResult.response.ok || !responseAccepted(userResult.xml)) {
+    throw new Error(officialReadFailureClass("GET_USER", userResult))
+  }
+  if (!itemResult.response.ok || !responseAccepted(itemResult.xml)) {
+    throw new Error(officialReadFailureClass("GET_ITEM", itemResult))
+  }
 
   const authenticatedUserId = text(
     tradingXmlTagValue(tradingXmlContainer(userResult.xml, "User"), "UserID"),

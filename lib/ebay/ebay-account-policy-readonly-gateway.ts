@@ -226,6 +226,7 @@ async function read(
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
+          "Accept-Language": "en-US",
           "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
         },
         cache: "no-store",
