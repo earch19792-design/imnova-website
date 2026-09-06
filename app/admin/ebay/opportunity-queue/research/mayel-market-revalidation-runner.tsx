@@ -203,6 +203,9 @@ export function MayelMarketRevalidationRunner() {
       setFailed(true)
       setState(error instanceof Error ? error.message :
         "No fue posible cerrar la investigación automática.")
+      if (autonomous) {
+        window.setTimeout(() => window.location.replace(safeReturnPath()), 4_000)
+      }
     })
   }, [])
 
