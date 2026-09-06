@@ -157,7 +157,7 @@ async function requestReceipt(input: {
   const fingerprint = sha256({ itemId,
     supplierVariantId: input.context.target.supplierVariantId,
     supplierSnapshot: input.context.variant.captured_at ?? null,
-    latestResearchAt: latest, idempotencyKey: input.idempotencyKey })
+    latestResearchAt: latest })
   const now = new Date().toISOString()
   const payload = {
     marketplace_account_key: input.accountKey,

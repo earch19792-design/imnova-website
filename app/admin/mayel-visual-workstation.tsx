@@ -138,6 +138,17 @@ type VisualDelegation = {
     liveReadFailureClass?: string | null } | null
 }
 
+type PriceDelegation = {
+  fullValidatedPriceDelegationActive: boolean
+  ownerPerPriceChangeApproval: false
+  authorizationButtonEnabled: boolean
+  firstBlockingPredicate: string | null
+  active: { status: string; ownerConfirmedAt: string | null } | null
+  validationPolicy: Record<string, boolean>
+  mayelDirectPriceWrite: false
+  sellerOsValidatedPriceExecutionOnly: true
+}
+
 const labels: Record<VisualRole, string> = {
   DETAIL: "Detalle", PACKAGE_CONTENTS: "Contenido del paquete",
   DIMENSIONS: "Dimensiones", PRIMARY_BENEFIT: "Beneficio principal",
@@ -217,6 +228,19 @@ function commercialDate(value: string | null | undefined) {
   if (!value || !Number.isFinite(Date.parse(value))) return "Por comprobar"
   return new Intl.DateTimeFormat("es-NI", { dateStyle: "medium",
     timeZone: "America/Managua" }).format(new Date(value))
+}
+
+function portfolioTaskStatus(task: VisualTask,
+  market?: MarketRevalidationStatus) {
+  if (task.phaseB?.execution?.appliedAndOfficiallyVerified) return "APLICADO"
+  if (task.phaseB?.applicationStatus === "WAITING_FOR_EBAY") {
+    return "ESPERANDO EBAY"
+  }
+  if (["IN_PROGRESS", "PENDING_RESUME"].includes(market?.state ?? "")) {
+    return "REVALIDANDO MERCADO"
+  }
+  if (task.phaseB?.safeToExecuteVisualChange) return "LISTO PARA APLICAR"
+  return "MEJORANDO"
 }
 
 function TaskCommercialContext({ intelligence, revalidationStatus, ebayItemId,
@@ -789,6 +813,56 @@ function FullVisualDelegationPanel({ delegation, owner, busy, onDone }: {
   </section>
 }
 
+function ValidatedPriceDelegationPanel({ delegation, owner, busy, onDone }: {
+  delegation: PriceDelegation | null
+  owner: boolean
+  busy: boolean
+  onDone: () => Promise<void>
+}) {
+  const active = delegation?.fullValidatedPriceDelegationActive === true
+  const [message, setMessage] = useState("")
+  async function submit(action: "AUTHORIZE_VALIDATED_PRICE_DELEGATION" |
+    "REVOKE_VALIDATED_PRICE_DELEGATION") {
+    setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, confirmation: action ===
+          "AUTHORIZE_VALIDATED_PRICE_DELEGATION"
+          ? "AUTORIZAR MAYEL OPTIMIZACION VALIDADA DE PRECIO"
+          : "REVOCAR DELEGACION DE PRECIO DE MAYEL" }),
+      })
+      await onDone()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No se pudo actualizar la delegación de precio.")
+    }
+  }
+  return <section className="mt-5 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-5 sm:p-7">
+    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8b6c3f]">Autoridad comercial separada</p>
+    <h3 className="mt-2 font-serif text-2xl font-semibold">Optimización validada de precio</h3>
+    <p className="mt-2 text-sm leading-6 text-[#64675f]">Mayel recomienda. Seller OS calcula el precio ejecutable sólo con evidencia Sold fresca, economía completa, stock seguro y sin conflicto de experimento. El margen objetivo nunca inventa el precio de mercado.</p>
+    <p className="mt-3 text-sm font-semibold">{active
+      ? "Delegación activa · no requiere aprobación por cada cambio de precio"
+      : "Todavía no autorizada · ningún precio puede cambiar automáticamente"}</p>
+    {owner && !active && <button type="button" disabled={busy ||
+      delegation?.authorizationButtonEnabled !== true}
+      onClick={() => void submit("AUTHORIZE_VALIDATED_PRICE_DELEGATION")}
+      className="mt-4 min-h-11 rounded-xl bg-[#8b6c3f] px-4 text-sm font-semibold text-white disabled:opacity-40">
+      Autorizar optimización validada de precio
+    </button>}
+    {owner && active && <button type="button" disabled={busy}
+      onClick={() => void submit("REVOKE_VALIDATED_PRICE_DELEGATION")}
+      className="mt-4 min-h-11 rounded-xl border border-[#8b6c3f] px-4 text-sm font-semibold text-[#7b5d34] disabled:opacity-40">
+      Revocar delegación de precio
+    </button>}
+    {!active && delegation?.firstBlockingPredicate &&
+      <p className="mt-3 text-xs text-[#704d3c]">Bloqueo: {delegation.firstBlockingPredicate}</p>}
+    <p className="mt-3 text-xs text-[#777a73]">Fuera de alcance: cantidad, categoría, condición, policies, promociones, Send Offers y comunicaciones.</p>
+    {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
+  </section>
+}
+
 export function MayelVisualWorkstation({ canOperate,
   canOwnerAuthorize = false, commercialIntelligenceByItemId = {} }: {
   canOperate: boolean
@@ -801,6 +875,8 @@ export function MayelVisualWorkstation({ canOperate,
   const [message, setMessage] = useState("")
   const [canaryAvailable, setCanaryAvailable] = useState<boolean | null>(null)
   const [delegation, setDelegation] = useState<VisualDelegation | null>(null)
+  const [priceDelegation, setPriceDelegation] =
+    useState<PriceDelegation | null>(null)
   const [marketRevalidationByItemId, setMarketRevalidationByItemId] =
     useState<Record<string, MarketRevalidationStatus>>({})
 
@@ -811,6 +887,8 @@ export function MayelVisualWorkstation({ canOperate,
     const nextTasks = workstation?.tasks ?? []
     setTasks(nextTasks)
     setDelegation((payload.delegation as VisualDelegation | undefined) ?? null)
+    setPriceDelegation((payload.priceDelegation as PriceDelegation |
+      undefined) ?? null)
     const reads = await Promise.allSettled(nextTasks.map(async (task) => {
       const statusPayload = await visualRequest(
         "/api/admin/ebay/live-optimization-operator", {
@@ -886,6 +964,8 @@ export function MayelVisualWorkstation({ canOperate,
     </div>
     <FullVisualDelegationPanel delegation={delegation}
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
+    <ValidatedPriceDelegationPanel delegation={priceDelegation}
+      owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
     {canOperate && <button type="button"
       onClick={() => void acquireNextDelegatedTask()} disabled={busy}
       data-mayel-explicit-work-acquisition
@@ -905,7 +985,8 @@ export function MayelVisualWorkstation({ canOperate,
         <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#74866d]">Tarea visual · {task.sku}</p>
           <h3 className="mt-2 font-serif text-2xl font-semibold">{task.productTitle}</h3>
           <p className="mt-1 text-xs text-[#777a73]">Publicación eBay {task.ebayItemId}</p></div>
-        <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{task.status === "OWNER_PREVIEW_READY" ? "Lista para vista previa del owner" : "Trabajo de Mayel"}</span>
+        <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{portfolioTaskStatus(task,
+          marketRevalidationByItemId[task.ebayItemId])}</span>
       </div>
       <div className="mt-6"><SourceGallery task={task} /></div>
       <TaskCommercialContext intelligence={

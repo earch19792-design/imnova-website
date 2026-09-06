@@ -128,14 +128,17 @@ async function existingOpenTask(input: {
   supabase: SupabaseClient
   accountKey: string
   actorUserId: string
+  targetItemId?: string | null
 }) {
-  const { data, error } = await input.supabase
+  let query = input.supabase
     .from("ebay_mayel_visual_tasks_v1")
     .select("*")
     .eq("marketplace_account_key", input.accountKey)
     .eq("assigned_operator_user_id", input.actorUserId)
     .in("status", OPEN_TASK_STATES)
-    .order("created_at", { ascending: false }).limit(1).maybeSingle()
+  if (input.targetItemId) query = query.eq("ebay_item_id", input.targetItemId)
+  const { data, error } = await query.order("created_at", {
+    ascending: false }).limit(1).maybeSingle()
   if (error) throw new Error("MAYEL_VISUAL_TASK_READ_FAILED")
   return data as JsonRecord | null
 }
@@ -191,22 +194,41 @@ export async function ensureMayelVisualTaskV1(input: {
   supabase: SupabaseClient
   accountKey: string
   actorUserId: string
+  targetItemId?: string | null
 }) {
   const existing = await existingOpenTask(input)
   if (existing) return { created: false,
     task: await reconcileCanonicalPrompt({ ...input, task: existing }),
     canaryAvailable: true }
 
-  const { data: signalRows, error: signalError } = await input.supabase
-    .from("ebay_listing_quality_report_signals")
-    .select("id,item_id,signal_type,priority_class,product_truth_supported,operator_action_required,report_observed_at,what_is_happening,why_it_matters,seller_os_recommendation")
-    .eq("marketplace_account_key", input.accountKey)
-    .eq("current_live", true).eq("exact_item_id_match", true)
-    .in("signal_type", ["IMAGE_REVIEW", "VISUAL_COVERAGE_REVIEW",
-      "GENERAL_LISTING_QUALITY", "LISTING_QUALITY_SPECIFIC_RECOMMENDATION"])
-    .order("report_observed_at", { ascending: false }).limit(50)
-  if (signalError) throw new Error("MAYEL_VISUAL_SIGNAL_READ_FAILED")
-  for (const signal of (signalRows ?? []) as JsonRecord[]) {
+  const requestedItemId = text(input.targetItemId, 20)
+  if (requestedItemId && !/^\d{9,20}$/.test(requestedItemId)) {
+    throw new Error("MAYEL_VISUAL_TARGET_ITEM_INVALID")
+  }
+  let signalRows: JsonRecord[] = []
+  if (!requestedItemId) {
+    const signalRead = await input.supabase
+      .from("ebay_listing_quality_report_signals")
+      .select("id,item_id,signal_type,priority_class,product_truth_supported,operator_action_required,report_observed_at,what_is_happening,why_it_matters,seller_os_recommendation")
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("current_live", true).eq("exact_item_id_match", true)
+      .in("signal_type", ["IMAGE_REVIEW", "VISUAL_COVERAGE_REVIEW",
+        "GENERAL_LISTING_QUALITY", "LISTING_QUALITY_SPECIFIC_RECOMMENDATION"])
+      .order("report_observed_at", { ascending: false }).limit(50)
+    if (signalRead.error) throw new Error("MAYEL_VISUAL_SIGNAL_READ_FAILED")
+    signalRows = (signalRead.data ?? []) as JsonRecord[]
+  }
+  const signals = requestedItemId
+    ? [{ item_id: requestedItemId,
+      signal_type: "SELLER_OS_LIVE_PORTFOLIO_CONTINUOUS_REVIEW",
+      priority_class: "PORTFOLIO", product_truth_supported: true,
+      operator_action_required: false, report_observed_at:
+        new Date().toISOString(),
+      what_is_happening: "Revisión visual continua del portfolio LIVE",
+      why_it_matters: "Todo listing LIVE elegible debe poder ser revisado",
+      seller_os_recommendation: "Mayel revisa la presentación visual" }]
+    : signalRows
+  for (const signal of signals) {
     const itemId = text(signal.item_id, 20)
     if (!itemId || !/^\d{9,20}$/.test(itemId)) continue
     const [{ data: link, error: linkError }, { data: active, error: activeError },
@@ -218,7 +240,8 @@ export async function ensureMayelVisualTaskV1(input: {
         .eq("verification_status", "verified").maybeSingle(),
       input.supabase.from("ebay_active_listings")
         .select("id,title,ebay_sku,supplier_sku,listing_status,raw_payload")
-        .eq("ebay_item_id", itemId).eq("listing_status", "active")
+        .eq("account_key", input.accountKey).eq("ebay_item_id", itemId)
+        .eq("listing_status", "active")
         .maybeSingle(),
       input.supabase.from("ebay_listing_experiments_v1")
         .select("experiment_id,lifecycle_status").eq("account_key", input.accountKey)
@@ -237,7 +260,7 @@ export async function ensureMayelVisualTaskV1(input: {
     const { data: listingPackage, error: packageError } = await input.supabase
       .from("ebay_listing_packages").select("id,opportunity_id,candidate_key,status,package_data")
       .eq("opportunity_id", link.opportunity_id).eq("status", "approved")
-      .maybeSingle()
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle()
     if (packageError) throw new Error("MAYEL_VISUAL_PACKAGE_READ_FAILED")
     if (!listingPackage || listingPackage.candidate_key !== link.candidate_key) continue
     const { data: sourcePack, error: sourceError } = await input.supabase
@@ -276,7 +299,9 @@ export async function ensureMayelVisualTaskV1(input: {
       listing_package_id: listingPackage.id,
       candidate_key: listingPackage.candidate_key,
       assigned_operator_user_id: input.actorUserId,
-      selection_authority: "EBAY_LISTING_QUALITY_VISUAL_SIGNAL",
+      selection_authority: requestedItemId
+        ? "SELLER_OS_LIVE_VISUAL_QUALITY_SIGNAL"
+        : "EBAY_LISTING_QUALITY_VISUAL_SIGNAL",
       selection_signal: selectionSignal,
       evidence_pack_version: MAYEL_PRODUCT_EVIDENCE_PACK_VERSION,
       evidence_pack: evidencePack,
@@ -302,6 +327,122 @@ export async function ensureMayelVisualTaskV1(input: {
     throw new Error("MAYEL_VISUAL_TASK_CREATE_FAILED")
   }
   return { created: false, task: null, canaryAvailable: false }
+}
+
+export async function ensureMayelVisualPortfolioTasksV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorUserId: string
+  limit?: number
+}) {
+  const limit = Math.max(1, Math.min(input.limit ?? 100, 200))
+  const { data: listings, error, count } = await input.supabase
+    .from("ebay_active_listings")
+    .select("id,ebay_item_id", { count: "exact" })
+    .eq("account_key", input.accountKey).eq("listing_status", "active")
+    .order("ebay_item_id", { ascending: true }).limit(limit)
+  if (error) throw new Error("MAYEL_VISUAL_PORTFOLIO_DISCOVERY_FAILED")
+  const itemIds = (listings ?? []).flatMap((row) => {
+    const itemId = text(row.ebay_item_id, 20)
+    return itemId ? [itemId] : []
+  })
+  if (!itemIds.length) return Object.freeze({ discoveredCount: count ?? 0,
+    boundedCount: 0, prequalifiedCount: 0, eligibleCount: 0,
+    createdCount: 0, reusedCount: 0, duplicateTaskCount: 0,
+    partial: false, outcomes: Object.freeze([]), marketplaceWrites: 0 as const })
+  const [linksRead, experimentsRead, openTasksRead] = await Promise.all([
+    input.supabase.from("ebay_manual_listing_links")
+      .select("ebay_item_id,connector_listing_id,opportunity_id,candidate_key")
+      .eq("account_key", input.accountKey).eq("verification_status", "verified")
+      .in("ebay_item_id", itemIds),
+    input.supabase.from("ebay_listing_experiments_v1")
+      .select("ebay_item_id").eq("account_key", input.accountKey)
+      .in("ebay_item_id", itemIds).in("lifecycle_status",
+        ACTIVE_EXPERIMENT_STATES),
+    input.supabase.from("ebay_mayel_visual_tasks_v1")
+      .select("id,ebay_item_id,assigned_operator_user_id")
+      .eq("marketplace_account_key", input.accountKey)
+      .in("ebay_item_id", itemIds).in("status", OPEN_TASK_STATES),
+  ])
+  if (linksRead.error || experimentsRead.error || openTasksRead.error) {
+    throw new Error("MAYEL_VISUAL_PORTFOLIO_ELIGIBILITY_READ_FAILED")
+  }
+  const links = new Map((linksRead.data ?? []).map((row) =>
+    [String(row.ebay_item_id), row]))
+  const experiments = new Set((experimentsRead.data ?? []).map((row) =>
+    String(row.ebay_item_id)))
+  const openTasks = new Map((openTasksRead.data ?? []).map((row) =>
+    [String(row.ebay_item_id), row]))
+  const opportunityIds = [...new Set((linksRead.data ?? []).flatMap((row) =>
+    typeof row.opportunity_id === "string" ? [row.opportunity_id] : []))]
+  const packagesRead = opportunityIds.length
+    ? await input.supabase.from("ebay_listing_packages")
+      .select("id,opportunity_id,candidate_key,updated_at")
+      .in("opportunity_id", opportunityIds).eq("status", "approved")
+      .order("updated_at", { ascending: false })
+    : { data: [], error: null }
+  if (packagesRead.error) throw new Error(
+    "MAYEL_VISUAL_PORTFOLIO_PACKAGE_READ_FAILED")
+  const packages = new Map<string, Record<string, unknown>>()
+  for (const row of packagesRead.data ?? []) {
+    const opportunityId = text(row.opportunity_id, 80)
+    if (opportunityId && !packages.has(opportunityId)) {
+      packages.set(opportunityId, row)
+    }
+  }
+  const outcomes: Record<string, unknown>[] = []
+  for (const listing of listings ?? []) {
+    const itemId = text(listing.ebay_item_id, 20)
+    if (!itemId) continue
+    const existing = openTasks.get(itemId)
+    if (existing && existing.assigned_operator_user_id !== input.actorUserId) {
+      outcomes.push({ itemId, eligible: false, taskId: existing.id,
+        created: false, blocker: "MAYEL_TASK_ASSIGNEE_MISMATCH" })
+      continue
+    }
+    const link = links.get(itemId)
+    if (!existing && (!link || link.connector_listing_id !== listing.id)) {
+      outcomes.push({ itemId, eligible: false, taskId: null, created: false,
+        blocker: "EXACT_VERIFIED_LIVE_LISTING_LINK_REQUIRED" })
+      continue
+    }
+    if (!existing && experiments.has(itemId)) {
+      outcomes.push({ itemId, eligible: false, taskId: null, created: false,
+        blocker: "ACTIVE_EXPERIMENT_CONFLICT" })
+      continue
+    }
+    const opportunityId = link ? text(link.opportunity_id, 80) : null
+    const listingPackage = opportunityId ? packages.get(opportunityId) : null
+    if (!existing && (!listingPackage ||
+        listingPackage.candidate_key !== link?.candidate_key)) {
+      outcomes.push({ itemId, eligible: false, taskId: null, created: false,
+        blocker: "CURRENT_APPROVED_LISTING_PACKAGE_REQUIRED" })
+      continue
+    }
+    try {
+      const result = await ensureMayelVisualTaskV1({ ...input,
+        targetItemId: itemId })
+      outcomes.push({ itemId, eligible: result.canaryAvailable,
+        taskId: result.task?.id ?? null, created: result.created })
+    } catch (error) {
+      outcomes.push({ itemId, eligible: false, taskId: null, created: false,
+        blocker: error instanceof Error ? error.message :
+          "MAYEL_VISUAL_PORTFOLIO_ITEM_FAILED" })
+    }
+  }
+  const taskIds = outcomes.flatMap((row) => typeof row.taskId === "string"
+    ? [row.taskId] : [])
+  return Object.freeze({ discoveredCount: count ?? null,
+    boundedCount: outcomes.length,
+    prequalifiedCount: outcomes.filter((row) => row.eligible === true ||
+      row.blocker === undefined).length,
+    eligibleCount: outcomes.filter((row) => row.eligible === true).length,
+    createdCount: outcomes.filter((row) => row.created === true).length,
+    reusedCount: outcomes.filter((row) => row.eligible === true &&
+      row.created === false).length,
+    duplicateTaskCount: taskIds.length - new Set(taskIds).size,
+    partial: typeof count === "number" && count > limit,
+    outcomes: Object.freeze(outcomes), marketplaceWrites: 0 as const })
 }
 
 async function taskForActor(input: { supabase: SupabaseClient
@@ -694,7 +835,7 @@ export async function readMayelVisualWorkstationV1(input: {
   let query = input.supabase.from("ebay_mayel_visual_tasks_v1")
     .select("*").eq("marketplace_account_key", input.accountKey)
     .in("status", OPEN_TASK_STATES).order("created_at", { ascending: false })
-    .limit(input.ownerView ? 20 : 1)
+    .limit(input.ownerView ? 50 : 50)
   if (!input.ownerView) query = query.eq("assigned_operator_user_id",
     input.actorUserId)
   const { data: taskRows, error } = await query

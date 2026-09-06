@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { runMayelVisualSafeRebaseRecoveryV1 } from
   "../ebay/ebay-mayel-visual-safe-rebase-runtime-v1"
+import { runMayelContinuousLivePortfolioOptimizationV1 } from
+  "../ebay/ebay-mayel-continuous-live-portfolio-v1"
 
 import { persistSellerOsOperationalIntegrityAuditV1,
   recoverSellerOsOperationalIntegrityV1 } from
@@ -42,6 +44,10 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
   const mayelVisualSafeRebase = await runMayelVisualSafeRebaseRecoveryV1({
     supabase: input.supabase, accountKey: input.accountKey,
   })
+  const mayelContinuousPortfolio =
+    await runMayelContinuousLivePortfolioOptimizationV1({
+      supabase: input.supabase, accountKey: input.accountKey, now: input.now,
+    })
   return Object.freeze({
     contractVersion: SELLER_OS_OPERATIONAL_INTEGRITY_RUNTIME_V1,
     status: initial.audit.status,
@@ -51,6 +57,7 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
     durableReceipt: receipt,
     recovery,
     mayelVisualSafeRebase,
+    mayelContinuousPortfolio,
     safety: Object.freeze({
       marketplaceWrites: 0 as const,
       productDecisions: 0 as const,
@@ -59,6 +66,8 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
       genericRecoveryOnly: true as const,
       businessFactWrites: 0 as const,
       mayelManifestRebaseCount: mayelVisualSafeRebase.rebasedCount,
+      mayelContinuousPortfolioMarketplaceWrites:
+        mayelContinuousPortfolio.marketplaceWrites,
     }),
   })
 }

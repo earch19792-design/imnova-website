@@ -61,6 +61,7 @@ export async function readRemoteLiveOperatorEnrollmentStatus(
   return Object.freeze({
     configured: remoteUsers.length > 0,
     remoteAccountCount: remoteUsers.length,
+    remoteUserId: remoteUsers.length === 1 ? remoteUsers[0]?.id ?? null : null,
     exactSingleton: remoteUsers.length === 1 && fixedSlotUsers.length === 1 &&
       remoteUsers[0]?.id === fixedSlotUsers[0]?.id,
     fixedSlotOccupiedByAnotherAuthority:

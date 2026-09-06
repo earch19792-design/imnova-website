@@ -27,6 +27,13 @@ import {
 } from "@/lib/ebay/ebay-mayel-full-visual-delegation-v1"
 import { MAYEL_VISUAL_OUTPUT_ROLES } from
   "@/lib/ebay/ebay-mayel-visual-workstation-v1"
+import {
+  authorizeMayelValidatedPriceDelegationV1,
+  MAYEL_VALIDATED_PRICE_DELEGATION_CONFIRMATION,
+  MAYEL_VALIDATED_PRICE_DELEGATION_REVOKE_CONFIRMATION,
+  readMayelValidatedPriceDelegationV1,
+  revokeMayelValidatedPriceDelegationV1,
+} from "@/lib/ebay/ebay-mayel-price-optimization-delegation-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
@@ -217,8 +224,12 @@ export async function GET(request: Request) {
       ownerView: auth.accessRole === SELLER_OS_ACCESS_ROLES.owner })
     const supabase = getSupabaseAdminClient()
     const ownerView = auth.accessRole === SELLER_OS_ACCESS_ROLES.owner
-    const delegation = await readMayelFullVisualDelegationV1({ supabase,
-      accountKey: accountKey(), ownerAuthenticated: ownerView })
+    const [delegation, priceDelegation] = await Promise.all([
+      readMayelFullVisualDelegationV1({ supabase,
+        accountKey: accountKey(), ownerAuthenticated: ownerView }),
+      readMayelValidatedPriceDelegationV1({ supabase,
+        accountKey: accountKey(), ownerAuthenticated: ownerView }),
+    ])
     const currentAccountIdentity =
       delegation.globalAccountIdentityProven === true
     const tasks = await Promise.all(workstation.tasks.map(async (task) => {
@@ -286,7 +297,7 @@ export async function GET(request: Request) {
       marketplaceWrites: 0,
     })
     return json({ success: true, workstation: { ...workstation, tasks },
-      delegation,
+      delegation, priceDelegation,
       accessRole: auth.accessRole,
       phase: "B_OWNER_GATED", marketplaceWrites: 0,
       openAiImageApiCalls: 0 })
@@ -376,6 +387,41 @@ export async function POST(request: Request) {
           ? "FULL_VISUAL_DELEGATION_ALREADY_INACTIVE"
           : "FULL_VISUAL_DELEGATION_REVOKED",
         delegation: outcome.authority, marketplaceWrites: 0 })
+    }
+    if (action === "AUTHORIZE_VALIDATED_PRICE_DELEGATION") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_PRICE_OWNER_AUTHORITY_REQUIRED" }, 403)
+      if (body?.confirmation !==
+          MAYEL_VALIDATED_PRICE_DELEGATION_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_PRICE_DELEGATION_CONFIRMATION_INVALID" }, 400)
+      }
+      const outcome = await authorizeMayelValidatedPriceDelegationV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId,
+      })
+      return json({ success: true, outcome: outcome.idempotent
+        ? "VALIDATED_PRICE_DELEGATION_ALREADY_ACTIVE"
+        : "VALIDATED_PRICE_DELEGATION_ACTIVATED",
+      priceDelegation: outcome.authority, marketplaceWrites: 0 })
+    }
+    if (action === "REVOKE_VALIDATED_PRICE_DELEGATION") {
+      if (!ownerRole) return json({ success: false,
+        error: "MAYEL_PRICE_OWNER_AUTHORITY_REQUIRED" }, 403)
+      if (body?.confirmation !==
+          MAYEL_VALIDATED_PRICE_DELEGATION_REVOKE_CONFIRMATION) {
+        return json({ success: false,
+          error: "MAYEL_PRICE_DELEGATION_REVOCATION_CONFIRMATION_INVALID" },
+        400)
+      }
+      const outcome = await revokeMayelValidatedPriceDelegationV1({
+        supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        ownerUserId: auth.userId,
+      })
+      return json({ success: true, outcome: outcome.idempotent
+        ? "VALIDATED_PRICE_DELEGATION_ALREADY_INACTIVE"
+        : "VALIDATED_PRICE_DELEGATION_REVOKED",
+      priceDelegation: outcome.authority, marketplaceWrites: 0 })
     }
     if (action === "REBASE_VISUAL_MANIFEST") {
       if (!ownerRole) return json({ success: false,
