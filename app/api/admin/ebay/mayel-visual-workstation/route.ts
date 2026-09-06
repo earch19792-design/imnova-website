@@ -208,6 +208,7 @@ export async function GET(request: Request) {
         applicationStatus: phaseB.applicationStatus,
         applicationReason: phaseB.applicationReason,
         blocker: phaseB.blocker,
+        tradingExecutorDryRun: phaseB.tradingExecutorDryRun,
         managementDiagnostics: phaseB.managementDiagnostics,
       }, marketplaceWrites: 0 })
     }

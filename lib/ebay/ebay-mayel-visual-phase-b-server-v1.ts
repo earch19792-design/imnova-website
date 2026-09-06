@@ -12,6 +12,7 @@ import { readCanonicalEbayListingManagementResourcesV1 } from
 import {
   classifyEbayListingManagementModelEvidenceV1,
   executeEbayInventoryManagedImageMutationV1,
+  getEbayDraftOnlyGatewayConfig,
   prepareEbayActiveListingManagementExecutorV1,
 } from "./ebay-draft-only-gateway"
 import { getEbayTradingReadOnlyAccessToken } from
@@ -21,6 +22,8 @@ import {
   buildMayelVisualPhaseBPlanV1,
   ebayOfficialImageSetDigestV1,
 } from "./ebay-mayel-visual-phase-b-v1"
+import { buildMayelTradingVisualDryRunV1 } from
+  "./ebay-mayel-trading-visual-executor-v1"
 
 export const MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION =
   "AUTORIZAR ACTUALIZACION DE IMAGENES"
@@ -391,14 +394,53 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     && context.plan.fieldsToChange[0] === "IMAGES_ONLY"
   const mayelManifestValid = context.plan.ready
   const unauthorizedFieldDiffCount = visualOnlyDiff ? 0 : null
-  const safeToExecuteVisualChange = context.accountIdentityProven
+  const mediaGateway = getEbayDraftOnlyGatewayConfig()
+  const mediaPreparationAvailable = mediaGateway.target === "PRODUCTION"
+    && mediaGateway.configured && mediaGateway.oauthConfigured
+    && mediaGateway.identityBound
+  const mediaPreparationAuthorized = mediaPreparationAvailable
+    && mediaGateway.enabled && mediaGateway.environmentAllowed
+  const tradingExecutorDryRun = context.management.managementModel ===
+    "TRADING_MANAGED" && context.plan.newMayelSecondaryImages.length === 1
+    ? buildMayelTradingVisualDryRunV1({
+      accountKey: input.accountKey,
+      itemId: String(context.task.ebay_item_id),
+      manifestId: uuid(context.task.visual_manifest_id),
+      manifestDigest: context.plan.visualManifestDigest ?? "",
+      managementModel: context.management.managementModel,
+      correctEbayApi: context.correctEbayApi,
+      accountIdentityProven: context.accountIdentityProven,
+      listingIdentityProven: context.listingIdentityProven,
+      listingActive: context.official?.listingStatus.toLowerCase() === "active",
+      manifestValid: mayelManifestValid,
+      visualOnlyDiff,
+      unauthorizedFieldDiffs: visualOnlyDiff ? [] : ["NON_VISUAL_DIFF"],
+      currentOfficialImageUrls: context.currentOfficialImageUrls,
+      expectedCurrentImageDigest:
+        context.plan.currentOfficialImageSetDigest,
+      proposedSourceImageUrls:
+        context.plan.proposedFinalOrderedImageUrls,
+      mayelAssetUrl: context.plan.newMayelSecondaryImages[0],
+      mayelAssetAuthorized: true,
+      approvedMayelStorageUrl: canonicalAssetUrlAllowed,
+      pictureSource: context.official?.pictureSource ?? null,
+      // Media API requires the production publisher credential carrying
+      // sell.inventory. Trading's base-scope token is not treated as proof.
+      mediaPreparationAvailable,
+      mediaPreparationAuthorized,
+      durableReviseAttemptCount:
+        Number(context.anyExecution?.marketplace_write_count) || 0,
+    }) : null
+  const baseSafeToExecute = context.accountIdentityProven
     && context.listingIdentityProven
     && context.currentImageSetProven
     && mayelManifestValid
     && visualOnlyDiff
     && unauthorizedFieldDiffCount === 0
-    && context.managementReady
     && !context.execution
+  const safeToExecuteVisualChange = baseSafeToExecute
+    && (context.managementReady
+      || tradingExecutorDryRun?.safeToExecuteVisualChange === true)
   const applicationStatus = context.tradingRateLimited
     ? "WAITING_FOR_EBAY" as const
     : safeToExecuteVisualChange ? "READY" as const : "BLOCKED" as const
@@ -487,13 +529,16 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     blocker: !context.listingIdentityProven
       && context.officialReadFailureClass
       ? context.officialReadFailureClass
-      : context.plan.blocker ?? context.managementBlocker,
+      : context.plan.blocker ?? (tradingExecutorDryRun
+        ? tradingExecutorDryRun.blocker : context.managementBlocker),
     tradingExecutorExplicitlyGated:
-      context.management.managementModel === "TRADING_MANAGED",
+      context.management.managementModel === "TRADING_MANAGED"
+      && tradingExecutorDryRun?.executorImplemented !== true,
+    tradingExecutorDryRun,
     execution: publicExecution(context.execution),
     safety: { getIsReadOnly: true, mainImageProtected: true,
       localFileDirectToEbay: false, autoPublish: false,
-      ownerApprovalRequired: true },
+      ownerApprovalRequired: false },
   }
   console.info("MAYEL_VISUAL_PHASE_B_READ_MODEL_V1", {
     visualTaskId: context.task.id,
