@@ -148,7 +148,8 @@ function accountKey() {
 function json(payload: Record<string, unknown>, status = 200) {
   return NextResponse.json(payload, { status,
     headers: { "Cache-Control": "private, no-store",
-      "X-Seller-OS-Mayel-Visual-Phase": "B_OWNER_GATED" } })
+      "X-Seller-OS-Mayel-Visual-Authority":
+        "MAYEL_FULL_VISUAL_DELEGATION_V1" } })
 }
 
 export async function GET(request: Request) {

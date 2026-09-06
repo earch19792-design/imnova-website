@@ -103,11 +103,13 @@ export async function readMayelFullVisualDelegationV1(input: {
       .select("id", { count: "exact", head: true })
       .eq("marketplace_account_key", input.accountKey),
     activeAuthority(input),
-    preflightEbayDraftOnlyMobile({}, input.fetchImpl ?? fetch)
-      .then((preflight) => ({ preflight, error: null as string | null }))
-      .catch((error) => ({ preflight: null,
-        error: error instanceof Error ? error.message :
-          "EBAY_IDENTITY_PREFLIGHT_FAILED" })),
+    input.ownerAuthenticated
+      ? preflightEbayDraftOnlyMobile({}, input.fetchImpl ?? fetch)
+        .then((preflight) => ({ preflight, error: null as string | null }))
+        .catch((error) => ({ preflight: null,
+          error: error instanceof Error ? error.message :
+            "EBAY_IDENTITY_PREFLIGHT_FAILED" }))
+      : Promise.resolve({ preflight: null, error: null as string | null }),
   ])
   const runtime = ebayDraftOnlyRuntimeStatus()
   const taskCapabilities = taskCapabilitySummary(input.taskDiagnostics ?? [])
