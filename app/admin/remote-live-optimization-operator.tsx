@@ -1115,8 +1115,9 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
           <MayelVisualWorkstation canOperate={canAct}
             canOwnerAuthorize={embeddedForOwner}
             commercialIntelligenceByItemId={Object.fromEntries(
-              taskListings.map((listing) => [listing.ebayItemId,
-                listing.commercialIntelligence]))} />
+              (dashboard?.listings ?? []).map((listing) => [listing.ebayItemId,
+                listing.commercialIntelligence]))}
+            livePortfolio={dashboard?.listings ?? []} />
         </div>}
         {dashboard && view !== "VISUAL" && <div className="mt-7 space-y-7">
           {!dashboard.capabilities.safeLiveTitleCanary &&
