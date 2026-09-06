@@ -308,6 +308,55 @@ export async function readMayelLiveMarketRevalidationPlanV1(input: {
     marketplaceWrites: 0 as const })
 }
 
+export async function readMayelLiveMarketRevalidationStatusV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  itemId: unknown
+}) {
+  const itemId = validItemId(input.itemId)
+  if (!itemId) throw new Error("MAYEL_MARKET_REVALIDATION_ITEM_REQUIRED")
+  const context = await readExactLiveContext({ ...input, itemId })
+  const planRead = await input.supabase.from(
+    "marketplace_product_research_query_plans")
+    .select("id,status,request_receipt_id,created_at,completed_at")
+    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+    .eq("source_context", "LIVE_LISTING_REVALIDATION")
+    .eq("subject_listing_id", context.listing.id).eq("subject_item_id", itemId)
+    .eq("subject_supplier_variant_id", context.target.supplierVariantId)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle()
+  if (planRead.error) {
+    throw new Error("MAYEL_MARKET_REVALIDATION_STATUS_READ_FAILED")
+  }
+  if (!planRead.data) return Object.freeze({ connectorAvailable: true as const,
+    state: "READY_TO_REQUEST" as const, itemId, planId: null,
+    requestPersisted: false, nextResearchPlanCreated: false,
+    result: null, ownerActionRequired: false as const,
+    mayelManualResearchRequired: false as const,
+    marketplaceWrites: 0 as const })
+  const receiptRead = await input.supabase.from(
+    "seller_os_operational_learning_ledger_v1")
+    .select("id,status,recovery_outcome,evidence,last_observed_at,resolved_at")
+    .eq("id", planRead.data.request_receipt_id)
+    .eq("marketplace_account_key", input.accountKey).limit(1).maybeSingle()
+  if (receiptRead.error || !receiptRead.data) {
+    throw new Error("MAYEL_MARKET_REVALIDATION_REQUEST_READBACK_FAILED")
+  }
+  const result = record(receiptRead.data.evidence)
+  const completed = receiptRead.data.status === "RESOLVED" &&
+    result.requestState === "COMPLETED"
+  return Object.freeze({ connectorAvailable: true as const,
+    state: completed ? "COMPLETED" as const :
+      planRead.data.status === "ACTIVE" ? "IN_PROGRESS" as const
+        : "PENDING_RESUME" as const,
+    itemId, planId: planRead.data.id,
+    requestPersisted: true, nextResearchPlanCreated: true,
+    result: completed ? result : null,
+    lastObservedAt: receiptRead.data.last_observed_at,
+    ownerActionRequired: false as const,
+    mayelManualResearchRequired: false as const,
+    marketplaceWrites: 0 as const })
+}
+
 export async function completeMayelLiveMarketRevalidationV1(input: {
   supabase: SupabaseClient
   accountKey: string

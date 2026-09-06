@@ -186,6 +186,27 @@ const authorityCheckLabels: Record<string, string> = {
 type TaskCommercialTab = "VISUAL" | "MERCADO" | "RENTABILIDAD" |
   "RECOMENDACIONES"
 
+type MarketRevalidationStatus = Readonly<{
+  connectorAvailable: boolean
+  state: "READY_TO_REQUEST" | "IN_PROGRESS" | "PENDING_RESUME" | "COMPLETED"
+  planId: string | null
+  result: Readonly<{
+    exactComparableCount?: number | null
+    rejectedComparableCount?: number | null
+    marketPriceAuthority?: string | null
+    soldPriceRange?: { minimum?: number | null; median?: number | null;
+      maximum?: number | null } | null
+    livePricePosition?: string | null
+    economics?: { supplierCost?: number | null; shipping?: number | null;
+      ebayFees?: number | null; otherCosts?: number | null;
+      expectedProfit?: number | null; margin?: number | null } | null
+    completedAt?: string | null
+  }> | null
+  ownerActionRequired: false
+  mayelManualResearchRequired: false
+  marketplaceWrites: 0
+}>
+
 function commercialMoney(value: number | null) {
   return value === null ? "Por comprobar" : new Intl.NumberFormat("en-US", {
     style: "currency", currency: "USD",
@@ -198,8 +219,10 @@ function commercialDate(value: string | null | undefined) {
     timeZone: "America/Managua" }).format(new Date(value))
 }
 
-function TaskCommercialContext({ intelligence, ebayItemId, canOperate }: {
+function TaskCommercialContext({ intelligence, revalidationStatus, ebayItemId,
+  canOperate }: {
   intelligence?: MayelCommercialIntelligenceV1
+  revalidationStatus?: MarketRevalidationStatus
   ebayItemId: string
   canOperate: boolean
 }) {
@@ -218,7 +241,8 @@ function TaskCommercialContext({ intelligence, ebayItemId, canOperate }: {
   }
   async function revalidateMarket() {
     if (!canOperate || revalidationBusy ||
-        intelligence?.revalidation.status !== "AVAILABLE") return
+        revalidationStatus?.connectorAvailable !== true ||
+        revalidationStatus.state === "IN_PROGRESS") return
     setRevalidationBusy(true)
     setRevalidationMessage("")
     try {
@@ -260,21 +284,37 @@ function TaskCommercialContext({ intelligence, ebayItemId, canOperate }: {
       <p>La falta temporal de datos comerciales no bloquea upload, QA ni preparación del manifest.</p>
     </div>}
     {tab === "MERCADO" && <div className="mt-4 space-y-3 text-sm text-[#4f5752]">
-      {!intelligence ? <p className="rounded-xl bg-white p-3">Mercado por comprobar. La autoridad comercial LIVE no está disponible ahora; no se atribuye el problema a imágenes.</p> : <>
+      {!intelligence && revalidationStatus?.state !== "COMPLETED" ?
+        <p className="rounded-xl bg-white p-3">Mercado por comprobar. La autoridad comercial LIVE no está disponible ahora; no se atribuye el problema a imágenes.</p> : <>
         <div className="grid gap-2 sm:grid-cols-2">
-          <p className="rounded-xl bg-white p-3">Última revisión<br/><strong>{commercialDate(intelligence.market.lastResearchAt)}</strong></p>
-          <p className="rounded-xl bg-white p-3">Comparables vendidos<br/><strong>{intelligence.market.soldComparableCount ?? "Por comprobar"}</strong></p>
-          <p className="rounded-xl bg-white p-3">Rango sold<br/><strong>{intelligence.market.soldPriceMinimum === null || intelligence.market.soldPriceMaximum === null ? "Por comprobar" : `${commercialMoney(intelligence.market.soldPriceMinimum)}–${commercialMoney(intelligence.market.soldPriceMaximum)}`}</strong></p>
-          <p className="rounded-xl bg-white p-3">Posición del precio<br/><strong>{position[intelligence.pricePosition.status] ?? "Mercado por comprobar"}</strong></p>
+          <p className="rounded-xl bg-white p-3">Última revisión<br/><strong>{commercialDate(intelligence?.market.lastResearchAt ?? revalidationStatus?.result?.completedAt)}</strong></p>
+          <p className="rounded-xl bg-white p-3">Comparables vendidos<br/><strong>{intelligence?.market.soldComparableCount ?? revalidationStatus?.result?.exactComparableCount ?? "Por comprobar"}</strong></p>
+          <p className="rounded-xl bg-white p-3">Rango sold<br/><strong>{(() => {
+            const minimum = intelligence?.market.soldPriceMinimum ??
+              revalidationStatus?.result?.soldPriceRange?.minimum ?? null
+            const maximum = intelligence?.market.soldPriceMaximum ??
+              revalidationStatus?.result?.soldPriceRange?.maximum ?? null
+            return minimum === null || maximum === null ? "Por comprobar" :
+              `${commercialMoney(minimum)}–${commercialMoney(maximum)}`
+          })()}</strong></p>
+          <p className="rounded-xl bg-white p-3">Posición del precio<br/><strong>{position[intelligence?.pricePosition.status ?? revalidationStatus?.result?.livePricePosition ?? ""] ?? "Mercado por comprobar"}</strong></p>
         </div>
-        <p className="rounded-xl bg-[#edf3f1] p-3">{intelligence.interpretation.explanation}</p>
+        <p className="rounded-xl bg-[#edf3f1] p-3">{intelligence?.interpretation.explanation ??
+          (revalidationStatus?.result?.marketPriceAuthority === "UNPROVEN"
+            ? "No hubo comparables exactos suficientes; Seller OS no fabricó un precio."
+            : "Seller OS completó la investigación automática y guardó el resultado.")}</p>
       </>}
+      {revalidationStatus?.state === "IN_PROGRESS" &&
+        <p className="rounded-xl bg-[#edf3f1] p-3">Investigación automática en curso. El plan y la solicitud están guardados.</p>}
+      {revalidationStatus?.state === "PENDING_RESUME" &&
+        <p className="rounded-xl bg-[#f7e9de] p-3">La investigación quedó guardada y Seller OS debe reanudarla de forma segura.</p>}
       <button type="button"
         disabled={!canOperate || revalidationBusy ||
-          intelligence?.revalidation.status !== "AVAILABLE"}
+          revalidationStatus?.connectorAvailable !== true ||
+          revalidationStatus.state === "IN_PROGRESS"}
         onClick={() => void revalidateMarket()}
         title={!canOperate ? "Disponible para Mayel dentro de su workspace" :
-          intelligence?.revalidation.status !== "AVAILABLE"
+          revalidationStatus?.connectorAvailable !== true
             ? "Seller OS todavía no tiene autoridad suficiente para crear el plan"
             : "Seller OS elegirá y ejecutará el plan de investigación"}
         className="min-h-11 rounded-xl border border-[#1d5961]/30 px-4 font-semibold text-[#1d5961] disabled:opacity-55">
@@ -288,12 +328,12 @@ function TaskCommercialContext({ intelligence, ebayItemId, canOperate }: {
     </div>}
     {tab === "RENTABILIDAD" && <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
       {[["Precio LIVE", intelligence?.economics.livePrice.value ?? null],
-        ["Costo proveedor", intelligence?.economics.supplierCost.value ?? null],
-        ["Shipping", intelligence?.economics.shippingCost.value ?? null],
-        ["Fees eBay", intelligence?.economics.ebayFees.value ?? null],
-        ["Otros/reservas", intelligence?.economics.otherCostsOrReserves.value ?? null],
-        ["Profit esperado", intelligence?.economics.expectedProfit.value ?? null],
-        ["Margen", intelligence?.economics.marginPercent.value ?? null],
+        ["Costo proveedor", intelligence?.economics.supplierCost.value ?? revalidationStatus?.result?.economics?.supplierCost ?? null],
+        ["Shipping", intelligence?.economics.shippingCost.value ?? revalidationStatus?.result?.economics?.shipping ?? null],
+        ["Fees eBay", intelligence?.economics.ebayFees.value ?? revalidationStatus?.result?.economics?.ebayFees ?? null],
+        ["Otros/reservas", intelligence?.economics.otherCostsOrReserves.value ?? revalidationStatus?.result?.economics?.otherCosts ?? null],
+        ["Profit esperado", intelligence?.economics.expectedProfit.value ?? revalidationStatus?.result?.economics?.expectedProfit ?? null],
+        ["Margen", intelligence?.economics.marginPercent.value ?? revalidationStatus?.result?.economics?.margin ?? null],
         ["ROI", intelligence?.economics.roi.value ?? null]].map(([label, value]) =>
         <p key={String(label)} className="rounded-xl bg-white p-3">
           <span className="text-xs text-[#73766f]">{label}</span><br/>
@@ -761,13 +801,34 @@ export function MayelVisualWorkstation({ canOperate,
   const [message, setMessage] = useState("")
   const [canaryAvailable, setCanaryAvailable] = useState<boolean | null>(null)
   const [delegation, setDelegation] = useState<VisualDelegation | null>(null)
+  const [marketRevalidationByItemId, setMarketRevalidationByItemId] =
+    useState<Record<string, MarketRevalidationStatus>>({})
 
   const load = useCallback(async () => {
     const payload = await visualRequest(
       "/api/admin/ebay/mayel-visual-workstation")
     const workstation = payload.workstation as { tasks?: VisualTask[] } | undefined
-    setTasks(workstation?.tasks ?? [])
+    const nextTasks = workstation?.tasks ?? []
+    setTasks(nextTasks)
     setDelegation((payload.delegation as VisualDelegation | undefined) ?? null)
+    const reads = await Promise.allSettled(nextTasks.map(async (task) => {
+      const statusPayload = await visualRequest(
+        "/api/admin/ebay/live-optimization-operator", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "READ_MARKET_REVALIDATION_STATUS",
+            ebayItemId: task.ebayItemId }),
+        })
+      return [task.ebayItemId,
+        statusPayload.result as MarketRevalidationStatus] as const
+    }))
+    const nextStatuses: Record<string, MarketRevalidationStatus> = {}
+    for (const read of reads) {
+      if (read.status === "fulfilled" &&
+          read.value[1]?.connectorAvailable === true) {
+        nextStatuses[read.value[0]] = read.value[1]
+      }
+    }
+    setMarketRevalidationByItemId(nextStatuses)
   }, [])
 
   useEffect(() => {
@@ -849,6 +910,7 @@ export function MayelVisualWorkstation({ canOperate,
       <div className="mt-6"><SourceGallery task={task} /></div>
       <TaskCommercialContext intelligence={
         commercialIntelligenceByItemId[task.ebayItemId]}
+        revalidationStatus={marketRevalidationByItemId[task.ebayItemId]}
         ebayItemId={task.ebayItemId} canOperate={canOperate} />
       {canOperate && <section className="mt-6 rounded-2xl bg-[#26312d] p-5 text-white">
         <div className="flex items-start gap-3"><Clipboard className="mt-1 h-5 w-5 shrink-0 text-[#acd2ca]" />

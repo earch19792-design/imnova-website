@@ -39,6 +39,7 @@ import { loadEbayPromotionRecommendationSafeExecutionV1 } from
 import {
   completeMayelLiveMarketRevalidationV1,
   readMayelLiveMarketRevalidationPlanV1,
+  readMayelLiveMarketRevalidationStatusV1,
   startMayelLiveMarketRevalidationV1,
 } from "@/lib/ebay/ebay-mayel-live-market-revalidation-v1"
 import { currentLiveListingsForMonitorV1 } from
@@ -383,6 +384,22 @@ export async function POST(request: Request) {
   { status: 403 })
   const body = await jsonBody(request)
   const action = typeof body?.action === "string" ? body.action : ""
+  if (action === "READ_MARKET_REVALIDATION_STATUS") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await readMayelLiveMarketRevalidationStatusV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        itemId: body?.ebayItemId,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
   if (action === "START_MARKET_REVALIDATION") {
     try {
       const account = getEbaySellerAccountScopeConfiguration()
