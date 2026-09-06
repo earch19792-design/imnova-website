@@ -79,6 +79,12 @@ type VisualTask = {
     rebaseBlocker?: string | null
     ownerCtaAvailable?: boolean
     blocker?: string | null
+    accountIdentityCurrent?: boolean
+    accountIdentityAuthority?: { status?: string; sourceAuthority?: string;
+      observedAt?: string } | null
+    legacyAccountMismatchSuppressed?: boolean
+    historicalBlocker?: string | null
+    executorCredentialProfileReady?: boolean
     execution?: { executionId?: string; phase?: string;
       marketplaceWriteCount?: number; appliedAndOfficiallyVerified?: boolean } | null
   }
@@ -106,6 +112,12 @@ type VisualDelegation = {
     mainImageAuthority: boolean; ownerPerImageApproval: boolean;
     ownerPerListingVisualApproval: boolean }
   taskExecutionReadinessIsSeparate: boolean
+  globalDelegationEligible: boolean
+  globalAccountIdentityProven: boolean
+  authorityStorageReady: boolean
+  revocationReady: boolean
+  accountIdentity: { status: string; sourceAuthority: string;
+    observedAt: string; marketplaceId: string } | null
 }
 
 const labels: Record<VisualRole, string> = {
@@ -142,6 +154,15 @@ const visualScopeLabels: Record<string, string> = {
   PACKAGE_CONTENT_IMAGES: "contenido del paquete",
   VISUAL_SEQUENCE_OPTIMIZATION: "secuencia visual",
   LIVE_LISTING_VISUAL_OPTIMIZATION: "optimización visual de listings LIVE",
+}
+
+const authorityCheckLabels: Record<string, string> = {
+  OWNER_AUTHENTICATED: "Sesión owner",
+  ACCOUNT_IDENTITY_PROVEN: "Cuenta eBay",
+  MAYEL_WORKSPACE_READY: "Workspace Mayel",
+  DELEGATION_SCOPE_VALID: "Alcance visual",
+  AUTHORITY_STORAGE_READY: "Persistencia de autoridad",
+  REVOCATION_READY: "Revocación",
 }
 
 async function visualRequest(path: string, init?: RequestInit) {
@@ -344,41 +365,64 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
   </section>
 }
 
-function OwnerPreview({ task, canOwnerAuthorize }: {
+function evidenceValues(pack: Record<string, unknown>, key: string) {
+  const value = pack[key]
+  return Array.isArray(value)
+    ? value.map(String).map((entry) => entry.trim()).filter(Boolean)
+    : typeof value === "string" && value.trim() ? [value.trim()] : []
+}
+
+function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
   task: VisualTask
   canOwnerAuthorize: boolean
+  delegation: VisualDelegation | null
 }) {
   if (!task.visualManifest) return null
   const phaseB = task.phaseB
   const proposed = Array.isArray(task.visualManifest.proposedOrderedImages)
     ? task.visualManifest.proposedOrderedImages as Record<string, unknown>[] : []
-  const factEntries = ["productType", "brand", "color", "materialsProven",
-    "packageContentsProven", "quantityOrPackCount", "dimensionsProven",
-    "allowedProductBenefits", "allowedUseCases"].flatMap((key) => {
-      const values = Array.isArray(task.evidencePack[key])
-        ? task.evidencePack[key] as unknown[] : []
-      return values.length ? [`${key}: ${values.join(" · ")}`] : []
-    })
+  const factRows = [
+    { label: "Producto", values: [task.productTitle] },
+    { label: "Variante exacta",
+      values: evidenceValues(task.evidencePack, "lunaVariantId") },
+    { label: "Tipo",
+      values: evidenceValues(task.evidencePack, "productType") },
+    { label: "Marca", values: evidenceValues(task.evidencePack, "brand") },
+    { label: "Color", values: evidenceValues(task.evidencePack, "color") },
+    { label: "Material",
+      values: evidenceValues(task.evidencePack, "materialsProven") },
+    { label: "Contenido del paquete",
+      values: evidenceValues(task.evidencePack, "packageContentsProven") },
+    { label: "Dimensiones",
+      values: evidenceValues(task.evidencePack, "dimensionsProven") },
+  ]
+  const delegationActive = delegation?.fullVisualDelegationActive === true
+  const accountIdentityCurrent =
+    delegation?.globalAccountIdentityProven === true
   const phase = phaseB?.execution?.phase
   const applied = phaseB?.execution?.appliedAndOfficiallyVerified === true
   return <section className="rounded-2xl border border-[#74866d]/35 bg-[#f4f7f1] p-5">
     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Vista previa del owner · publicación activa</p>
     <h4 className="mt-2 font-serif text-xl font-semibold">Imágenes actuales y propuesta</h4>
     <p className="mt-2 text-sm text-[#5f645e]">Item {task.ebayItemId} · {task.productTitle}</p>
-    <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. La imagen principal actual permanece protegida.</p>
-    <p className="mt-2 text-xs text-[#617159]">Control de calidad de Mayel: {task.outputs.filter((output) => output.status === "approved").length} aprobada(s) · aprobación del owner pendiente.</p>
+    <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. La propuesta histórica conserva la principal actual; la delegación global también permite que Mayel proponga sustituirla.</p>
+    <p className="mt-2 text-xs text-[#617159]">Control de calidad de Mayel: {task.outputs.filter((output) => output.status === "approved").length} aprobada(s) · {delegationActive ? "cubierta por delegación visual global" : "esperando delegación visual global"}.</p>
     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{proposed.map((entry, index) =>
       <figure key={`${entry.assetId ?? "current"}-${index}`}
         className="rounded-xl border border-[#d6dfd1] bg-white p-2">
         <img src={String(entry.publicUrl ?? "")} alt="Imagen propuesta para revisión del owner"
           className="aspect-square w-full rounded-lg object-contain" />
-        <figcaption className="mt-2 text-[10px] font-semibold text-[#617159]">{index === 0 ? "Principal actual · preservada" : labels[entry.role as VisualRole] ?? "Secundaria actual"}</figcaption>
+        <figcaption className="mt-2 text-[10px] font-semibold text-[#617159]">{index === 0 ? "Principal actual · conservada en esta propuesta" : labels[entry.role as VisualRole] ?? "Secundaria actual"}</figcaption>
       </figure>)}</div>
     <div className="mt-4 grid gap-2 rounded-xl bg-white p-3 text-xs text-[#5f645e] sm:grid-cols-2">
-      <p>Cuenta: {phaseB?.account ?? "Cuenta eBay vinculada"}</p>
+      <p>Cuenta eBay: {accountIdentityCurrent ? "comprobada" : "por comprobar"}</p>
       <p>Marketplace: {phaseB?.marketplace ?? "EBAY_US"}</p>
-      <p>Modelo de gestión: {phaseB?.managementModel ?? "Por verificar"}</p>
-      <p>Imagen principal protegida: {phaseB?.mainImageProtected === false ? "No" : "Sí"}</p>
+      <p>Modelo de gestión: {phaseB?.managementModel === "INVENTORY_API_MANAGED"
+        ? "Inventory API comprobado" : phaseB?.managementModel ===
+          "TRADING_MANAGED" ? "Trading comprobado" : "por comprobar"}</p>
+      <p>Imagen principal: {delegationActive
+        ? "Mayel puede modificarla bajo delegación activa"
+        : "incluida en la delegación visual pendiente"}</p>
     </div>
     {phaseB?.managementModel === "MANAGEMENT_MODEL_UNPROVEN" &&
       <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
@@ -396,11 +440,14 @@ function OwnerPreview({ task, canOwnerAuthorize }: {
         </div>
       </details>}
     <p className="mt-4 break-all text-[10px] text-[#777a73]">Manifest: {phaseB?.visualManifestDigest ?? task.visualManifestDigest}</p>
-    {factEntries.length > 0 && <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
+    <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
       <summary className="cursor-pointer font-semibold">Verdad certificada del producto utilizada</summary>
-      <ul className="mt-2 space-y-1">{factEntries.map((entry) =>
-        <li key={entry}>{entry}</li>)}</ul>
-    </details>}
+      <ul className="mt-2 space-y-1">{factRows.map((entry) =>
+        <li key={entry.label}><strong>{entry.label}:</strong>{" "}
+          {entry.values.length ? entry.values.join(" · ") :
+            `No hay evidencia suficiente para ${entry.label.toLowerCase()}.`}
+        </li>)}</ul>
+    </details>
     {canOwnerAuthorize && !phase && <p className="mt-4 rounded-xl bg-white p-3 text-sm text-[#5f645e]">
       La delegación visual general se administra arriba. Seller OS ejecutará
       esta propuesta sólo cuando la validación específica del listing esté
@@ -413,7 +460,13 @@ function OwnerPreview({ task, canOwnerAuthorize }: {
         `Estado de la actualización: ${phase.replaceAll("_", " ")}`}
     </p>}
     {canOwnerAuthorize && !phaseB?.ownerCtaAvailable && !phase &&
-      <p className="mt-3 text-xs font-semibold text-[#704d3c]">La actualización permanece bloqueada de forma segura: {phaseB?.blocker ?? "preflight no disponible"}.</p>}
+      <p className="mt-3 text-xs font-semibold text-[#704d3c]">
+        {phaseB?.managementModel === "MANAGEMENT_MODEL_UNPROVEN"
+          ? "Mayel puede trabajar la propuesta visual. Seller OS todavía debe comprobar cómo está gestionado este listing antes de aplicar cambios en eBay."
+          : phaseB?.blocker === "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
+            ? "Mayel puede trabajar la propuesta visual. Seller OS debe reconciliar primero el conjunto vigente de imágenes oficiales."
+            : "La ejecución permanece bloqueada hasta completar la validación específica del listing."}
+      </p>}
     {!canOwnerAuthorize && <p className="mt-2 text-xs font-semibold text-[#704d3c]">Mayel prepara y aprueba los recursos. La decisión final pertenece al owner.</p>}
   </section>
 }
@@ -502,11 +555,20 @@ function FullVisualDelegationPanel({ delegation, owner, busy, onDone }: {
       <summary className="cursor-pointer font-semibold">Ver comprobaciones de autoridad</summary>
       <ul className="mt-3 space-y-2">{(delegation?.predicates ?? [])
         .map((predicate) => <li key={predicate.code}
-          className="flex items-start justify-between gap-3">
-          <span>{predicate.humanMessage}</span>
-          <span className="shrink-0 font-semibold">{predicate.pass === true
-            ? "Comprobado" : predicate.pass === false ? "Bloqueado" :
-              "Se comprueba por listing"}</span>
+          className="rounded-lg bg-[#f7f5f0] p-3">
+          <span className="flex items-start justify-between gap-3">
+            <strong>{authorityCheckLabels[predicate.code] ?? predicate.code}</strong>
+            <span className="shrink-0 font-semibold">{predicate.pass === true
+              ? predicate.code === "MAYEL_WORKSPACE_READY" ? "Listo"
+                : predicate.code === "DELEGATION_SCOPE_VALID" ? "Válido"
+                  : predicate.code === "AUTHORITY_STORAGE_READY" ? "Lista"
+                    : predicate.code === "REVOCATION_READY" ? "Disponible"
+                      : "Comprobada"
+              : "Por comprobar"}</span>
+          </span>
+          {predicate.pass !== true && <span className="mt-1 block text-[#704d3c]">
+            {predicate.humanMessage}
+          </span>}
         </li>)}</ul>
     </details>
     {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
@@ -635,7 +697,7 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
             onDone={refresh} />)}</div>
       </section>}
       <div className="mt-6"><OwnerPreview task={task}
-        canOwnerAuthorize={canOwnerAuthorize} /></div>
+        canOwnerAuthorize={canOwnerAuthorize} delegation={delegation} /></div>
       <details className="mt-5 rounded-xl border border-[#e0d9ce] p-3 text-xs text-[#6f736c]">
         <summary className="cursor-pointer py-2 font-semibold">Provenance técnica</summary>
         <p className="mt-2 break-all">Visual Task ID: {task.visualTaskId}</p>

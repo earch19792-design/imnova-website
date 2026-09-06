@@ -55,12 +55,9 @@ export type MayelDelegationPredicateCode =
   | "OWNER_AUTHENTICATED"
   | "MAYEL_WORKSPACE_READY"
   | "ACCOUNT_IDENTITY_PROVEN"
-  | "MANAGEMENT_MODEL_PROVEN"
-  | "CURRENT_OFFICIAL_IMAGE_SET_PROVEN"
-  | "ASSET_MANIFEST_VALID"
   | "DELEGATION_SCOPE_VALID"
-  | "SELLER_OS_EXECUTOR_READY"
-  | "OFFICIAL_READBACK_CAPABILITY_READY"
+  | "AUTHORITY_STORAGE_READY"
+  | "REVOCATION_READY"
 
 export type MayelDelegationPredicateV1 = Readonly<{
   code: MayelDelegationPredicateCode
@@ -74,7 +71,8 @@ const REQUIRED_DELEGATION_PREDICATES = Object.freeze([
   "MAYEL_WORKSPACE_READY",
   "ACCOUNT_IDENTITY_PROVEN",
   "DELEGATION_SCOPE_VALID",
-  "SELLER_OS_EXECUTOR_READY",
+  "AUTHORITY_STORAGE_READY",
+  "REVOCATION_READY",
 ] as const)
 
 function stable(value: unknown): unknown {
@@ -121,18 +119,12 @@ const messages: Record<MayelDelegationPredicateCode, string> = {
   OWNER_AUTHENTICATED: "Inicia sesión como owner para conceder esta delegación.",
   MAYEL_WORKSPACE_READY: "La estación visual de Mayel todavía no está disponible.",
   ACCOUNT_IDENTITY_PROVEN: "Falta comprobar la cuenta eBay vinculada.",
-  MANAGEMENT_MODEL_PROVEN:
-    "Falta comprobar cómo está gestionado el listing actual en eBay.",
-  CURRENT_OFFICIAL_IMAGE_SET_PROVEN:
-    "Falta una lectura vigente de las imágenes oficiales del listing actual.",
-  ASSET_MANIFEST_VALID:
-    "La propuesta visual actual necesita volver a validarse antes de ejecutarse.",
   DELEGATION_SCOPE_VALID:
     "El alcance de control visual no coincide con el contrato seguro vigente.",
-  SELLER_OS_EXECUTOR_READY:
-    "El ejecutor visual seguro de Seller OS todavía no está disponible.",
-  OFFICIAL_READBACK_CAPABILITY_READY:
-    "La capacidad de comprobar el resultado oficial en eBay no está demostrada.",
+  AUTHORITY_STORAGE_READY:
+    "La persistencia durable de la delegación todavía no está disponible.",
+  REVOCATION_READY:
+    "La revocación segura de la delegación todavía no está disponible.",
 }
 
 export function buildMayelFullVisualDelegationPredicatesV1(input: {
@@ -140,24 +132,16 @@ export function buildMayelFullVisualDelegationPredicatesV1(input: {
   workspaceReady: boolean
   accountIdentityProven: boolean
   delegationScopeValid: boolean
-  sellerOsExecutorReady: boolean
-  managementModelProven: boolean | null
-  currentOfficialImageSetProven: boolean | null
-  assetManifestValid: boolean | null
-  officialReadbackCapabilityReady: boolean | null
+  authorityStorageReady: boolean
+  revocationReady: boolean
 }) {
   const values: Record<MayelDelegationPredicateCode, boolean | null> = {
     OWNER_AUTHENTICATED: input.ownerAuthenticated,
     MAYEL_WORKSPACE_READY: input.workspaceReady,
     ACCOUNT_IDENTITY_PROVEN: input.accountIdentityProven,
-    MANAGEMENT_MODEL_PROVEN: input.managementModelProven,
-    CURRENT_OFFICIAL_IMAGE_SET_PROVEN:
-      input.currentOfficialImageSetProven,
-    ASSET_MANIFEST_VALID: input.assetManifestValid,
     DELEGATION_SCOPE_VALID: input.delegationScopeValid,
-    SELLER_OS_EXECUTOR_READY: input.sellerOsExecutorReady,
-    OFFICIAL_READBACK_CAPABILITY_READY:
-      input.officialReadbackCapabilityReady,
+    AUTHORITY_STORAGE_READY: input.authorityStorageReady,
+    REVOCATION_READY: input.revocationReady,
   }
   const required = new Set<string>(REQUIRED_DELEGATION_PREDICATES)
   const predicates = (Object.keys(values) as MayelDelegationPredicateCode[])

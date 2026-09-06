@@ -165,21 +165,68 @@ export async function GET(request: Request) {
       ownerView: auth.accessRole === SELLER_OS_ACCESS_ROLES.owner })
     const supabase = getSupabaseAdminClient()
     const ownerView = auth.accessRole === SELLER_OS_ACCESS_ROLES.owner
+    const delegation = await readMayelFullVisualDelegationV1({ supabase,
+      accountKey: accountKey(), ownerAuthenticated: ownerView })
+    const currentAccountIdentity =
+      delegation.globalAccountIdentityProven === true
     const tasks = ownerView ? await Promise.all(workstation.tasks.map(async (task) => {
       if (task.status !== "OWNER_PREVIEW_READY") return task
       try {
         const phaseB = await readMayelVisualPhaseBPreviewV1({
           supabase, accountKey: accountKey(), taskId: task.visualTaskId,
         })
-        return { ...task, phaseB }
+        return { ...task, phaseB: { ...phaseB,
+          accountIdentityCurrent: currentAccountIdentity,
+          accountIdentityAuthority: delegation.accountIdentity,
+          legacyAccountMismatchSuppressed: false } }
       } catch (error) {
+        const errorCode = safeCode(error)
+        const staleLegacyMismatch = currentAccountIdentity && errorCode ===
+          "EBAY_DRAFT_ONLY_ACCOUNT_IDENTITY_MISMATCH"
         return { ...task, phaseB: { ownerCtaAvailable: false,
-          blocker: safeCode(error), marketplaceWritesOnGet: 0 } }
+          blocker: staleLegacyMismatch
+            ? "MAYEL_VISUAL_MANAGEMENT_MODEL_UNPROVEN" : errorCode,
+          managementModel: "MANAGEMENT_MODEL_UNPROVEN",
+          accountIdentityCurrent: currentAccountIdentity,
+          accountIdentityAuthority: delegation.accountIdentity,
+          legacyAccountMismatchSuppressed: staleLegacyMismatch,
+          historicalBlocker: staleLegacyMismatch ? errorCode : null,
+          executorCredentialProfileReady: !staleLegacyMismatch,
+          marketplaceWritesOnGet: 0 } }
       }
     })) : workstation.tasks
-    const delegation = await readMayelFullVisualDelegationV1({ supabase,
-      accountKey: accountKey(), ownerAuthenticated: ownerView,
-      taskDiagnostics: tasks })
+    const taskAuthorityProjection = tasks.map((task) => {
+      const phaseB = "phaseB" in task && task.phaseB &&
+        typeof task.phaseB === "object"
+        ? task.phaseB as {
+          accountIdentityCurrent?: boolean
+          managementModel?: string
+          legacyAccountMismatchSuppressed?: boolean
+        }
+        : null
+      return {
+        visualTaskId: task.visualTaskId,
+        accountIdentityCurrent: phaseB?.accountIdentityCurrent === true,
+        managementModel: phaseB?.managementModel ?? "NOT_PROJECTED",
+        legacyAccountMismatchSuppressed:
+          phaseB?.legacyAccountMismatchSuppressed === true,
+      }
+    })
+    console.info("MAYEL_FULL_VISUAL_DELEGATION_READ_MODEL_V1", {
+      ownerAuthenticated: ownerView,
+      accountIdentityProven: delegation.globalAccountIdentityProven,
+      workspaceReady: delegation.predicates.find((predicate) =>
+        predicate.code === "MAYEL_WORKSPACE_READY")?.pass === true,
+      scopeValid: delegation.predicates.find((predicate) =>
+        predicate.code === "DELEGATION_SCOPE_VALID")?.pass === true,
+      authorityStorageReady: delegation.authorityStorageReady,
+      revocationReady: delegation.revocationReady,
+      globalDelegationEligible: delegation.globalDelegationEligible,
+      buttonEnabled: delegation.authorizationButtonEnabled,
+      authorityCreated: Boolean(delegation.active),
+      taskAuthorityProjection,
+      marketplaceWrites: 0,
+    })
     return json({ success: true, workstation: { ...workstation, tasks },
       delegation,
       accessRole: auth.accessRole,

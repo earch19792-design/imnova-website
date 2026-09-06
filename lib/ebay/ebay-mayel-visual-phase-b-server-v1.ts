@@ -233,7 +233,6 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     fieldsToChange: context.plan.fieldsToChange,
     mainImageProtected: context.plan.mainImageProtected,
     mainImageChanged: context.plan.mainImageChanged,
-    account: "Cuenta eBay vinculada",
     marketplace: "EBAY_US",
     managementModel: context.management.managementModel,
     managementModelAuthority: context.management.managementEvidenceSource,

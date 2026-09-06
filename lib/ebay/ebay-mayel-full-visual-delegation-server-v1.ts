@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-import { ebayDraftOnlyRuntimeStatus, preflightEbayDraftOnlyMobile } from
-  "./ebay-draft-only-gateway"
+import { readCanonicalEbayAccountIdentityAuthorityV1 } from
+  "./ebay-account-policy-readonly-gateway"
 import {
   buildMayelFullVisualDelegationPredicatesV1,
   MAYEL_FULL_VISUAL_ALLOWED_ACTIONS,
@@ -62,68 +62,42 @@ async function activeAuthority(input: {
   return data as JsonRecord | null
 }
 
-function taskCapabilitySummary(tasks: readonly unknown[]) {
-  const phases = tasks.flatMap((value) => {
-    const phase = record(record(value).phaseB)
-    return Object.keys(phase).length ? [phase] : []
-  })
-  if (!phases.length) return {
-    managementModelProven: null,
-    currentOfficialImageSetProven: null,
-    assetManifestValid: null,
-    officialReadbackCapabilityReady: null,
-  }
-  return {
-    managementModelProven: phases.some((phase) =>
-      ["INVENTORY_API_MANAGED", "TRADING_MANAGED"]
-        .includes(String(phase.managementModel))),
-    currentOfficialImageSetProven: phases.some((phase) =>
-      /^sha256:[0-9a-f]{64}$/.test(
-        String(phase.currentOfficialImageSetDigest ?? ""))),
-    assetManifestValid: phases.some((phase) =>
-      /^sha256:[0-9a-f]{64}$/.test(
-        String(phase.visualManifestDigest ?? ""))
-      && phase.blocker !== "MAYEL_VISUAL_MANIFEST_INVALID"),
-    officialReadbackCapabilityReady: phases.some((phase) =>
-      /^sha256:[0-9a-f]{64}$/.test(
-        String(phase.currentOfficialImageSetDigest ?? ""))),
-  }
-}
-
 export async function readMayelFullVisualDelegationV1(input: {
   supabase: SupabaseClient
   accountKey: string
   ownerAuthenticated: boolean
-  taskDiagnostics?: readonly unknown[]
   fetchImpl?: typeof fetch
 }) {
-  const [{ count: taskCount, error: workspaceError }, authority,
+  const [{ count: taskCount, error: workspaceError }, authorityResult,
     identityResult] = await Promise.all([
     input.supabase.from("ebay_mayel_visual_tasks_v1")
       .select("id", { count: "exact", head: true })
       .eq("marketplace_account_key", input.accountKey),
-    activeAuthority(input),
+    activeAuthority(input)
+      .then((authority) => ({ authority, error: null as string | null }))
+      .catch((error) => ({ authority: null,
+        error: error instanceof Error ? error.message :
+          "MAYEL_VISUAL_DELEGATION_READ_FAILED" })),
     input.ownerAuthenticated
-      ? preflightEbayDraftOnlyMobile({}, input.fetchImpl ?? fetch)
-        .then((preflight) => ({ preflight, error: null as string | null }))
-        .catch((error) => ({ preflight: null,
+      ? readCanonicalEbayAccountIdentityAuthorityV1(
+        input.fetchImpl ?? fetch)
+        .then((authority) => ({ authority, error: null as string | null }))
+        .catch((error) => ({ authority: null,
           error: error instanceof Error ? error.message :
             "EBAY_IDENTITY_PREFLIGHT_FAILED" }))
-      : Promise.resolve({ preflight: null, error: null as string | null }),
+      : Promise.resolve({ authority: null, error: null as string | null }),
   ])
-  const runtime = ebayDraftOnlyRuntimeStatus()
-  const taskCapabilities = taskCapabilitySummary(input.taskDiagnostics ?? [])
+  const authorityStorageReady = authorityResult.error === null
   const predicateState = buildMayelFullVisualDelegationPredicatesV1({
     ownerAuthenticated: input.ownerAuthenticated,
     workspaceReady: !workspaceError,
     accountIdentityProven:
-      identityResult.preflight?.identity.status === "BOUND",
+      identityResult.authority?.status === "BOUND",
     delegationScopeValid: mayelFullVisualScopeContractValidV1(),
-    sellerOsExecutorReady: runtime.enabled && runtime.configured
-      && runtime.target === "PRODUCTION",
-    ...taskCapabilities,
+    authorityStorageReady,
+    revocationReady: authorityStorageReady,
   })
-  const active = publicAuthority(authority)
+  const active = publicAuthority(authorityResult.authority)
   return Object.freeze({
     contractVersion: MAYEL_FULL_VISUAL_DELEGATION_VERSION,
     authorizationButtonRendered: input.ownerAuthenticated,
@@ -138,7 +112,18 @@ export async function readMayelFullVisualDelegationV1(input: {
     active,
     fullVisualDelegationActive: active?.status === "ACTIVE",
     workspaceTaskCount: taskCount ?? null,
-    identityReadStatus: identityResult.preflight
+    globalDelegationEligible: predicateState.buttonEnabled,
+    globalAccountIdentityProven:
+      identityResult.authority?.status === "BOUND",
+    accountIdentity: identityResult.authority ? {
+      status: identityResult.authority.status,
+      sourceAuthority: identityResult.authority.sourceAuthority,
+      observedAt: identityResult.authority.observedAt,
+      marketplaceId: identityResult.authority.marketplaceId,
+    } : null,
+    authorityStorageReady,
+    revocationReady: authorityStorageReady,
+    identityReadStatus: identityResult.authority
       ? "OFFICIAL_IDENTITY_READ_PASS" : "OFFICIAL_IDENTITY_READ_FAILED",
     identityFailureClass: identityResult.error,
     scope: {
@@ -157,7 +142,6 @@ export async function authorizeMayelFullVisualDelegationV1(input: {
   supabase: SupabaseClient
   accountKey: string
   ownerUserId: string
-  taskDiagnostics?: readonly unknown[]
   fetchImpl?: typeof fetch
 }) {
   const current = await readMayelFullVisualDelegationV1({ ...input,

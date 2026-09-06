@@ -520,6 +520,33 @@ export async function preflightEbayAccountPoliciesReadonly(
   return executePreflight(config, requested, fetchImpl, false)
 }
 
+/**
+ * Canonical account identity authority shared by owner-facing control planes.
+ * It intentionally proves only the current official account binding; listing
+ * management models and write credential profiles remain separate execution
+ * concerns.
+ */
+export async function readCanonicalEbayAccountIdentityAuthorityV1(
+  fetchImpl: typeof fetch = fetch,
+) {
+  const config = gatewayConfig()
+  if (!config.configured) {
+    if (!config.oauthConfigured) {
+      throw new Error("EBAY_ACCOUNT_POLICY_READONLY_OAUTH_MISSING")
+    }
+    throw new Error("EBAY_ACCOUNT_POLICY_IDENTITY_UNBOUND")
+  }
+  const authenticated = await authenticatedToken(config, fetchImpl, false)
+  return Object.freeze({
+    status: authenticated.identityStatus,
+    proven: authenticated.identityStatus === "BOUND",
+    sourceAuthority: "OFFICIAL_EBAY_ACCOUNT_IDENTITY_READ_V1" as const,
+    observedAt: new Date().toISOString(),
+    marketplaceId: MARKETPLACE_ID,
+    sanitized: true,
+  })
+}
+
 export async function readEbaySellerStoreSubscriptionReadonly(
   fetchImpl: typeof fetch = fetch,
 ) {
