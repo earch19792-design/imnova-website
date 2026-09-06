@@ -45,20 +45,22 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
   accountKey: string
   accountAlias: string | null
   now?: Date
+  forceOfficialRead?: boolean
   readOfficial?: typeof getEbayCommercialMonitorLiveReadonly
 }>) {
   const now = input.now ?? new Date()
   const stored = await readCurrentLiveAuthorityV1({ supabase: input.supabase,
     accountKey: input.accountKey, now })
-  if (stored.currentState === "CURRENT_FRESH") return Object.freeze({
+  if (stored.currentState === "CURRENT_FRESH" &&
+      input.forceOfficialRead !== true) return Object.freeze({
     status: "CURRENT_FRESH_REUSED" as const, authority: stored,
-    officialReadAttempted: false, databaseWrites: 0,
+    live: null, officialReadAttempted: false, databaseWrites: 0,
     marketplaceWrites: 0 as const,
   })
   if (stored.nextRetryAt && Date.parse(stored.nextRetryAt) > now.getTime()) {
     return Object.freeze({ status: "WAITING_FOR_RETRY" as const,
       authority: stored, officialReadAttempted: false, databaseWrites: 0,
-      marketplaceWrites: 0 as const })
+      live: null, marketplaceWrites: 0 as const })
   }
 
   const runId = randomUUID()
@@ -70,7 +72,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     "CURRENT_LIVE_AUTHORITY_RECOVERY_CLAIM_FAILED")
   if (claimed.claimed !== true) return Object.freeze({
     status: "SINGLE_FLIGHT_ALREADY_RUNNING" as const, authority: stored,
-    officialReadAttempted: false, databaseWrites: 0,
+    live: null, officialReadAttempted: false, databaseWrites: 0,
     marketplaceWrites: 0 as const,
   })
 
@@ -102,7 +104,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
       const authority = await readCurrentLiveAuthorityV1({
         supabase: input.supabase, accountKey: input.accountKey, live, now })
       return Object.freeze({ status: "CURRENT_UNAVAILABLE" as const,
-        authority, officialReadAttempted: true, databaseWrites: 1,
+        authority, live, officialReadAttempted: true, databaseWrites: 1,
         marketplaceWrites: 0 as const })
     }
     const rows = rowsForPersistence(live)
@@ -125,7 +127,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     const authority = await readCurrentLiveAuthorityV1({
       supabase: input.supabase, accountKey: input.accountKey, live, now })
     return Object.freeze({ status: "RECOVERED_CURRENT_FRESH" as const,
-      authority, officialReadAttempted: true, databaseWrites: 1,
+      authority, live, officialReadAttempted: true, databaseWrites: 1,
       marketplaceWrites: 0 as const })
   } catch (error) {
     const code = safeCode(error instanceof Error ? error.message : null,

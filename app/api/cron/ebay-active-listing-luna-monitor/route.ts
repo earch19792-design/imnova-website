@@ -40,8 +40,8 @@ import {
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { getSellerOsStockGuardRuntimeBoundary } from
   "@/lib/ebay/environment-boundaries"
-import { readCurrentLiveAuthorityV1 } from
-  "@/lib/ebay/ebay-current-live-authority-v1"
+import { runCurrentLiveAuthorityRecoveryV1 } from
+  "@/lib/ebay/ebay-current-live-authority-recovery-v1"
 
 const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
   "366608128809",
@@ -280,14 +280,12 @@ export async function POST(req: Request) {
         protectedSessionRequired: false as const,
         protectedSessionStatus: protectedSession.status,
       })
-      const live = await getEbayCommercialMonitorLiveReadonly({
-        accountKey,
-        accountAlias: account.accountAlias,
+      const liveRecovery = await runCurrentLiveAuthorityRecoveryV1({
+        supabase, accountKey, accountAlias: account.accountAlias,
+        forceOfficialRead: true,
       })
-      const liveAuthority = await readCurrentLiveAuthorityV1({ supabase,
-        accountKey, live })
-      if (liveAuthority.currentState !== "CURRENT_FRESH") {
-        const failureCode = liveAuthority.sourceFailureCode ??
+      if (liveRecovery.authority.currentState !== "CURRENT_FRESH") {
+        const failureCode = liveRecovery.authority.sourceFailureCode ??
           "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE"
         const { error: leaseFinishError } = await supabase.rpc(
           "finish_ebay_targeted_luna_monitor_run",
@@ -298,22 +296,24 @@ export async function POST(req: Request) {
           "TARGETED_LUNA_MONITOR_FINISH_FAILED")
         leaseOwned = false
         await finishSellerAutomationRun(supabase, runId, {
-          status: "partial",
-          claimedTasks: 0,
-          successfulTasks: 0,
+          status: "partial", claimedTasks: 0, successfulTasks: 0,
           failedTasks: 0,
           metrics: { stage: "LUNA_PRODUCTION_STOCK_POLLING_V1",
-            accountKey, activation, currentLiveCount: null,
-            currentLiveAuthority: liveAuthority,
+            accountKey, activation,
+            currentLiveCount: null,
+            currentLiveAuthority: liveRecovery.authority,
+            currentLiveRecoveryStatus: liveRecovery.status,
             failureClass: "CURRENT_LIVE_AUTHORITY_UNAVAILABLE",
             falseZeroPrevented: true },
         })
         return NextResponse.json({ success: false, status: "degraded",
-          currentLiveAuthority: liveAuthority,
+          currentLiveAuthority: liveRecovery.authority,
           ownerActionRequired: false,
           safety: { marketplaceWrites: 0, lunaWrites: 0,
             falseZeroPrevented: true } }, { status: 503 })
       }
+      const live = liveRecovery.live
+      if (!live) throw new Error("CURRENT_LIVE_OFFICIAL_READ_REQUIRED")
       const analyticsLastKnownGood = await persistAnalyticsLastKnownGoodV1({
         supabase,
         accountKey,
