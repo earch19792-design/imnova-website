@@ -559,6 +559,7 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
   busy: boolean; onDone: () => Promise<void> }) {
   const [uploads, setUploads] = useState<File[]>([])
   const [rights, setRights] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [message, setMessage] = useState("")
   const activeCount = task.outputs.filter((output) =>
     output.status !== "rejected").length
@@ -566,7 +567,8 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
   const selectionValid = uploads.length > 0 && uploads.length <= remaining
 
   async function upload() {
-    if (!rights || !selectionValid) return
+    if (uploading || !rights || !selectionValid) return
+    setUploading(true)
     setMessage("")
     try {
       const form = new FormData()
@@ -582,6 +584,8 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
     } catch (error) {
       setMessage(error instanceof Error ? error.message :
         "No pudimos subir esta imagen.")
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -589,6 +593,7 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
   return <section className="rounded-2xl border border-dashed border-[#1d5961]/45 bg-[#f0f5f3] p-5">
     <div className="flex items-center gap-2"><Upload className="h-5 w-5 text-[#1d5961]" />
       <h4 className="font-semibold">Subir imágenes creadas por Mayel</h4></div>
+    <p className="mt-2 text-xs font-semibold text-[#1d5961]">Carga disponible · {remaining} de 6 espacios libres</p>
     <p className="mt-2 text-sm leading-6 text-[#5f645e]">El producto ya está ligado por la tarea. No escribas un SKU. Cada archivo entra primero a cuarentena privada.</p>
     <p className="mt-2 rounded-xl bg-white p-3 text-xs leading-5 text-[#5f645e]">
       La falta de un dato factual no bloquea el trabajo visual general. En los
@@ -615,9 +620,9 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
         onChange={(event) => setRights(event.target.checked)} className="mt-1" />
       Confirmo que este archivo fue creado en mi propia suscripción de ChatGPT para esta tarea y puedo subirlo a Seller OS.
     </label>
-    <button type="button" disabled={busy || !rights || !selectionValid}
+    <button type="button" disabled={busy || uploading || !rights || !selectionValid}
       onClick={() => void upload()}
-      className="mt-4 inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40"><Upload className="h-4 w-4" />Subir imágenes</button>
+      className="mt-4 inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40"><Upload className="h-4 w-4" />{uploading ? "Subiendo…" : "Subir imágenes"}</button>
     {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
   </section>
 }
@@ -1274,6 +1279,8 @@ export function MayelVisualWorkstation({ canOperate,
     useState<PromotionDelegation | null>(null)
   const [marketRevalidationByItemId, setMarketRevalidationByItemId] =
     useState<Record<string, MarketRevalidationStatus>>({})
+  const [selectedVisualTaskId, setSelectedVisualTaskId] =
+    useState<string | null>(null)
 
   const load = useCallback(async () => {
     const payload = await visualRequest(
@@ -1288,25 +1295,38 @@ export function MayelVisualWorkstation({ canOperate,
       CommercialDelegation | undefined) ?? null)
     setPromotionDelegation((payload.promotionDelegation as
       PromotionDelegation | undefined) ?? null)
-    const reads = await Promise.allSettled(nextTasks.map(async (task) => {
-      const statusPayload = await visualRequest(
-        "/api/admin/ebay/live-optimization-operator", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "READ_MARKET_REVALIDATION_STATUS",
-            ebayItemId: task.ebayItemId }),
-        })
-      return [task.ebayItemId,
-        statusPayload.result as MarketRevalidationStatus] as const
-    }))
-    const nextStatuses: Record<string, MarketRevalidationStatus> = {}
-    for (const read of reads) {
-      if (read.status === "fulfilled" &&
-          read.value[1]?.connectorAvailable === true) {
-        nextStatuses[read.value[0]] = read.value[1]
-      }
-    }
-    setMarketRevalidationByItemId(nextStatuses)
   }, [])
+
+  useEffect(() => {
+    if (!selectedVisualTaskId) return
+    const selectedTask = tasks.find((task) =>
+      task.visualTaskId === selectedVisualTaskId)
+    if (!selectedTask) return
+    let active = true
+    void visualRequest("/api/admin/ebay/live-optimization-operator", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "READ_MARKET_REVALIDATION_STATUS",
+        ebayItemId: selectedTask.ebayItemId }),
+    }).then((payload) => {
+      const status = payload.result as MarketRevalidationStatus | undefined
+      if (active && status?.connectorAvailable === true) {
+        setMarketRevalidationByItemId((current) => ({ ...current,
+          [selectedTask.ebayItemId]: status }))
+      }
+    }).catch(() => {
+      // Commercial intelligence is best-effort and never blocks visual work.
+    })
+    return () => { active = false }
+  }, [selectedVisualTaskId, tasks])
+
+  useEffect(() => {
+    if (!selectedVisualTaskId) return
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`mayel-task-${selectedVisualTaskId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [selectedVisualTaskId, tasks])
 
   useEffect(() => {
     let active = true
@@ -1329,12 +1349,17 @@ export function MayelVisualWorkstation({ canOperate,
     setBusy(true)
     setMessage("")
     try {
-      await visualRequest(
+      const payload = await visualRequest(
         "/api/admin/ebay/mayel-visual-workstation", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "ENSURE_VISUAL_TASK", ebayItemId }),
         })
+      const visualTaskId = typeof payload.visualTaskId === "string"
+        ? payload.visualTaskId : null
+      if (!visualTaskId) throw new Error(
+        "Este listing todavía no tiene una tarea visual elegible.")
       await load()
+      setSelectedVisualTaskId(visualTaskId)
     } catch (error) {
       setMessage(error instanceof Error ? error.message :
         "No pudimos abrir este listing en la Estación visual.")
@@ -1375,9 +1400,18 @@ export function MayelVisualWorkstation({ canOperate,
       <h3 className="font-serif text-2xl font-semibold">No hay una oportunidad visual lista</h3>
       <p className="mt-2 text-sm leading-6 text-[#64675f]">Seller OS no fabricará una tarea. Aparecerá aquí cuando una publicación activa tenga identidad, verdad del producto, imágenes autorizadas y una oportunidad visual demostrada.</p>
     </div>}
-    <div className="mt-6 space-y-7">{tasks.map((task) => <article
+    {selectedVisualTaskId && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#e3ebe1] p-4 text-sm text-[#425143]">
+      <strong>Trabajando ahora · tarea visual abierta</strong>
+      <button type="button" onClick={() => setSelectedVisualTaskId(null)}
+        className="min-h-10 rounded-xl border border-[#82947d] bg-white px-3 text-xs font-semibold">Ver todas las tareas</button>
+    </div>}
+    <div className="mt-6 space-y-7">{tasks.filter((task) =>
+      !selectedVisualTaskId || task.visualTaskId === selectedVisualTaskId)
+      .map((task) => <article
       key={task.visualTaskId}
-      className="rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-5 shadow-[0_18px_50px_rgba(55,45,32,0.07)] sm:p-7">
+      id={`mayel-task-${task.visualTaskId}`}
+      data-selected-visual-task={task.visualTaskId === selectedVisualTaskId}
+      className="scroll-mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-5 shadow-[0_18px_50px_rgba(55,45,32,0.07)] sm:p-7">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#74866d]">Tarea visual · {task.sku}</p>
           <h3 className="mt-2 font-serif text-2xl font-semibold">{task.productTitle}</h3>
@@ -1403,11 +1437,16 @@ export function MayelVisualWorkstation({ canOperate,
         <button type="button" onClick={() => void navigator.clipboard.writeText(task.prompt)}
           className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-[#26312d]"><Clipboard className="h-4 w-4" />Copiar prompt</button>
       </section>}
-      <div className="mt-6 grid gap-2 sm:grid-cols-3">{task.promptSlots.map((slot) =>
+      <section className="mt-6" aria-label="Checklist creativo del listing">
+        <div className="flex items-center gap-2"><Check className="h-5 w-5 text-[#1d5961]" />
+          <h4 className="font-semibold">Checklist creativo del listing</h4></div>
+        <p className="mt-1 text-xs leading-5 text-[#6f736c]">Aquí ves qué puedes crear. Después de subir cada imagen aparecerá su checklist de control de calidad.</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">{task.promptSlots.map((slot) =>
         <div key={slot.role} className={`rounded-xl p-3 text-xs ${slot.status === "READY" ? "bg-[#e3ebe1] text-[#425143]" : "bg-[#f7e9de] text-[#704d3c]"}`}>
           <strong>{labels[slot.role]}</strong><span className="mt-1 block">{slot.status === "READY" ? "Libre para crear" : "Crear sin claim factual"}</span>
           {slot.factClaimRestricted && <span className="mt-1 block">Evidencia factual pendiente; el trabajo visual continúa.</span>}
         </div>)}</div>
+      </section>
       {canOperate && <div className="mt-6"><UploadPanel task={task} busy={busy}
         onDone={refresh} /></div>}
       {task.outputs.length > 0 && <section className="mt-7">
