@@ -98,6 +98,20 @@ function stable(value: unknown): unknown {
     .map(([key, entry]) => [key, stable(entry)]))
 }
 
+function managementReadErrors(value: unknown) {
+  const errors = Array.isArray(record(value).errors)
+    ? record(value).errors as unknown[] : []
+  return errors.slice(0, 3).map((entry) => {
+    const error = record(entry)
+    return Object.freeze({
+      errorId: text(error.errorId, 40) || null,
+      domain: text(error.domain, 80) || null,
+      category: text(error.category, 80) || null,
+      message: text(error.message, 240) || null,
+    })
+  })
+}
+
 async function readCanonicalListingManagementEvidence(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -155,6 +169,10 @@ async function readCanonicalListingManagementEvidence(input: {
     durableAccountIdentityObservedAt: durableVerifiedAt,
     accountIdentityProven: true as const,
     marketplaceId: resources.marketplaceId,
+    resourceErrors: Object.freeze({
+      inventory: Object.freeze(managementReadErrors(resources.inventory.body)),
+      offers: Object.freeze(managementReadErrors(resources.offers.body)),
+    }),
   })
 }
 
@@ -365,6 +383,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
       offersReadComplete: context.management.offersReadComplete,
       exactPublishedOfferCount: context.management.exactPublishedOfferCount,
       groupedInventoryItem: context.management.groupedInventoryItem,
+      resourceErrors: context.management.resourceErrors,
     },
     safeRebaseAvailable,
     rebaseEligible: context.plan.blocker ===
