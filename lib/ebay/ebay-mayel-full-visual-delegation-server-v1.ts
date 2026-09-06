@@ -62,6 +62,27 @@ async function activeAuthority(input: {
   return data as JsonRecord | null
 }
 
+async function canonicalAccountIdentity(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  fetchImpl?: typeof fetch
+}) {
+  const { data: vaultRefreshToken, error: vaultReadError } =
+    await input.supabase.rpc(
+      "get_ebay_account_policy_readonly_refresh_token_v1",
+      { p_account_key: input.accountKey },
+    )
+  if (vaultReadError) {
+    throw new Error("EBAY_ACCOUNT_POLICY_OAUTH_VAULT_READ_FAILED")
+  }
+  const refreshToken = typeof vaultRefreshToken === "string"
+    ? vaultRefreshToken.trim() : ""
+  return readCanonicalEbayAccountIdentityAuthorityV1(
+    input.fetchImpl ?? fetch,
+    refreshToken,
+  )
+}
+
 export async function readMayelFullVisualDelegationV1(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -79,8 +100,7 @@ export async function readMayelFullVisualDelegationV1(input: {
         error: error instanceof Error ? error.message :
           "MAYEL_VISUAL_DELEGATION_READ_FAILED" })),
     input.ownerAuthenticated
-      ? readCanonicalEbayAccountIdentityAuthorityV1(
-        input.fetchImpl ?? fetch)
+      ? canonicalAccountIdentity(input)
         .then((authority) => ({ authority, error: null as string | null }))
         .catch((error) => ({ authority: null,
           error: error instanceof Error ? error.message :

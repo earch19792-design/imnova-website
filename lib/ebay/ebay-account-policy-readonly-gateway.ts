@@ -528,8 +528,9 @@ export async function preflightEbayAccountPoliciesReadonly(
  */
 export async function readCanonicalEbayAccountIdentityAuthorityV1(
   fetchImpl: typeof fetch = fetch,
+  refreshTokenOverride = "",
 ) {
-  const config = gatewayConfig()
+  const config = gatewayConfig(refreshTokenOverride)
   if (!config.configured) {
     if (!config.oauthConfigured) {
       throw new Error("EBAY_ACCOUNT_POLICY_READONLY_OAUTH_MISSING")
