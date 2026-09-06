@@ -289,6 +289,8 @@ async function loadContext(input: {
   }
   const management = reconcileManagementWithOfficialTradingListing(
     baseManagement, official)
+  const tradingRateLimited = tradingReadFailureClass?.endsWith(
+    "_EBAY_ERROR_518") === true
   const inventoryImageUrls = Array.isArray(record(
     record(management.inventoryItemPayload).product).imageUrls)
     ? record(record(management.inventoryItemPayload).product).imageUrls as unknown[]
@@ -319,7 +321,9 @@ async function loadContext(input: {
   })
   const managementReady = management.managementModel === "INVENTORY_API_MANAGED"
   const managementBlocker = management.managementModel === "TRADING_MANAGED"
-    ? "MAYEL_VISUAL_TRADING_EXECUTOR_EXPLICITLY_GATED_SINGLE_WRITE_CONTRACT"
+    ? tradingRateLimited
+      ? "TRADING_API_RATE_LIMIT"
+      : "MAYEL_VISUAL_TRADING_EXECUTOR_EXPLICITLY_GATED_SINGLE_WRITE_CONTRACT"
     : management.managementModel === "MANAGEMENT_MODEL_UNPROVEN"
       ? "MAYEL_VISUAL_MANAGEMENT_MODEL_UNPROVEN" : null
   const inventoryManagedIdentityProven = management.managementModel ===
@@ -351,6 +355,7 @@ async function loadContext(input: {
       ?? (official ? "EBAY_TRADING_GET_ITEM_V1" : null),
     officialReadFailureClass,
     tradingReadFailureClass,
+    tradingRateLimited,
   }
 }
 
@@ -394,6 +399,12 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     && unauthorizedFieldDiffCount === 0
     && context.managementReady
     && !context.execution
+  const applicationStatus = context.tradingRateLimited
+    ? "WAITING_FOR_EBAY" as const
+    : safeToExecuteVisualChange ? "READY" as const : "BLOCKED" as const
+  const applicationReason = context.tradingRateLimited
+    ? "eBay Trading alcanzó temporalmente su límite de llamadas. Tu trabajo está guardado y se aplicará cuando vuelva a estar disponible."
+    : null
   const preview = {
     contractVersion: "MAYEL_VISUAL_WORKSTATION_PHASE_B_V1",
     visualManifestId: uuid(context.task.visual_manifest_id),
@@ -433,6 +444,8 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     unauthorizedFieldDiffCount,
     safeToExecuteVisualChange,
     readyForMayelPhysicalCanary: safeToExecuteVisualChange,
+    applicationStatus,
+    applicationReason,
     managementDiagnostics: {
       inventoryHttpStatus: context.management.inventoryHttpStatus,
       offersHttpStatus: context.management.offersHttpStatus,
@@ -494,6 +507,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     officialReadAuthority: context.officialReadAuthority,
     officialReadFailureClass: context.officialReadFailureClass,
     tradingReadFailureClass: context.tradingReadFailureClass,
+    applicationStatus,
     currentImageSetProven: context.currentImageSetProven,
     mayelManifestValid,
     visualOnlyDiff,

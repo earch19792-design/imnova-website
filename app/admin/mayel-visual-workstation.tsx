@@ -75,6 +75,8 @@ type VisualTask = {
     unauthorizedFieldDiffCount?: number | null
     safeToExecuteVisualChange?: boolean
     readyForMayelPhysicalCanary?: boolean
+    applicationStatus?: "WAITING_FOR_EBAY" | "READY" | "BLOCKED"
+    applicationReason?: string | null
     managementDiagnostics?: {
       inventoryHttpStatus?: number
       offersHttpStatus?: number
@@ -506,6 +508,7 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
   ]
   const delegationActive = delegation?.fullVisualDelegationActive === true
   const accountIdentityCurrent =
+    phaseB?.accountIdentityProven === true ||
     delegation?.globalAccountIdentityProven === true
   const phase = phaseB?.execution?.phase
   const applied = phaseB?.execution?.appliedAndOfficiallyVerified === true
@@ -526,8 +529,8 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
       <p>Cuenta eBay: {accountIdentityCurrent ? "comprobada" : "por comprobar"}</p>
       <p>Marketplace: {phaseB?.marketplace ?? "EBAY_US"}</p>
       <p>Modelo de gestión: {phaseB?.managementModel === "INVENTORY_API_MANAGED"
-        ? "Inventory API comprobado" : phaseB?.managementModel ===
-          "TRADING_MANAGED" ? "Trading comprobado" : "por comprobar"}</p>
+        ? "Inventory API" : phaseB?.managementModel ===
+          "TRADING_MANAGED" ? "Trading" : "por comprobar"}</p>
       <p>Imagen principal: {delegationActive
         ? "Mayel puede modificarla bajo delegación activa"
         : "incluida en la delegación visual pendiente"}</p>
@@ -541,13 +544,18 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
       <p>Imágenes oficiales actuales: {phaseB?.currentImageSetProven
         ? "comprobadas" : "por comprobar"}</p>
       <p>Manifest de Mayel: {phaseB?.mayelManifestValid
-        ? "reconciliado" : "requiere reconciliación"}</p>
+        ? "listo" : "requiere reconciliación"}</p>
       <p>Cambio propuesto: {phaseB?.visualOnlyDiff
         && phaseB?.unauthorizedFieldDiffCount === 0
         ? "sólo visual · otros campos protegidos" : "no comprobado"}</p>
-      <p>Canary físico: {phaseB?.readyForMayelPhysicalCanary
-        ? "listo para ejecución de Seller OS" : "todavía bloqueado"}</p>
+      <p>Aplicación en eBay: {phaseB?.applicationStatus === "WAITING_FOR_EBAY"
+        ? "EN ESPERA" : phaseB?.applicationStatus === "READY"
+          ? "LISTA" : "BLOQUEADA"}</p>
     </div>
+    {phaseB?.applicationReason &&
+      <p className="mt-3 rounded-xl bg-[#f7e9de] p-3 text-sm font-semibold text-[#704d3c]">
+        {phaseB.applicationReason}
+      </p>}
     {phaseB?.managementModel === "MANAGEMENT_MODEL_UNPROVEN" &&
       <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
         <summary className="cursor-pointer font-semibold">Por qué el modelo de gestión sigue pendiente</summary>
@@ -584,6 +592,7 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
         `Estado de la actualización: ${phase.replaceAll("_", " ")}`}
     </p>}
     {canOwnerAuthorize && !phaseB?.ownerCtaAvailable && !phase &&
+      !phaseB?.applicationReason &&
       <p className="mt-3 text-xs font-semibold text-[#704d3c]">
         {phaseB?.managementModel === "MANAGEMENT_MODEL_UNPROVEN"
           ? "Mayel puede trabajar la propuesta visual. Seller OS todavía debe comprobar cómo está gestionado este listing antes de aplicar cambios en eBay."
@@ -591,7 +600,7 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
             ? "Mayel puede trabajar la propuesta visual. Seller OS debe reconciliar primero el conjunto vigente de imágenes oficiales."
             : "La ejecución permanece bloqueada hasta completar la validación específica del listing."}
       </p>}
-    {!canOwnerAuthorize && <p className="mt-2 text-xs font-semibold text-[#704d3c]">Mayel prepara y aprueba los recursos. La decisión final pertenece al owner.</p>}
+    {!canOwnerAuthorize && <p className="mt-2 text-xs font-semibold text-[#704d3c]">Mayel decide y aprueba los cambios visuales dentro de su delegación. Seller OS los valida y aplica de forma segura.</p>}
   </section>
 }
 

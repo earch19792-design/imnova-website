@@ -196,6 +196,8 @@ export async function GET(request: Request) {
         rebaseBlocker: phaseB.rebaseBlocker,
         safeToExecuteVisualChange: phaseB.safeToExecuteVisualChange,
         readyForMayelPhysicalCanary: phaseB.readyForMayelPhysicalCanary,
+        applicationStatus: phaseB.applicationStatus,
+        applicationReason: phaseB.applicationReason,
         blocker: phaseB.blocker,
         managementDiagnostics: phaseB.managementDiagnostics,
       }, marketplaceWrites: 0 })
@@ -219,7 +221,7 @@ export async function GET(request: Request) {
       accountKey: accountKey(), ownerAuthenticated: ownerView })
     const currentAccountIdentity =
       delegation.globalAccountIdentityProven === true
-    const tasks = ownerView ? await Promise.all(workstation.tasks.map(async (task) => {
+    const tasks = await Promise.all(workstation.tasks.map(async (task) => {
       if (task.status !== "OWNER_PREVIEW_READY") return task
       try {
         const phaseB = await readMayelVisualPhaseBPreviewV1({
@@ -244,7 +246,7 @@ export async function GET(request: Request) {
           executorCredentialProfileReady: !staleLegacyMismatch,
           marketplaceWritesOnGet: 0 } }
       }
-    })) : workstation.tasks
+    }))
     const taskAuthorityProjection = tasks.map((task) => {
       const phaseB = "phaseB" in task && task.phaseB &&
         typeof task.phaseB === "object"
