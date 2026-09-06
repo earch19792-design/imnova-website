@@ -7,6 +7,11 @@ import {
   type CommercialMonitorGetDto,
   type EbayListingQualityRecommendation,
 } from "./commercial-monitor-readonly-contract"
+import {
+  buildMayelCommercialIntelligenceV1,
+  type MayelCommercialIntelligenceV1,
+  type MayelMarketEvidenceRowV1,
+} from "./ebay-mayel-commercial-intelligence-v1"
 import type { SellerOsHeroVisualReviewV1 } from
   "./ebay-seller-os-visual-quality-v1"
 import { currentLiveListingsForMonitorV1 } from
@@ -154,6 +159,7 @@ export type RemoteLiveOperatorListingV1 = Readonly<{
     exactListingAssociation: boolean
   }>[]
   officialQualitySignals: readonly RemoteListingQualitySignalV1[]
+  commercialIntelligence: MayelCommercialIntelligenceV1
   visualReview: Readonly<{
     status: "AVAILABLE" | "PARTIAL" | "UNPROVEN"
     imageUrl: string | null
@@ -803,6 +809,9 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
   salesResults: RemoteLiveOperatorSalesResultsV1
   imageProposals?: readonly RemoteOperatorPreparedImageProposalV1[]
   listingQualitySignals?: readonly RemoteListingQualitySignalV1[]
+  marketEvidence?: readonly MayelMarketEvidenceRowV1[]
+  marketEvidenceReadStatus?: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE"
+  marketEvidenceLimitationCode?: string | null
   safeMutationCanary?: RemoteOperatorSafeMutationCanaryV1 | null
   improvementExecutions?: readonly unknown[]
   operatorUserId?: string | null
@@ -923,6 +932,15 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
             label: "Disponible después de la certificación física.",
             ownerReason: "La escritura LIVE permanece cerrada hasta completar el canary físico." }
         : resolvedAction
+    const commercialIntelligence = buildMayelCommercialIntelligenceV1({
+      listing,
+      commercialDashboard: input.commercialDashboard,
+      marketEvidence: input.marketEvidence ?? [],
+      marketEvidenceReadStatus: input.marketEvidenceReadStatus,
+      marketEvidenceLimitationCode: input.marketEvidenceLimitationCode,
+      qualityRecommendations: qualityReport.recommendations,
+      decisionReasonCodes: decision?.reasonCodes ?? [],
+    })
     return Object.freeze({
       ebayItemId: listing.identity.itemId,
       title: listing.identity.title ?? `Listing ${listing.identity.itemId}`,
@@ -961,6 +979,7 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
         exactListingAssociation: row.associationStatus !== "UNPROVEN",
       }))),
       officialQualitySignals: Object.freeze(officialQualitySignals),
+      commercialIntelligence,
       visualReview: Object.freeze({
         status: visual?.status ?? "UNPROVEN",
         imageUrl: visual?.heroImageUrl ?? listing.identity.primaryImageUrl,
@@ -1093,6 +1112,15 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       safeLiveTitleCanaryApplyEnabled:
         input.safeMutationCanary?.applyAvailable === true,
       officialPostActionReadback: true,
+      mayelCommercialIntelligence: true,
+      mayelEconomicsRead: listingCards.some((row) =>
+        row.commercialIntelligence.economics.status !== "UNAVAILABLE"),
+      mayelMarketEvidenceRead: listingCards.some((row) =>
+        row.commercialIntelligence.market.status !== "UNAVAILABLE"),
+      mayelEbayRecommendationsRead: listingCards.some((row) =>
+        row.commercialIntelligence.ebayRecommendations.status !==
+          "UNAVAILABLE"),
+      mayelMarketRevalidationRequest: "PARTIAL" as const,
     }),
     authority: Object.freeze({
       newListingPublishOwnerOnly: true as const,
@@ -1102,6 +1130,10 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       postsaleOwnerOnly: true as const,
       remoteOperatorPostsaleAccess: false as const,
       unauthorizedPromotionSpend: 0 as const,
+      mayelDirectPriceWrite: false as const,
+      mayelPromotionWrite: false as const,
+      mayelSendOffer: false as const,
+      mayelSpendAuthority: false as const,
     }),
     safety: Object.freeze({
       rawEbayJargonRequiredForOperation: false as const,
@@ -1112,6 +1144,7 @@ export function buildRemoteLiveOptimizationOperatorV1(input: {
       remoteOperatorReportUploadAccess: false as const,
       remoteOperatorRawReportAccess: false as const,
       marketplaceWritesDuringRead: 0 as const,
+      commercialFeedFailureBlocksVisualWorkspace: false as const,
     }),
     history,
   })

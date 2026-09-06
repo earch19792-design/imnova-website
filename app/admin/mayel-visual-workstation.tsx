@@ -5,6 +5,8 @@ import { Check, Clipboard, ShieldCheck, Upload, X } from
   "lucide-react"
 
 import { supabase } from "@/lib/supabase"
+import type { MayelCommercialIntelligenceV1 } from
+  "@/lib/ebay/ebay-mayel-commercial-intelligence-v1"
 
 type VisualRole = "DETAIL" | "PACKAGE_CONTENTS" | "DIMENSIONS" |
   "PRIMARY_BENEFIT" | "LIFESTYLE" | "HUMAN_USE"
@@ -177,6 +179,98 @@ const authorityCheckLabels: Record<string, string> = {
   DELEGATION_SCOPE_VALID: "Alcance visual",
   AUTHORITY_STORAGE_READY: "Persistencia de autoridad",
   REVOCATION_READY: "Revocación",
+}
+
+type TaskCommercialTab = "VISUAL" | "MERCADO" | "RENTABILIDAD" |
+  "RECOMENDACIONES"
+
+function commercialMoney(value: number | null) {
+  return value === null ? "Por comprobar" : new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD",
+  }).format(value)
+}
+
+function commercialDate(value: string | null | undefined) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "Por comprobar"
+  return new Intl.DateTimeFormat("es-NI", { dateStyle: "medium",
+    timeZone: "America/Managua" }).format(new Date(value))
+}
+
+function TaskCommercialContext({ intelligence }: {
+  intelligence?: MayelCommercialIntelligenceV1
+}) {
+  const [tab, setTab] = useState<TaskCommercialTab>("VISUAL")
+  const tabs = [["VISUAL", "Visual"], ["MERCADO", "Mercado"],
+    ["RENTABILIDAD", "Rentabilidad"],
+    ["RECOMENDACIONES", "Recomendaciones eBay"]] as const
+  const position: Record<string, string> = {
+    DENTRO_DEL_MERCADO: "Dentro del mercado",
+    POR_ENCIMA_DEL_MERCADO: "Por encima del mercado",
+    POR_DEBAJO_DEL_MERCADO: "Por debajo del mercado",
+    MERCADO_POR_COMPROBAR: "Mercado por comprobar",
+    EVIDENCIA_VENCIDA: "Evidencia vencida",
+  }
+  return <section className="mt-6 rounded-2xl border border-[#cbd9d4] bg-[#f8fbf9] p-4"
+    data-commercial-feed-blocks-visual="false">
+    <div className="flex flex-wrap gap-2" role="tablist"
+      aria-label="Contexto comercial de la tarea visual">
+      {tabs.map(([key, label]) => <button key={key} type="button"
+        role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
+        className={`min-h-11 rounded-xl px-3 text-xs font-semibold ${
+          tab === key ? "bg-[#1d5961] text-white" :
+            "border border-[#d9e2de] bg-white text-[#4f5b55]"}`}>
+        {label}
+      </button>)}
+    </div>
+    {tab === "VISUAL" && <div className="mt-4 text-sm leading-6 text-[#4f5752]">
+      <p className="font-semibold text-[#292d29]">Estación visual disponible</p>
+      <p>La falta temporal de datos comerciales no bloquea upload, QA ni preparación del manifest.</p>
+    </div>}
+    {tab === "MERCADO" && <div className="mt-4 space-y-3 text-sm text-[#4f5752]">
+      {!intelligence ? <p className="rounded-xl bg-white p-3">Mercado por comprobar. La autoridad comercial LIVE no está disponible ahora; no se atribuye el problema a imágenes.</p> : <>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <p className="rounded-xl bg-white p-3">Última revisión<br/><strong>{commercialDate(intelligence.market.lastResearchAt)}</strong></p>
+          <p className="rounded-xl bg-white p-3">Comparables vendidos<br/><strong>{intelligence.market.soldComparableCount ?? "Por comprobar"}</strong></p>
+          <p className="rounded-xl bg-white p-3">Rango sold<br/><strong>{intelligence.market.soldPriceMinimum === null || intelligence.market.soldPriceMaximum === null ? "Por comprobar" : `${commercialMoney(intelligence.market.soldPriceMinimum)}–${commercialMoney(intelligence.market.soldPriceMaximum)}`}</strong></p>
+          <p className="rounded-xl bg-white p-3">Posición del precio<br/><strong>{position[intelligence.pricePosition.status] ?? "Mercado por comprobar"}</strong></p>
+        </div>
+        <p className="rounded-xl bg-[#edf3f1] p-3">{intelligence.interpretation.explanation}</p>
+      </>}
+      <button type="button" disabled
+        title="El enlace durable desde un listing LIVE al plan Product Research aún no está comprobado"
+        className="min-h-11 rounded-xl border border-[#1d5961]/30 px-4 font-semibold text-[#1d5961] opacity-55">
+        Revalidar mercado
+      </button>
+      <p className="text-xs">Solicitud visible; ejecución cerrada hasta comprobar el conector durable. Seller OS elegirá queries, páginas y filtros.</p>
+    </div>}
+    {tab === "RENTABILIDAD" && <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+      {[["Precio LIVE", intelligence?.economics.livePrice.value ?? null],
+        ["Costo proveedor", intelligence?.economics.supplierCost.value ?? null],
+        ["Shipping", intelligence?.economics.shippingCost.value ?? null],
+        ["Fees eBay", intelligence?.economics.ebayFees.value ?? null],
+        ["Otros/reservas", intelligence?.economics.otherCostsOrReserves.value ?? null],
+        ["Profit esperado", intelligence?.economics.expectedProfit.value ?? null],
+        ["Margen", intelligence?.economics.marginPercent.value ?? null],
+        ["ROI", intelligence?.economics.roi.value ?? null]].map(([label, value]) =>
+        <p key={String(label)} className="rounded-xl bg-white p-3">
+          <span className="text-xs text-[#73766f]">{label}</span><br/>
+          <strong>{["Margen", "ROI"].includes(String(label)) && value !== null
+            ? `${value}%` : commercialMoney(value as number | null)}</strong>
+        </p>)}
+    </div>}
+    {tab === "RECOMENDACIONES" && <div className="mt-4 space-y-2 text-sm text-[#4f5752]">
+      {(intelligence?.ebayRecommendations.officialListingQuality ?? []).map(
+        (row, index) => <article key={`${row.type}-${index}`}
+          className="rounded-xl bg-white p-3">
+          <strong>{row.category}</strong><p>{row.exactPlatformWording ??
+            "eBay no proporcionó texto adicional."}</p>
+          <p className="mt-1 text-xs">Señal oficial; no autoriza ejecución.</p>
+        </article>)}
+      {!intelligence?.ebayRecommendations.officialListingQuality.length &&
+        <p className="rounded-xl bg-white p-3">No hay una recomendación oficial exacta disponible para esta tarea ahora.</p>}
+      <p className="text-xs">Recomendación eBay ≠ Product Truth ≠ autoridad para cambiar precio, promoción u ofertas.</p>
+    </div>}
+  </section>
 }
 
 async function visualRequest(path: string, init?: RequestInit) {
@@ -605,9 +699,12 @@ function FullVisualDelegationPanel({ delegation, owner, busy, onDone }: {
   </section>
 }
 
-export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }: {
+export function MayelVisualWorkstation({ canOperate,
+  canOwnerAuthorize = false, commercialIntelligenceByItemId = {} }: {
   canOperate: boolean
   canOwnerAuthorize?: boolean
+  commercialIntelligenceByItemId?: Readonly<Record<string,
+    MayelCommercialIntelligenceV1>>
 }) {
   const [tasks, setTasks] = useState<VisualTask[]>([])
   const [busy, setBusy] = useState(true)
@@ -700,6 +797,8 @@ export function MayelVisualWorkstation({ canOperate, canOwnerAuthorize = false }
         <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{task.status === "OWNER_PREVIEW_READY" ? "Lista para vista previa del owner" : "Trabajo de Mayel"}</span>
       </div>
       <div className="mt-6"><SourceGallery task={task} /></div>
+      <TaskCommercialContext intelligence={
+        commercialIntelligenceByItemId[task.ebayItemId]} />
       {canOperate && <section className="mt-6 rounded-2xl bg-[#26312d] p-5 text-white">
         <div className="flex items-start gap-3"><Clipboard className="mt-1 h-5 w-5 shrink-0 text-[#acd2ca]" />
           <div><h4 className="font-semibold">Prompt individual listo para copiar</h4>

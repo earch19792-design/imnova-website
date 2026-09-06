@@ -34,6 +34,8 @@ import { buildSellerOsCurrentLiveVisualQualityV1 } from
   "@/lib/ebay/ebay-seller-os-visual-quality-v1"
 import { buildProactiveExceptionQueueV1 } from
   "@/lib/ebay/ebay-seller-os-portfolio-intelligence-v1"
+import { loadEbayPromotionRecommendationSafeExecutionV1 } from
+  "@/lib/ebay/ebay-promotion-recommendation-safe-execution-v1"
 import { currentLiveListingsForMonitorV1 } from
   "@/lib/ebay/ebay-seller-os-live-portfolio-integrity-v1"
 import {
@@ -136,6 +138,54 @@ async function persistedActiveListingCount(
   return count ?? 0
 }
 
+async function mayelMarketEvidence(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  accountKey: string,
+  supplierVariantIds: readonly string[],
+) {
+  if (!supplierVariantIds.length) return Object.freeze({
+    status: "UNAVAILABLE" as const,
+    rows: Object.freeze([]),
+    limitationCode: "LIVE_LISTING_SUPPLIER_VARIANT_LINK_UNAVAILABLE",
+  })
+  const maximumVariantScope = 100
+  const boundedVariantIds = supplierVariantIds.slice(0, maximumVariantScope)
+  const scopeTruncated = supplierVariantIds.length > maximumVariantScope
+  const maximumRows = 500
+  const base = "id,source_listing_id,matched_supplier_variant_id,match_classification,match_reasons,normalized_identity,average_sold_price,average_shipping,confirmed_sold_quantity,last_sold_date,created_at,evidence_reviewed,quality_status"
+  const primary = await supabase.from(
+    "marketplace_product_research_capture_observations")
+    .select(base).eq("marketplace_account_key", accountKey)
+    .eq("marketplace", "EBAY_US")
+    .in("matched_supplier_variant_id", boundedVariantIds)
+    .order("created_at", { ascending: false }).limit(maximumRows)
+  if (!primary.error) return Object.freeze({
+    status: scopeTruncated || (primary.data?.length ?? 0) >= maximumRows
+      ? "PARTIAL" as const : "AVAILABLE" as const,
+    rows: Object.freeze(primary.data ?? []),
+    limitationCode: scopeTruncated
+      ? "MAYEL_MARKET_EVIDENCE_VARIANT_SCOPE_LIMIT_REACHED"
+      : (primary.data?.length ?? 0) >= maximumRows
+        ? "MAYEL_MARKET_EVIDENCE_RESULT_LIMIT_REACHED" : null,
+  })
+  // Older installations intentionally omitted the official Item ID. Preserve
+  // all proven market evidence and make only that field unavailable.
+  const fallback = await supabase.from(
+    "marketplace_product_research_capture_observations")
+    .select("id,matched_supplier_variant_id,match_classification,match_reasons,normalized_identity,average_sold_price,average_shipping,confirmed_sold_quantity,last_sold_date,created_at,evidence_reviewed,quality_status")
+    .eq("marketplace_account_key", accountKey).eq("marketplace", "EBAY_US")
+    .in("matched_supplier_variant_id", boundedVariantIds)
+    .order("created_at", { ascending: false }).limit(maximumRows)
+  if (!fallback.error) return Object.freeze({
+    status: "PARTIAL" as const,
+    rows: Object.freeze(fallback.data ?? []),
+    limitationCode: "COMPARABLE_ITEM_ID_NOT_PERSISTED",
+  })
+  return Object.freeze({ status: "UNAVAILABLE" as const,
+    rows: Object.freeze([]),
+    limitationCode: "MAYEL_MARKET_EVIDENCE_READ_UNAVAILABLE" })
+}
+
 async function visualQuality(
   monitor: Awaited<ReturnType<typeof loadSellerOsAssistantMonitorSnapshotV1>>,
 ) {
@@ -227,6 +277,14 @@ export async function GET(request: Request) {
     })) {
       throw new Error("REMOTE_FEED_FALSE_ZERO_REJECTED")
     }
+    const currentLiveListings = currentLiveListingsForMonitorV1(monitor)
+    const marketEvidence = await mayelMarketEvidence(
+      supabase,
+      account.accountKey,
+      [...new Set(currentLiveListings.map((listing) =>
+        listing.stock.supplierVariantId).filter((value): value is string =>
+        Boolean(value)))],
+    )
     const commercialExceptions = buildProactiveExceptionQueueV1({
       monitor,
       maximumEntries: 250,
@@ -252,6 +310,9 @@ export async function GET(request: Request) {
       salesResults,
       imageProposals,
       listingQualitySignals,
+      marketEvidence: marketEvidence.rows,
+      marketEvidenceReadStatus: marketEvidence.status,
+      marketEvidenceLimitationCode: marketEvidence.limitationCode,
       safeMutationCanary,
       improvementExecutions: executions.data ?? [],
       operatorUserId: auth.validation.userId,
@@ -317,6 +378,35 @@ export async function POST(request: Request) {
   { status: 403 })
   const body = await jsonBody(request)
   const action = typeof body?.action === "string" ? body.action : ""
+  if (action === "READ_EBAY_PROMOTION_RECOMMENDATION") {
+    const ebayItemId = typeof body?.ebayItemId === "string" &&
+      /^\d{9,20}$/.test(body.ebayItemId.trim())
+      ? body.ebayItemId.trim() : null
+    if (!ebayItemId) return NextResponse.json({ success: false,
+      error: "MAYEL_EBAY_RECOMMENDATION_ITEM_ID_REQUIRED" }, { status: 400 })
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const recommendation =
+        await loadEbayPromotionRecommendationSafeExecutionV1({
+          supabase: getSupabaseAdminClient(),
+          accountKey: account.accountKey,
+          ebayItemId,
+        })
+      return NextResponse.json({ success: true, recommendation,
+        safety: { marketplaceWrites: 0, priceWrites: 0,
+          promotionWrites: 0, sendOffers: 0, buyerMessages: 0 } },
+      { headers: { "Cache-Control": "private, no-store",
+        "X-Seller-OS-Mayel-Recommendation": "READ_ONLY" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error),
+        operatorMessage:
+          "La recomendación oficial de eBay no está disponible ahora. La Estación visual sigue disponible.",
+        safety: { marketplaceWrites: 0, priceWrites: 0,
+          promotionWrites: 0, sendOffers: 0, buyerMessages: 0 } },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
   if (action === "REPORT_FEED_RENDER") {
     const view = ["HOME", "TASKS", "SUGGESTIONS"].includes(
       String(body?.view ?? "")) ? String(body?.view) : null

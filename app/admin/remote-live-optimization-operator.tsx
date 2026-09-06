@@ -84,6 +84,11 @@ function number(value: unknown) {
     : "—"
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
+
 function shortDate(value: string | null | undefined) {
   if (!value || !Number.isFinite(Date.parse(value))) return "—"
   return new Intl.DateTimeFormat("es", { month: "short", day: "numeric",
@@ -598,6 +603,224 @@ function ActionPanel({ listing, canAct, onRefresh }: {
   </div>
 }
 
+type CommercialTab = "VISUAL" | "MERCADO" | "RENTABILIDAD" |
+  "RECOMENDACIONES"
+
+function humanCapability(value: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE") {
+  return value === "AVAILABLE" ? "Disponible" : value === "PARTIAL"
+    ? "Parcial" : "No disponible"
+}
+
+function metricText(field: Readonly<{ value: number | null }>, options?: {
+  currency?: boolean; suffix?: string
+}) {
+  if (field.value === null) return "Por comprobar"
+  return options?.currency ? money(field.value) :
+    `${number(field.value)}${options?.suffix ?? ""}`
+}
+
+function CommercialIntelligencePanel({ listing }: {
+  listing: RemoteLiveOperatorListingV1
+}) {
+  const intelligence = listing.commercialIntelligence
+  const [tab, setTab] = useState<CommercialTab>("VISUAL")
+  const [recommendation, setRecommendation] = useState<
+    Record<string, unknown> | null>(null)
+  const [recommendationBusy, setRecommendationBusy] = useState(false)
+  const [recommendationMessage, setRecommendationMessage] = useState("")
+  const tabs = [
+    ["VISUAL", "Visual"], ["MERCADO", "Mercado"],
+    ["RENTABILIDAD", "Rentabilidad"],
+    ["RECOMENDACIONES", "Recomendaciones eBay"],
+  ] as const
+  const pricePositionLabels: Record<string, string> = {
+    DENTRO_DEL_MERCADO: "Dentro del mercado",
+    POR_ENCIMA_DEL_MERCADO: "Por encima del mercado",
+    POR_DEBAJO_DEL_MERCADO: "Por debajo del mercado",
+    MERCADO_POR_COMPROBAR: "Mercado por comprobar",
+    EVIDENCIA_VENCIDA: "Evidencia vencida",
+  }
+  const officialRecommendation = asRecord(recommendation?.recommendation)
+  const recommendationUi = asRecord(recommendation?.ui)
+
+  async function readPromotionRecommendation() {
+    if (recommendationBusy) return
+    setRecommendationBusy(true)
+    setRecommendationMessage("")
+    try {
+      const payload = await operatorRequest(
+        "/api/admin/ebay/live-optimization-operator", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "READ_EBAY_PROMOTION_RECOMMENDATION",
+            ebayItemId: listing.ebayItemId,
+          }),
+        })
+      setRecommendation((payload.recommendation ?? null) as
+        Record<string, unknown> | null)
+      setRecommendationMessage(
+        "Recomendación oficial comprobada en modo de sólo lectura.")
+    } catch (error) {
+      setRecommendation(null)
+      setRecommendationMessage(error instanceof Error ? error.message :
+        "La recomendación oficial no está disponible ahora. La Estación visual sigue disponible.")
+    } finally {
+      setRecommendationBusy(false)
+    }
+  }
+
+  return <section className="mt-4 rounded-2xl border border-[#cbd9d4] bg-[#f8fbf9] p-3 sm:p-4"
+    data-mayel-commercial-intelligence={intelligence.status}
+    data-commercial-feed-blocks-visual="false">
+    <div className="flex flex-wrap gap-2" role="tablist"
+      aria-label={`Contexto de ${listing.title}`}>
+      {tabs.map(([key, label]) => <button key={key} type="button"
+        role="tab" aria-selected={tab === key}
+        onClick={() => setTab(key)}
+        className={`min-h-11 rounded-xl px-3 text-xs font-semibold transition ${
+          tab === key ? "bg-[#1d5961] text-white" :
+            "border border-[#d9e2de] bg-white text-[#4f5b55]"}`}>
+        {label}
+      </button>)}
+    </div>
+
+    {tab === "VISUAL" && <div className="mt-4 text-sm leading-6 text-[#4f5752]">
+      <p className="font-semibold text-[#292d29]">Estación visual</p>
+      <p className="mt-1">El trabajo visual, upload, QA y manifest continúan aunque la información comercial esté degradada.</p>
+      <p className="mt-2 rounded-xl bg-white p-3">
+        Estado de revisión: <strong>{listing.visualReview.status === "AVAILABLE"
+          ? "Comprobada" : listing.visualReview.status === "PARTIAL"
+            ? "Parcial" : "Por comprobar"}</strong>
+      </p>
+    </div>}
+
+    {tab === "MERCADO" && <div className="mt-4 space-y-4">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          ["Última revisión", shortDate(intelligence.market.lastResearchAt)],
+          ["Comparables vendidos", intelligence.market.soldComparableCount ??
+            "Por comprobar"],
+          ["Rango vendido", intelligence.market.soldPriceMinimum !== null &&
+              intelligence.market.soldPriceMaximum !== null
+            ? `${money(intelligence.market.soldPriceMinimum)}–${money(
+              intelligence.market.soldPriceMaximum)}` : "Por comprobar"],
+          ["Precio LIVE", intelligence.pricePosition.livePrice === null
+            ? "Por comprobar" : money(intelligence.pricePosition.livePrice)],
+        ].map(([label, value]) => <div key={label}
+          className="rounded-xl bg-white p-3">
+          <p className="text-[11px] font-medium text-[#73766f]">{label}</p>
+          <p className="mt-1 text-sm font-semibold text-[#292d29]">{value}</p>
+        </div>)}
+      </div>
+      <div className="rounded-xl bg-[#edf3f1] p-3 text-sm leading-6 text-[#36534a]">
+        <p className="font-semibold">{pricePositionLabels[
+          intelligence.pricePosition.status] ?? "Mercado por comprobar"}</p>
+        <p>{intelligence.interpretation.explanation}</p>
+      </div>
+      <details className="rounded-xl border border-[#d9e2de] bg-white p-3">
+        <summary className="min-h-10 cursor-pointer py-2 text-sm font-semibold text-[#1d5961]">Ver comparables aceptados y rechazados</summary>
+        <div className="mt-2 space-y-2">
+          {[...intelligence.market.acceptedComparables,
+            ...intelligence.market.rejectedComparables].map((row, index) =>
+            <div key={row.evidenceId ?? `${row.classification}-${index}`}
+              className="rounded-xl bg-[#f4efe7] p-3 text-xs leading-5 text-[#555b55]">
+              <p className="font-semibold text-[#292d29]">{row.title ??
+                "Título no conservado por el contrato de privacidad"}</p>
+              <p>Item ID: {row.ebayItemId ?? "No conservado"} · {row.classification}</p>
+              <p>{row.soldPrice === null ? "Precio por comprobar" :
+                `${money(row.soldPrice)} vendido`} · Shipping {row.shippingCost === null
+                  ? "por comprobar" : money(row.shippingCost)} · {shortDate(row.soldAt)}</p>
+              <p>Condición: {row.condition ?? "Por comprobar"} · {row.reason}</p>
+            </div>)}
+          {!intelligence.market.acceptedComparables.length &&
+            !intelligence.market.rejectedComparables.length && <p
+            className="text-sm text-[#70756f]">No hay comparables exactos legibles para este listing. No se infiere demanda desde listings activos.</p>}
+        </div>
+      </details>
+      <button type="button" disabled
+        title="El enlace durable desde un listing LIVE al plan Product Research aún no está comprobado"
+        className="min-h-12 rounded-xl border border-[#1d5961]/30 px-4 text-sm font-semibold text-[#1d5961] opacity-55">
+        Revalidar mercado
+      </button>
+      <p className="text-xs leading-5 text-[#747a74]">Visible para solicitar una revalidación; permanece cerrado hasta comprobar el enlace durable con Product Research. Mayel no elige queries ni filtros.</p>
+    </div>}
+
+    {tab === "RENTABILIDAD" && <div className="mt-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-[#292d29]">Rentabilidad</p>
+        <span className="text-xs font-semibold text-[#617159]">{humanCapability(
+          intelligence.economics.status)}</span>
+      </div>
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {[
+          ["Precio LIVE", metricText(intelligence.economics.livePrice,
+            { currency: true })],
+          ["Costo proveedor", metricText(
+            intelligence.economics.supplierCost, { currency: true })],
+          ["Shipping", metricText(intelligence.economics.shippingCost,
+            { currency: true })],
+          ["Fees eBay", metricText(intelligence.economics.ebayFees,
+            { currency: true })],
+          ["Otros/reservas", metricText(
+            intelligence.economics.otherCostsOrReserves, { currency: true })],
+          ["Profit esperado", metricText(
+            intelligence.economics.expectedProfit, { currency: true })],
+          ["Margen", metricText(intelligence.economics.marginPercent,
+            { suffix: "%" })],
+          ["ROI", metricText(intelligence.economics.roi,
+            { suffix: "%" })],
+        ].map(([label, value]) => <div key={label}
+          className="rounded-xl bg-white p-3">
+          <dt className="text-[11px] font-medium text-[#73766f]">{label}</dt>
+          <dd className="mt-1 text-sm font-semibold text-[#292d29]">{value}</dd>
+        </div>)}
+      </dl>
+      <p className="mt-3 text-xs leading-5 text-[#747a74]">“Por comprobar” significa autoridad ausente; nunca se representa como $0.00.</p>
+    </div>}
+
+    {tab === "RECOMENDACIONES" && <div className="mt-4 space-y-3">
+      {intelligence.ebayRecommendations.officialListingQuality.map(
+        (row, index) => <article key={`${row.type}-${index}`}
+          className="rounded-xl bg-white p-3 text-sm leading-6 text-[#50564f]">
+          <p className="font-semibold text-[#292d29]">{row.category}</p>
+          <p>{row.exactPlatformWording ?? "eBay señaló esta categoría sin texto adicional."}</p>
+          <p className="mt-1 text-xs text-[#73766f]">Fuente oficial · {shortDate(row.observedAt)} · Seller OS: necesita validar evidencia</p>
+        </article>)}
+      {!intelligence.ebayRecommendations.officialListingQuality.length &&
+        <p className="rounded-xl bg-white p-3 text-sm text-[#70756f]">No existe una recomendación exacta vigente en el reporte oficial de Listing Quality.</p>}
+      <button type="button" onClick={() => void readPromotionRecommendation()}
+        disabled={recommendationBusy}
+        className="min-h-12 rounded-xl border border-[#1d5961]/35 bg-white px-4 text-sm font-semibold text-[#1d5961] disabled:opacity-45">
+        {recommendationBusy ? "Comprobando…" :
+          "Comprobar recomendación oficial de promoción"}
+      </button>
+      {recommendation && <div className="rounded-xl bg-[#edf3f1] p-3 text-sm leading-6 text-[#36534a]">
+        <p className="font-semibold">Resultado oficial leído</p>
+        <p>{typeof recommendationUi.ebayRecommends === "string"
+          ? recommendationUi.ebayRecommends :
+            officialRecommendation.available === false
+              ? "eBay no devolvió una recomendación aplicable."
+              : "La recomendación oficial no contiene un valor comprobable."}</p>
+        <p className="mt-1">Seller OS: {typeof recommendation.promotionDecision ===
+          "string" ? recommendation.promotionDecision.replaceAll("_", " ") :
+            "NECESITA VALIDACIÓN"}. Esta señal no autoriza promoción, gasto ni cambio de precio.</p>
+      </div>}
+      {recommendationMessage && <p aria-live="polite"
+        className="text-xs leading-5 text-[#666d67]">{recommendationMessage}</p>}
+      <details className="rounded-xl border border-[#d9e2de] bg-white p-3">
+        <summary className="min-h-10 cursor-pointer py-2 text-sm font-semibold text-[#555a54]">Cobertura de recomendaciones eBay</summary>
+        <ul className="mt-2 space-y-2 text-xs leading-5 text-[#5f645e]">
+          {intelligence.ebayRecommendations.capabilityAudit.map((row) =>
+            <li key={row.type} className="rounded-lg bg-[#f4efe7] p-2">
+              <strong>{row.type.replaceAll("_", " ")}</strong> · {humanCapability(row.status)}
+              {row.limitationCode && <span className="block">{row.limitationCode.replaceAll("_", " ").toLocaleLowerCase("es")}</span>}
+            </li>)}
+        </ul>
+      </details>
+    </div>}
+  </section>
+}
+
 function ListingCard({ listing, canAct, onRefresh }: {
   listing: RemoteLiveOperatorListingV1
   canAct: boolean
@@ -633,6 +856,7 @@ function ListingCard({ listing, canAct, onRefresh }: {
         <summary className="min-h-12 cursor-pointer py-3 text-sm font-semibold text-[#1d5961] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1d5961]">ⓘ ¿Qué significa esto?</summary>
         <p className="mt-1 text-sm leading-6 text-[#5f645e]">{listing.helper}</p>
       </details>
+      <CommercialIntelligencePanel listing={listing} />
       <details className="mt-2 rounded-2xl border border-[#e0d9ce] p-3">
         <summary className="min-h-12 cursor-pointer py-3 text-sm font-semibold text-[#555a54]">Ver datos de apoyo</summary>
         <div className="mt-2"><SupportingNumbers listing={listing} /></div>
@@ -889,7 +1113,10 @@ export function RemoteLiveOptimizationOperator({ embeddedForOwner = false }: {
             <p className="mt-1">Puedes preparar, subir y revisar recursos visuales. La aplicación y el readback en eBay se validan por separado antes de ejecutar cualquier cambio.</p>
           </section>
           <MayelVisualWorkstation canOperate={canAct}
-            canOwnerAuthorize={embeddedForOwner} />
+            canOwnerAuthorize={embeddedForOwner}
+            commercialIntelligenceByItemId={Object.fromEntries(
+              taskListings.map((listing) => [listing.ebayItemId,
+                listing.commercialIntelligence]))} />
         </div>}
         {dashboard && view !== "VISUAL" && <div className="mt-7 space-y-7">
           {!dashboard.capabilities.safeLiveTitleCanary &&
