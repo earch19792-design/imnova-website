@@ -1,13 +1,19 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
-import { signInSellerOs } from "@/lib/admin-auth"
+import { signInSellerOs, validateSellerOsSession } from "@/lib/admin-auth"
 import { getSafeAdminReturnPath } from "@/lib/admin-auth-return"
 import {
   REMOTE_LIVE_OPERATOR_USERNAME_MAX_LENGTH,
   REMOTE_LIVE_OPERATOR_USERNAME_MIN_LENGTH,
 } from "@/lib/remote-live-operator-identity"
+import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
+import { supabase } from "@/lib/supabase"
+import {
+  isProductResearchWorkerControlReturnPath,
+  recoverProductResearchWorkerControlSessionV1,
+} from "@/lib/seller-os/product-research-browser-restart-recovery-v1"
 
 const ADMIN_SESSION_ESTABLISH_TIMEOUT_MS = 20_000
 const REMOTE_PASSWORD_MIN_LENGTH = 12
@@ -18,6 +24,11 @@ type LoginPhase =
   | "AUTHENTICATING"
   | "ESTABLISHING_SESSION"
   | "OPENING_DASHBOARD"
+
+type WorkerControlRecoveryState =
+  | "NOT_APPLICABLE"
+  | "RECOVERING"
+  | "WAITING_AUTH_REQUIRED"
 
 async function establishProtectedAdminSession(accessToken: string) {
   const controller = new AbortController()
@@ -72,6 +83,7 @@ function enrollmentErrorMessage(code: unknown) {
 }
 
 export default function AdminLoginPage() {
+  const workerRecoveryStarted = useRef(false)
   const [identifier, setIdentifier] = useState("")
   const [password, setPassword] = useState("")
   const [setupInvitation, setSetupInvitation] = useState<string | null>(null)
@@ -84,6 +96,8 @@ export default function AdminLoginPage() {
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [loginPhase, setLoginPhase] = useState<LoginPhase>("IDLE")
+  const [workerControlRecovery, setWorkerControlRecovery] =
+    useState<WorkerControlRecoveryState>("NOT_APPLICABLE")
 
   useEffect(() => {
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""))
@@ -99,6 +113,64 @@ export default function AdminLoginPage() {
     }
     setSetupHydrated(true)
   }, [])
+
+  useEffect(() => {
+    if (!setupHydrated || setupInvitation || workerRecoveryStarted.current) {
+      return
+    }
+    const returnTo = new URLSearchParams(window.location.search).get("returnTo")
+    if (!isProductResearchWorkerControlReturnPath(returnTo)) return
+    workerRecoveryStarted.current = true
+    let active = true
+    let recoveryInFlight = false
+    const recover = async () => {
+      if (!active || recoveryInFlight) return
+      recoveryInFlight = true
+      setWorkerControlRecovery("RECOVERING")
+      try {
+        const result = await recoverProductResearchWorkerControlSessionV1({
+          returnTo,
+          readSession: async () => {
+            const session = await validateSellerOsSession()
+            return {
+              authorized: session.authorized &&
+                session.role === SELLER_OS_ACCESS_ROLES.owner,
+              accessToken: session.session?.access_token ?? null,
+              error: session.authorized &&
+                session.role !== SELLER_OS_ACCESS_ROLES.owner
+                ? "WORKER_CONTROL_OWNER_SESSION_REQUIRED"
+                : session.error,
+            }
+          },
+          establishProtectedSession: async (accessToken) => {
+            const response = await establishProtectedAdminSession(accessToken)
+            return response.ok
+          },
+        })
+        if (!active) return
+        if (result.status === "CONTROL_PAGE_RECOVERED") {
+          window.location.replace(getSafeAdminReturnPath(returnTo))
+          return
+        }
+        setWorkerControlRecovery("WAITING_AUTH_REQUIRED")
+      } catch {
+        if (active) setWorkerControlRecovery("WAITING_AUTH_REQUIRED")
+      } finally {
+        recoveryInFlight = false
+      }
+    }
+    const { data: authState } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (!active || !session?.access_token) return
+        globalThis.setTimeout(() => { void recover() }, 0)
+      },
+    )
+    void recover()
+    return () => {
+      active = false
+      authState.subscription.unsubscribe()
+    }
+  }, [setupHydrated, setupInvitation])
 
   async function openSellerOs(loginIdentifier: string, loginPassword: string) {
     setLoginPhase("AUTHENTICATING")
@@ -211,6 +283,14 @@ export default function AdminLoginPage() {
             ? "Esta invitación permite crear una sola cuenta de asistente. Elige tu usuario y contraseña; después el alta quedará cerrada."
             : "Acceso privado para owner y asistente autorizada. No existe registro público."}
         </p>
+        {workerControlRecovery === "RECOVERING" && <p
+          className="mt-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 px-4 py-3 text-sm leading-6 text-cyan-100">
+          Recuperando automáticamente el worker de Product Research con tu sesión normal de Seller OS…
+        </p>}
+        {workerControlRecovery === "WAITING_AUTH_REQUIRED" && <p
+          className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/5 px-4 py-3 text-sm leading-6 text-amber-100">
+          Product Research está esperando una sesión válida. Los planes y receipts siguen guardados; no se creó ni reclamó trabajo nuevo desde esta pantalla.
+        </p>}
       </header>
 
       {firstEnrollment ? <form onSubmit={handleFirstEnrollment}

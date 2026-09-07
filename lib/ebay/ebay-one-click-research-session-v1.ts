@@ -12,15 +12,18 @@ export const EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE =
   "IMNOVA_EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE_V1"
 
 export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
-  version: "1.2.27",
-  buildId: "e48924c20aa5ec439224a34c0a696e5b85ed19ba",
+  version: "1.2.28",
+  buildId: "aa5e25606b6617903a02a88a98f4b7f5c9093511",
   archivePath:
-    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.27.zip",
+    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.28.zip",
 })
 
 export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
   Object.freeze({ version: "1.2.26",
     buildId: "10fa05a43791ff4bd42083d0ca88341a5c99a947",
+    browserRestartRecoverySupported: false as const }),
+  Object.freeze({ version: "1.2.27",
+    buildId: "e48924c20aa5ec439224a34c0a696e5b85ed19ba",
     browserRestartRecoverySupported: false as const }),
   Object.freeze({ version: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version,
     buildId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.buildId,

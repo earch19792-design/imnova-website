@@ -1,5 +1,9 @@
 "use strict"
 
+if (typeof importScripts === "function") {
+  importScripts("worker-control-recovery.js")
+}
+
 const ANALYZE_MESSAGE = "IMNOVA_ANALYZE_VISIBLE_EBAY_THUMBNAIL_V1"
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024
 const MAX_DECODED_PIXELS = 16_000_000
@@ -17,11 +21,16 @@ const ADMIN_ORIGINS = new Set([
 const ADMIN_SCOPE_MATCHES = [...ADMIN_ORIGINS].map(
   (origin) => `${origin}/admin/ebay/*`,
 )
+const ADMIN_CONTROL_SCOPE_MATCHES = [...ADMIN_ORIGINS].map(
+  (origin) => `${origin}/admin/*`,
+)
 const ADMIN_SCOPE_PATH = /^\/admin\/ebay(?:\/|$)/
 const ADMIN_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
 const WORKER_CONTROL_URL =
   "https://imnova-seller-os-preprod.vercel.app/admin/ebay/opportunity-queue/research?mayelResearchWorker=auto&browserWorkerControl=1"
 const WORKER_CONTROL_ALARM = "seller-os-product-research-worker-control-v1"
+const WORKER_CONTROL_RECOVERY =
+  globalThis.SELLER_OS_PRODUCT_RESEARCH_CONTROL_RECOVERY_V1
 const SESSION_VERSION = "EBAY_ONE_CLICK_RESEARCH_SESSION_V1_2026_08_26"
 const SESSION_SCOPE = "EBAY_RESEARCH_CAPTURE_ONLY"
 const MAX_RUNTIME_MS = 15 * 60_000
@@ -63,38 +72,71 @@ async function injectAdminBridgeIntoExistingTabs() {
 
 void injectAdminBridgeIntoExistingTabs()
 
-async function ensureWorkerControlTab() {
+async function removeDuplicateWorkerControlTabs(tabIds) {
+  await Promise.allSettled(tabIds.map(async (tabId) => {
+    try { await chrome.tabs.remove(tabId) } catch { /* already closed */ }
+  }))
+}
+
+async function ensureWorkerControlTab({ forceReloadExisting = false } = {}) {
   let existing
   try {
     existing = await chrome.tabs.query({
-      url: "https://imnova-seller-os-preprod.vercel.app/admin/ebay/opportunity-queue/research*",
+      url: ADMIN_CONTROL_SCOPE_MATCHES,
     })
   } catch {
-    return false
+    return { state: "UNOBSERVABLE", blockerCode: "CONTROL_TAB_QUERY_FAILED" }
   }
-  if (existing.some((tab) => {
+  const decision = WORKER_CONTROL_RECOVERY.decide(existing,
+    forceReloadExisting)
+  await removeDuplicateWorkerControlTabs(decision.duplicateTabIds)
+  if (decision.action === "WAIT_FOR_AUTH") return {
+    state: decision.workerState,
+    blockerCode: decision.blockerCode,
+    tabId: decision.primaryTabId,
+  }
+  if (decision.action === "REUSE_CONTROL_PAGE") return {
+    state: "CONTROL_PAGE_ACTIVE", blockerCode: null,
+    tabId: decision.primaryTabId,
+  }
+  if (decision.action === "RELOAD_CONTROL_PAGE") {
     try {
-      return new URL(tab.url ?? "").searchParams.get(
-        "browserWorkerControl") === "1"
-    } catch { return false }
-  })) return true
+      await chrome.tabs.update(decision.primaryTabId, {
+        url: WORKER_CONTROL_URL, active: false,
+      })
+      return { state: "RECOVERING", blockerCode: null,
+        tabId: decision.primaryTabId }
+    } catch {
+      return { state: "UNOBSERVABLE",
+        blockerCode: "CONTROL_PAGE_RELOAD_FAILED" }
+    }
+  }
   try {
-    await chrome.tabs.create({ url: WORKER_CONTROL_URL, active: false })
-    return true
+    const created = await chrome.tabs.create({
+      url: WORKER_CONTROL_URL, active: false,
+    })
+    return { state: "RECOVERING", blockerCode: null,
+      tabId: created?.id ?? null }
   } catch {
-    return false
+    return { state: "UNOBSERVABLE",
+      blockerCode: "CONTROL_PAGE_CREATE_FAILED" }
   }
 }
 
 function scheduleWorkerControlRecovery() {
   chrome.alarms?.create?.(WORKER_CONTROL_ALARM, { periodInMinutes: 2 })
-  void ensureWorkerControlTab()
+  void ensureWorkerControlTab({ forceReloadExisting: true })
 }
 
 chrome.runtime.onInstalled?.addListener?.(scheduleWorkerControlRecovery)
 chrome.runtime.onStartup?.addListener?.(scheduleWorkerControlRecovery)
 chrome.alarms?.onAlarm?.addListener?.((alarm) => {
   if (alarm.name === WORKER_CONTROL_ALARM) void ensureWorkerControlTab()
+})
+chrome.tabs?.onUpdated?.addListener?.((_tabId, changeInfo) => {
+  if (WORKER_CONTROL_RECOVERY.isControlAuthRedirect(changeInfo.url)) {
+    void ensureWorkerControlTab()
+  }
 })
 
 function officialResearchSender(sender) {

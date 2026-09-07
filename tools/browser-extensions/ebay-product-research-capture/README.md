@@ -9,9 +9,16 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.27.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.28.
 
-## Liveness y recuperación autónoma (v1.2.27)
+## Liveness y recuperación autónoma (v1.2.28)
+
+Después de un restart, la extensión reutiliza un único control page. Si el
+cookie protegido venció pero la sesión normal de Seller OS continúa vigente,
+`/admin/login` restablece el cookie mediante `/api/admin/session` y vuelve al
+worker sin click. Sin sesión válida, el estado queda
+`WAITING_AUTH_REQUIRED`; no se crean tabs repetidas, no se leen cookies y no
+se persisten tokens o credenciales.
 
 La extensión mantiene un único control route inactivo mediante `runtime.onStartup` y una alarma
 acotada de dos minutos. Ese documento autenticado prueba el bridge, persiste un heartbeat de
