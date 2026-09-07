@@ -1,5 +1,18 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  async headers() {
+    return [
+      {
+        source: "/seller-os-tools/ebay-product-research-capture-extension-v1.2.28.zip",
+        headers: [
+          {
+            key: "Content-Disposition",
+            value: 'attachment; filename="ebay-product-research-capture-extension.zip"',
+          },
+        ],
+      },
+    ]
+  },
   serverExternalPackages: ["playwright"],
   typescript: {
     ignoreBuildErrors: true,
