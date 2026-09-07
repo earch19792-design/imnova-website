@@ -906,6 +906,7 @@ function failureClass(entry: SellerOsCapabilityHealthV1) {
 
 function healthCheck(entry: SellerOsCapabilityHealthV1):
     SellerOsOperationalIntegrityCheckV1 {
+  const currentFailureClass = failureClass(entry)
   const evidence = { capabilityId: entry.capabilityId,
     finalHealthState: entry.finalHealthState,
     lastHeartbeatAt: entry.lastHeartbeatAt,
@@ -919,8 +920,13 @@ function healthCheck(entry: SellerOsCapabilityHealthV1):
     `CAPABILITY_EXPECTED_OUTPUT:${entry.capabilityId}`,
   status: entry.finalHealthState === "HEALTHY" ? "PASS" : "VIOLATION",
   failureClass: entry.finalHealthState === "HEALTHY"
-    ? null : failureClass(entry), retrySafety: "SAFE_READ_ONLY_RECONCILIATION",
-  recoveryClass: "AUTO_RECOVERABLE", evidenceFingerprint: digest(evidence),
+    ? null : currentFailureClass, retrySafety: "SAFE_READ_ONLY_RECONCILIATION",
+  recoveryClass: "AUTO_RECOVERABLE", evidenceFingerprint: digest({
+    capabilityId: entry.capabilityId,
+    failureClass: entry.finalHealthState === "HEALTHY"
+      ? "PASS" : currentFailureClass,
+    blockerCode: entry.blockerCode, expectedOutput: entry.expectedOutput,
+  }),
   evidence: Object.freeze(evidence), regressionGuard: Object.freeze({
     detectionRule: "NOW_GT_LAST_EXPECTED_OUTPUT_PLUS_MAX_SILENCE_OR_LAYER_FAILURE",
     recoveryPolicy: entry.recoveryPolicy,

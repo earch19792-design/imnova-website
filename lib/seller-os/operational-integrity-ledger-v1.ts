@@ -114,6 +114,22 @@ export async function persistSellerOsOperationalIntegrityAuditV1(input: Readonly
     if (touch.error) {
       throw new Error("SELLER_OS_OPERATIONAL_LEARNING_TOUCH_FAILED")
     }
+    const superseded = await input.supabase.from(
+      "seller_os_operational_learning_ledger_v1").update({
+        status: "RESOLVED",
+        recovery_outcome: "STILL_VIOLATED",
+        resolved_at: input.audit.observedAt,
+        lease_owner: null,
+        lease_expires_at: null,
+        updated_at: input.audit.observedAt,
+      }).eq("marketplace_account_key", input.accountKey)
+      .eq("invariant_code", entry.invariantCode)
+      .eq("mechanism_version", input.audit.mechanismVersion)
+      .eq("status", "OPEN")
+      .neq("evidence_fingerprint", entry.evidenceFingerprint)
+    if (superseded.error) {
+      throw new Error("SELLER_OS_OPERATIONAL_LEARNING_SUPERSEDE_FAILED")
+    }
   }
 
   const passedCodes = input.audit.checks.filter((entry) =>
