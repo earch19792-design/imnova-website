@@ -93,9 +93,16 @@ import { validateAdminApiRequest } from "../supabase-admin"
 import { collectSellerOsDemandFirstBroadNetServerReplayV1,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1 } from
   "./ebay-demand-first-broad-net-orchestrator-v1"
+import { getEbaySellerAccountScopeConfiguration } from
+  "./ebay-seller-account-scope"
+import { SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1,
+  readSellerOsProductCaseAuditV1,
+  readSellerOsPublicationExecutionAuditV1 } from
+  "../seller-os/audit-observability-gateway-v1"
+import { getSupabaseAdminClient } from "../supabase-admin"
 
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
-  "SELLER_OS_MCP_READONLY_V1_2026_08_22_P2_I01A_RATE_LIMIT"
+  "SELLER_OS_MCP_READONLY_V1_2026_09_06_AUDIT_OBSERVABILITY"
 export const SELLER_OS_CHATGPT_CONNECTION_STATE = Object.freeze({
   code: "CODE_COMPLETE" as const,
   humanConnection: "READY_FOR_HUMAN_CONNECTION_AFTER_APPROVED_AUTH_SETUP" as const,
@@ -127,6 +134,7 @@ const READ_ONLY_HEADERS = { "Cache-Control": "private, no-store, max-age=0",
 
 const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
   ...SELLER_OS_ASSISTANT_TOOLS_V1,
+  ...SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1,
   SELLER_OS_RUNTIME_HEALTH_TOOL_V1,
   SELLER_OS_DEV_STATUS_TOOL_V1,
   SELLER_OS_CI_STATUS_TOOL_V1,
@@ -142,6 +150,7 @@ const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
 
 const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
   ...SELLER_OS_ASSISTANT_TOOLS_V1.map((tool) => tool.name),
+  ...SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1.map((tool) => tool.name),
   SELLER_OS_RUNTIME_HEALTH_TOOL_V1.name,
   SELLER_OS_DEV_STATUS_TOOL_V1.name,
   SELLER_OS_CI_STATUS_TOOL_V1.name,
@@ -197,6 +206,7 @@ const PHASE_TWO_CERTIFICATION_RESOURCES = [
 ] as const
 
 const DEDICATED_READ_TOOLS = Object.freeze([
+  ...SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1,
   SELLER_OS_OFFICIAL_ORDERS_TOOL_V1,
   SELLER_OS_SALES_ORDER_EVENTS_TOOL_V1,
   SELLER_OS_RECENT_SALES_FEED_TOOL_V1,
@@ -435,7 +445,27 @@ export function createSellerOsMcpServerV1(options: {
   const monitorLoader = options.monitorLoader ?? loadSellerOsAssistantMonitorV1
   const monitor = () => (monitorPromise ??= monitorLoader())
   const localToolExecutor: SellerOsAssistantToolExecutorV1 = async (input) =>
-    input.toolName === "seller_os_get_opportunity_radar" ||
+    input.toolName === "seller_os_get_product_case" ||
+      input.toolName === "seller_os_get_publication_execution"
+      ? (() => {
+          const account = getEbaySellerAccountScopeConfiguration()
+          if (!account.accountKey) throw new Error("AUDIT_ACCOUNT_SCOPE_REQUIRED")
+          const supabase = getSupabaseAdminClient()
+          return input.toolName === "seller_os_get_product_case"
+            ? readSellerOsProductCaseAuditV1({ supabase,
+                accountKey: account.accountKey,
+                identityType: input.arguments.identityType as never,
+                identity: String(input.arguments.identity ?? ""),
+                detailMode: input.arguments.detailMode as never })
+            : readSellerOsPublicationExecutionAuditV1({ supabase,
+                accountKey: account.accountKey,
+                publicationExecutionId: String(
+                  input.arguments.publicationExecutionId ?? ""),
+                packageId: typeof input.arguments.packageId === "string"
+                  ? input.arguments.packageId : undefined,
+                detailMode: input.arguments.detailMode as never })
+        })()
+      : input.toolName === "seller_os_get_opportunity_radar" ||
       input.toolName === "seller_os_get_opportunity_case"
       ? collectSellerOsLongitudinalOpportunityReadV1({
           toolName: input.toolName,
@@ -488,6 +518,38 @@ export function createSellerOsMcpServerV1(options: {
           credentialsIncluded: false, buyerPiiIncluded: false, marketplaceWrites: 0 }
         return { isError: true, structuredContent: { result }, content: [{ type: "text" as const,
           text: "Seller OS stopped the bounded read safely; no evidence was inferred." }] }
+      }
+    })
+    registeredToolNames.add(descriptor.name)
+  }
+  for (const descriptor of SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1) {
+    const productCase = descriptor.name === "seller_os_get_product_case"
+    const config = { title: descriptor.title, description: descriptor.description,
+      inputSchema: productCase ? z.object({
+        identityType: z.enum(["PRODUCT_CASE_ID", "LUNA_PRODUCT_ID",
+          "SUPPLIER_SKU", "EBAY_ITEM_ID", "LISTING_PACKAGE_ID"]),
+        identity: z.string().min(1).max(220),
+        detailMode: z.enum(["SUMMARY", "EVIDENCE", "TRACE"]).optional(),
+      }).strict() : z.object({
+        publicationExecutionId: z.string().uuid(),
+        packageId: z.string().uuid().optional(),
+        detailMode: z.enum(["SUMMARY", "EVIDENCE", "TRACE"]).optional(),
+      }).strict(), annotations: descriptor.annotations, securitySchemes,
+      _meta: { securitySchemes } }
+    server.registerTool(descriptor.name, config, async (args: unknown) => {
+      try {
+        const result = await toolExecutor({ toolName: descriptor.name,
+          arguments: args as Record<string, unknown> })
+        return { structuredContent: { result }, content: [{ type: "text" as const,
+          text: `Seller OS returned bounded read-only audit evidence for ${descriptor.title}.` }] }
+      } catch {
+        const result = { status: "SELLER_OS_AUDIT_READ_FAILED_CLOSED",
+          credentialsIncluded: false, buyerPiiIncluded: false,
+          databaseBusinessWrites: 0, marketplaceWrites: 0 }
+        return { isError: true, structuredContent: { result }, content: [{
+          type: "text" as const,
+          text: "Seller OS stopped the audit read safely; no evidence was inferred.",
+        }] }
       }
     })
     registeredToolNames.add(descriptor.name)
