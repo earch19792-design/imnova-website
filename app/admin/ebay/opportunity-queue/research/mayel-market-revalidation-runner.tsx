@@ -38,6 +38,18 @@ function safeReturnPath() {
     ? value : "/admin/ebay/mayel"
 }
 
+async function stableProductResearchWorkerId(extensionId: string) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode(
+      `SELLER_OS_PRODUCT_RESEARCH_BROWSER_WORKER_V1:${extensionId}`)))
+  digest[6] = (digest[6] & 0x0f) | 0x50
+  digest[8] = (digest[8] & 0x3f) | 0x80
+  const hex = Array.from(digest.slice(0, 16), (value) =>
+    value.toString(16).padStart(2, "0")).join("")
+  const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  return `product-research-browser:${uuid}`
+}
+
 async function authorizedPost(body: JsonRecord) {
   const session = await supabase.auth.getSession()
   const token = session.data.session?.access_token
@@ -124,7 +136,7 @@ export function MayelMarketRevalidationRunner() {
         extensionVersion: probe.extensionVersion,
         manifestOriginMatch: probe.extensionId === probe.bridgeExtensionId,
       })
-      const workerId = `product-research-browser:${crypto.randomUUID()}`
+      const workerId = await stableProductResearchWorkerId(probe.extensionId)
       const persistHeartbeat = async (workerState: "IDLE" | "WORKING") => {
         const payload = await authorizedPost({
           action: "HEARTBEAT_PRODUCT_RESEARCH_WORKER", workerId,

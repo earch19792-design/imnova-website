@@ -432,7 +432,7 @@ export async function claimMayelAutonomousResearchPlanV1(input: {
       p_worker_id: workerId,
       p_worker_capability: capability,
       p_plan_id: requestedPlanId,
-      p_lease_seconds: 900,
+      p_lease_seconds: 300,
     })
   if (claimed.error) {
     throw new Error("MAYEL_RESEARCH_WORKER_CLAIM_FAILED")
