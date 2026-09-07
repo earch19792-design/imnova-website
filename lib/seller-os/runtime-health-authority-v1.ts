@@ -97,13 +97,15 @@ function check(input: Readonly<{
 }>): SellerOsOperationalIntegrityCheckV1 {
   const failureClass = input.state === "PROVEN_FAILED"
     ? "RUNTIME_SERVICE_DISCONNECTED" : null
+  const stableEvidence = Object.fromEntries(Object.entries(input.evidence)
+    .filter(([key]) => !["observedAt", "lastSuccessAt"].includes(key)))
   return Object.freeze({ invariantCode: input.invariantCode,
     status: input.state === "PROVEN_HEALTHY" ? "PASS"
       : input.state === "PROVEN_FAILED" ? "VIOLATION" : "UNKNOWN",
     failureClass, retrySafety: "SAFE_READ_ONLY_RECONCILIATION",
     recoveryClass: "AUTO_RECOVERABLE",
     evidenceFingerprint: sha256({ invariantCode: input.invariantCode,
-      state: input.state, evidence: input.evidence }),
+      state: input.state, evidence: stableEvidence }),
     evidence: input.evidence,
     regressionGuard: Object.freeze({
       authority: SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1,

@@ -8,6 +8,7 @@ RUNTIME_ENV="/home/earch/.config/imnova/seller-os-tunnel-runtime.env"
 CLOUD_ENV="/home/earch/.config/imnova/seller-os-cloud-read-relay.env"
 TUNNEL_CLIENT="/home/earch/.local/bin/tunnel-client"
 HEALTH_REPORTER="/home/earch/.local/bin/imnova-seller-os-runtime-health-reporter.mjs"
+NODE_BIN="/home/earch/.nvm/versions/node/v22.23.0/bin/node"
 PROFILE="seller-os-tunnel-live-v1"
 
 restart_tunnel=0
@@ -61,10 +62,10 @@ fi
 # watchdog has observed/recovered the fixed local services. Failure to reach
 # the cloud leaves the local watchdog successful and assurance UNKNOWN; it is
 # never coerced into a disconnected service.
-if [[ -r "$CLOUD_ENV" && -x "$HEALTH_REPORTER" ]]; then
-  set -a
-  source "$CLOUD_ENV"
-  set +a
-  "$HEALTH_REPORTER" >/dev/null 2>&1 || true
-  unset SELLER_OS_CLOUD_READ_RELAY_SECRET 2>/dev/null || true
+if [[ -r "$CLOUD_ENV" && -r "$HEALTH_REPORTER" && -x "$NODE_BIN" ]]; then
+  /usr/bin/systemd-run --user --quiet --collect \
+    --unit=imnova-seller-os-runtime-health-reporter \
+    --on-active=5s \
+    --property="EnvironmentFile=$CLOUD_ENV" \
+    "$NODE_BIN" "$HEALTH_REPORTER" || true
 fi
