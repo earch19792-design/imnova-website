@@ -4,7 +4,7 @@ import { basename, resolve } from "node:path"
 const source = resolve("tools/browser-extensions/luna-shipping-capture")
 const outputPaths = [
   "public/seller-os-tools/luna-shipping-capture-extension.zip",
-  "public/seller-os-tools/luna-shipping-capture-extension-v1.0.53.zip",
+  "public/seller-os-tools/luna-shipping-capture-extension-v1.0.54.zip",
 ]
 const files = [
   "manifest.json", "background.js", "content.js", "startup-probe.json", "README.md",

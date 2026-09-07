@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.53"
+const EXTENSION_BUILD_VERSION = "1.0.54"
 const WORKER_CONTROL_ALARM = "seller-os-luna-shipping-worker-control-v1"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
@@ -1419,20 +1419,34 @@ function observeCheckoutNavigation(details, inject) {
 
 async function ensureShippingWorkerControlPage() {
   if (chrome.runtime.id !== EXACT_EXTENSION_ID) return false
+  const workerControlUrl = `${CONTROL_PAGE}?bridgeOnly=1&workerVersion=${
+    encodeURIComponent(EXTENSION_BUILD_VERSION)}`
   let tabs
   try {
     tabs = await chrome.tabs.query({
       url: `${SELLER_OS_ORIGIN}/admin/ebay/luna-shipping-capture*`,
     })
   } catch { return false }
-  if (tabs.some((tab) => {
+  const existingWorkerTab = tabs.find((tab) => {
     try {
       return new URL(tab.url ?? "").searchParams.get("bridgeOnly") === "1"
     } catch { return false }
-  })) return true
+  })
+  if (existingWorkerTab) {
+    try {
+      const currentWorkerVersion = new URL(existingWorkerTab.url ?? "")
+        .searchParams.get("workerVersion")
+      if (currentWorkerVersion === EXTENSION_BUILD_VERSION) return true
+      if (!Number.isInteger(existingWorkerTab.id)) return false
+      await chrome.tabs.update(existingWorkerTab.id, {
+        url: workerControlUrl, active: false,
+      })
+      return true
+    } catch { return false }
+  }
   try {
     await chrome.tabs.create({
-      url: `${CONTROL_PAGE}?bridgeOnly=1`, active: false,
+      url: workerControlUrl, active: false,
     })
     return true
   } catch { return false }
