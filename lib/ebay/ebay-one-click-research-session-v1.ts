@@ -18,17 +18,29 @@ export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
     "/seller-os-tools/ebay-product-research-capture-extension-v1.2.27.zip",
 })
 
+export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
+  Object.freeze({ version: "1.2.26",
+    buildId: "10fa05a43791ff4bd42083d0ca88341a5c99a947",
+    browserRestartRecoverySupported: false as const }),
+  Object.freeze({ version: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version,
+    buildId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.buildId,
+    browserRestartRecoverySupported: true as const }),
+])
+
 export function attestEbayOneClickResearchExtensionArtifact(input: Readonly<{
   extensionVersion: unknown
   manifestOriginMatch: unknown
 }>) {
-  if (input.extensionVersion !== EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version ||
-    input.manifestOriginMatch !== true) {
+  const artifact = EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY.find(
+    (candidate) => candidate.version === input.extensionVersion)
+  if (!artifact || input.manifestOriginMatch !== true) {
     throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT_MISMATCH")
   }
   return Object.freeze({
-    extensionVersion: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version,
-    buildId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.buildId,
+    extensionVersion: artifact.version,
+    buildId: artifact.buildId,
+    browserRestartRecoverySupported:
+      artifact.browserRestartRecoverySupported,
     manifestOriginMatch: true as const,
   })
 }
