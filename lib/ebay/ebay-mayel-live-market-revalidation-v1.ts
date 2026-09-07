@@ -35,6 +35,8 @@ export const MAYEL_LIVE_MARKET_REVALIDATION_VERSION =
   "MAYEL_LIVE_MARKET_REVALIDATION_V1_2026_09_06"
 export const MAYEL_LIVE_MARKET_REVALIDATION_RECOVERY_POLICY =
   "MAYEL_LIVE_MARKET_REVALIDATION_POLICY_V1"
+export const QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_NAMESPACE_CONTRACT_V1 =
+  "QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_NAMESPACE_V1_2026_09_07"
 
 type JsonRecord = Record<string, unknown>
 
@@ -75,6 +77,57 @@ function validWorkerId(value: unknown) {
   const normalized = text(value, 160)
   return /^product-research-browser:[0-9a-f-]{36}$/i.test(normalized)
     ? normalized : null
+}
+
+function quickPickProductIdNamespace(value: unknown) {
+  const normalized = text(value, 160)
+  if (/^\d{1,30}$/.test(normalized)) return "SUPPLIER_PRODUCT_ID" as const
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(normalized)) return "INTERNAL_PRODUCT_ID" as const
+  return "UNPROVEN" as const
+}
+
+async function resolveQuickPickExactSupplierVariantV1(input: {
+  supabase: SupabaseClient
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string | null
+}) {
+  if (quickPickProductIdNamespace(input.lunaProductId) !==
+      "SUPPLIER_PRODUCT_ID" || !/^\d{1,30}$/.test(input.lunaVariantId)) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_NAMESPACE_UNPROVEN")
+  }
+  const catalog = await input.supabase.from("market_radar_latest_variants")
+    .select("product_id,supplier_product_id,supplier_variant_id,sku,barcode,title,variant_title,metadata")
+    .eq("source_key", "lunaportex")
+    .eq("supplier_product_id", input.lunaProductId)
+    .limit(250)
+  if (catalog.error) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_AUTHORITY_UNAVAILABLE")
+  }
+  const productRows = (catalog.data ?? []).map((row) => record(row))
+  if (!productRows.length) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_UNPROVEN")
+  }
+  const exactRows = productRows.filter((row) =>
+    text(row.supplier_variant_id, 160) === input.lunaVariantId)
+  if (exactRows.length !== 1) {
+    throw new Error(exactRows.length > 1
+      ? "QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_CONTRADICTED"
+      : "QUICK_PICK_PRODUCT_RESEARCH_VARIANT_PRODUCT_MISMATCH")
+  }
+  const target = targetFromCatalogRow(exactRows[0])
+  if (!target || target.supplierProductId !== input.lunaProductId ||
+      target.supplierVariantId !== input.lunaVariantId) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_UNPROVEN")
+  }
+  if (input.supplierSku && target.supplierSku !== input.supplierSku) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_SUPPLIER_SKU_CONTRADICTED")
+  }
+  return Object.freeze({ target,
+    contractVersion: QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_NAMESPACE_CONTRACT_V1,
+    productIdNamespace: "SUPPLIER_PRODUCT_ID" as const,
+    variantIdNamespace: "SUPPLIER_VARIANT_ID" as const })
 }
 
 function safeFailureCode(value: unknown) {
@@ -518,15 +571,13 @@ async function completeQuickPickProductResearchPlanV1(input: {
       Date.parse(String(lease.data.worker_lease_expires_at)) <= Date.now()) {
     throw new Error("QUICK_PICK_PRODUCT_RESEARCH_WORKER_LEASE_REQUIRED")
   }
-  const variant = await input.supabase.from("market_radar_latest_variants")
-    .select("*").eq("source_key", "lunaportex")
-    .eq("product_id", plan.sourceLunaProductId)
-    .eq("supplier_variant_id", plan.subjectSupplierVariantId)
-    .limit(1).maybeSingle()
-  const target = variant.error ? null : targetFromCatalogRow(record(variant.data))
-  if (!target || target.supplierVariantId !== plan.subjectSupplierVariantId) {
-    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_EXACT_VARIANT_REQUIRED")
-  }
+  const identity = await resolveQuickPickExactSupplierVariantV1({
+    supabase: input.supabase,
+    lunaProductId: plan.sourceLunaProductId,
+    lunaVariantId: plan.subjectSupplierVariantId,
+    supplierSku: plan.sourceSupplierSku,
+  })
+  const target = identity.target
   const planned = await assertProductResearchCaptureMatchesNextQuery({
     supabase: input.supabase, accountKey: input.accountKey,
     searchQuery: input.capture?.searchQuery, planId: input.planId,
