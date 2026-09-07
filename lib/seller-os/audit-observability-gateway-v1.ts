@@ -463,7 +463,8 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
       lunaProductId: text(queue.supplier_product_id, 180),
       lunaVariantId: text(queue.supplier_variant_id, 180),
       supplierSku: text(queue.supplier_sku, 180),
-      ebaySku: text(active.sku, 180), ebayItemId: text(active.ebay_item_id, 30),
+      ebaySku: text(first(active.sku, execution.sku), 180),
+      ebayItemId: text(active.ebay_item_id, 30),
       packageId: text(packageRow.id, 80) },
     PRODUCT_JOURNEY: orderedJourney,
     FIELD_TRUTH: mode === "SUMMARY"
@@ -560,14 +561,17 @@ export async function readSellerOsPublicationExecutionAuditV1(input: Readonly<{
       approval.status, false, false, approval.id),
     step("EXECUTION_CLAIM", execution.started_at, execution.updated_at,
       execution.phase, false, false, execution.id),
-    ...(execution.inventory_item_status || execution.inventory_item_completed_at
-      ? [step("INVENTORY_ITEM_UPSERT", execution.inventory_item_started_at,
-          execution.inventory_item_completed_at, execution.inventory_item_status,
+    ...(execution.inventory_http_status || execution.inventory_confirmed_at
+      ? [step("INVENTORY_ITEM_UPSERT", execution.started_at,
+          execution.inventory_confirmed_at,
+          execution.inventory_http_status ?
+            `HTTP_${execution.inventory_http_status}` : "PROVEN",
           true, false, execution.id)] : []),
-    ...(execution.offer_status || execution.offer_completed_at
-      ? [step("OFFER_CREATE_OR_REUSE", execution.offer_started_at,
-          execution.offer_completed_at, execution.offer_status, true, false,
-          execution.offer_id)] : []),
+    ...(execution.offer_http_status || execution.offer_id
+      ? [step("OFFER_CREATE_OR_REUSE", execution.offer_create_started_at,
+          execution.completed_at,
+          execution.offer_http_status ? `HTTP_${execution.offer_http_status}`
+            : "OFFER_ID_PROVEN", true, false, execution.offer_id)] : []),
     ...(text(publication.id, 80) ? [step("PUBLISH", publication.started_at,
       publication.completed_at, publication.phase, (numberValue(
         publication.publish_write_count) ?? 0) > 0, false, publication.id)] : []),
@@ -606,8 +610,12 @@ export async function readSellerOsPublicationExecutionAuditV1(input: Readonly<{
     PREWRITE_STATE: mode === "SUMMARY" ? text(child.stage, 100) : {
       packageStatus: packageRow.status, executionPhase: execution.phase,
       authorizationStatus: approval.status },
-    INVENTORY_ITEM_STATE: first(execution.inventory_item_status, "UNPROVEN"),
-    OFFER_STATE: first(execution.offer_status, child.offer_status, "UNPROVEN"),
+    INVENTORY_ITEM_STATE: execution.inventory_http_status
+      ? `HTTP_${execution.inventory_http_status}_RECEIPT` : "UNPROVEN",
+    OFFER_STATE: first(execution.offer_http_status
+      ? `HTTP_${execution.offer_http_status}_RECEIPT` : null,
+      child.offer_status, execution.offer_id ? "OFFER_ID_PROVEN" : null,
+      "UNPROVEN"),
     SELF_LINEAGE_STATE: first(child.self_lineage_state, "UNPROVEN"),
     INTENDED_WRITE_PLAN: mode === "SUMMARY" ? undefined :
       (Array.isArray(execution.permitted_operations)
