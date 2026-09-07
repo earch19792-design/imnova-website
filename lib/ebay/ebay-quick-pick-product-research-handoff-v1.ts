@@ -6,6 +6,10 @@ import {
   buildProductResearchCommercialQueryPlanV1,
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 } from "./ebay-product-research-query-plan.ts"
+import {
+  ensureProductResearchAdaptiveReformulationV1,
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+} from "./ebay-product-research-adaptive-reformulation-v1.ts"
 
 export const QUICK_PICK_PRODUCT_RESEARCH_HANDOFF_V1 =
   "QUICK_PICK_PRODUCT_RESEARCH_HANDOFF_V1" as const
@@ -223,7 +227,27 @@ async function createOrReusePlan(input: Readonly<{
   if (write.error || !write.data) {
     throw new Error("QUICK_PICK_PRODUCT_RESEARCH_PLAN_PERSIST_FAILED")
   }
-  return record(write.data)
+  const persisted = record(write.data)
+  const planId = text(persisted.planId, 40)
+  if (!planId) throw new Error("QUICK_PICK_PRODUCT_RESEARCH_PLAN_READBACK_INVALID")
+  const reformulation = await ensureProductResearchAdaptiveReformulationV1({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    planId,
+    productName: candidate.productTitle,
+    brand: candidate.productBrand,
+    sourceField: "ebay_luna_opportunity_queue.product_title",
+    sourceAuthority: "LUNA_PRODUCT_TRUTH",
+    observedAt: input.observedAt,
+  })
+  return Object.freeze({ ...persisted,
+    planId,
+    planCreated: persisted.planCreated === true,
+    researchState: reformulation.status === "REFORMULATION_TASK_CREATED" ||
+      reformulation.status === "REFORMULATION_REUSED"
+      ? (input.workerCapabilityFresh ? "CLAIMABLE" : "WAITING_FOR_WORKER")
+      : persisted.researchState,
+    reformulation })
 }
 
 type CreatePlan = typeof createOrReusePlan

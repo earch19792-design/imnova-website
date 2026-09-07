@@ -4,7 +4,10 @@ export const PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V1 =
 export type ProductResearchQueryIntentV1 =
   | "EXACT_PRODUCT_QUERY"
   | "CORE_FAMILY_QUERY"
+  | "REFORMULATED_CORE_FAMILY_QUERY"
   | "SEMANTIC_EXPANSION_QUERY"
+
+export const PRODUCT_RESEARCH_MAX_REFORMULATION_ATTEMPTS = 2 as const
 
 export type CommercialComparableClassificationV1 =
   | "EXACT_PRODUCT_COMPARABLE"
@@ -48,6 +51,27 @@ export type ProductResearchCommercialQueryV1 = Readonly<{
   ordinal: number
 }>
 
+export type ProductResearchReformulationEvidenceEntityV1 = Readonly<{
+  itemId?: string | null
+  boundedTitleEvidence?: string | null
+  classification?: CommercialComparableClassificationV1 | null
+}>
+
+export type ProductResearchReformulationDecisionV1 = Readonly<{
+  outcome: "CREATE_TASK" | "TERMINAL_UNPROVEN"
+  intent: "REFORMULATED_CORE_FAMILY_QUERY" |
+    "SEMANTIC_EXPANSION_QUERY" | null
+  query: string | null
+  evidenceBasis: readonly ProductResearchTermEvidenceV1[]
+  parentTaskId: string
+  reformulationOrdinal: number
+  whyPreviousQueryFailed: Readonly<Record<string, number | string>>
+  addedSignals: readonly string[]
+  removedSignals: readonly string[]
+  terminalConclusion: "DEMAND_REMAINS_UNPROVEN_AFTER_BOUNDED_RESEARCH" |
+    "RECOVERY_POLICY_EXHAUSTED" | null
+}>
+
 const MATERIALS = new Set([
   "aluminum", "aluminium", "bamboo", "brass", "ceramic", "cotton", "fabric",
   "glass", "leather", "metal", "nylon", "plastic", "rubber", "silicone",
@@ -75,6 +99,11 @@ const NOISE_WORDS = new Set([
   "assorted", "default", "new", "title", "various",
 ])
 const CONNECTORS = new Set(["for", "including", "with"])
+const REFORMULATION_NOISE = new Set([
+  ...FUNCTION_WORDS,
+  "buy", "free", "item", "items", "lot", "new", "pack", "packs",
+  "sale", "seller", "shipping", "used",
+])
 
 function normalizedText(value: unknown, maximum = 320) {
   return typeof value === "string"
@@ -369,6 +398,174 @@ export function evaluateProductResearchQueryQualityV1(
       : total ? "LOW_PRECISION_REFORMULATION_REQUIRED" as const
         : "NO_EVIDENCE_UNPROVEN" as const,
   })
+}
+
+function evidenceClassification(value: unknown) {
+  return ["EXACT_PRODUCT_COMPARABLE", "CLOSE_VARIANT_COMPARABLE",
+    "CORE_FAMILY_COMPARABLE", "ADJACENT_BUT_NOT_COMPARABLE",
+    "FALSE_POSITIVE"].includes(String(value))
+    ? value as CommercialComparableClassificationV1 : null
+}
+
+function canonicalEvidenceRows(
+  rows: readonly ProductResearchReformulationEvidenceEntityV1[],
+) {
+  const byItem = new Map<string, ProductResearchReformulationEvidenceEntityV1>()
+  for (const row of rows) {
+    const itemId = normalizedText(row.itemId, 30)
+    const title = normalizedText(row.boundedTitleEvidence, 160)
+    const classification = evidenceClassification(row.classification)
+    if (!/^\d{9,20}$/.test(itemId) || !title || !classification) continue
+    if (!byItem.has(itemId)) byItem.set(itemId, { ...row, itemId,
+      boundedTitleEvidence: title, classification })
+  }
+  return [...byItem.values()]
+}
+
+function titleTermStats(
+  rows: readonly ProductResearchReformulationEvidenceEntityV1[],
+) {
+  const acceptedClasses = new Set<CommercialComparableClassificationV1>([
+    "EXACT_PRODUCT_COMPARABLE", "CLOSE_VARIANT_COMPARABLE",
+    "CORE_FAMILY_COMPARABLE",
+  ])
+  const accepted = rows.filter((row) =>
+    acceptedClasses.has(row.classification as CommercialComparableClassificationV1))
+  const irrelevant = rows.filter((row) =>
+    !acceptedClasses.has(row.classification as CommercialComparableClassificationV1))
+  const counts = (source: readonly ProductResearchReformulationEvidenceEntityV1[]) => {
+    const result = new Map<string, number>()
+    for (const row of source) {
+      const rowTerms = unique(tokens(row.boundedTitleEvidence).filter((term) =>
+        term.length >= 2 && !REFORMULATION_NOISE.has(term) && !/^\d+$/.test(term)))
+      for (const term of rowTerms) result.set(term, (result.get(term) ?? 0) + 1)
+    }
+    return result
+  }
+  return { accepted, irrelevant, acceptedTerms: counts(accepted),
+    irrelevantTerms: counts(irrelevant) }
+}
+
+/**
+ * Derives one bounded follow-up query from durable Product Truth plus the
+ * contrast between commercially relevant and irrelevant sold-result titles.
+ * It does not accept caller keywords or an external benchmark.
+ */
+export function deriveProductResearchReformulationDecisionV1(input: Readonly<{
+  entity: ProductResearchEntityV1
+  parentTaskId: string
+  parentQuery: string
+  qualityStatus: string
+  qualityMetrics?: Readonly<Record<string, unknown>> | null
+  commercialEvidence: readonly ProductResearchReformulationEvidenceEntityV1[]
+  priorQueries: readonly string[]
+  reformulationAttemptCount: number
+  maxReformulationAttempts?: number
+}>) : ProductResearchReformulationDecisionV1 | null {
+  if (input.qualityStatus !== "LOW_PRECISION_REFORMULATION_REQUIRED" ||
+      !input.entity.productNoun || !normalizedText(input.parentTaskId, 60)) return null
+  const maximum = Math.max(1, Math.min(5,
+    Math.trunc(input.maxReformulationAttempts ??
+      PRODUCT_RESEARCH_MAX_REFORMULATION_ATTEMPTS)))
+  const ordinal = Math.max(0, Math.trunc(input.reformulationAttemptCount)) + 1
+  const rows = canonicalEvidenceRows(input.commercialEvidence)
+  const stats = titleTermStats(rows)
+  const metric = (key: string) => {
+    const value = Number(input.qualityMetrics?.[key])
+    return Number.isFinite(value) ? value : 0
+  }
+  const whyPreviousQueryFailed = Object.freeze({
+    qualityStatus: input.qualityStatus,
+    uniqueItemIds: rows.length,
+    exactComparableCount: metric("exactComparableCount"),
+    closeVariantComparableCount: metric("closeVariantComparableCount"),
+    familyComparableCount: metric("familyComparableCount"),
+    adjacentCount: metric("adjacentCount"),
+    falsePositiveCount: metric("falsePositiveCount"),
+    comparablePrecision: metric("comparablePrecision"),
+  })
+  const terminal = (conclusion:
+    ProductResearchReformulationDecisionV1["terminalConclusion"]) =>
+    Object.freeze({ outcome: "TERMINAL_UNPROVEN" as const, intent: null,
+      query: null, evidenceBasis: Object.freeze([]),
+      parentTaskId: normalizedText(input.parentTaskId, 60),
+      reformulationOrdinal: ordinal, whyPreviousQueryFailed,
+      addedSignals: Object.freeze([]), removedSignals: Object.freeze([]),
+      terminalConclusion: conclusion })
+  if (ordinal > maximum) {
+    return terminal("DEMAND_REMAINS_UNPROVEN_AFTER_BOUNDED_RESEARCH")
+  }
+
+  const parentTerms = unique(tokens(input.parentQuery))
+  const prior = new Set(input.priorQueries.map((query) =>
+    tokens(query).join(" ")).filter(Boolean))
+  const acceptedDenominator = Math.max(1, stats.accepted.length)
+  const irrelevantDenominator = Math.max(1, stats.irrelevant.length)
+  const truthGroups = new Map<string, string>([
+    ...input.entity.countOrSetQualifiers.map((term) => [term,
+      "COUNT_OR_SET_QUALIFIER"] as const),
+    ...input.entity.sizeOrVariantQualifiers.map((term) => [term,
+      "SIZE_OR_VARIANT_QUALIFIER"] as const),
+    ...input.entity.featureQualifiers.map((term) => [term,
+      "FEATURE_QUALIFIER"] as const),
+    ...input.entity.brandSignal.map((term) => [term,
+      "STRUCTURED_BRAND_SIGNAL"] as const),
+  ])
+  const truthCandidates = [...truthGroups.entries()].flatMap(([term, reason]) => {
+    const normalized = tokens(term)[0] ?? ""
+    if (!normalized || parentTerms.includes(normalized) ||
+        REFORMULATION_NOISE.has(normalized)) return []
+    const acceptedFrequency = stats.acceptedTerms.get(normalized) ?? 0
+    const irrelevantFrequency = stats.irrelevantTerms.get(normalized) ?? 0
+    const lift = acceptedFrequency / acceptedDenominator -
+      irrelevantFrequency / irrelevantDenominator
+    const structuralBonus = ["COUNT_OR_SET_QUALIFIER",
+      "SIZE_OR_VARIANT_QUALIFIER", "FEATURE_QUALIFIER"].includes(reason)
+      ? 0.25 : 0
+    return [{ term: normalized, reason, acceptedFrequency,
+      irrelevantFrequency, score: lift + structuralBonus,
+      sourceField: input.entity.evidence.find((entry) =>
+        entry.term === term)?.sourceField ?? "product_title",
+      sourceAuthority: input.entity.evidence.find((entry) =>
+        entry.term === term)?.sourceAuthority ?? "LUNA_PRODUCT_TRUTH" }]
+  })
+  const truthTerms = new Set(input.entity.evidence.map((entry) => entry.term))
+  const marketplaceCandidates = [...stats.acceptedTerms.entries()].flatMap(
+    ([term, acceptedFrequency]) => {
+      if (parentTerms.includes(term) || truthTerms.has(term) ||
+          REFORMULATION_NOISE.has(term) || acceptedFrequency < 2) return []
+      const irrelevantFrequency = stats.irrelevantTerms.get(term) ?? 0
+      const lift = acceptedFrequency / acceptedDenominator -
+        irrelevantFrequency / irrelevantDenominator
+      return lift > 0 ? [{ term, reason: "MARKETPLACE_ACCEPTED_TITLE_CONTRAST",
+        acceptedFrequency, irrelevantFrequency, score: lift,
+        sourceField: "marketplace_sold_title_evidence",
+        sourceAuthority: "EBAY_PRODUCT_RESEARCH_DURABLE_EVIDENCE" }] : []
+    })
+  const ordered = [...truthCandidates, ...marketplaceCandidates]
+    .sort((left, right) => right.score - left.score ||
+      right.acceptedFrequency - left.acceptedFrequency ||
+      left.irrelevantFrequency - right.irrelevantFrequency ||
+      left.term.localeCompare(right.term))
+  const chosen = ordered.find((candidate) => {
+    const next = boundedQuery([...parentTerms, candidate.term])
+    return next && !prior.has(next)
+  })
+  if (!chosen) return terminal("RECOVERY_POLICY_EXHAUSTED")
+  const query = boundedQuery([...parentTerms, chosen.term])
+  const intent = chosen.sourceAuthority === "LUNA_PRODUCT_TRUTH"
+    ? "REFORMULATED_CORE_FAMILY_QUERY" as const
+    : "SEMANTIC_EXPANSION_QUERY" as const
+  const evidenceBasis = Object.freeze([Object.freeze({ term: chosen.term,
+    sourceField: chosen.sourceField,
+    sourceAuthority: chosen.sourceAuthority,
+    selectionReason: `${chosen.reason}_ACCEPTED_${chosen.acceptedFrequency}` +
+      `_IRRELEVANT_${chosen.irrelevantFrequency}` })])
+  return Object.freeze({ outcome: "CREATE_TASK" as const, intent, query,
+    evidenceBasis, parentTaskId: normalizedText(input.parentTaskId, 60),
+    reformulationOrdinal: ordinal, whyPreviousQueryFailed,
+    addedSignals: Object.freeze([chosen.term]), removedSignals: Object.freeze([]),
+    terminalConclusion: null })
 }
 
 export function canonicalizeComparableEvidenceByItemIdV1<T extends Readonly<{

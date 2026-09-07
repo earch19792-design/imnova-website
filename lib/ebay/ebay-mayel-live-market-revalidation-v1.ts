@@ -30,6 +30,8 @@ import { currentLiveListingsForMonitorV1 } from
   "./ebay-seller-os-live-portfolio-integrity-v1"
 import { loadSellerOsAssistantMonitorV1 } from
   "./ebay-seller-os-assistant-runtime"
+import { ensureProductResearchAdaptiveReformulationV1 } from
+  "./ebay-product-research-adaptive-reformulation-v1"
 
 export const MAYEL_LIVE_MARKET_REVALIDATION_VERSION =
   "MAYEL_LIVE_MARKET_REVALIDATION_V1_2026_09_06"
@@ -618,6 +620,9 @@ async function completeQuickPickProductResearchPlanV1(input: {
       searchQueryHash: research.searchQueryHash,
       captureBatchId: research.batchId,
       capturedAt: new Date(research.capturedAt),
+      // Quick Pick completion is semantic: a low-precision final query must
+      // first materialize its durable reformulation decision/task.
+      deferPlanCompletion: true,
     })
   }
   const qualityWrite = await input.supabase.from(
@@ -631,6 +636,17 @@ async function completeQuickPickProductResearchPlanV1(input: {
   if (qualityWrite.error || qualityWrite.data?.id !== planned.taskId) {
     throw new Error("QUICK_PICK_PRODUCT_RESEARCH_QUALITY_READBACK_REQUIRED")
   }
+  const reformulation = await ensureProductResearchAdaptiveReformulationV1({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    planId: input.planId,
+    parentTaskId: planned.taskId,
+    productName: target.productName,
+    brand: target.identity.manufacturerBrand,
+    sourceField: "product_name",
+    sourceAuthority: target.identityEvidenceSource ?? target.sourceType ??
+      "LUNA_PRODUCT_TRUTH",
+  })
   const completedAt = new Date().toISOString()
   const completed = await input.supabase.rpc(
     "complete_quick_pick_product_research_claim_v1", {
@@ -651,6 +667,7 @@ async function completeQuickPickProductResearchPlanV1(input: {
     captureBatchId: research.batchId, soldImportBatchId, soldEvidenceOutcome,
     commercialQualityStatus: research.commercialQualityStatus,
     commercialQuality: research.commercialQuality,
+    reformulation,
     productResearchExecuted: true as const,
     researchReceiptCreated: true as const,
     nextStageStarted: false as const,

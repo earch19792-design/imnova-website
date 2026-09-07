@@ -641,6 +641,7 @@ export async function markProductResearchQueryCaptured(input: {
   taskId?: string | null
   capturedAt?: Date
   now?: Date
+  deferPlanCompletion?: boolean
 }) {
   const now = (input.now ?? new Date()).toISOString()
   const capturedAt = (input.capturedAt ?? input.now ?? new Date()).toISOString()
@@ -674,6 +675,13 @@ export async function markProductResearchQueryCaptured(input: {
       .eq("marketplace", "EBAY_US").eq("query_hash", input.searchQueryHash)
       .eq("status", "PENDING")
     if (updateError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_UPDATE_FAILED")
+  }
+  if (input.deferPlanCompletion === true) {
+    return getProductResearchQueryPlanStatus({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      planId: settledPlanId,
+    })
   }
   return completeProductResearchQueryPlanWhenSettled({
     supabase: input.supabase, accountKey: input.accountKey,
