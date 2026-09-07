@@ -342,7 +342,7 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
     .eq("marketplace", "EBAY_US")
     .in("source_context", ["LIVE_LISTING_REVALIDATION",
       "QUICK_PICK_RESEARCH_REQUIRED"])
-    .in("status", ["ACTIVE", "COMPLETED"])
+    .eq("status", "ACTIVE")
     .order("created_at", { ascending: true }).limit(100)
   if (plans.error) {
     throw new Error("MAYEL_RESEARCH_ACQUISITION_PLAN_READ_FAILED")
@@ -362,7 +362,7 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
       .select("plan_id,status,capture_batch_id")
       .eq("marketplace_account_key", input.accountKey)
       .eq("marketplace", "EBAY_US").in("plan_id", planIds)
-      .in("status", ["PENDING", "PROCESSED"]),
+      .eq("status", "PENDING"),
     receiptIds.length ? input.supabase.from(
       "seller_os_operational_learning_ledger_v1")
       .select("id,status,lease_owner,lease_expires_at")
@@ -373,13 +373,9 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
     throw new Error("MAYEL_RESEARCH_ACQUISITION_STATE_READ_FAILED")
   }
   const resumablePlanIds = new Set((plans.data ?? []).filter((plan) =>
-    (tasks.data ?? []).some((task) => {
-      const samePlan = String(task.plan_id) === String(plan.id)
-      const pendingQuery = plan.status === "ACTIVE" && task.status === "PENDING"
-      const downstreamResume = plan.status === "COMPLETED" &&
-        task.status === "PROCESSED" && Boolean(task.capture_batch_id)
-      return samePlan && (pendingQuery || downstreamResume)
-    })).map((plan) => String(plan.id)))
+    (tasks.data ?? []).some((task) =>
+      String(task.plan_id) === String(plan.id) && task.status === "PENDING"))
+    .map((plan) => String(plan.id)))
   const now = Date.now()
   const receiptById = new Map((receipts.data ?? []).map((receipt) =>
     [String(receipt.id), receipt] as const))
