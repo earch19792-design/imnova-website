@@ -319,8 +319,9 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
     LISTING_PACKAGE: { status: packageId ? "PROVEN" : "MISSING",
       authority: "ebay_listing_packages", observedAt: packageObserved,
       receipt: packageId },
-    OWNER_AUTHORIZATION: { status: approval.status === "APPROVED" ||
-      approval.status === "CONSUMED" ? "PROVEN" : Object.keys(approval).length
+    OWNER_AUTHORIZATION: { status: ["APPROVED", "CONSUMED"].includes(
+      String(approval.status ?? "").toUpperCase()) ? "PROVEN"
+      : Object.keys(approval).length
         ? "UNPROVEN" : "MISSING", authority: "ebay_draft_only_approvals",
       observedAt: first(approval.approved_at, approval.updated_at), receipt: approval.id },
     PUBLISHER: { status: Object.keys(batchChild).length && batchChild.error_class
