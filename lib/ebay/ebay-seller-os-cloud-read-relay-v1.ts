@@ -15,6 +15,8 @@ import type { SellerOsEbayTradingRateLimitStatusV1 } from
   "./ebay-trading-rate-limit-observability-v1.ts"
 // @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
 import { collectSellerOsLongitudinalOpportunityReadV1 } from "./ebay-longitudinal-opportunity-radar-read-v1.ts"
+// @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
+import { SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1, enrichSellerOsSystemReviewAuditDrilldownV1, readSellerOsProductCaseAuditV1, readSellerOsPublicationExecutionAuditV1 } from "../seller-os/audit-observability-gateway-v1.ts"
 
 export const SELLER_OS_CLOUD_READ_RELAY_VERSION =
   "SELLER_OS_CLOUD_READ_RELAY_V1_2026_08_12"
@@ -46,6 +48,7 @@ const REQUEST_TIMEOUT_MS = 30_000
 const RELAY_TOOL_NAMES = new Set(
   [
     ...SELLER_OS_ASSISTANT_TOOLS_V1.map((descriptor) => descriptor.name),
+    ...SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1.map((descriptor) => descriptor.name),
     SELLER_OS_OFFICIAL_ORDERS_TOOL_V1.name,
     SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1.name,
     SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name,
@@ -134,6 +137,7 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
     throw new Error("SELLER_OS_RELAY_ARGUMENTS_INVALID")
   }
   const args = value as Record<string, unknown>
+  const normalized: Record<string, unknown> = {}
   const allowedKeys = new Set<string>(
     toolName === SELLER_OS_OFFICIAL_ORDERS_TOOL_V1.name ||
         toolName === SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1.name ||
@@ -143,16 +147,55 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
         toolName === SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1
       ? [] : ["limit"],
   )
+  if (toolName === "seller_os_get_product_case") {
+    allowedKeys.delete("limit")
+    allowedKeys.add("identityType")
+    allowedKeys.add("identity")
+    allowedKeys.add("detailMode")
+  }
+  if (toolName === "seller_os_get_publication_execution") {
+    allowedKeys.delete("limit")
+    allowedKeys.add("publicationExecutionId")
+    allowedKeys.add("packageId")
+    allowedKeys.add("detailMode")
+  }
   if (toolName === "seller_os_get_listing_intelligence") {
     allowedKeys.add("itemId")
   }
   if (toolName === "seller_os_get_opportunity_case") {
     allowedKeys.add("opportunityCaseId")
   }
+  if (toolName === "seller_os_get_product_case") {
+    if (!["PRODUCT_CASE_ID", "LUNA_PRODUCT_ID", "SUPPLIER_SKU",
+      "EBAY_ITEM_ID", "LISTING_PACKAGE_ID"].includes(String(args.identityType)) ||
+      typeof args.identity !== "string" || !args.identity.trim() ||
+      args.identity.length > 220) {
+      throw new Error("SELLER_OS_RELAY_PRODUCT_IDENTITY_INVALID")
+    }
+    normalized.identityType = args.identityType
+    normalized.identity = args.identity.normalize("NFKC").trim()
+  }
+  if (toolName === "seller_os_get_publication_execution") {
+    if (typeof args.publicationExecutionId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(args.publicationExecutionId) ||
+      (args.packageId !== undefined && (typeof args.packageId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+          .test(args.packageId)))) {
+      throw new Error("SELLER_OS_RELAY_PUBLICATION_IDENTITY_INVALID")
+    }
+    normalized.publicationExecutionId = args.publicationExecutionId
+    if (args.packageId) normalized.packageId = args.packageId
+  }
+  if (args.detailMode !== undefined) {
+    if (!["SUMMARY", "EVIDENCE", "TRACE"].includes(String(args.detailMode))) {
+      throw new Error("SELLER_OS_RELAY_DETAIL_MODE_INVALID")
+    }
+    normalized.detailMode = args.detailMode
+  }
   if (Object.keys(args).some((key) => !allowedKeys.has(key))) {
     throw new Error("SELLER_OS_RELAY_ARGUMENT_NOT_ALLOWLISTED")
   }
-  const normalized: Record<string, unknown> = {}
   if (args.limit !== undefined) {
     if (!Number.isInteger(args.limit) || Number(args.limit) < 1 ||
       Number(args.limit) > 100) {
@@ -465,6 +508,9 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     longitudinalOpportunityReadCollector?: typeof
       collectSellerOsLongitudinalOpportunityReadV1
     demandFirstBroadNetReplayCollector?: () => Promise<unknown>
+    productCaseCollector?: (args: Record<string, unknown>) => Promise<unknown>
+    publicationExecutionCollector?: (args: Record<string, unknown>) => Promise<unknown>
+    systemReviewDrilldownEnricher?: (bundle: unknown) => Promise<unknown>
   } = {},
 ) {
   const environment = options.environment ?? process.env
@@ -566,6 +612,35 @@ export async function handleSellerOsCloudReadRelayRequestV1(
           return runtime.collectSellerOsDemandFirstBroadNetServerReplayV1()
         })
       result = await collector()
+    } else if (envelope.toolName === "seller_os_get_product_case" ||
+        envelope.toolName === "seller_os_get_publication_execution") {
+      const accountModule = await import("./ebay-seller-account-scope")
+      const account = accountModule.getEbaySellerAccountScopeConfiguration(
+        environment)
+      if (!account.accountKey) throw new Error("AUDIT_ACCOUNT_SCOPE_REQUIRED")
+      const collector = envelope.toolName === "seller_os_get_product_case"
+        ? options.productCaseCollector ?? (async (args) => {
+            const supabaseModule = await import("../supabase-admin")
+            return readSellerOsProductCaseAuditV1({
+              supabase: supabaseModule.getSupabaseAdminClient(),
+              accountKey: account.accountKey as string,
+              identityType: args.identityType as never,
+              identity: String(args.identity ?? ""),
+              detailMode: args.detailMode as never,
+            })
+          })
+        : options.publicationExecutionCollector ?? (async (args) => {
+            const supabaseModule = await import("../supabase-admin")
+            return readSellerOsPublicationExecutionAuditV1({
+              supabase: supabaseModule.getSupabaseAdminClient(),
+              accountKey: account.accountKey as string,
+              publicationExecutionId: String(args.publicationExecutionId ?? ""),
+              packageId: typeof args.packageId === "string"
+                ? args.packageId : undefined,
+              detailMode: args.detailMode as never,
+            })
+          })
+      result = await collector(envelope.arguments)
     } else if (envelope.toolName === "seller_os_get_opportunity_radar" ||
         envelope.toolName === "seller_os_get_opportunity_case") {
       const collector = options.longitudinalOpportunityReadCollector ??
@@ -585,6 +660,21 @@ export async function handleSellerOsCloudReadRelayRequestV1(
         arguments: envelope.arguments,
         monitor,
       })
+      if (envelope.toolName === "seller_os_get_system_review_bundle") {
+        const accountModule = await import("./ebay-seller-account-scope")
+        const account = accountModule.getEbaySellerAccountScopeConfiguration(
+          environment)
+        if (!account.accountKey) throw new Error("AUDIT_ACCOUNT_SCOPE_REQUIRED")
+        const enrich = options.systemReviewDrilldownEnricher ??
+          (async (bundle: unknown) => {
+            const supabaseModule = await import("../supabase-admin")
+            return enrichSellerOsSystemReviewAuditDrilldownV1({
+              supabase: supabaseModule.getSupabaseAdminClient(),
+              accountKey: account.accountKey as string, bundle,
+            })
+          })
+        result = await enrich(result)
+      }
     }
     result = projectSellerOsCloudReadRelayResultV1(
       envelope.toolName,
