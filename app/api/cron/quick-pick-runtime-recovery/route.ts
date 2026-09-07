@@ -50,7 +50,13 @@ export async function POST(req: Request) {
     const productResearchHandoff =
       await reconcileQuickPickProductResearchHandoffV1({
         supabase, accountKey,
-      })
+      }).catch(() => Object.freeze({
+        contractVersion: "QUICK_PICK_PRODUCT_RESEARCH_HANDOFF_V1",
+        status: "FAIL" as const,
+        errorCode: "QUICK_PICK_PRODUCT_RESEARCH_HANDOFF_RECONCILIATION_FAILED",
+        marketplaceWrites: 0 as const,
+        ownerActionRequired: false as const,
+      }))
     if (req.headers.get("x-seller-os-runtime-lane") ===
         "PUBLISHER_PREAUTHORIZATION_RECOVERY") {
       const recovery = await recoverQuickPickPublisherPackagesV1({
