@@ -97,13 +97,6 @@ function freshness(observedAt: string | null, freshUntil: string | null,
   if (freshUntil && Date.parse(freshUntil) <= now.getTime()) return "STALE" as const
   return "CURRENT" as const
 }
-function phaseStatus(value: unknown): SellerOsAuditEvidenceStatusV1 {
-  if (value === "COMPROBADO") return "PROVEN"
-  if (value === "TIENE_UN_FALLO") return "CONTRADICTED"
-  if (value === "FALTA_COMPROBAR") return "UNPROVEN"
-  if (value === "EN_PROCESO" || value === "PENDIENTE") return "MISSING"
-  return "UNPROVEN"
-}
 function cleanDetailMode(value: unknown): SellerOsAuditDetailModeV1 {
   return value === "EVIDENCE" || value === "TRACE" ? value : "SUMMARY"
 }
@@ -234,52 +227,135 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
   const packageRow = resolved.packageRow ?? {}
   const active = resolved.activeRow ?? {}
   const candidateId = resolved.candidateId as string
-  const journey = /^sha256:[0-9a-f]{64}$/.test(candidateId)
-    ? record(await (async () => {
-        // Loaded only for a resolved case so catalog discovery remains cheap.
-        // @ts-expect-error Node's direct TypeScript runner requires the suffix.
-        const module = await import("./product-journey-read-model-v1.ts")
-        return module.readSellerOsProductJourneyV1({ supabase: input.supabase,
-          accountKey: input.accountKey, candidateId, now })
-      })()) : {}
-  const phases = rows(journey.phases)
-  const phaseBy = new Map(phases.map((phase) => [String(phase.code), phase]))
-  const stageSource: Record<string, string> = {
-    LUNA_SOURCE: "PRODUCT_TRUTH", PRODUCT_TRUTH: "PRODUCT_TRUTH",
-    MARKET_RESEARCH: "PRODUCT_RESEARCH", RADAR: "RADAR",
-    PRICING: "ECONOMICS", ECONOMICS: "ECONOMICS",
-    EBAY_IDENTITY: "LISTING_PACKAGE", CATEGORY: "LISTING_PACKAGE",
-    ASPECTS: "LISTING_PACKAGE", LISTING_PACKAGE: "LISTING_PACKAGE",
-    OWNER_AUTHORIZATION: "OWNER_AUTHORIZATION", PUBLISHER: "PUBLISHER",
-    OFFICIAL_EBAY_READBACK: "OFFICIAL_EBAY_READBACK",
-    CURRENT_LIVE: "LIVE_MONITORING", STOCK: "LIVE_MONITORING",
-    ANALYTICS: "LIVE_MONITORING", ORDERS: "LIVE_MONITORING",
-    MAYEL: "LIVE_MONITORING",
-  }
-  const orderedJourney = JOURNEY_STAGES.map((code) => {
-    const phase = phaseBy.get(stageSource[code])
-    const status = phase ? phaseStatus(phase.status) : "UNPROVEN"
-    return Object.freeze({ STAGE: code, STATUS: status,
-      TEMPORAL_SCOPE: phase && record(phase.freshness).status === "STALE"
-        ? "STALE" : "CURRENT", SOURCE_AUTHORITY: text(phase?.sourceAuthority, 180)
-          ?? "NO_CURRENT_AUTHORITY_PROVEN",
-      OBSERVED_AT: dateValue(record(phase?.freshness).observedAt),
-      FRESH_UNTIL: dateValue(record(phase?.freshness).expiresAt),
-      FAILURE_CLASS: text(phase?.failureClass, 180),
-      RECEIPT_REFERENCES: mode === "TRACE"
-        ? (Array.isArray(record(phase?.technicalEvidence).receiptReferences)
-            ? record(phase?.technicalEvidence).receiptReferences : []) : undefined })
-  })
   const assessment = record(queue.assessment)
   const productTruth = record(first(assessment.productTruth,
     assessment.productTruthV1, assessment.lunaProductTruthV1))
   const packageData = record(packageRow.package_data)
-  const economics = record(record(journey.economicEvidenceRefresh).economics)
+  const packageId = text(packageRow.id, 80)
+  const itemId = text(active.ebay_item_id, 30)
+  const variantId = text(queue.supplier_variant_id, 100)
+  const [approvalRead, executionRead, publicationRead, childRead,
+    economicsRead, researchRead, shippingRead] = await Promise.all([
+      packageId ? input.supabase.from("ebay_draft_only_approvals").select("*")
+        .eq("listing_package_id", packageId).order("updated_at",
+          { ascending: false }).limit(5) : Promise.resolve({ data: [], error: null }),
+      packageId ? input.supabase.from("ebay_draft_only_execution_ledger")
+        .select("*").eq("listing_package_id", packageId).order("updated_at",
+          { ascending: false }).limit(5) : Promise.resolve({ data: [], error: null }),
+      packageId ? input.supabase.from("ebay_authorized_listing_publications")
+        .select("*").eq("listing_package_id", packageId).order("updated_at",
+          { ascending: false }).limit(5) : Promise.resolve({ data: [], error: null }),
+      input.supabase.from("seller_os_publisher_batch_children_v1").select("*")
+        .eq("marketplace_account_key", input.accountKey)
+        .eq("candidate_id", candidateId).order("updated_at",
+          { ascending: false }).limit(5),
+      itemId ? input.supabase.from("seller_os_live_economics_readbacks_v1")
+        .select("*").eq("marketplace_account_key", input.accountKey)
+        .eq("ebay_item_id", itemId).order("calculated_at",
+          { ascending: false }).limit(1).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      variantId ? input.supabase.from(
+        "marketplace_product_research_capture_observations")
+        .select("id,capture_batch_id,match_classification,evidence_reviewed,created_at")
+        .eq("marketplace_account_key", input.accountKey)
+        .eq("matched_supplier_variant_id", variantId)
+        .order("created_at", { ascending: false }).limit(100)
+        : Promise.resolve({ data: [], error: null }),
+      input.supabase.from("seller_os_luna_shipping_job_claims").select("*")
+        .eq("account_key", input.accountKey).eq("candidate_id", candidateId)
+        .order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    ])
+  for (const [code, result] of [["APPROVAL", approvalRead],
+    ["EXECUTION", executionRead], ["PUBLICATION", publicationRead],
+    ["BATCH_CHILD", childRead], ["ECONOMICS", economicsRead],
+    ["RESEARCH", researchRead], ["SHIPPING", shippingRead]] as const) {
+    assertRead(code, result)
+  }
+  const approval = latest(rows(approvalRead.data)) ?? {}
+  const execution = latest(rows(executionRead.data)) ?? {}
+  const publication = latest(rows(publicationRead.data)) ?? {}
+  const batchChild = latest(rows(childRead.data)) ?? {}
+  const economics = record(economicsRead.data)
+  const research = rows(researchRead.data)
+  const shipping = record(shippingRead.data)
   const queueObserved = first(queue.source_observed_at, queue.updated_at,
     queue.created_at)
   const packageObserved = first(packageRow.updated_at, packageRow.created_at)
   const activeObserved = first(active.last_ebay_sync_at, active.updated_at,
     active.created_at)
+  const stageEvidence: Record<string, Readonly<{ status: SellerOsAuditEvidenceStatusV1;
+    authority: string; observedAt: unknown; receipt?: unknown; failure?: unknown }>> = {
+    LUNA_SOURCE: { status: text(queue.id, 80) ? "PROVEN" : "MISSING",
+      authority: "ebay_luna_opportunity_queue", observedAt: queueObserved,
+      receipt: queue.id },
+    PRODUCT_TRUTH: { status: Object.keys(productTruth).length ? "PROVEN" : "UNPROVEN",
+      authority: "ebay_luna_opportunity_queue.assessment.productTruth",
+      observedAt: queueObserved, receipt: queue.id },
+    MARKET_RESEARCH: { status: research.length ? "PROVEN" : "MISSING",
+      authority: "marketplace_product_research_capture_observations",
+      observedAt: research[0]?.created_at, receipt: research[0]?.capture_batch_id },
+    RADAR: { status: Object.keys(record(assessment.radarFactoryCandidateV1)).length
+      ? "PROVEN" : "UNPROVEN", authority: "ebay_luna_opportunity_queue.assessment",
+      observedAt: queueObserved, receipt: queue.id },
+    PRICING: { status: economics.live_price !== undefined ? "PROVEN" : "UNPROVEN",
+      authority: "seller_os_live_economics_readbacks_v1",
+      observedAt: economics.calculated_at, receipt: itemId },
+    ECONOMICS: { status: economics.status === "PROVEN" ? "PROVEN" :
+      Object.keys(economics).length ? "UNPROVEN" : "MISSING",
+      authority: "seller_os_live_economics_readbacks_v1",
+      observedAt: economics.calculated_at, receipt: itemId,
+      failure: Array.isArray(economics.missing_economic_inputs)
+        ? economics.missing_economic_inputs.join(",") : null },
+    EBAY_IDENTITY: { status: first(itemId, execution.sku) ? "PROVEN" : "UNPROVEN",
+      authority: itemId ? "ebay_active_listings" : "ebay_draft_only_execution_ledger",
+      observedAt: first(activeObserved, execution.updated_at),
+      receipt: first(itemId, execution.id) },
+    CATEGORY: { status: first(packageData.categoryId, packageRow.category_id)
+      ? "PROVEN" : "MISSING", authority: "ebay_listing_packages.package_data",
+      observedAt: packageObserved, receipt: packageId },
+    ASPECTS: { status: first(packageData.aspects, packageData.itemSpecifics)
+      ? "PROVEN" : "MISSING", authority: "ebay_listing_packages.package_data",
+      observedAt: packageObserved, receipt: packageId },
+    LISTING_PACKAGE: { status: packageId ? "PROVEN" : "MISSING",
+      authority: "ebay_listing_packages", observedAt: packageObserved,
+      receipt: packageId },
+    OWNER_AUTHORIZATION: { status: approval.status === "APPROVED" ||
+      approval.status === "CONSUMED" ? "PROVEN" : Object.keys(approval).length
+        ? "UNPROVEN" : "MISSING", authority: "ebay_draft_only_approvals",
+      observedAt: first(approval.approved_at, approval.updated_at), receipt: approval.id },
+    PUBLISHER: { status: Object.keys(batchChild).length && batchChild.error_class
+      ? "CONTRADICTED" : Object.keys(execution).length ? "PROVEN" : "MISSING",
+      authority: Object.keys(batchChild).length
+        ? "seller_os_publisher_batch_children_v1"
+        : "ebay_draft_only_execution_ledger",
+      observedAt: first(batchChild.updated_at, execution.updated_at),
+      receipt: first(batchChild.receipt_id, execution.id),
+      failure: first(batchChild.error_class, execution.last_error_code) },
+    OFFICIAL_EBAY_READBACK: { status: itemId && Object.keys(active).length
+      ? "PROVEN" : "UNPROVEN", authority: "ebay_active_listings",
+      observedAt: activeObserved, receipt: itemId },
+    CURRENT_LIVE: { status: itemId && ["Active", "ACTIVE", "LIVE"].includes(
+      String(active.listing_status)) ? "PROVEN" : itemId ? "UNPROVEN" : "MISSING",
+      authority: "ebay_active_listings", observedAt: activeObserved, receipt: itemId },
+    STOCK: { status: first(queue.supplier_inventory, queue.supplier_availability)
+      !== null ? "PROVEN" : "UNPROVEN", authority: "ebay_luna_opportunity_queue",
+      observedAt: queueObserved, receipt: queue.id },
+    ANALYTICS: { status: "UNPROVEN", authority:
+      "ebay_listing_performance_snapshots", observedAt: null },
+    ORDERS: { status: "UNPROVEN", authority: "marketplace_order_snapshots",
+      observedAt: null },
+    MAYEL: { status: "UNPROVEN", authority:
+      "ebay_mayel_visual_phase_b_executions_v1", observedAt: null },
+  }
+  const orderedJourney = JOURNEY_STAGES.map((code) => {
+    const evidence = stageEvidence[code]
+    return Object.freeze({ STAGE: code, STATUS: evidence.status,
+      TEMPORAL_SCOPE: "CURRENT", SOURCE_AUTHORITY: evidence.authority,
+      OBSERVED_AT: dateValue(evidence.observedAt), FRESH_UNTIL: null,
+      FAILURE_CLASS: text(evidence.failure, 180),
+      RECEIPT_REFERENCES: mode === "TRACE" && evidence.receipt
+        ? [String(evidence.receipt)] : undefined })
+  })
   const fieldTruth = [
     field({ field: "LUNA_PRODUCT_ID", value: queue.supplier_product_id,
       source: "LUNA", authority: "ebay_luna_opportunity_queue",
@@ -327,8 +403,7 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
         : "ebay_listing_packages.package_data.shipping",
       observedAt: first(economics.calculated_at, packageObserved),
       evidenceId: packageRow.id, consumers: ["ECONOMICS"] }, now),
-    field({ field: "EBAY_ITEM_ID", value: first(active.ebay_item_id,
-      record(journey.identity).itemId), source: "EBAY",
+    field({ field: "EBAY_ITEM_ID", value: active.ebay_item_id, source: "EBAY",
       authority: "ebay_active_listings", observedAt: activeObserved,
       evidenceId: active.id, consumers: ["CURRENT_LIVE", "STOCK", "ORDERS"] }, now),
     field({ field: "EBAY_LIVE_PRICE", value: first(economics.live_price,
@@ -397,9 +472,13 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
           "SUPPLIER_SHIPPING", "EXPECTED_PROFIT", "PACKAGE_STATE",
           "PACKAGE_DIGEST"].includes(entry.FIELD)) : fieldTruth,
     ...groups, NEXT_BLOCKING_STAGE: blocker, BUSINESS_IMPACT: impact,
-    TECHNICAL_TRACE: mode === "TRACE" ? {
-      journeyActivity: journey.activity ?? [], evidenceInventory:
-        journey.evidenceInventory ?? null } : undefined,
+    TECHNICAL_TRACE: mode === "TRACE" ? { approvalId: approval.id ?? null,
+      executionId: execution.id ?? null, publicationId: publication.id ?? null,
+      publisherChildReceiptId: batchChild.receipt_id ?? null,
+      shippingReceiptId: shipping.id ?? null,
+      researchEvidenceIds: research.map((entry) => entry.id).filter(Boolean),
+      reusedExistingAuthorities: true, newRuntimeCreated: false,
+      newLedgerCreated: false } : undefined,
     safety: { readOnly: true, arbitrarySql: false, arbitraryUrl: false,
       arbitraryPath: false, arbitraryShell: false, credentialsIncluded: false,
       buyerPiiIncluded: false, databaseBusinessWrites: 0,
