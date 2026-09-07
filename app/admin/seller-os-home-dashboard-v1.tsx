@@ -6,7 +6,11 @@ import { ArrowRight, BriefcaseBusiness, CircleAlert, PackageCheck,
 
 import { supabase } from "@/lib/supabase"
 import {
+  sellerOsCompactCapabilityLabelV1,
+  sellerOsCompactCapabilityStateV1,
+  sellerOsCompactCapabilityToneV1,
   sellerOsOperationalStateToneV1,
+  type SellerOsCompactCapabilityStateV1,
   type SellerOsOperationalStateV1,
 } from "@/lib/seller-os/operational-status-v1"
 
@@ -24,20 +28,23 @@ type HomeAuthority = Readonly<{
   fulfillmentPending: number | null
   postSaleExceptions: number | null
   postSaleWorking: boolean
-  ebayState: SellerOsOperationalStateV1
-  productResearchState: SellerOsOperationalStateV1
+  ebayState: SellerOsCompactCapabilityStateV1
+  publisherState: SellerOsCompactCapabilityStateV1
+  radarState: SellerOsCompactCapabilityStateV1
+  productResearchCompactState: SellerOsCompactCapabilityStateV1
   productResearchCause: string
   productResearchConnection: "CONECTADA" | "DESCONECTADA" | "DESCONOCIDA"
   productResearchObservedAt: string | null
   productResearchVersion: string | null
   productResearchPlan: string | null
-  lunaState: SellerOsOperationalStateV1
+  lunaCompactState: SellerOsCompactCapabilityStateV1
   lunaCause: string
   lunaConnection: "CONECTADA" | "DESCONECTADA" | "DESCONOCIDA"
   lunaObservedAt: string | null
   lunaVersion: string | null
   lunaPending: number | null
-  mayelState: SellerOsOperationalStateV1
+  mayelVisualState: SellerOsCompactCapabilityStateV1
+  mayelCommercialState: SellerOsCompactCapabilityStateV1
   mayelAvailable: boolean
   mayelDelegated: number | null
   mayelOwnerExceptions: number | null
@@ -59,20 +66,23 @@ const EMPTY_AUTHORITY: HomeAuthority = Object.freeze({
   fulfillmentPending: null,
   postSaleExceptions: null,
   postSaleWorking: false,
-  ebayState: "DESCONOCIDO",
-  productResearchState: "DESCONOCIDO",
+  ebayState: "UNKNOWN",
+  publisherState: "UNKNOWN",
+  radarState: "UNKNOWN",
+  productResearchCompactState: "UNKNOWN",
   productResearchCause: "OPERATIONAL_SNAPSHOT_NOT_LOADED",
   productResearchConnection: "DESCONOCIDA",
   productResearchObservedAt: null,
   productResearchVersion: null,
   productResearchPlan: null,
-  lunaState: "DESCONOCIDO",
+  lunaCompactState: "UNKNOWN",
   lunaCause: "OPERATIONAL_SNAPSHOT_NOT_LOADED",
   lunaConnection: "DESCONOCIDA",
   lunaObservedAt: null,
   lunaVersion: null,
   lunaPending: null,
-  mayelState: "DESCONOCIDO",
+  mayelVisualState: "UNKNOWN",
+  mayelCommercialState: "UNKNOWN",
   mayelAvailable: false,
   mayelDelegated: null,
   mayelOwnerExceptions: null,
@@ -89,12 +99,6 @@ function count(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
-}
-
-function operationalState(value: unknown): SellerOsOperationalStateV1 {
-  return ["OPERANDO", "SIN_TRABAJO", "RECUPERANDO", "BLOQUEADO",
-    "DESCONOCIDO"].includes(String(value))
-    ? value as SellerOsOperationalStateV1 : "DESCONOCIDO"
 }
 
 function connectionState(value: unknown) {
@@ -125,6 +129,15 @@ function usd(value: unknown) {
 function Status({ state }: { state: SellerOsOperationalStateV1 }) {
   return <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black tracking-wide ${sellerOsOperationalStateToneV1(state)}`}>
     {state.replace("_", " ")}
+  </span>
+}
+
+function CompactStatus({ state }: Readonly<{
+  state: SellerOsCompactCapabilityStateV1
+}>) {
+  return <span data-compact-state={state}
+    className={`rounded-full border px-2 py-1 text-[10px] font-black tracking-wide ${sellerOsCompactCapabilityToneV1(state)}`}>
+    {sellerOsCompactCapabilityLabelV1(state)}
   </span>
 }
 
@@ -162,6 +175,10 @@ export function SellerOsHomeDashboardV1() {
       const capabilities = record(snapshot.capabilities)
       const researchCapability = record(capabilities.productResearch)
       const lunaCapability = record(capabilities.lunaShipping)
+      const publisherCapability = record(capabilities.publisher)
+      const radarCapability = record(capabilities.radar)
+      const ebayCapability = record(capabilities.ebay)
+      const mayelCapability = record(capabilities.mayel)
       setAuthority(Object.freeze({
         publicationAuthority: publication.authorityAvailable === true,
         preparedReady: count(publication.preparedReadyCount),
@@ -176,8 +193,14 @@ export function SellerOsHomeDashboardV1() {
         fulfillmentPending: count(business.fulfillmentPending),
         postSaleExceptions: count(business.postSaleExceptions),
         postSaleWorking: business.postSaleWorking === true,
-        ebayState: operationalState(record(capabilities.ebay).state),
-        productResearchState: operationalState(researchCapability.state),
+        ebayState: sellerOsCompactCapabilityStateV1(
+          ebayCapability.compactState),
+        publisherState: sellerOsCompactCapabilityStateV1(
+          publisherCapability.compactState),
+        radarState: sellerOsCompactCapabilityStateV1(
+          radarCapability.compactState),
+        productResearchCompactState: sellerOsCompactCapabilityStateV1(
+          researchCapability.compactState),
         productResearchCause: String(
           researchCapability.presentationCause
             ?? "PRODUCT_RESEARCH_PRESENTATION_CAUSE_UNAVAILABLE"),
@@ -189,7 +212,8 @@ export function SellerOsHomeDashboardV1() {
           "string" ? researchCapability.extensionVersion : null,
         productResearchPlan: typeof researchCapability.queuePlanState ===
           "string" ? researchCapability.queuePlanState : null,
-        lunaState: operationalState(lunaCapability.state),
+        lunaCompactState: sellerOsCompactCapabilityStateV1(
+          lunaCapability.compactState),
         lunaCause: String(lunaCapability.presentationCause
           ?? "LUNA_PRESENTATION_CAUSE_UNAVAILABLE"),
         lunaConnection: connectionState(lunaCapability.connectionState),
@@ -197,7 +221,10 @@ export function SellerOsHomeDashboardV1() {
         lunaVersion: typeof lunaCapability.extensionVersion === "string"
           ? lunaCapability.extensionVersion : null,
         lunaPending: count(lunaCapability.eligiblePendingJobCount),
-        mayelState: operationalState(record(capabilities.mayel).state),
+        mayelVisualState: sellerOsCompactCapabilityStateV1(
+          mayelCapability.visualState),
+        mayelCommercialState: sellerOsCompactCapabilityStateV1(
+          mayelCapability.commercialState),
         mayelAvailable: mayel.authorityAvailable === true,
         mayelDelegated: count(mayel.delegatedCount),
         mayelOwnerExceptions: count(mayel.ownerExceptionCount),
@@ -219,7 +246,7 @@ export function SellerOsHomeDashboardV1() {
   // The global shell deliberately owns no Luna executor. Its initialization
   // state is therefore not worker evidence and may never override the durable
   // operational snapshot shown to the owner.
-  const lunaState = authority.lunaState
+  const lunaState = authority.lunaCompactState
   const postSaleState: SellerOsOperationalStateV1 =
     !authority.postSaleAuthority ? "DESCONOCIDO"
       : authority.postSaleExceptions === null ? "DESCONOCIDO"
@@ -253,14 +280,16 @@ export function SellerOsHomeDashboardV1() {
     return null
   }, [authority, facts])
 
-  const capabilities: readonly [string, SellerOsOperationalStateV1,
+  const capabilities: readonly [string, SellerOsCompactCapabilityStateV1,
     string][] = [
-    ["Publisher", "BLOQUEADO",
+    ["Publisher", authority.publisherState,
       "FAILED_PHYSICAL_ACCEPTANCE · no se solicitan pruebas SKU por SKU."],
     ["eBay", authority.ebayState,
-      "Lectura oficial de cuenta y órdenes; HTTP 200 solo no certifica éxito."],
-    ["Mayel", authority.mayelState,
-      "Cola durable y resultados; la navegación no controla el runtime."],
+      "Salud comercial: Publisher, LIVE y órdenes; conectividad sola no certifica operación."],
+    ["Mayel · Visual", authority.mayelVisualState,
+      "Estación visual y trabajo durable bajo la delegación vigente."],
+    ["Mayel · Comercial", authority.mayelCommercialState,
+      "Depende de autoridades comerciales actuales; no oculta degradación detrás del trabajo visual."],
   ]
 
   const insights = record(authority.ownerInsights)
@@ -369,7 +398,7 @@ export function SellerOsHomeDashboardV1() {
             cause={authority.lunaCause} />
           <ExtensionCapability label="Product Research"
             connection={authority.productResearchConnection}
-            state={authority.productResearchState}
+            state={authority.productResearchCompactState}
             observedAt={authority.productResearchObservedAt}
             version={authority.productResearchVersion}
             queue={authority.productResearchPlan ?? "DESCONOCIDO"}
@@ -377,7 +406,7 @@ export function SellerOsHomeDashboardV1() {
           <div className="rounded-xl bg-black/20 px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
               <dt className="text-sm font-black">Night Radar</dt>
-              <dd><Status state={operationalState(radar.status)} /></dd>
+              <dd><CompactStatus state={authority.radarState} /></dd>
             </div>
             <p className="mt-1 text-[11px] leading-4 text-white/45">
               Último ciclo: {safeIso(radar.lastCompletedRunAt)
@@ -392,7 +421,7 @@ export function SellerOsHomeDashboardV1() {
             className="rounded-xl bg-black/20 px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
               <dt className="text-sm font-black">{label}</dt>
-              <dd><Status state={state} /></dd>
+              <dd><CompactStatus state={state} /></dd>
             </div>
             <p className="mt-1 text-[11px] leading-4 text-white/40">{detail}</p>
           </div>)}
@@ -439,12 +468,12 @@ export function SellerOsHomeDashboardV1() {
 
 function ExtensionCapability(props: Readonly<{ label: string;
   connection: "CONECTADA" | "DESCONECTADA" | "DESCONOCIDA";
-  state: SellerOsOperationalStateV1; observedAt: string | null;
+  state: SellerOsCompactCapabilityStateV1; observedAt: string | null;
   version: string | null; queue: string; cause: string }>) {
   return <div className="rounded-xl bg-black/20 px-3 py-2.5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <dt className="text-sm font-black">{props.label}</dt>
-      <dd className="flex items-center gap-2"><span className="text-[10px] font-black tracking-wide text-white/65">{props.connection}</span><Status state={props.state} /></dd>
+      <dd className="flex items-center gap-2"><span className="text-[10px] font-black tracking-wide text-white/65">{props.connection}</span><CompactStatus state={props.state} /></dd>
     </div>
     <p className="mt-1 text-[11px] text-white/45">Handshake: {ownerTime(props.observedAt)} · versión: {props.version ?? "—"} · cola/plan: {props.queue}</p>
     <p className="mt-1 text-[10px] text-white/30">{props.cause}</p>

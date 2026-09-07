@@ -19,15 +19,19 @@ import { getMarketplaceFulfillmentDashboard } from
 import { auditSellerOsOperationalIntegrityV1,
   type SellerOsOperationalIntegrityInputV1 } from
   "./operational-integrity-auditor-v1"
-import { sellerOsOperationalStateV1,
+import { projectSellerOsCompactCapabilityStatesV1,
+  sellerOsOperationalStateV1,
   type SellerOsOperationalStateV1 } from "./operational-status-v1"
-import { readSellerOsOwnerOperationalInsightsV1 } from
+import { readSellerOsOwnerOperationalInsightsV1,
+  SELLER_OS_OWNER_OPERATIONAL_INSIGHTS_V1 } from
   "./owner-operational-insights-v1"
 
 export const SELLER_OS_OPERATIONAL_SNAPSHOT_V1 =
   "SELLER_OS_OPERATIONAL_SNAPSHOT_V1" as const
 export const SELLER_OS_PUBLISHER_PHYSICAL_STATE_V1 =
   "FAILED_PHYSICAL_ACCEPTANCE" as const
+export const SELLER_OS_RADAR_COMPACT_MAX_OUTPUT_SILENCE_SECONDS_V1 =
+  36 * 60 * 60
 
 type Result<T> = Readonly<{ available: true; value: T }> |
   Readonly<{ available: false; value: null }>
@@ -58,6 +62,18 @@ function exactZero(value: unknown) {
   if (value === null || value === undefined || value === "") return false
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed === 0
+}
+
+function radarOutputObservedAt(value: unknown) {
+  const radar = record(value)
+  const exact = text(radar.lastCompletedRunAt, 80)
+  if (exact && Number.isFinite(Date.parse(exact))) {
+    return new Date(exact).toISOString()
+  }
+  const date = text(radar.lastCompletedRunDate, 20)
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  const endOfUtcDay = `${date}T23:59:59.999Z`
+  return Number.isFinite(Date.parse(endOfUtcDay)) ? endOfUtcDay : null
 }
 
 function workerCapabilityReceipt(events: readonly Readonly<{
@@ -319,6 +335,34 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   ])
   const insights = settled(insightsRaw[0])
   const latestLunaEvent = lunaEvents.at(-1)
+  const radar = record(insights.available ? insights.value.radar : null)
+  const radarOutputAt = radarOutputObservedAt(radar)
+  const radarOutputAgeSeconds = radarOutputAt
+    ? Math.max(0, Math.floor((now.getTime() - Date.parse(radarOutputAt)) /
+      1_000)) : null
+  const radarOutputFresh = radarOutputAgeSeconds !== null &&
+    radarOutputAgeSeconds <=
+      SELLER_OS_RADAR_COMPACT_MAX_OUTPUT_SILENCE_SECONDS_V1
+
+  const compactStates = projectSellerOsCompactCapabilityStatesV1({
+    lunaAuthorityAvailable: lunaTrace.available && lunaJobs.available,
+    lunaEligiblePendingJobCount: eligiblePendingJobCount,
+    lunaCapabilityProven,
+    productResearchAuthorityAvailable,
+    productResearchPlanStatus: planStatus,
+    productResearchCapabilityFresh: recentResearch,
+    radarAuthorityAvailable: insights.available,
+    radarOutputFresh,
+    radarOperationalState: ["OPERANDO", "SIN_TRABAJO", "RECUPERANDO",
+      "BLOQUEADO", "DESCONOCIDO"].includes(String(radar.status))
+      ? radar.status as SellerOsOperationalStateV1 : null,
+    commercialAuthorityAvailable: commercial.available,
+    orderAuthorityAvailable: orderAuthority,
+    currentLiveAuthorityAvailable: liveAuthority,
+    publisherPhysicalAcceptance: false,
+    mayelAuthorityAvailable: mayelRows !== null,
+    mayelPendingCount: mayelOpen,
+  })
 
   return Object.freeze({
     contractVersion: SELLER_OS_OPERATIONAL_SNAPSHOT_V1,
@@ -378,6 +422,9 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       recentResultCount: mayelRecent }),
     capabilities: Object.freeze({
       lunaShipping: Object.freeze({ state: lunaState,
+        compactState: compactStates.lunaShipping,
+        sourceAuthority:
+          "LUNA_SHIPPING_RUNTIME_TRACE_PLUS_ELIGIBLE_JOB_QUEUE",
         connectionState: lunaReceipt.receiptFresh
           ? "CONECTADA" as const : "DESCONOCIDA" as const,
         authorityAvailable: lunaTrace.available && lunaJobs.available,
@@ -395,6 +442,9 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
         eligiblePendingJobCount,
         traceDurable: lunaTrace.available && lunaTrace.value.traceDurable }),
       productResearch: Object.freeze({ state: productResearchState,
+        compactState: compactStates.productResearch,
+        sourceAuthority:
+          "PRODUCT_RESEARCH_CAPTURE_RECEIPT_PLUS_QUERY_PLAN",
         connectionState: recentResearch
           ? "CONECTADA" as const : "DESCONOCIDA" as const,
         authorityAvailable: productResearchAuthorityAvailable,
@@ -410,9 +460,31 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
         queuePlanState: planStatus || null,
         presentationCause: productResearchPresentationCause }),
       publisher: Object.freeze({ state: "BLOQUEADO" as const,
+        compactState: compactStates.publisher,
+        sourceAuthority: "SELLER_OS_PUBLISHER_PHYSICAL_STATE_V1",
         blocker: SELLER_OS_PUBLISHER_PHYSICAL_STATE_V1 }),
-      ebay: Object.freeze({ state: ebayState }),
-      mayel: Object.freeze({ state: mayelState }),
+      radar: Object.freeze({ compactState: compactStates.radar,
+        sourceAuthority: SELLER_OS_OWNER_OPERATIONAL_INSIGHTS_V1,
+        lastDurableOutputAt: radarOutputAt,
+        outputAgeSeconds: radarOutputAgeSeconds,
+        maximumOutputSilenceSeconds:
+          SELLER_OS_RADAR_COMPACT_MAX_OUTPUT_SILENCE_SECONDS_V1,
+        presentationCause: !insights.available
+          ? "RADAR_AUTHORITY_UNAVAILABLE"
+          : !radarOutputFresh ? "RADAR_DURABLE_OUTPUT_STALE_OR_ABSENT"
+            : text(radar.cause, 160) }),
+      ebay: Object.freeze({ state: ebayState,
+        compactState: compactStates.ebay,
+        sourceAuthority: "SELLER_OS_COMMERCIAL_REVENUE_PATH",
+        orderAuthority,
+        currentLiveAuthority: liveAuthority,
+        publisherPhysicalAcceptance: false as const }),
+      mayel: Object.freeze({ state: mayelState,
+        visualState: compactStates.mayelVisual,
+        commercialState: compactStates.mayelCommercial,
+        visualSourceAuthority: "EBAY_MAYEL_VISUAL_TASKS_V1",
+        commercialSourceAuthority:
+          "MAYEL_PLUS_SELLER_OS_COMMERCIAL_REVENUE_PATH" }),
     }),
     ownerInsights: insights.available ? insights.value : null,
     authorityFailures: Object.freeze([
