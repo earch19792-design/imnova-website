@@ -294,13 +294,30 @@ export async function getProductResearchQueryPlanStatus(input: {
   planId?: string | null
   preferredSearchQuery?: unknown
 }) {
-  let query = input.supabase.from("marketplace_product_research_query_plans")
+  const baseQuery = () => input.supabase
+    .from("marketplace_product_research_query_plans")
     .select("id,run_id,plan_version,status,query_count,candidate_count,created_at,completed_at,source_context,subject_listing_id,subject_item_id,subject_supplier_variant_id,request_receipt_id,source_candidate_key,source_luna_product_id,source_supplier_sku,source_opportunity_id")
-    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
-  if (input.planId) query = query.eq("id", input.planId)
-  else if (input.runId) query = query.eq("run_id", input.runId)
-  const { data: plan, error } = await query.order("created_at", { ascending: false })
-    .limit(1).maybeSingle()
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+  let planRead
+  if (input.planId) {
+    planRead = await baseQuery().eq("id", input.planId)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle()
+  } else if (input.runId) {
+    planRead = await baseQuery().eq("run_id", input.runId)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle()
+  } else {
+    // Worker discovery must select unfinished durable work. A newer completed
+    // plan may remain useful for readback, but it cannot permanently hide an
+    // older ACTIVE plan that is still waiting for the browser worker.
+    planRead = await baseQuery().eq("status", "ACTIVE")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle()
+    if (!planRead.error && !planRead.data) {
+      planRead = await baseQuery().order("created_at", { ascending: false })
+        .limit(1).maybeSingle()
+    }
+  }
+  const { data: plan, error } = planRead
   if (error) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
   if (!plan) return null
   const { data: tasks, error: taskError } = await input.supabase
