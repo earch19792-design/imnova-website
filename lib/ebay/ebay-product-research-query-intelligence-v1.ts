@@ -1,5 +1,5 @@
 export const PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V1 =
-  "PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V1_2026_09_07" as const
+  "PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V2_2026_09_07" as const
 
 export type ProductResearchQueryIntentV1 =
   | "EXACT_PRODUCT_QUERY"
@@ -61,8 +61,8 @@ const SHAPES = new Set([
   "oval", "rectangular", "round", "square", "triangular",
 ])
 const GENERIC_CONTEXT = new Set([
-  "accessory", "accessories", "home", "household", "indoor", "kitchen",
-  "outdoor", "premium", "professional", "replacement", "universal",
+  "accessory", "accessories", "premium", "professional", "replacement",
+  "universal",
 ])
 const FUNCTION_WORDS = new Set([
   "a", "an", "and", "by", "each", "for", "from", "in", "including", "of",
@@ -158,7 +158,10 @@ export function extractProductResearchEntityV1(input: Readonly<{
   const materialQualifiers = unique(main.filter((entry) => MATERIALS.has(entry)))
   const beforeNoun = nounIndex >= 0 ? main.slice(0, nounIndex) : []
   const afterConnector = boundary >= 0 ? titleTokens.slice(boundary + 1) : []
-  const featureQualifiers = unique([...beforeNoun, ...afterConnector]
+  const featureQualifiers = unique([
+    ...beforeNoun.filter((entry) => SHAPES.has(entry)),
+    ...afterConnector,
+  ]
     .filter((entry) => entry.length >= 2 && !MATERIALS.has(entry) &&
       !COLORS.has(entry) && !GENERIC_CONTEXT.has(entry) &&
       !FUNCTION_WORDS.has(entry) && !COUNT_WORDS.has(entry) &&
@@ -180,7 +183,8 @@ export function extractProductResearchEntityV1(input: Readonly<{
               ? "DEFINING_FAMILY_QUALIFIER" : "FEATURE_QUALIFIER"
   const selectedEvidence = unique([
     ...brandSignal, ...countOrSetQualifiers, ...sizeOrVariantQualifiers,
-    ...materialQualifiers, ...featureQualifiers, productNoun ?? "",
+    ...materialQualifiers, ...definingFamilyQualifiers, ...featureQualifiers,
+    productNoun ?? "",
   ]).map((term) => Object.freeze({ term, sourceField, sourceAuthority,
     selectionReason: reason(term) }))
   return Object.freeze({
@@ -266,6 +270,23 @@ function includesStem(row: readonly string[], expected: string) {
   return row.some((entry) => lexicalStem(entry) === stem)
 }
 
+function hasStructuralDiscriminatorMatch(
+  entity: ProductResearchEntityV1,
+  rowTokens: readonly string[],
+) {
+  const setStructureVisible = entity.countOrSetQualifiers
+    .filter((entry) => !/^\d+$/.test(entry))
+    .some((entry) => includesStem(rowTokens, entry))
+  const sizeVisible = entity.sizeOrVariantQualifiers.length > 0 &&
+    entity.sizeOrVariantQualifiers.every((entry) => includesStem(rowTokens, entry))
+  const featureMatches = entity.featureQualifiers.filter((entry) =>
+    includesStem(rowTokens, entry)).length
+  const minimumFeatureMatches = Math.min(2, entity.featureQualifiers.length)
+  const featureIdentityVisible = minimumFeatureMatches > 0 &&
+    featureMatches >= minimumFeatureMatches
+  return setStructureVisible || sizeVisible || featureIdentityVisible
+}
+
 export function classifyCommercialComparableV1(input: Readonly<{
   entity: ProductResearchEntityV1
   title: unknown
@@ -288,10 +309,17 @@ export function classifyCommercialComparableV1(input: Readonly<{
   const expectedCount = Number(input.entity.countOrSetQualifiers.find((entry) =>
     /^\d+$/.test(entry))) || null
   const expectedSize = input.entity.sizeOrVariantQualifiers.join(" ") || null
+  const structuralDiscriminatorMatch = hasStructuralDiscriminatorMatch(
+    input.entity, rowTokens)
   if (expectedCount && input.detectedCount && expectedCount !== input.detectedCount ||
       expectedSize && input.detectedSize && expectedSize !== input.detectedSize) {
-    return Object.freeze({ classification: "CLOSE_VARIANT_COMPARABLE" as const,
-      reasons: Object.freeze(["EXACT_VARIANT_QUALIFIER_DIFFERS"]) })
+    return structuralDiscriminatorMatch
+      ? Object.freeze({ classification: "CLOSE_VARIANT_COMPARABLE" as const,
+        reasons: Object.freeze(["EXACT_VARIANT_QUALIFIER_DIFFERS",
+          "PRODUCT_ENTITY_STRUCTURE_MATCHES"]) })
+      : Object.freeze({ classification: "ADJACENT_BUT_NOT_COMPARABLE" as const,
+        reasons: Object.freeze(["EXACT_VARIANT_QUALIFIER_DIFFERS",
+          "PRODUCT_ENTITY_STRUCTURE_UNPROVEN"]) })
   }
   const exactDiscriminators = unique([
     ...input.entity.materialQualifiers,
@@ -304,8 +332,12 @@ export function classifyCommercialComparableV1(input: Readonly<{
   return exactVisible
     ? Object.freeze({ classification: "EXACT_PRODUCT_COMPARABLE" as const,
       reasons: Object.freeze(["PRODUCT_ENTITY_AND_EXACT_DISCRIMINATORS_MATCH"]) })
-    : Object.freeze({ classification: "CORE_FAMILY_COMPARABLE" as const,
-      reasons: Object.freeze(["PRODUCT_ENTITY_AND_FAMILY_QUALIFIERS_MATCH"]) })
+    : structuralDiscriminatorMatch
+      ? Object.freeze({ classification: "CORE_FAMILY_COMPARABLE" as const,
+        reasons: Object.freeze(["PRODUCT_ENTITY_FAMILY_AND_STRUCTURE_MATCH"]) })
+      : Object.freeze({ classification: "ADJACENT_BUT_NOT_COMPARABLE" as const,
+        reasons: Object.freeze(["GENERIC_ATTRIBUTE_OVERLAP_ONLY",
+          "PRODUCT_ENTITY_STRUCTURE_UNPROVEN"]) })
 }
 
 export function evaluateProductResearchQueryQualityV1(
