@@ -295,7 +295,7 @@ export async function getProductResearchQueryPlanStatus(input: {
   preferredSearchQuery?: unknown
 }) {
   let query = input.supabase.from("marketplace_product_research_query_plans")
-    .select("id,run_id,plan_version,status,query_count,candidate_count,created_at,completed_at,source_context,subject_listing_id,subject_item_id,subject_supplier_variant_id,request_receipt_id")
+    .select("id,run_id,plan_version,status,query_count,candidate_count,created_at,completed_at,source_context,subject_listing_id,subject_item_id,subject_supplier_variant_id,request_receipt_id,source_candidate_key,source_luna_product_id,source_supplier_sku,source_opportunity_id")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
   if (input.planId) query = query.eq("id", input.planId)
   else if (input.runId) query = query.eq("run_id", input.runId)
@@ -347,6 +347,10 @@ export async function getProductResearchQueryPlanStatus(input: {
     subjectItemId: plan.subject_item_id ?? null,
     subjectSupplierVariantId: plan.subject_supplier_variant_id ?? null,
     requestReceiptId: plan.request_receipt_id ?? null,
+    sourceCandidateKey: plan.source_candidate_key ?? null,
+    sourceLunaProductId: plan.source_luna_product_id ?? null,
+    sourceSupplierSku: plan.source_supplier_sku ?? null,
+    sourceOpportunityId: plan.source_opportunity_id ?? null,
     rawCompetitorContentStored: false,
     openAiCalls: 0,
     ebayWrites: 0,
