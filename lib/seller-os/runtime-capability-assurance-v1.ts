@@ -281,7 +281,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
     alerting: true, workerHeartbeatRequired: true }),
   capability({ capabilityId: "LUNA_SHIPPING", businessPurpose:
     "Shipping exacto a destino canónico", expectedMode: "DEPENDENCY_DRIVEN",
-    expectedCadenceSeconds: 60, maxExpectedSilenceSeconds: 20 * 60,
+    expectedCadenceSeconds: 60, maxExpectedSilenceSeconds: 5 * 60,
     canaryMode: "PASSIVE_HEARTBEAT", expectedOutput: "SHIPPING_EVIDENCE_RECEIPT",
     schedulerLane: null, dependencyIds: [], primaryPath:
       "LUNA_SHIPPING_EXTENSION_WORKER", recoveryPolicy:
@@ -293,7 +293,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
   capability({ capabilityId: "PRODUCT_RESEARCH_EXTENSION", businessPurpose:
     "Captura visible de Product Research/Sold", expectedMode:
       "DEPENDENCY_DRIVEN", expectedCadenceSeconds: 60,
-    maxExpectedSilenceSeconds: 30 * 60, canaryMode: "PASSIVE_HEARTBEAT",
+    maxExpectedSilenceSeconds: 5 * 60, canaryMode: "PASSIVE_HEARTBEAT",
     expectedOutput: "PRODUCT_RESEARCH_CAPABILITY_RECEIPT", schedulerLane: null,
     dependencyIds: [], primaryPath: "PRODUCT_RESEARCH_BROWSER_EXTENSION",
     recoveryPolicy: "PRESERVE_PLAN_AND_RECLAIM_ON_HANDSHAKE", safeFallback:
@@ -303,10 +303,10 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
   capability({ capabilityId: "PRODUCT_RESEARCH_BROWSER_WORKER", businessPurpose:
     "Ejecutar plans Sold sin investigación manual", expectedMode:
       "DEPENDENCY_DRIVEN", expectedCadenceSeconds: 60,
-    maxExpectedSilenceSeconds: 30 * 60, canaryMode: "PASSIVE_HEARTBEAT",
+    maxExpectedSilenceSeconds: 5 * 60, canaryMode: "PASSIVE_HEARTBEAT",
     expectedOutput: "SOLD_EVIDENCE_RECEIPT", schedulerLane: null,
     dependencyIds: ["PRODUCT_RESEARCH_EXTENSION"], primaryPath:
-      "AUTHENTICATED_VISIBLE_ADMIN_TAB_WORKER", recoveryPolicy:
+      "AUTHENTICATED_EXTENSION_CONTROL_ROUTE_WORKER", recoveryPolicy:
       "DURABLE_PENDING_PLAN_AND_AUTOMATIC_RECLAIM", safeFallback:
       "WAITING_DEPENDENCY", failClosedPolicy: "NO_MANUAL_QUERY_SUBSTITUTION",
     lastGoodStatePolicy: "PRESERVE_LAST_SOLD_EVIDENCE_AS_STALE",
@@ -564,6 +564,20 @@ function workerEvidence(evidence: Record<string, unknown>, worker: string) {
       Object.hasOwn(entry, "eligiblePendingJobCount")) ?? {}
 }
 
+function workerLivenessEvidence(evidence: Record<string, unknown>,
+  capabilityId: string, now: Date) {
+  const value = rows(evidence.workerLiveness).find((entry) =>
+    entry.capability_id === capabilityId) ?? {}
+  const freshUntil = iso(value.fresh_until)
+  const observedAt = iso(value.observed_at)
+  const fresh = value.heartbeat_source === "INDEPENDENT_WORKER_LIVENESS" &&
+    value.physical_connection === "PROVEN_AVAILABLE" &&
+    value.extension_identity_match === true && observedAt !== null &&
+    freshUntil !== null && now.getTime() >= Date.parse(observedAt) &&
+    now.getTime() < Date.parse(freshUntil)
+  return Object.freeze({ value, observedAt, freshUntil, fresh })
+}
+
 function baseObservation(overrides: Partial<CapabilityObservationV1> = {}):
     CapabilityObservationV1 {
   return Object.freeze({ lastHeartbeatAt: null, lastAttemptAt: null,
@@ -604,7 +618,7 @@ function observationFor(input: Readonly<{
   const publisher = record(evidence.publisher)
   const publisherBatch = record(evidence.publisherBatch)
   const lunaWorker = workerEvidence(evidence, "LUNA_SHIPPING")
-  const researchWorker = workerEvidence(evidence, "PRODUCT_RESEARCH")
+  const liveness = workerLivenessEvidence(evidence, id, input.now)
   const lane = input.definition.schedulerLane
     ? scheduler(evidence, input.definition.schedulerLane) : {}
   const laneDispatchAt = iso(lane.last_dispatch_at)
@@ -763,33 +777,33 @@ function observationFor(input: Readonly<{
     sourceAuthorityAvailable: Object.keys(productFacts).length > 0 })
   if (id === "LUNA_SHIPPING") {
     const pending = count(lunaWorker.eligiblePendingJobCount)
-    const connected = lunaWorker.capabilityProven === true
-    return baseObservation({ lastHeartbeatAt: connected
-      ? iso(record(evidence.integrity).observed_at) : null,
+    const connected = liveness.fresh
+    return baseObservation({ lastHeartbeatAt: liveness.observedAt,
     lastAttemptAt: iso(shippingClaims.latestClaimAt),
     lastSuccessAt: iso(shippingClaims.latestCompletedAt),
     lastExpectedOutputAt: iso(shipping.latestObservedAt),
     pendingWorkCount: pending, dependencyAvailable: connected,
     connectionProven: connected,
     blockerCode: connected ? null : "WORKER_CAPABILITY_EXPIRED",
-    sourceAuthorityAvailable: Object.keys(shippingClaims).length > 0 })
+    authorityFreshUntil: liveness.freshUntil,
+    sourceAuthorityAvailable: evidence.workerLivenessReadAvailable === true })
   }
   if (id === "PRODUCT_RESEARCH_EXTENSION" || id ===
       "PRODUCT_RESEARCH_BROWSER_WORKER") {
     const capturedAt = iso(research.captured_at) ??
       iso(researchTasks.latestCapturedAt)
     const pending = count(researchTasks.pendingCount)
-    const connected = researchWorker.capabilityProven === true
-    return baseObservation({ lastHeartbeatAt: connected
-      ? iso(record(evidence.integrity).observed_at) : null,
+    const connected = liveness.fresh
+    return baseObservation({ lastHeartbeatAt: liveness.observedAt,
     lastAttemptAt: iso(researchPlans.latestUpdatedAt),
     lastSuccessAt: capturedAt, lastCompletedJobId: text(research.id),
     lastDurableReceiptId: text(research.id), lastExpectedOutputAt: capturedAt,
     pendingWorkCount: pending, dependencyAvailable: connected,
     connectionProven: connected,
     blockerCode: connected ? null : "WORKER_CAPABILITY_EXPIRED",
+    authorityFreshUntil: liveness.freshUntil,
     downstreamConsumedAt: iso(researchTasks.latestProcessedAt),
-    sourceAuthorityAvailable: Object.keys(research).length > 0 })
+    sourceAuthorityAvailable: evidence.workerLivenessReadAvailable === true })
   }
   if (id === "RADAR") return baseObservation({
     lastHeartbeatAt: laneDispatchAt, lastAttemptAt: laneDispatchAt,
@@ -1258,7 +1272,8 @@ export async function runSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
   now?: Date
   runtimeHealth?: SellerOsRuntimeHealthV1
 }>) {
-  const [evidenceResult, runtimeHealthResult] = await Promise.all([
+  const [evidenceResult, runtimeHealthResult, workerLivenessResult] =
+    await Promise.all([
     input.supabase.rpc("get_seller_os_runtime_capability_evidence_v1", {
       p_marketplace_account_key: input.accountKey,
     }),
@@ -1267,12 +1282,18 @@ export async function runSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
       : readLatestSellerOsRuntimeHealthAuthorityV1({
         supabase: input.supabase, accountKey: input.accountKey,
       }),
+    input.supabase.from("seller_os_browser_worker_capabilities_v1")
+      .select("capability_id,worker_family,worker_state,heartbeat_receipt_id,heartbeat_source,physical_connection,extension_identity_match,extension_version,observed_at,fresh_until,last_heartbeat_at")
+      .eq("marketplace_account_key", input.accountKey),
   ])
   if (evidenceResult.error || !evidenceResult.data) {
     throw new Error("SELLER_OS_RUNTIME_CAPABILITY_EVIDENCE_READ_FAILED")
   }
   const report = evaluateSellerOsRuntimeCapabilityAssuranceV1({
-    evidence: evidenceResult.data,
+    evidence: { ...record(evidenceResult.data),
+      workerLiveness: workerLivenessResult.error
+        ? [] : workerLivenessResult.data ?? [],
+      workerLivenessReadAvailable: !workerLivenessResult.error },
     runtimeHealth: runtimeHealthResult.runtimeHealth,
     now: input.now,
   })

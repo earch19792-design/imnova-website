@@ -337,12 +337,13 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
 }) {
   const plans = await input.supabase.from(
     "marketplace_product_research_query_plans")
-    .select("id,request_receipt_id,subject_item_id,status,created_at")
+    .select("id,source_context,request_receipt_id,subject_item_id,status,created_at,worker_lease_owner,worker_lease_expires_at")
     .eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US")
-    .eq("source_context", "LIVE_LISTING_REVALIDATION")
+    .in("source_context", ["LIVE_LISTING_REVALIDATION",
+      "QUICK_PICK_RESEARCH_REQUIRED"])
     .in("status", ["ACTIVE", "COMPLETED"])
-    .order("created_at", { ascending: true }).limit(4)
+    .order("created_at", { ascending: true }).limit(100)
   if (plans.error) {
     throw new Error("MAYEL_RESEARCH_ACQUISITION_PLAN_READ_FAILED")
   }
@@ -350,20 +351,23 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
   if (!planIds.length) return Object.freeze({
     pendingPlanCount: 0, claimablePlanCount: 0,
     activeClaimCount: 0, nextPlanId: null,
+    sourceContexts: Object.freeze([] as string[]),
     authenticatedBrowserRequired: true as const,
     marketplaceWrites: 0 as const,
   })
+  const receiptIds = (plans.data ?? []).flatMap((plan) =>
+    plan.request_receipt_id ? [String(plan.request_receipt_id)] : [])
   const [tasks, receipts] = await Promise.all([
     input.supabase.from("marketplace_product_research_query_tasks")
       .select("plan_id,status,capture_batch_id")
       .eq("marketplace_account_key", input.accountKey)
       .eq("marketplace", "EBAY_US").in("plan_id", planIds)
       .in("status", ["PENDING", "PROCESSED"]),
-    input.supabase.from("seller_os_operational_learning_ledger_v1")
+    receiptIds.length ? input.supabase.from(
+      "seller_os_operational_learning_ledger_v1")
       .select("id,status,lease_owner,lease_expires_at")
       .eq("marketplace_account_key", input.accountKey)
-      .in("id", (plans.data ?? []).map((plan) =>
-        String(plan.request_receipt_id))),
+      .in("id", receiptIds) : Promise.resolve({ data: [], error: null }),
   ])
   if (tasks.error || receipts.error) {
     throw new Error("MAYEL_RESEARCH_ACQUISITION_STATE_READ_FAILED")
@@ -380,14 +384,23 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
   const receiptById = new Map((receipts.data ?? []).map((receipt) =>
     [String(receipt.id), receipt] as const))
   const pending = (plans.data ?? []).filter((plan) =>
-    resumablePlanIds.has(String(plan.id)) &&
-    receiptById.get(String(plan.request_receipt_id))?.status === "OPEN")
+    resumablePlanIds.has(String(plan.id)) && (
+      plan.source_context === "QUICK_PICK_RESEARCH_REQUIRED" ||
+      receiptById.get(String(plan.request_receipt_id))?.status === "OPEN"))
   const activeClaimCount = pending.filter((plan) => {
+    if (plan.source_context === "QUICK_PICK_RESEARCH_REQUIRED") {
+      return Boolean(plan.worker_lease_owner && plan.worker_lease_expires_at &&
+        Date.parse(String(plan.worker_lease_expires_at)) > now)
+    }
     const receipt = receiptById.get(String(plan.request_receipt_id))
     return Boolean(receipt?.lease_owner && receipt.lease_expires_at &&
       Date.parse(String(receipt.lease_expires_at)) > now)
   }).length
   const claimable = pending.filter((plan) => {
+    if (plan.source_context === "QUICK_PICK_RESEARCH_REQUIRED") {
+      return !plan.worker_lease_expires_at ||
+        Date.parse(String(plan.worker_lease_expires_at)) <= now
+    }
     const receipt = receiptById.get(String(plan.request_receipt_id))
     return !receipt?.lease_expires_at ||
       Date.parse(String(receipt.lease_expires_at)) <= now
@@ -396,6 +409,8 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
     claimablePlanCount: activeClaimCount ? 0 : claimable.length,
     activeClaimCount,
     nextPlanId: activeClaimCount ? null : claimable[0]?.id ?? null,
+    sourceContexts: Object.freeze([...new Set(pending.map((plan) =>
+      String(plan.source_context)))]),
     authenticatedBrowserRequired: true as const,
     marketplaceWrites: 0 as const })
 }
@@ -432,13 +447,22 @@ export async function claimMayelAutonomousResearchPlanV1(input: {
     marketplaceWrites: 0 as const })
   const planId = validPlanId(record(row).plan_id)
   if (!planId) throw new Error("MAYEL_RESEARCH_WORKER_CLAIM_READBACK_FAILED")
-  const readback = await readMayelLiveMarketRevalidationPlanV1({
+  const plan = await getProductResearchQueryPlanStatus({
     supabase: input.supabase, accountKey: input.accountKey, planId,
   })
+  if (!plan || !["LIVE_LISTING_REVALIDATION",
+      "QUICK_PICK_RESEARCH_REQUIRED"].includes(plan.sourceContext)) {
+    throw new Error("MAYEL_RESEARCH_WORKER_CLAIM_READBACK_FAILED")
+  }
+  const itemId = plan.sourceContext === "LIVE_LISTING_REVALIDATION"
+    ? (await readMayelLiveMarketRevalidationPlanV1({
+      supabase: input.supabase, accountKey: input.accountKey, planId,
+    })).itemId : null
   return Object.freeze({ claimed: true as const, workerId, planId,
     leaseExpiresAt: record(row).lease_expires_at ?? null,
-    ledgerId: record(row).ledger_id ?? null, plan: readback.plan,
-    itemId: readback.itemId, marketplaceWrites: 0 as const })
+    ledgerId: record(row).ledger_id ?? null, plan,
+    itemId, sourceContext: plan.sourceContext,
+    marketplaceWrites: 0 as const })
 }
 
 export async function releaseMayelAutonomousResearchPlanV1(input: {
@@ -466,6 +490,150 @@ export async function releaseMayelAutonomousResearchPlanV1(input: {
   return Object.freeze({ released: true as const, planId,
     retrySafety: "SAFE_IDEMPOTENT_RUNTIME_RESUME" as const,
     marketplaceWrites: 0 as const })
+}
+
+async function completeQuickPickProductResearchPlanV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  planId: string
+  capture: ProductResearchBrowserCapture
+  soldRows: unknown[]
+  workerId: string
+}) {
+  const plan = await getProductResearchQueryPlanStatus({
+    supabase: input.supabase, accountKey: input.accountKey,
+    planId: input.planId,
+  })
+  if (!plan || plan.sourceContext !== "QUICK_PICK_RESEARCH_REQUIRED" ||
+      !plan.sourceLunaProductId || !plan.subjectSupplierVariantId ||
+      !plan.sourceCandidateKey) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_PLAN_SCOPE_INVALID")
+  }
+  const lease = await input.supabase.from(
+    "marketplace_product_research_query_plans")
+    .select("worker_lease_owner,worker_lease_expires_at")
+    .eq("id", input.planId).eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("source_context", "QUICK_PICK_RESEARCH_REQUIRED")
+    .limit(1).maybeSingle()
+  if (lease.error || lease.data?.worker_lease_owner !== input.workerId ||
+      !lease.data.worker_lease_expires_at ||
+      Date.parse(String(lease.data.worker_lease_expires_at)) <= Date.now()) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_WORKER_LEASE_REQUIRED")
+  }
+  const variant = await input.supabase.from("market_radar_latest_variants")
+    .select("*").eq("source_key", "lunaportex")
+    .eq("product_id", plan.sourceLunaProductId)
+    .eq("supplier_variant_id", plan.subjectSupplierVariantId)
+    .limit(1).maybeSingle()
+  const target = variant.error ? null : targetFromCatalogRow(record(variant.data))
+  if (!target || target.supplierVariantId !== plan.subjectSupplierVariantId) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_EXACT_VARIANT_REQUIRED")
+  }
+  const planned = await assertProductResearchCaptureMatchesNextQuery({
+    supabase: input.supabase, accountKey: input.accountKey,
+    searchQuery: input.capture?.searchQuery, planId: input.planId,
+  })
+  if (!planned || planned.planId !== input.planId) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_TASK_BINDING_INVALID")
+  }
+  const research = await importProductResearchBrowserCapture({
+    supabase: input.supabase, accountKey: input.accountKey,
+    actorId: input.actorId, capture: input.capture,
+    exactTargets: [target], visualContext: { categoryId: planned.categoryId },
+  })
+  let soldImportBatchId: string | null = null
+  let soldEvidenceOutcome = "NO_ROWS_CAPTURED"
+  if (input.soldRows.length > 0) {
+    const soldCapture = await adaptMainSearchSoldCaptureForCanonicalImport({
+      rows: input.soldRows,
+    })
+    try {
+      const sold = await importOfficialSoldEvidence({
+        supabase: input.supabase, accountKey: input.accountKey,
+        actorId: input.actorId, format: "JSON",
+        sourceExportType: "EBAY_MAIN_SEARCH_SOLD_CAPTURE",
+        content: JSON.stringify({ rows: soldCapture.rows }),
+        operatorAttested: true,
+      })
+      soldImportBatchId = sold.batchId
+      soldEvidenceOutcome = "DURABLE_SOLD_EVIDENCE"
+    } catch (error) {
+      if (!soldEvidenceNoValidRowsDiagnostic(error)) throw error
+      soldEvidenceOutcome = "NO_VALID_SOLD_EVIDENCE"
+    }
+  }
+  if (!planned.alreadyProcessed) {
+    await markProductResearchQueryCaptured({
+      supabase: input.supabase, accountKey: input.accountKey,
+      planId: input.planId, taskId: planned.taskId,
+      searchQueryHash: research.searchQueryHash,
+      captureBatchId: research.batchId,
+      capturedAt: new Date(research.capturedAt),
+    })
+  }
+  const completedAt = new Date().toISOString()
+  const completed = await input.supabase.rpc(
+    "complete_quick_pick_product_research_claim_v1", {
+      p_marketplace_account_key: input.accountKey,
+      p_plan_id: input.planId,
+      p_worker_id: input.workerId,
+      p_capture_batch_id: research.batchId,
+      p_completed_at: completedAt,
+    })
+  if (completed.error || completed.data !== true) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_CLAIM_COMPLETE_FAILED")
+  }
+  return Object.freeze({ planId: input.planId,
+    sourceContext: "QUICK_PICK_RESEARCH_REQUIRED" as const,
+    candidateId: plan.sourceCandidateKey,
+    lunaProductId: plan.sourceLunaProductId,
+    lunaVariantId: plan.subjectSupplierVariantId,
+    captureBatchId: research.batchId, soldImportBatchId, soldEvidenceOutcome,
+    productResearchExecuted: true as const,
+    researchReceiptCreated: true as const,
+    nextStageStarted: false as const,
+    ownerActionRequired: false as const,
+    marketplaceWrites: 0 as const, completedAt })
+}
+
+export async function completeAutonomousProductResearchPlanV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  planId: unknown
+  capture: ProductResearchBrowserCapture
+  soldRows: unknown
+  soldFilterAutomated: unknown
+  paginationAutomated: unknown
+  extensionMarketplaceWrites: unknown
+  workerId: unknown
+  workerMetrics?: unknown
+}) {
+  const planId = validPlanId(input.planId)
+  const workerId = validWorkerId(input.workerId)
+  if (!planId || !workerId || input.soldFilterAutomated !== true ||
+      input.paginationAutomated !== true ||
+      input.extensionMarketplaceWrites !== 0 ||
+      !Array.isArray(input.soldRows) || input.soldRows.length > 200) {
+    throw new Error("PRODUCT_RESEARCH_WORKER_RESULT_INVALID")
+  }
+  const plan = await getProductResearchQueryPlanStatus({
+    supabase: input.supabase, accountKey: input.accountKey, planId,
+  })
+  if (plan?.sourceContext === "LIVE_LISTING_REVALIDATION") {
+    return completeMayelLiveMarketRevalidationV1({ ...input, planId,
+      workerId, soldRows: input.soldRows })
+  }
+  if (plan?.sourceContext === "QUICK_PICK_RESEARCH_REQUIRED") {
+    return completeQuickPickProductResearchPlanV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      actorId: input.actorId, planId, workerId,
+      capture: input.capture, soldRows: input.soldRows,
+    })
+  }
+  throw new Error("PRODUCT_RESEARCH_PLAN_CONTEXT_NOT_CLAIMABLE")
 }
 
 export async function resumeMayelMarketRevalidationDownstreamV1(input: {

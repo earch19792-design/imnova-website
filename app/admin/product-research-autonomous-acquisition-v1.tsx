@@ -31,10 +31,10 @@ async function readAcquisitionState() {
 
 /**
  * Existing Product Research is a Chrome-session worker, not a server-side
- * browser. This bounded clock only discovers durable work while an
- * authenticated admin tab is alive. It performs a read-only POST; claim and
- * execution occur on the existing dedicated Research route after a fresh
- * extension handshake. A GET/render/refresh never advances business state.
+ * browser. The extension-owned control route is the autonomous authority;
+ * this bounded discovery remains only a safe compatibility fallback for an
+ * already authenticated admin document. Claim and execution still require a
+ * fresh extension handshake and durable lease on the dedicated Research route.
  */
 export function ProductResearchAutonomousAcquisitionV1() {
   const pathname = usePathname()
@@ -47,7 +47,7 @@ export function ProductResearchAutonomousAcquisitionV1() {
     let active = true
     let interval: number | null = null
     const tick = async () => {
-      if (!active || running.current || document.visibilityState !== "visible") {
+      if (!active || running.current) {
         return
       }
       running.current = true

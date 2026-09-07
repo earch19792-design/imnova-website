@@ -38,7 +38,7 @@ import { loadEbayPromotionRecommendationSafeExecutionV1 } from
   "@/lib/ebay/ebay-promotion-recommendation-safe-execution-v1"
 import {
   claimMayelAutonomousResearchPlanV1,
-  completeMayelLiveMarketRevalidationV1,
+  completeAutonomousProductResearchPlanV1,
   readMayelAutonomousResearchAcquisitionV1,
   readMayelLiveMarketRevalidationPlanV1,
   readMayelLiveMarketRevalidationStatusV1,
@@ -46,6 +46,8 @@ import {
   resumeMayelMarketRevalidationDownstreamV1,
   startMayelLiveMarketRevalidationV1,
 } from "@/lib/ebay/ebay-mayel-live-market-revalidation-v1"
+import { persistSellerOsBrowserWorkerHeartbeatV1 } from
+  "@/lib/seller-os/browser-worker-capability-v1"
 import { currentLiveListingsForMonitorV1 } from
   "@/lib/ebay/ebay-seller-os-live-portfolio-integrity-v1"
 import {
@@ -409,6 +411,27 @@ export async function POST(request: Request) {
   { status: 403 })
   const body = await jsonBody(request)
   const action = typeof body?.action === "string" ? body.action : ""
+  if (action === "HEARTBEAT_PRODUCT_RESEARCH_WORKER") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await persistSellerOsBrowserWorkerHeartbeatV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        workerFamily: "PRODUCT_RESEARCH",
+        workerInstanceId: String(body?.workerId ?? ""),
+        extensionVersion: String(body?.extensionVersion ?? ""),
+        extensionIdentityMatch: body?.extensionIdentityMatch === true,
+        workerState: body?.workerState === "WORKING" ? "WORKING" :
+          body?.workerState === "AVAILABLE" ? "AVAILABLE" : "IDLE",
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { businessOutputWrites: 0, marketplaceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
   if (action === "READ_AUTONOMOUS_RESEARCH_ACQUISITION") {
     try {
       const account = getEbaySellerAccountScopeConfiguration()
@@ -516,7 +539,7 @@ export async function POST(request: Request) {
     try {
       const account = getEbaySellerAccountScopeConfiguration()
       if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
-      const result = await completeMayelLiveMarketRevalidationV1({
+      const result = await completeAutonomousProductResearchPlanV1({
         supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
         actorId: auth.validation.userId, planId: body?.planId,
         capture: body?.productResearchCapture as never,

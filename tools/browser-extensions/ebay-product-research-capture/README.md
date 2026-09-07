@@ -9,7 +9,14 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.26.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.27.
+
+## Liveness y recuperación autónoma (v1.2.27)
+
+La extensión mantiene un único control route inactivo mediante `runtime.onStartup` y una alarma
+acotada de dos minutos. Ese documento autenticado prueba el bridge, persiste un heartbeat de
+liveness independiente de las capturas comerciales y reclama el claimer existente. Un worker
+ocioso continúa disponible; reiniciar Chrome redescubre trabajo durable sin clic técnico.
 
 ## Reentrada por menú y navegación SPA (v1.2.26)
 

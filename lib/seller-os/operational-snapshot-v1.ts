@@ -22,6 +22,8 @@ import { auditSellerOsOperationalIntegrityV1,
 import { projectSellerOsCompactCapabilityStatesV1,
   sellerOsOperationalStateV1,
   type SellerOsOperationalStateV1 } from "./operational-status-v1"
+import { readSellerOsBrowserWorkerCapabilitiesV1 } from
+  "./browser-worker-capability-v1"
 import { readSellerOsOwnerOperationalInsightsV1,
   SELLER_OS_OWNER_OPERATIONAL_INSIGHTS_V1 } from
   "./owner-operational-insights-v1"
@@ -76,26 +78,6 @@ function radarOutputObservedAt(value: unknown) {
   return Number.isFinite(Date.parse(endOfUtcDay)) ? endOfUtcDay : null
 }
 
-function workerCapabilityReceipt(events: readonly Readonly<{
-  timestamp: string
-  state: string
-  success: boolean
-}>[], now: Date) {
-  const latest = events[events.length - 1]
-  const observedAtMs = Date.parse(latest?.timestamp ?? "")
-  const receiptPresent = Boolean(latest && Number.isFinite(observedAtMs))
-  const receiptFresh = receiptPresent && now.getTime() >= observedAtMs
-    && now.getTime() - observedAtMs <= 20 * 60 * 1_000
-  const capabilityPass = receiptFresh && latest?.success === true
-    && latest.state !== "FAIL" && events.some((event) => event.success && [
-    "PRODUCTION_WORKER_READY", "BRIDGE_CONNECTED",
-    "WORKER_IDLE_NO_ELIGIBLE_JOB", "PASS",
-  ].includes(event.state))
-  return Object.freeze({ receiptPresent, receiptFresh, capabilityPass,
-    observedAt: receiptPresent ? new Date(observedAtMs).toISOString() : null,
-    maximumAgeSeconds: 20 * 60 })
-}
-
 export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
@@ -111,7 +93,8 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   const candidateKeys = candidateKeysResult[0].status === "fulfilled"
     ? candidateKeysResult[0].value : Object.freeze([] as string[])
   const [quickPickRaw, commercialRaw, fulfillmentRaw, researchRaw,
-    researchPlanRaw, mayelRaw, lunaJobsRaw, lunaTraceRaw, publisherBatchRaw] =
+    researchPlanRaw, mayelRaw, lunaJobsRaw, lunaTraceRaw, publisherBatchRaw,
+    browserWorkersRaw] =
     await Promise.allSettled([
       readLunaQuickPickProgressV1({ supabase: input.supabase,
         accountKey: input.accountKey, candidateKeys, includeRecent: false }),
@@ -143,6 +126,9 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
         .in("status", ["AUTHORIZED", "CLAIMED", "RUNNING",
           "FAILED_RETRY_SAFE"]).order("created_at", { ascending: false })
         .limit(100),
+      readSellerOsBrowserWorkerCapabilitiesV1({
+        supabase: input.supabase, accountKey: input.accountKey, now,
+      }),
     ])
 
   const quickPick = settled(quickPickRaw)
@@ -268,25 +254,31 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
 
   const research = settled(researchRaw)
   const researchPlan = settled(researchPlanRaw)
+  const browserWorkers = settled(browserWorkersRaw)
+  const productResearchExtension = browserWorkers.available
+    ? browserWorkers.value.byId.get("PRODUCT_RESEARCH_EXTENSION") : null
+  const productResearchBrowserWorker = browserWorkers.available
+    ? browserWorkers.value.byId.get("PRODUCT_RESEARCH_BROWSER_WORKER") : null
   const planStatus = researchPlan.available
     ? String(researchPlan.value?.status ?? "") : ""
   const latestResearch = record(research.available
     ? research.value.latest : null)
   const latestResearchAt = Date.parse(String(latestResearch.captured_at ??
     latestResearch.created_at ?? ""))
-  const recentResearch = Number.isFinite(latestResearchAt) &&
-    now.getTime() >= latestResearchAt &&
-    now.getTime() - latestResearchAt <= 30 * 60 * 1_000
+  const recentResearch = productResearchExtension?.fresh === true &&
+    productResearchBrowserWorker?.fresh === true &&
+    productResearchExtension.receiptId === productResearchBrowserWorker.receiptId
   const productResearchAuthorityAvailable = research.available &&
-    researchPlan.available
+    researchPlan.available && browserWorkers.available
   const productResearchCapabilityReceiptPresent =
-    Number.isFinite(latestResearchAt)
+    Boolean(productResearchExtension?.receiptId &&
+      productResearchBrowserWorker?.receiptId)
   const productResearchState: SellerOsOperationalStateV1 =
     !productResearchAuthorityAvailable || !recentResearch ? "DESCONOCIDO"
       : planStatus === "COMPLETE" ? "SIN_TRABAJO" : "OPERANDO"
   const productResearchPresentationCause = !productResearchAuthorityAvailable
     ? "PRODUCT_RESEARCH_AUTHORITY_UNAVAILABLE"
-    : !productResearchCapabilityReceiptPresent
+      : !productResearchCapabilityReceiptPresent
       ? "PRODUCT_RESEARCH_WORKER_CAPABILITY_RECEIPT_ABSENT"
       : !recentResearch ? "PRODUCT_RESEARCH_WORKER_CAPABILITY_RECEIPT_EXPIRED"
         : planStatus === "COMPLETE"
@@ -296,9 +288,9 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   const lunaJobs = settled(lunaJobsRaw)
   const lunaTrace = settled(lunaTraceRaw)
   const lunaEvents = lunaTrace.available ? lunaTrace.value.events : []
-  const lunaReceipt = workerCapabilityReceipt(lunaEvents, now)
-  const lunaCapabilityProven = lunaTrace.available
-    && lunaReceipt.capabilityPass
+  const lunaReceipt = browserWorkers.available
+    ? browserWorkers.value.byId.get("LUNA_SHIPPING") : null
+  const lunaCapabilityProven = lunaReceipt?.fresh === true
   const eligiblePendingJobCount = lunaJobs.available
     ? lunaJobs.value.length : null
   const lunaState: SellerOsOperationalStateV1 =
@@ -306,12 +298,12 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       !lunaCapabilityProven ? "BLOQUEADO"
       : !lunaCapabilityProven ? "DESCONOCIDO"
         : eligiblePendingJobCount === 0 ? "SIN_TRABAJO" : "RECUPERANDO"
-  const lunaPresentationCause = !lunaTrace.available
-    ? "LUNA_TRACE_AUTHORITY_UNAVAILABLE"
-    : !lunaReceipt.receiptPresent ? "LUNA_WORKER_CAPABILITY_RECEIPT_ABSENT"
-      : !lunaReceipt.receiptFresh
+  const lunaPresentationCause = !browserWorkers.available
+    ? "LUNA_WORKER_LIVENESS_AUTHORITY_UNAVAILABLE"
+    : !lunaReceipt?.receiptId ? "LUNA_WORKER_CAPABILITY_RECEIPT_ABSENT"
+      : !lunaReceipt.fresh
         ? "LUNA_WORKER_CAPABILITY_RECEIPT_EXPIRED"
-        : !lunaReceipt.capabilityPass
+        : !lunaCapabilityProven
           ? "LUNA_WORKER_CAPABILITY_NOT_PROVEN"
           : !lunaJobs.available ? "LUNA_PENDING_JOB_AUTHORITY_UNAVAILABLE"
             : eligiblePendingJobCount === 0
@@ -345,7 +337,7 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       SELLER_OS_RADAR_COMPACT_MAX_OUTPUT_SILENCE_SECONDS_V1
 
   const compactStates = projectSellerOsCompactCapabilityStatesV1({
-    lunaAuthorityAvailable: lunaTrace.available && lunaJobs.available,
+    lunaAuthorityAvailable: browserWorkers.available && lunaJobs.available,
     lunaEligiblePendingJobCount: eligiblePendingJobCount,
     lunaCapabilityProven,
     productResearchAuthorityAvailable,
@@ -424,37 +416,38 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       lunaShipping: Object.freeze({ state: lunaState,
         compactState: compactStates.lunaShipping,
         sourceAuthority:
-          "LUNA_SHIPPING_RUNTIME_TRACE_PLUS_ELIGIBLE_JOB_QUEUE",
-        connectionState: lunaReceipt.receiptFresh
+          "INDEPENDENT_WORKER_LIVENESS_PLUS_ELIGIBLE_JOB_QUEUE",
+        connectionState: lunaReceipt?.fresh
           ? "CONECTADA" as const : "DESCONOCIDA" as const,
-        authorityAvailable: lunaTrace.available && lunaJobs.available,
+        authorityAvailable: browserWorkers.available && lunaJobs.available,
         connected: lunaCapabilityProven,
         capabilityProven: lunaCapabilityProven,
-        capabilityFresh: lunaReceipt.receiptFresh,
-        capabilityObservedAt: lunaReceipt.observedAt,
-        extensionVersion: text(record(latestLunaEvent).extensionVersion, 40),
+        capabilityFresh: lunaReceipt?.fresh === true,
+        capabilityObservedAt: lunaReceipt?.observedAt ?? null,
+        extensionVersion: lunaReceipt?.extensionVersion ??
+          text(record(latestLunaEvent).extensionVersion, 40),
         lastSuccessfulActivity: [...lunaEvents].reverse().find((event) =>
           event.success)?.timestamp ?? null,
         lastError: [...lunaEvents].reverse().find((event) =>
           !event.success)?.state ?? null,
-        capabilityMaximumAgeSeconds: lunaReceipt.maximumAgeSeconds,
+        capabilityMaximumAgeSeconds: 5 * 60,
         presentationCause: lunaPresentationCause,
         eligiblePendingJobCount,
         traceDurable: lunaTrace.available && lunaTrace.value.traceDurable }),
       productResearch: Object.freeze({ state: productResearchState,
         compactState: compactStates.productResearch,
         sourceAuthority:
-          "PRODUCT_RESEARCH_CAPTURE_RECEIPT_PLUS_QUERY_PLAN",
+          "INDEPENDENT_WORKER_LIVENESS_PLUS_QUERY_PLAN",
         connectionState: recentResearch
           ? "CONECTADA" as const : "DESCONOCIDA" as const,
         authorityAvailable: productResearchAuthorityAvailable,
         capabilityProven: recentResearch,
         capabilityFresh: recentResearch,
-        capabilityObservedAt: productResearchCapabilityReceiptPresent
-          ? new Date(latestResearchAt).toISOString() : null,
-        capabilityMaximumAgeSeconds: 30 * 60,
-        extensionVersion: null,
+        capabilityObservedAt: productResearchExtension?.observedAt ?? null,
+        capabilityMaximumAgeSeconds: 5 * 60,
+        extensionVersion: productResearchExtension?.extensionVersion ?? null,
         lastSuccessfulActivity: productResearchCapabilityReceiptPresent
+          && Number.isFinite(latestResearchAt)
           ? new Date(latestResearchAt).toISOString() : null,
         lastError: null,
         queuePlanState: planStatus || null,
@@ -491,11 +484,13 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       !quickPick.available ? "QUICK_PICK_AUTHORITY_UNAVAILABLE" : null,
       !commercial.available ? "COMMERCIAL_AUTHORITY_UNAVAILABLE" : null,
       !fulfillment.available ? "FULFILLMENT_AUTHORITY_UNAVAILABLE" : null,
-      !research.available || !researchPlan.available
+      !research.available || !researchPlan.available || !browserWorkers.available
         ? "PRODUCT_RESEARCH_AUTHORITY_UNAVAILABLE" : null,
       mayelRows === null ? "MAYEL_AUTHORITY_UNAVAILABLE" : null,
       !lunaJobs.available ? "LUNA_PENDING_JOB_AUTHORITY_UNAVAILABLE" : null,
       !lunaTrace.available ? "LUNA_TRACE_AUTHORITY_UNAVAILABLE" : null,
+      !browserWorkers.available ? "BROWSER_WORKER_LIVENESS_AUTHORITY_UNAVAILABLE"
+        : null,
       !insights.available ? "OWNER_OPERATIONAL_INSIGHTS_UNAVAILABLE" : null,
     ].filter((value): value is string => Boolean(value))),
     safety: Object.freeze({ readOnlyAuthorityAcquisition: true as const,

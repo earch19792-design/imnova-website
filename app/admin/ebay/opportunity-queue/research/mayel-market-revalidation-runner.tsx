@@ -27,6 +27,11 @@ function autonomousModeFromLocation() {
     .get("mayelResearchWorker") === "auto"
 }
 
+function browserWorkerControlModeFromLocation() {
+  return new URLSearchParams(window.location.search)
+    .get("browserWorkerControl") === "1"
+}
+
 function safeReturnPath() {
   const value = new URLSearchParams(window.location.search).get("returnTo")
   return value && /^\/admin(?:\/|$)/.test(value) && !value.startsWith("//")
@@ -93,6 +98,7 @@ export function MayelMarketRevalidationRunner() {
   useEffect(() => {
     const planId = planIdFromLocation()
     const autonomous = autonomousModeFromLocation()
+    const browserWorkerControl = browserWorkerControlModeFromLocation()
     if ((!planId && !autonomous) || started.current) return
     started.current = true
     setActive(true)
@@ -119,10 +125,25 @@ export function MayelMarketRevalidationRunner() {
         manifestOriginMatch: probe.extensionId === probe.bridgeExtensionId,
       })
       const workerId = `product-research-browser:${crypto.randomUUID()}`
+      const persistHeartbeat = async (workerState: "IDLE" | "WORKING") => {
+        const payload = await authorizedPost({
+          action: "HEARTBEAT_PRODUCT_RESEARCH_WORKER", workerId,
+          extensionVersion: probe.extensionVersion,
+          extensionIdentityMatch: probe.extensionId === probe.bridgeExtensionId,
+          workerState,
+        })
+        const heartbeat = payload.result as JsonRecord
+        if (heartbeat.capabilityFresh !== true ||
+            heartbeat.heartbeatSource !== "INDEPENDENT_WORKER_LIVENESS") {
+          throw new Error("PRODUCT_RESEARCH_WORKER_HEARTBEAT_INVALID")
+        }
+        return heartbeat
+      }
+      let heartbeat = await persistHeartbeat("IDLE")
       const maximumPlans = autonomous ? 4 : 1
       let completed = 0
       for (; completed < maximumPlans; completed += 1) {
-        const capabilityObservedAt = new Date().toISOString()
+        if (completed > 0) heartbeat = await persistHeartbeat("IDLE")
         const claimPayload = await authorizedPost({
           action: "CLAIM_AUTONOMOUS_RESEARCH_PLAN", workerId,
           ...(planId ? { planId } : {}),
@@ -132,13 +153,16 @@ export function MayelMarketRevalidationRunner() {
               probe.extensionId === probe.bridgeExtensionId,
             extensionId: probe.extensionId,
             extensionVersion: probe.extensionVersion,
-            observedAt: capabilityObservedAt,
+            observedAt: heartbeat.observedAt,
+            heartbeatReceiptId: heartbeat.heartbeatReceiptId,
+            heartbeatSource: heartbeat.heartbeatSource,
             cookieAccess: probe.cookieAccess,
             marketplaceWrites: probe.marketplaceWrites,
           },
         })
         const claim = claimPayload.result as JsonRecord
         if (claim.claimed !== true) break
+        heartbeat = await persistHeartbeat("WORKING")
         const claimedPlanId = String(claim.planId ?? "")
         try {
           const claimedPlan = claim.plan && typeof claim.plan === "object"
@@ -207,6 +231,13 @@ export function MayelMarketRevalidationRunner() {
         }
         if (!autonomous) break
       }
+      if (browserWorkerControl) {
+        setState(completed > 0
+          ? "Research completado. Buscando trabajo pendiente…"
+          : "Worker disponible · sin trabajo pendiente")
+        window.setTimeout(() => window.location.reload(), 60_000)
+        return
+      }
       setState("Mercado revalidado. Volviendo a Mayel…")
       window.setTimeout(() => window.location.replace(
         autonomous ? safeReturnPath() :
@@ -215,7 +246,9 @@ export function MayelMarketRevalidationRunner() {
       setFailed(true)
       setState(error instanceof Error ? error.message :
         "No fue posible cerrar la investigación automática.")
-      if (autonomous) {
+      if (browserWorkerControl) {
+        window.setTimeout(() => window.location.reload(), 60_000)
+      } else if (autonomous) {
         window.setTimeout(() => window.location.replace(safeReturnPath()), 4_000)
       }
     })

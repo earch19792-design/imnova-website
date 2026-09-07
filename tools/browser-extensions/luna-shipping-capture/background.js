@@ -9,7 +9,8 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.52"
+const EXTENSION_BUILD_VERSION = "1.0.53"
+const WORKER_CONTROL_ALARM = "seller-os-luna-shipping-worker-control-v1"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -1416,9 +1417,38 @@ function observeCheckoutNavigation(details, inject) {
   }, CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS)
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  if (chrome.runtime.id !== EXACT_EXTENSION_ID) return
-  void chrome.tabs.create({ url: `${CONTROL_PAGE}?bridgeOnly=1`, active: true })
+async function ensureShippingWorkerControlPage() {
+  if (chrome.runtime.id !== EXACT_EXTENSION_ID) return false
+  let tabs
+  try {
+    tabs = await chrome.tabs.query({
+      url: `${SELLER_OS_ORIGIN}/admin/ebay/luna-shipping-capture*`,
+    })
+  } catch { return false }
+  if (tabs.some((tab) => {
+    try {
+      return new URL(tab.url ?? "").searchParams.get("bridgeOnly") === "1"
+    } catch { return false }
+  })) return true
+  try {
+    await chrome.tabs.create({
+      url: `${CONTROL_PAGE}?bridgeOnly=1`, active: false,
+    })
+    return true
+  } catch { return false }
+}
+
+function scheduleShippingWorkerRecovery() {
+  chrome.alarms?.create?.(WORKER_CONTROL_ALARM, { periodInMinutes: 2 })
+  void ensureShippingWorkerControlPage()
+}
+
+chrome.runtime.onInstalled?.addListener?.(scheduleShippingWorkerRecovery)
+chrome.runtime.onStartup?.addListener?.(scheduleShippingWorkerRecovery)
+chrome.alarms?.onAlarm?.addListener?.((alarm) => {
+  if (alarm.name === WORKER_CONTROL_ALARM) {
+    void ensureShippingWorkerControlPage()
+  }
 })
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {

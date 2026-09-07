@@ -49,6 +49,8 @@ import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { preflightEbayCategoryProductIdentifiers } from
   "@/lib/ebay/ebay-draft-only-gateway"
+import { persistSellerOsBrowserWorkerHeartbeatV1 } from
+  "@/lib/seller-os/browser-worker-capability-v1"
 
 function candidateIds(value: unknown) {
   return (Array.isArray(value) ? value : [])
@@ -137,6 +139,22 @@ export async function POST(req: Request) {
   if (!auth.ok) return auth.response
   try {
     const body = await listingAiJson(req)
+    if (body.action === "heartbeat_worker_capability") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const result = await persistSellerOsBrowserWorkerHeartbeatV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        workerFamily: "LUNA_SHIPPING",
+        workerInstanceId: runtimeInstanceId(body.runtimeInstanceId,
+          auth.actorId),
+        extensionVersion: String(body.extensionVersion ?? ""),
+        extensionIdentityMatch: body.extensionIdentityMatch === true,
+        workerState: body.workerState === "WORKING" ? "WORKING" :
+          body.workerState === "AVAILABLE" ? "AVAILABLE" : "IDLE",
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { businessOutputWrites: 0, lunaPurchases: 0,
+          marketplaceWrites: 0 } })
+    }
     if (body.action === "resolve_jobs") {
       enforceListingAiRouteRateLimit(auth.actorId, "READ")
       const requested = candidateIds(body.candidateIds)

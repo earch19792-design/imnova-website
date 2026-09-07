@@ -1816,7 +1816,7 @@ export function Loop2Top20OpportunityPool({
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
             {oneClickResearchCommandCenter}
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.26 conserva la captura anterior y reactiva el mismo bridge al entrar o volver a Oportunidades, incluso mediante navegación SPA; no almacena tokens ni usa credenciales persistentes.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.27 conserva la captura anterior y reactiva el mismo bridge al entrar o volver a Oportunidades, incluso mediante navegación SPA; no almacena tokens ni usa credenciales persistentes.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>

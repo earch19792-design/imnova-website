@@ -12,10 +12,10 @@ export const EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE =
   "IMNOVA_EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE_V1"
 
 export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
-  version: "1.2.26",
-  buildId: "10fa05a43791ff4bd42083d0ca88341a5c99a947",
+  version: "1.2.27",
+  buildId: "e48924c20aa5ec439224a34c0a696e5b85ed19ba",
   archivePath:
-    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.26.zip",
+    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.27.zip",
 })
 
 export function attestEbayOneClickResearchExtensionArtifact(input: Readonly<{

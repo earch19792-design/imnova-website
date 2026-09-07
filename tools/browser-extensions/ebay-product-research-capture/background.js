@@ -19,6 +19,9 @@ const ADMIN_SCOPE_MATCHES = [...ADMIN_ORIGINS].map(
 )
 const ADMIN_SCOPE_PATH = /^\/admin\/ebay(?:\/|$)/
 const ADMIN_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
+const WORKER_CONTROL_URL =
+  "https://imnova-seller-os-preprod.vercel.app/admin/ebay/opportunity-queue/research?mayelResearchWorker=auto&browserWorkerControl=1"
+const WORKER_CONTROL_ALARM = "seller-os-product-research-worker-control-v1"
 const SESSION_VERSION = "EBAY_ONE_CLICK_RESEARCH_SESSION_V1_2026_08_26"
 const SESSION_SCOPE = "EBAY_RESEARCH_CAPTURE_ONLY"
 const MAX_RUNTIME_MS = 15 * 60_000
@@ -59,6 +62,40 @@ async function injectAdminBridgeIntoExistingTabs() {
 }
 
 void injectAdminBridgeIntoExistingTabs()
+
+async function ensureWorkerControlTab() {
+  let existing
+  try {
+    existing = await chrome.tabs.query({
+      url: "https://imnova-seller-os-preprod.vercel.app/admin/ebay/opportunity-queue/research*",
+    })
+  } catch {
+    return false
+  }
+  if (existing.some((tab) => {
+    try {
+      return new URL(tab.url ?? "").searchParams.get(
+        "browserWorkerControl") === "1"
+    } catch { return false }
+  })) return true
+  try {
+    await chrome.tabs.create({ url: WORKER_CONTROL_URL, active: false })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function scheduleWorkerControlRecovery() {
+  chrome.alarms?.create?.(WORKER_CONTROL_ALARM, { periodInMinutes: 2 })
+  void ensureWorkerControlTab()
+}
+
+chrome.runtime.onInstalled?.addListener?.(scheduleWorkerControlRecovery)
+chrome.runtime.onStartup?.addListener?.(scheduleWorkerControlRecovery)
+chrome.alarms?.onAlarm?.addListener?.((alarm) => {
+  if (alarm.name === WORKER_CONTROL_ALARM) void ensureWorkerControlTab()
+})
 
 function officialResearchSender(sender) {
   try {
