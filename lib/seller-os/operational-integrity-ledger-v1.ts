@@ -208,10 +208,12 @@ export async function readLatestSellerOsOperationalIntegrityV1(input: Readonly<{
     input.supabase.from("seller_os_operational_integrity_runs_v1")
       .select("id,status,mechanism_version,evidence_fingerprint,audit_receipt,observed_at")
       .eq("marketplace_account_key", input.accountKey)
+      .eq("mechanism_version", SELLER_OS_OPERATIONAL_INTEGRITY_AUDITOR_VERSION)
       .order("observed_at", { ascending: false }).limit(1).maybeSingle(),
     input.supabase.from("seller_os_operational_learning_ledger_v1")
       .select("failure_class,invariant_code,retry_safety,recovery_class,recovery_outcome,last_observed_at")
       .eq("marketplace_account_key", input.accountKey)
+      .eq("mechanism_version", SELLER_OS_OPERATIONAL_INTEGRITY_AUDITOR_VERSION)
       .eq("status", "OPEN")
       .order("last_observed_at", { ascending: false }).limit(100),
   ])

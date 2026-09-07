@@ -19,9 +19,33 @@ type ReadinessPayload = { success?: boolean; capabilities?: Record<string, strin
   readiness?: Record<string, string | boolean>; templates?: TemplateDefinition[];
   result?: Record<string, unknown>; error?: string; diagnosis?: Record<string, unknown>;
   operationalIntegrity?: Record<string, unknown> | null;
-  runtimeScheduler?: Record<string, unknown> | null }
+  runtimeScheduler?: Record<string, unknown> | null;
+  runtimeAssurance?: Record<string, unknown> | null }
 type HumanPreview = { title?: string; subject?: string; problem?: string; evidence?: string;
   recommendedAction?: string; observedAt?: string; deepLinkLabel?: string; deepLink?: string }
+
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
+
+function healthLabel(value: unknown) {
+  const labels: Record<string, string> = {
+    HEALTHY: "Operando", DEGRADED_EXTERNAL: "Fuente externa limitada",
+    DEGRADED_INTERNAL: "Inconsistencia interna", WAITING_DEPENDENCY:
+      "Esperando dependencia", DISCONNECTED: "Desconectado",
+    STALLED: "Detenido", MISSED_SCHEDULE: "Ejecución esperada ausente",
+    OUTPUT_MISSING: "Resultado durable ausente", UNKNOWN: "Por comprobar",
+  }
+  return labels[String(value)] ?? "Por comprobar"
+}
+
+function shownDate(value: unknown) {
+  const parsed = Date.parse(String(value ?? ""))
+  return Number.isFinite(parsed) ? new Intl.DateTimeFormat("es-NI", {
+    timeZone: "America/Managua", dateStyle: "short", timeStyle: "short",
+  }).format(new Date(parsed)) : "—"
+}
 
 export default function OperationalReadinessPage() {
   const [payload, setPayload] = useState<ReadinessPayload | null>(null)
@@ -72,6 +96,13 @@ export default function OperationalReadinessPage() {
     payload?.operationalIntegrity?.openViolationCount ?? NaN)
   const schedulerLanes = Array.isArray(payload?.runtimeScheduler?.lanes)
     ? payload.runtimeScheduler.lanes as Record<string, unknown>[] : []
+  const assuranceRun = object(payload?.runtimeAssurance?.latestRun)
+  const assuranceReceipt = object(assuranceRun.audit_receipt)
+  const capabilityMatrix = Array.isArray(assuranceReceipt.capabilityMatrix)
+    ? assuranceReceipt.capabilityMatrix.map(object) : []
+  const unhealthyCapabilities = capabilityMatrix.filter((entry) =>
+    entry.finalHealthState !== "HEALTHY")
+  const assuranceCounts = object(assuranceReceipt.counts)
   const lowStockPreview = whatsappResults.LOW_STOCK_CONFIRMED?.humanPreview as HumanPreview | undefined
   const stalePreview = whatsappResults.STALE_EVIDENCE?.humanPreview as HumanPreview | undefined
 
@@ -105,6 +136,27 @@ export default function OperationalReadinessPage() {
           <div className="rounded-xl bg-slate-50 p-3"><dt className="text-slate-500">Última observación</dt><dd className="mt-1 font-bold">{typeof latestIntegrity?.observed_at === "string" ? new Date(latestIntegrity.observed_at).toLocaleString("es-NI") : "—"}</dd></div>
           <div className="rounded-xl bg-slate-50 p-3"><dt className="text-slate-500">GET con continuaciones</dt><dd className="mt-1 text-xl font-black">{payload?.runtimeScheduler?.getBusinessMutations === 0 ? "0" : "—"}</dd></div>
         </dl>
+        <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h3 className="font-black">Salud de capacidades críticas</h3>
+              <p className="mt-1 text-sm text-slate-500">Conexión, ejecución, resultado durable y consumo se verifican por separado.</p></div>
+            <span className="rounded-full bg-white px-3 py-1 text-[13px] font-black text-slate-700">
+              {capabilityMatrix.length > 0
+                ? `${String(assuranceCounts.healthy ?? 0)} operando · ${unhealthyCapabilities.length} requieren atención`
+                : "Todavía sin receipt de assurance"}
+            </span>
+          </div>
+          {unhealthyCapabilities.length > 0 && <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {unhealthyCapabilities.slice(0, 8).map((entry) => <article key={String(entry.capabilityId)} className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+              <div className="flex items-start justify-between gap-3"><strong>{String(entry.capabilityId ?? "Capacidad").replaceAll("_", " ")}</strong><span className="text-[12px] font-black text-amber-700">{healthLabel(entry.finalHealthState)}</span></div>
+              <p className="mt-1 text-slate-600">{String(entry.humanSummary ?? "No hay evidencia suficiente para declarar salud.")}</p>
+              <p className="mt-2 text-[12px] text-slate-500">Último resultado: {shownDate(entry.lastExpectedOutputAt)} · Próximo intento: {shownDate(entry.nextRetryAt ?? entry.nextExpectedRunAt)}</p>
+              <p className="mt-1 text-[12px] text-slate-500">Impacto: {String(entry.safeFallback ?? "Se conserva el último estado comprobado.").replaceAll("_", " ").toLowerCase()}</p>
+            </article>)}
+          </div>}
+          {capabilityMatrix.length > 0 && unhealthyCapabilities.length === 0 && <p className="mt-3 text-sm font-semibold text-emerald-700">Todas las capacidades críticas produjeron la evidencia esperada dentro de su ventana.</p>}
+          <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3"><summary className="cursor-pointer text-sm font-black">Ver matriz técnica completa</summary><div className="mt-3 overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr className="text-slate-500"><th className="p-2">Capacidad</th><th className="p-2">Conexión</th><th className="p-2">Job</th><th className="p-2">Output</th><th className="p-2">Downstream</th><th className="p-2">Estado</th></tr></thead><tbody>{capabilityMatrix.map((entry) => <tr key={String(entry.capabilityId)} className="border-t border-slate-100"><td className="p-2 font-bold">{String(entry.capabilityId)}</td><td className="p-2">{String(entry.connectionHealth)}</td><td className="p-2">{String(entry.jobHealth)}</td><td className="p-2">{String(entry.outputHealth)}</td><td className="p-2">{String(entry.downstreamHealth)}</td><td className="p-2">{String(entry.finalHealthState)}</td></tr>)}</tbody></table></div></details>
+        </section>
         <details id="diagnostics" className="mt-4 rounded-xl border border-slate-200 p-3">
           <summary className="cursor-pointer text-sm font-black">Ver schedulers POST</summary>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">{schedulerLanes.map((lane) => <div key={String(lane.lane)} className="rounded-lg bg-slate-50 p-3 text-[13px]"><strong>{String(lane.lane)}</strong><p className="mt-1 text-slate-500">{String(lane.httpMethod ?? "DESCONOCIDO")} · {lane.enabled === true ? "ACTIVO" : "BLOQUEADO"} · {String(lane.schedule ?? "—")}</p></div>)}</div>
