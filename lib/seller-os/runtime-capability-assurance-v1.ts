@@ -12,6 +12,39 @@ export const SELLER_OS_RUNTIME_CAPABILITY_ASSURANCE_V1 =
 export const SELLER_OS_RUNTIME_CAPABILITY_RECOVERY_POLICY_V1 =
   "SELLER_OS_RUNTIME_CAPABILITY_RECOVERY_POLICY_V1" as const
 
+export const SELLER_OS_RUNTIME_FAILURE_LEARNING_V1 = Object.freeze([
+  Object.freeze({ failureClass: "FALSE_ZERO_ON_SOURCE_FAILURE",
+    detectionRule:
+      "SOURCE_UNAVAILABLE_AND_OWNER_OR_DOWNSTREAM_COUNT_EQUALS_ZERO_WITHOUT_AUTHORITATIVE_ZERO",
+    recoveryPolicy:
+      "PRESERVE_LAST_CERTIFIED_STATE_AND_RETRY_OFFICIAL_SOURCE",
+    regressionGuard: "UNAVAILABLE_UNPROVEN_UNKNOWN_NEVER_EQUAL_ZERO" }),
+  Object.freeze({ failureClass: "RUNNER_PARKED_AFTER_FAILURE",
+    detectionRule: "RETRYABLE_FAILURE_WITHOUT_NEXT_ATTEMPT_OR_NEW_OUTPUT",
+    recoveryPolicy: "BOUNDED_SCHEDULED_RECLAIM_FROM_INCOMPLETE_STAGE",
+    regressionGuard: "RETRYABLE_WORK_MUST_HAVE_RECLAIM_PATH" }),
+  Object.freeze({ failureClass: "DOWNSTREAM_INCOMPLETE_NOT_RECLAIMABLE",
+    detectionRule: "UPSTREAM_OUTPUT_PRESENT_AND_DOWNSTREAM_OUTPUT_MISSING",
+    recoveryPolicy: "RECLAIM_DOWNSTREAM_STAGE_WITH_EXISTING_RECEIPT",
+    regressionGuard: "DURABLE_OUTPUT_MUST_REMAIN_CONSUMABLE" }),
+  Object.freeze({ failureClass: "STALE_EVIDENCE_WITHOUT_REFRESH",
+    detectionRule: "EVIDENCE_EXPIRED_AND_NO_REFRESH_OR_EXPLICIT_GAP_STATE",
+    recoveryPolicy: "CREATE_OR_REUSE_BOUNDED_REFRESH_JOB",
+    regressionGuard: "EVERY_STALEABLE_SOURCE_HAS_REFRESH_OR_EXPLICIT_GAP" }),
+  Object.freeze({ failureClass: "WORKER_CAPABILITY_EXPIRED",
+    detectionRule: "PENDING_WORK_AND_WORKER_HEARTBEAT_EXCEEDS_MAX_SILENCE",
+    recoveryPolicy: "PRESERVE_WORK_AND_RECLAIM_ON_FRESH_CAPABILITY_EVENT",
+    regressionGuard: "NO_SILENT_WORKER_DISCONNECTION" }),
+  Object.freeze({ failureClass: "SCHEDULER_TICK_WITHOUT_OUTPUT",
+    detectionRule: "SCHEDULER_TICK_FRESH_AND_EXPECTED_DURABLE_OUTPUT_STALE",
+    recoveryPolicy: "RECLAIM_RUN_WITHOUT_TREATING_TICK_AS_SUCCESS",
+    regressionGuard: "SCHEDULER_TICK_IS_NOT_JOB_OR_OUTPUT_HEALTH" }),
+  Object.freeze({ failureClass: "FRESH_LABEL_AFTER_EXPIRY",
+    detectionRule: "PERSISTED_FRESH_AND_NOW_AFTER_FRESH_UNTIL",
+    recoveryPolicy: "DERIVE_FRESHNESS_FROM_TIME_AND_SCHEDULE_REFRESH",
+    regressionGuard: "PERSISTED_LABEL_CANNOT_OVERRIDE_EXPIRY" }),
+] as const)
+
 export type SellerOsCapabilityFinalHealthV1 =
   | "HEALTHY"
   | "DEGRADED_EXTERNAL"
@@ -971,6 +1004,7 @@ export function evaluateSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
       ? "VIOLATION" as const : "PASS" as const,
     checks, summary, capabilityMatrix: matrix, counts, unresolved,
     runtimeInfrastructureCanary, assurances,
+    failureLearningPolicies: SELLER_OS_RUNTIME_FAILURE_LEARNING_V1,
     systemicRuntimeAssurancePass: runtimeInfrastructureCanary === "PASS" &&
       assurances.capabilityCanaryCoveragePercent === 100 &&
       assurances.everyScheduledJobHasMissedRunDetection &&
