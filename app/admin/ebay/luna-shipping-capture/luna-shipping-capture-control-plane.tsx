@@ -551,6 +551,10 @@ export function LunaShippingCaptureControlPlane({
     let extensionReady = false
     let canonicalBindingStatusRead = false
     let canonicalDestinationBindingPresent = false
+    let canonicalDestinationMismatchProven = false
+    let canonicalBindingRecoveryInFlight = false
+    let recoverCanonicalDestination:
+      ((automatic: boolean) => void) | null = null
     let activeJobStatusReady = false
     let recoveredActiveJob: LunaChromeShippingJobV1 | null = null
     const runtimeInstanceId = crypto.randomUUID()
@@ -694,6 +698,7 @@ export function LunaShippingCaptureControlPlane({
       if (event.state === "CANONICAL_BIND_COMPLETED") {
         canonicalBindingStatusRead = true
         canonicalDestinationBindingPresent = true
+        canonicalDestinationMismatchProven = false
         setCanonicalBindingStatusReady(true)
         setCanonicalDestinationBound(true)
         setCanonicalDestinationMatch(true)
@@ -701,6 +706,7 @@ export function LunaShippingCaptureControlPlane({
       }
       if (event.state === "FAIL" &&
           event.reasonCode === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH") {
+        canonicalDestinationMismatchProven = true
         setCanonicalDestinationMismatch(true)
       }
       const terminal = event.state === "PASS" || event.state === "FAIL"
@@ -904,6 +910,14 @@ export function LunaShippingCaptureControlPlane({
           discoveryInFlight || busy) {
         return
       }
+      if (extensionReady && canonicalBindingStatusRead &&
+          !canonicalDestinationBindingPresent &&
+          !canonicalDestinationMismatchProven &&
+          port) {
+        recoverCanonicalDestination?.(true)
+        scheduleProductionAcquisition()
+        return
+      }
       if (!extensionReady || !canonicalBindingStatusRead ||
           !canonicalDestinationBindingPresent || !activeJobStatusReady || !port) {
         scheduleProductionAcquisition()
@@ -1020,12 +1034,19 @@ export function LunaShippingCaptureControlPlane({
     }
     liveTriggerRef.current = beginLiveCapture
 
-    const bindCanonicalDestination = () => {
-      if (!port || !extensionReady || busy) return
+    recoverCanonicalDestination = (automatic: boolean) => {
+      if (!port || !extensionReady || busy ||
+          canonicalBindingRecoveryInFlight) return
+      if (automatic && (!productionRuntimeAuthorized ||
+          !canonicalBindingStatusRead || canonicalDestinationBindingPresent ||
+          canonicalDestinationMismatchProven)) return
+      canonicalBindingRecoveryInFlight = true
       busy = true
       setRunning(true)
       setError("")
-      setStatus("BINDING_CANONICAL_DESTINATION")
+      setStatus(automatic
+        ? "RESTORING_CANONICAL_DESTINATION"
+        : "BINDING_CANONICAL_DESTINATION")
       void adminPost("resolve_jobs", { candidateIds: [CANARY_ID],
         purpose: "CANONICAL_BIND_BOOTSTRAP" }).then((payload) => {
         const bootstrapJobs = Array.isArray(payload.jobs) ? payload.jobs : []
@@ -1036,7 +1057,16 @@ export function LunaShippingCaptureControlPlane({
         }
         port.postMessage({ type: "SELLER_OS_BIND_LUNA_CANONICAL_DESTINATION",
           bootstrapJob })
-      }).catch(fail)
+      }).catch((bindingError) => {
+        canonicalBindingRecoveryInFlight = false
+        fail(bindingError, automatic
+          ? "AUTONOMOUS_CANONICAL_BIND_RECOVERY"
+          : "OWNER_CANONICAL_BIND")
+        if (automatic) scheduleProductionAcquisition()
+      })
+    }
+    const bindCanonicalDestination = () => {
+      recoverCanonicalDestination?.(false)
     }
     bindDestinationRef.current = bindCanonicalDestination
 
@@ -1162,6 +1192,7 @@ export function LunaShippingCaptureControlPlane({
           canonicalBindingStatusRead = true
           canonicalDestinationBindingPresent =
             bindingClassification === "PRIMARY_BINDING_VALID"
+          canonicalDestinationMismatchProven = false
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationBound(canonicalDestinationBindingPresent)
           setCanonicalDestinationMismatch(false)
@@ -1178,6 +1209,7 @@ export function LunaShippingCaptureControlPlane({
           const bound = message.canonicalDestinationBound === true
           canonicalBindingStatusRead = true
           canonicalDestinationBindingPresent = bound
+          canonicalDestinationMismatchProven = false
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationMismatch(false)
           setCanonicalDestinationBound(bound)
@@ -1303,20 +1335,29 @@ export function LunaShippingCaptureControlPlane({
           return
         }
         if (message?.type === "LUNA_CANONICAL_DESTINATION_BINDING_RESULT") {
+          canonicalBindingRecoveryInFlight = false
           if (message.success !== true ||
               message.canonicalDestinationBound !== true ||
               message.canonicalDestinationMatch !== true) {
             setCanonicalDestinationMatch(false)
-            if (message.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH") {
+            const destinationMismatch =
+              message.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH"
+            if (destinationMismatch) {
+              canonicalDestinationMismatchProven = true
               setCanonicalDestinationMismatch(true)
             }
             fail(new Error(typeof message.error === "string" ? message.error
-              : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"))
+              : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"),
+            "CANONICAL_BIND_RESULT")
+            if (productionRuntimeAuthorized && !destinationMismatch) {
+              scheduleProductionAcquisition()
+            }
             return
           }
           setCanonicalDestinationBound(true)
           canonicalBindingStatusRead = true
           canonicalDestinationBindingPresent = true
+          canonicalDestinationMismatchProven = false
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationMatch(true)
           setCanonicalDestinationMismatch(false)
