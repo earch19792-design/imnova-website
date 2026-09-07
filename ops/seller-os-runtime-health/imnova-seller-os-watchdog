@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -u
+
+MCP_UNIT="imnova-seller-os-mcp.service"
+TUNNEL_UNIT="imnova-seller-os-tunnel.service"
+MCP_URL="http://127.0.0.1:3000/api/seller-os/assistant/mcp"
+RUNTIME_ENV="/home/earch/.config/imnova/seller-os-tunnel-runtime.env"
+CLOUD_ENV="/home/earch/.config/imnova/seller-os-cloud-read-relay.env"
+TUNNEL_CLIENT="/home/earch/.local/bin/tunnel-client"
+HEALTH_REPORTER="/home/earch/.local/bin/imnova-seller-os-runtime-health-reporter.mjs"
+PROFILE="seller-os-tunnel-live-v1"
+
+restart_tunnel=0
+
+if ! systemctl --user is-active --quiet "$MCP_UNIT"; then
+  systemctl --user restart "$MCP_UNIT"
+  sleep 4
+  restart_tunnel=1
+fi
+
+HTTP_CODE="$(
+  curl \
+    --max-time 4 \
+    --silent \
+    --show-error \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    "$MCP_URL" 2>/dev/null || true
+)"
+
+if [[ "$HTTP_CODE" != "200" && "$HTTP_CODE" != "406" ]]; then
+  systemctl --user restart "$MCP_UNIT"
+  sleep 4
+  restart_tunnel=1
+fi
+
+if [[ "$restart_tunnel" == "1" ]]; then
+  systemctl --user restart "$TUNNEL_UNIT"
+  sleep 3
+fi
+
+if ! systemctl --user is-active --quiet "$TUNNEL_UNIT"; then
+  systemctl --user restart "$TUNNEL_UNIT"
+  sleep 3
+fi
+
+if [[ -r "$RUNTIME_ENV" ]]; then
+  set -a
+  source "$RUNTIME_ENV"
+  set +a
+
+  if ! "$TUNNEL_CLIENT" doctor \
+      --profile "$PROFILE" >/dev/null 2>&1; then
+    systemctl --user restart "$TUNNEL_UNIT"
+  fi
+
+  unset CONTROL_PLANE_API_KEY 2>/dev/null || true
+fi
+
+# Publish the exact bounded SELLER_OS_RUNTIME_HEALTH_V1 receipt after the
+# watchdog has observed/recovered the fixed local services. Failure to reach
+# the cloud leaves the local watchdog successful and assurance UNKNOWN; it is
+# never coerced into a disconnected service.
+if [[ -r "$CLOUD_ENV" && -x "$HEALTH_REPORTER" ]]; then
+  set -a
+  source "$CLOUD_ENV"
+  set +a
+  "$HEALTH_REPORTER" >/dev/null 2>&1 || true
+  unset SELLER_OS_CLOUD_READ_RELAY_SECRET 2>/dev/null || true
+fi

@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-import { collectSellerOsRuntimeHealthV1,
-  type SellerOsRuntimeHealthV1 } from
+import { type SellerOsRuntimeHealthV1 } from
   "../ebay/ebay-seller-os-runtime-health-v1"
 import type { SellerOsOperationalIntegrityCheckV1 } from
   "./operational-integrity-auditor-v1.ts"
+import { readLatestSellerOsRuntimeHealthAuthorityV1,
+  SELLER_OS_RUNTIME_HEALTH_AUTHORITY_MAX_SILENCE_SECONDS_V1,
+  SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1 } from
+  "./runtime-health-authority-v1"
 
 export const SELLER_OS_RUNTIME_CAPABILITY_ASSURANCE_V1 =
   "SELLER_OS_RUNTIME_CAPABILITY_ASSURANCE_V1" as const
@@ -43,6 +46,25 @@ export const SELLER_OS_RUNTIME_FAILURE_LEARNING_V1 = Object.freeze([
     detectionRule: "PERSISTED_FRESH_AND_NOW_AFTER_FRESH_UNTIL",
     recoveryPolicy: "DERIVE_FRESHNESS_FROM_TIME_AND_SCHEDULE_REFRESH",
     regressionGuard: "PERSISTED_LABEL_CANNOT_OVERRIDE_EXPIRY" }),
+  Object.freeze({ failureClass: "HEALTH_OBSERVATION_CONTEXT_MISMATCH",
+    detectionRule:
+      "FIXED_LOCAL_RUNTIME_PROBED_FROM_NON_LOCAL_EXECUTION_CONTEXT",
+    recoveryPolicy:
+      "CONSUME_DURABLE_SELLER_OS_RUNTIME_HEALTH_V1_FROM_FIXED_LOCAL_HOST",
+    regressionGuard: "CLOUD_ASSURANCE_MUST_NOT_RUN_LOCAL_SYSTEMD_PROBE" }),
+  Object.freeze({ failureClass: "UNAVAILABLE_READ_MAPPED_TO_FAILED",
+    detectionRule: "UNOBSERVABLE_OR_UNAVAILABLE_PROJECTED_AS_DISCONNECTED",
+    recoveryPolicy: "PROJECT_UNOBSERVABLE_AS_UNKNOWN_AND_PRESERVE_LAST_GOOD",
+    regressionGuard: "UNOBSERVABLE_NEVER_EQUALS_FAILED" }),
+  Object.freeze({ failureClass: "HEALTH_AUTHORITY_CONTRADICTION",
+    detectionRule:
+      "TWO_CURRENT_AUTHORITIES_DISAGREE_ON_SAME_CAPABILITY_HEALTH_FACT",
+    recoveryPolicy: "FAIL_HEALTH_CLOSED_AND_PERSIST_CONTRADICTION_RECEIPT",
+    regressionGuard: "NO_SILENT_AUTHORITY_PRECEDENCE" }),
+  Object.freeze({ failureClass: "CADENCE_CONFIGURATION_DIVERGENCE",
+    detectionRule: "ASSURANCE_CADENCE_DIFFERS_FROM_RUNTIME_TIMER_AUTHORITY",
+    recoveryPolicy: "DERIVE_CADENCE_FROM_SELLER_OS_RUNTIME_HEALTH_V1",
+    regressionGuard: "NO_DUPLICATED_HARDCODED_INFRA_CADENCE" }),
 ] as const)
 
 export type SellerOsCapabilityFinalHealthV1 =
@@ -61,13 +83,14 @@ type LayerHealthV1 = "PASS" | "DEGRADED" | "FAILED" |
 type CanaryModeV1 = "PASSIVE_HEARTBEAT" | "READ_ONLY_PROBE" |
   "SAFE_DRY_RUN"
 type ExpectedModeV1 = "CONTINUOUS" | "SCHEDULED" |
-  "DEPENDENCY_DRIVEN" | "ON_DEMAND_WITH_CANARY"
+  "DEPENDENCY_DRIVEN" | "ON_DEMAND"
 
 export type SellerOsCriticalCapabilityDefinitionV1 = Readonly<{
   capabilityId: string
   businessPurpose: string
   expectedMode: ExpectedModeV1
   expectedCadenceSeconds: number
+  cadenceAuthority?: string
   maxExpectedSilenceSeconds: number
   canaryMode: CanaryModeV1
   expectedOutput: string
@@ -95,7 +118,9 @@ const FIVE_MINUTES = 5 * 60
 export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
   capability({ capabilityId: "MCP", businessPurpose:
     "Canal privado read-only de Seller OS", expectedMode: "CONTINUOUS",
-    expectedCadenceSeconds: 60, maxExpectedSilenceSeconds: 180,
+    expectedCadenceSeconds: 0, maxExpectedSilenceSeconds:
+      SELLER_OS_RUNTIME_HEALTH_AUTHORITY_MAX_SILENCE_SECONDS_V1,
+    cadenceAuthority: SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1,
     canaryMode: "PASSIVE_HEARTBEAT", expectedOutput: "MCP_RUNTIME_ATTESTATION",
     schedulerLane: null, dependencyIds: ["TUNNEL"],
     primaryPath: "DEDICATED_MCP_SERVICE", recoveryPolicy:
@@ -105,7 +130,9 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
     alerting: true, workerHeartbeatRequired: true }),
   capability({ capabilityId: "TUNNEL", businessPurpose:
     "Transporte restringido hacia el MCP local", expectedMode: "CONTINUOUS",
-    expectedCadenceSeconds: 60, maxExpectedSilenceSeconds: 180,
+    expectedCadenceSeconds: 0, maxExpectedSilenceSeconds:
+      SELLER_OS_RUNTIME_HEALTH_AUTHORITY_MAX_SILENCE_SECONDS_V1,
+    cadenceAuthority: SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1,
     canaryMode: "PASSIVE_HEARTBEAT", expectedOutput: "TUNNEL_RUNTIME_ATTESTATION",
     schedulerLane: null, dependencyIds: [], primaryPath: "LOOPBACK_TUNNEL_SERVICE",
     recoveryPolicy: "WATCHDOG_RESTART_AND_REATTEST", safeFallback:
@@ -115,7 +142,9 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
     alerting: true, workerHeartbeatRequired: true }),
   capability({ capabilityId: "WATCHDOG", businessPurpose:
     "Detectar y recuperar servicios MCP/tunnel detenidos", expectedMode:
-      "SCHEDULED", expectedCadenceSeconds: 60, maxExpectedSilenceSeconds: 180,
+      "SCHEDULED", expectedCadenceSeconds: 0, maxExpectedSilenceSeconds:
+      SELLER_OS_RUNTIME_HEALTH_AUTHORITY_MAX_SILENCE_SECONDS_V1,
+    cadenceAuthority: SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1,
     canaryMode: "PASSIVE_HEARTBEAT", expectedOutput: "WATCHDOG_SUCCESS_RECEIPT",
     schedulerLane: null, dependencyIds: [], primaryPath: "SYSTEMD_WATCHDOG_TIMER",
     recoveryPolicy: "SYSTEMD_BOUNDED_RESTART", safeFallback:
@@ -147,7 +176,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
     alerting: true, workerHeartbeatRequired: false }),
   capability({ capabilityId: "EBAY_INVENTORY_API", businessPurpose:
     "Leer/preparar inventory items y Offers", expectedMode:
-      "ON_DEMAND_WITH_CANARY", expectedCadenceSeconds: DAILY,
+      "ON_DEMAND", expectedCadenceSeconds: DAILY,
     maxExpectedSilenceSeconds: 2 * DAILY, canaryMode: "READ_ONLY_PROBE",
     expectedOutput: "INVENTORY_OFFER_READ_RECEIPT", schedulerLane: null,
     dependencyIds: [], primaryPath: "SELL_INVENTORY_OFFICIAL_READ",
@@ -158,7 +187,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
     alerting: true, workerHeartbeatRequired: false }),
   capability({ capabilityId: "EBAY_MEDIA_API", businessPurpose:
     "Preparar imágenes eBay/EPS para cambios visuales", expectedMode:
-      "ON_DEMAND_WITH_CANARY", expectedCadenceSeconds: DAILY,
+      "ON_DEMAND", expectedCadenceSeconds: DAILY,
     maxExpectedSilenceSeconds: 2 * DAILY, canaryMode: "SAFE_DRY_RUN",
     expectedOutput: "MEDIA_CAPABILITY_OR_PREPARATION_RECEIPT", schedulerLane: null,
     dependencyIds: [], primaryPath: "COMMERCE_MEDIA_API",
@@ -168,7 +197,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
       "PRESERVE_DURABLE_MEDIA_BINDING", selfRecovery: true,
     alerting: true, workerHeartbeatRequired: false }),
   capability({ capabilityId: "EBAY_TAXONOMY_API", businessPurpose:
-    "Categorías y aspectos oficiales", expectedMode: "ON_DEMAND_WITH_CANARY",
+    "Categorías y aspectos oficiales", expectedMode: "ON_DEMAND",
     expectedCadenceSeconds: DAILY, maxExpectedSilenceSeconds: 7 * DAILY,
     canaryMode: "READ_ONLY_PROBE", expectedOutput: "TAXONOMY_READ_RECEIPT",
     schedulerLane: null, dependencyIds: [], primaryPath: "TAXONOMY_API",
@@ -178,7 +207,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
       "PRESERVE_LAST_CERTIFIED_TAXONOMY", selfRecovery: true,
     alerting: true, workerHeartbeatRequired: false }),
   capability({ capabilityId: "EBAY_CATALOG_API", businessPurpose:
-    "Identificadores y catálogo oficial", expectedMode: "ON_DEMAND_WITH_CANARY",
+    "Identificadores y catálogo oficial", expectedMode: "ON_DEMAND",
     expectedCadenceSeconds: DAILY, maxExpectedSilenceSeconds: 2 * DAILY,
     canaryMode: "READ_ONLY_PROBE", expectedOutput: "CATALOG_READ_RECEIPT",
     schedulerLane: null, dependencyIds: [], primaryPath: "COMMERCE_CATALOG_API",
@@ -189,7 +218,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
     alerting: true, workerHeartbeatRequired: false }),
   capability({ capabilityId: "EBAY_BROWSE_API", businessPurpose:
     "Contexto público de listings, nunca sustituto de Sold", expectedMode:
-      "ON_DEMAND_WITH_CANARY", expectedCadenceSeconds: DAILY,
+      "ON_DEMAND", expectedCadenceSeconds: DAILY,
     maxExpectedSilenceSeconds: 2 * DAILY, canaryMode: "READ_ONLY_PROBE",
     expectedOutput: "BROWSE_READ_RECEIPT", schedulerLane: null,
     dependencyIds: [], primaryPath: "BUY_BROWSE_API", recoveryPolicy:
@@ -199,7 +228,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
     alerting: true, workerHeartbeatRequired: false }),
   capability({ capabilityId: "EBAY_ACCOUNT_POLICIES", businessPurpose:
     "Identidad de cuenta, location y business policies", expectedMode:
-      "ON_DEMAND_WITH_CANARY", expectedCadenceSeconds: DAILY,
+      "ON_DEMAND", expectedCadenceSeconds: DAILY,
     maxExpectedSilenceSeconds: 30 * DAILY, canaryMode: "READ_ONLY_PROBE",
     expectedOutput: "ACCOUNT_POLICY_PROFILE", schedulerLane: null,
     dependencyIds: [], primaryPath: "SELL_ACCOUNT_API", recoveryPolicy:
@@ -230,7 +259,7 @@ export const SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1 = Object.freeze([
     alerting: true, workerHeartbeatRequired: false }),
   capability({ capabilityId: "EBAY_RECOMMENDATIONS", businessPurpose:
     "Recomendaciones oficiales read-side", expectedMode:
-      "ON_DEMAND_WITH_CANARY", expectedCadenceSeconds: DAILY,
+      "ON_DEMAND", expectedCadenceSeconds: DAILY,
     maxExpectedSilenceSeconds: 2 * DAILY, canaryMode: "READ_ONLY_PROBE",
     expectedOutput: "RECOMMENDATION_READ_RECEIPT", schedulerLane: null,
     dependencyIds: [], primaryPath: "SELL_RECOMMENDATION_AND_MARKETING_READ",
@@ -383,6 +412,7 @@ type CapabilityObservationV1 = Readonly<{
   blockerCode: string | null
   pendingWorkCount: number | null
   downstreamConsumedAt: string | null
+  authorityFreshUntil: string | null
   persistedFreshExpiredCount: number
   sourceAuthorityAvailable: boolean
 }>
@@ -392,6 +422,7 @@ export type SellerOsCapabilityHealthV1 = Readonly<{
   businessPurpose: string
   expectedMode: ExpectedModeV1
   expectedCadenceSeconds: number
+  cadenceAuthority: string
   maxExpectedSilenceSeconds: number
   canaryMode: CanaryModeV1
   canaryCovered: true
@@ -402,6 +433,7 @@ export type SellerOsCapabilityHealthV1 = Readonly<{
   jobHealth: LayerHealthV1
   outputHealth: LayerHealthV1
   downstreamHealth: LayerHealthV1
+  authorityFreshUntil: string | null
   lastHeartbeatAt: string | null
   lastAttemptAt: string | null
   lastSuccessAt: string | null
@@ -457,6 +489,41 @@ function latest(...values: (string | null)[]) {
   return values.filter((value): value is string => Boolean(value))
     .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null
 }
+export function deriveSellerOsWatchdogCadenceV1(
+  runtimeHealth: SellerOsRuntimeHealthV1,
+) {
+  const last = Date.parse(runtimeHealth.services.watchdogTimer.lastTrigger ?? "")
+  const next = Date.parse(runtimeHealth.services.watchdogTimer.nextTrigger ?? "")
+  if (!Number.isFinite(last) || !Number.isFinite(next) || next <= last) return null
+  const seconds = Math.round((next - last) / 1_000)
+  return seconds >= 30 && seconds <= 3_600 ? seconds : null
+}
+
+function resolvedDefinitionV1(
+  definition: SellerOsCriticalCapabilityDefinitionV1,
+  runtimeHealth: SellerOsRuntimeHealthV1,
+) {
+  if (definition.cadenceAuthority !== SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1) {
+    return definition
+  }
+  return capability({ ...definition,
+    expectedCadenceSeconds: deriveSellerOsWatchdogCadenceV1(runtimeHealth) ?? 0,
+  })
+}
+
+function runtimeHealthAuthorityFreshV1(runtimeHealth: SellerOsRuntimeHealthV1,
+  now: Date) {
+  const age = ageSeconds(runtimeHealth.observedAt, now.getTime())
+  return runtimeHealth.contractVersion === SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1 &&
+    age !== null && age <=
+      SELLER_OS_RUNTIME_HEALTH_AUTHORITY_MAX_SILENCE_SECONDS_V1
+}
+
+function provenConnectionV1(status: string) {
+  if (status === "HEALTHY") return true
+  if (status === "FAILED") return false
+  return null
+}
 function digest(value: unknown) {
   return `sha256:${createHash("sha256").update(JSON.stringify(value))
     .digest("hex")}`
@@ -505,6 +572,7 @@ function baseObservation(overrides: Partial<CapabilityObservationV1> = {}):
     nextRetryAt: null, dependencyAvailable: null, connectionProven: null,
     explicitExternalBlocker: false, blockerCode: null,
     pendingWorkCount: null, downstreamConsumedAt: null,
+    authorityFreshUntil: null,
     persistedFreshExpiredCount: 0, sourceAuthorityAvailable: false,
     ...overrides })
 }
@@ -513,6 +581,7 @@ function observationFor(input: Readonly<{
   definition: SellerOsCriticalCapabilityDefinitionV1
   evidence: Record<string, unknown>
   runtimeHealth: SellerOsRuntimeHealthV1
+  now: Date
 }>): CapabilityObservationV1 {
   const id = input.definition.capabilityId
   const evidence = input.evidence
@@ -539,46 +608,60 @@ function observationFor(input: Readonly<{
   const lane = input.definition.schedulerLane
     ? scheduler(evidence, input.definition.schedulerLane) : {}
   const laneDispatchAt = iso(lane.last_dispatch_at)
+  const runtimeAuthorityFresh = runtimeHealthAuthorityFreshV1(
+    input.runtimeHealth, input.now)
   if (id === "MCP") {
     const service = input.runtimeHealth.services.mcp
+    const connectionProven = runtimeAuthorityFresh
+      ? provenConnectionV1(service.status) : null
     return baseObservation({ lastHeartbeatAt:
-      service.status === "HEALTHY" ? input.runtimeHealth.observedAt : null,
+      connectionProven === true ? input.runtimeHealth.observedAt : null,
     lastAttemptAt: input.runtimeHealth.observedAt,
-    lastSuccessAt: service.status === "HEALTHY"
+    lastSuccessAt: connectionProven === true
       ? input.runtimeHealth.observedAt : null,
     lastExpectedOutputAt: input.runtimeHealth.runtimeCatalog.exactCatalogMatch
-      ? input.runtimeHealth.observedAt : null,
-    connectionProven: service.status === "HEALTHY",
-    blockerCode: service.status === "HEALTHY" ? null :
-      "MCP_SERVICE_EVIDENCE_UNAVAILABLE",
-    sourceAuthorityAvailable: input.runtimeHealth.evidenceCompleteness !==
-      "UNAVAILABLE" })
+      && runtimeAuthorityFresh ? input.runtimeHealth.observedAt : null,
+    connectionProven,
+    blockerCode: connectionProven === false ? "MCP_SERVICE_PROVEN_FAILED"
+      : connectionProven === null ? "MCP_SERVICE_UNOBSERVABLE"
+        : input.runtimeHealth.runtimeCatalog.exactCatalogMatch !== true
+          ? "MCP_RUNTIME_CATALOG_UNPROVEN" : null,
+    sourceAuthorityAvailable: runtimeAuthorityFresh &&
+      input.runtimeHealth.evidenceCompleteness !== "UNAVAILABLE" })
   }
   if (id === "TUNNEL") {
     const service = input.runtimeHealth.services.tunnel
+    const connectionProven = runtimeAuthorityFresh
+      ? provenConnectionV1(service.status) : null
     return baseObservation({ lastHeartbeatAt: service.status === "HEALTHY"
-      ? input.runtimeHealth.observedAt : null,
+      && runtimeAuthorityFresh ? input.runtimeHealth.observedAt : null,
     lastAttemptAt: input.runtimeHealth.observedAt,
-    lastSuccessAt: service.status === "HEALTHY"
+    lastSuccessAt: connectionProven === true
       ? input.runtimeHealth.observedAt : null,
-    lastExpectedOutputAt: service.status === "HEALTHY"
+    lastExpectedOutputAt: connectionProven === true
       ? input.runtimeHealth.observedAt : null,
-    connectionProven: service.status === "HEALTHY",
-    blockerCode: service.status === "HEALTHY" ? null :
-      "TUNNEL_SERVICE_EVIDENCE_UNAVAILABLE",
-    sourceAuthorityAvailable: input.runtimeHealth.evidenceCompleteness !==
-      "UNAVAILABLE" })
+    connectionProven,
+    blockerCode: connectionProven === false ? "TUNNEL_SERVICE_PROVEN_FAILED"
+      : connectionProven === null ? "TUNNEL_SERVICE_UNOBSERVABLE" : null,
+    sourceAuthorityAvailable: runtimeAuthorityFresh &&
+      input.runtimeHealth.evidenceCompleteness !== "UNAVAILABLE" })
   }
-  if (id === "WATCHDOG") return baseObservation({
+  if (id === "WATCHDOG") {
+    const connectionProven = runtimeAuthorityFresh ? provenConnectionV1(
+      input.runtimeHealth.services.watchdogTimer.status) : null
+    return baseObservation({
     lastHeartbeatAt: input.runtimeHealth.watchdog.lastRunAt,
     lastAttemptAt: input.runtimeHealth.watchdog.lastRunAt,
     lastSuccessAt: input.runtimeHealth.watchdog.lastSuccessAt,
     lastExpectedOutputAt: input.runtimeHealth.watchdog.lastSuccessAt,
-    connectionProven: input.runtimeHealth.services.watchdogTimer.status ===
-      "HEALTHY", blockerCode: input.runtimeHealth.watchdog.lastResult ===
-      "success" ? null : "WATCHDOG_SUCCESS_RECEIPT_UNAVAILABLE",
-    sourceAuthorityAvailable: input.runtimeHealth.evidenceCompleteness !==
-      "UNAVAILABLE" })
+    connectionProven, blockerCode: connectionProven === false
+      ? "WATCHDOG_TIMER_PROVEN_FAILED" : connectionProven === null
+        ? "WATCHDOG_UNOBSERVABLE"
+        : input.runtimeHealth.watchdog.lastResult === "success" ? null
+          : "WATCHDOG_SUCCESS_RECEIPT_UNAVAILABLE",
+    sourceAuthorityAvailable: runtimeAuthorityFresh &&
+      input.runtimeHealth.evidenceCompleteness !== "UNAVAILABLE" })
+  }
   if (id === "SCHEDULER_INFRASTRUCTURE") return baseObservation({
     lastHeartbeatAt: laneDispatchAt, lastAttemptAt: laneDispatchAt,
     lastSuccessAt: laneDispatchAt, lastCompletedJobId: text(lane.dispatch_key),
@@ -630,6 +713,7 @@ function observationFor(input: Readonly<{
     return baseObservation({ lastAttemptAt: iso(row.latest_fetched_at),
       lastSuccessAt: available ? iso(row.latest_fetched_at) : null,
       lastExpectedOutputAt: available ? iso(row.latest_fetched_at) : null,
+      authorityFreshUntil: iso(row.latest_expires_at),
       connectionProven: available ? true : null,
       blockerCode: available ? null : `${name}_READ_OUTPUT_MISSING`,
       sourceAuthorityAvailable: Object.keys(row).length > 0 })
@@ -638,8 +722,12 @@ function observationFor(input: Readonly<{
     lastAttemptAt: iso(policies.verified_at), lastSuccessAt: iso(policies.verified_at),
     lastCompletedJobId: text(policies.id), lastDurableReceiptId: text(policies.id),
     lastExpectedOutputAt: iso(policies.verified_at),
+    authorityFreshUntil: iso(policies.expires_at),
     connectionProven: iso(policies.verified_at) !== null,
-    blockerCode: iso(policies.verified_at) ? null : "ACCOUNT_POLICY_PROFILE_MISSING",
+    blockerCode: !iso(policies.verified_at) ? "ACCOUNT_POLICY_PROFILE_MISSING"
+      : iso(policies.expires_at) && input.now.getTime() >
+        Date.parse(String(policies.expires_at))
+        ? "ACCOUNT_POLICY_PROFILE_EXPIRED" : null,
     sourceAuthorityAvailable: Object.keys(policies).length > 0 })
   if (id === "EBAY_ANALYTICS") return baseObservation({
     lastAttemptAt: iso(analytics.latestObservedAt),
@@ -794,7 +882,10 @@ function evaluateCapability(input: Readonly<{
     observation.lastSuccessAt, nowMs)
   const heartbeatLag = ageSeconds(observation.lastHeartbeatAt, nowMs)
   const outputMissing = observation.lastExpectedOutputAt === null
-  const outputLate = lag !== null && lag > definition.maxExpectedSilenceSeconds
+  const authorityExpired = observation.authorityFreshUntil !== null &&
+    nowMs > Date.parse(observation.authorityFreshUntil)
+  const outputLate = definition.expectedMode !== "ON_DEMAND" &&
+    lag !== null && lag > definition.maxExpectedSilenceSeconds
   const heartbeatLate = definition.workerHeartbeatRequired &&
     (heartbeatLag === null || heartbeatLag > definition.maxExpectedSilenceSeconds)
   const laneRequired = definition.schedulerLane !== null
@@ -812,6 +903,8 @@ function evaluateCapability(input: Readonly<{
     finalHealthState = "DEGRADED_EXTERNAL"
   } else if (!observation.sourceAuthorityAvailable) {
     finalHealthState = "UNKNOWN"
+  } else if (authorityExpired) {
+    finalHealthState = "STALLED"
   } else if (laneLate) {
     finalHealthState = "MISSED_SCHEDULE"
   } else if (heartbeatLate) {
@@ -839,9 +932,10 @@ function evaluateCapability(input: Readonly<{
         : "UNKNOWN"
   const jobHealth: LayerHealthV1 = laneLate ? "FAILED"
     : dependencyWaiting ? "WAITING_DEPENDENCY"
-      : definition.expectedMode === "ON_DEMAND_WITH_CANARY" ||
+      : definition.expectedMode === "ON_DEMAND" ||
         observation.lastAttemptAt ? "PASS" : "UNKNOWN"
-  const outputHealth: LayerHealthV1 = outputMissing || outputLate
+  const outputHealth: LayerHealthV1 = outputMissing || outputLate ||
+    authorityExpired
     ? "FAILED" : "PASS"
   const downstreamHealth: LayerHealthV1 = observation.downstreamConsumedAt
     ? "PASS" : outputMissing ? "UNKNOWN" : "DEGRADED"
@@ -850,18 +944,21 @@ function evaluateCapability(input: Readonly<{
       ? "WAITING_DEPENDENCY" : finalHealthState === "UNKNOWN"
         ? "UNKNOWN" : finalHealthState === "DEGRADED_EXTERNAL"
           ? "DEGRADED" : "FAILED"
-  const nextExpectedRunAt = addSeconds(observation.lastHeartbeatAt ??
-    observation.lastAttemptAt ?? observation.lastSuccessAt,
-  definition.expectedCadenceSeconds)
+  const nextExpectedRunAt = definition.expectedMode === "ON_DEMAND" ||
+      definition.expectedCadenceSeconds <= 0 ? null
+    : addSeconds(observation.lastHeartbeatAt ?? observation.lastAttemptAt ??
+      observation.lastSuccessAt, definition.expectedCadenceSeconds)
   return Object.freeze({ capabilityId: definition.capabilityId,
     businessPurpose: definition.businessPurpose,
     expectedMode: definition.expectedMode,
     expectedCadenceSeconds: definition.expectedCadenceSeconds,
+    cadenceAuthority: definition.cadenceAuthority ?? "CAPABILITY_REGISTRY_V1",
     maxExpectedSilenceSeconds: definition.maxExpectedSilenceSeconds,
     canaryMode: definition.canaryMode, canaryCovered: true as const,
     expectedOutput: definition.expectedOutput, infraHealth,
     connectionHealth, capabilityHealth, jobHealth, outputHealth,
-    downstreamHealth, lastHeartbeatAt: observation.lastHeartbeatAt,
+    downstreamHealth, authorityFreshUntil: observation.authorityFreshUntil,
+    lastHeartbeatAt: observation.lastHeartbeatAt,
     lastAttemptAt: observation.lastAttemptAt,
     lastSuccessAt: observation.lastSuccessAt,
     lastCompletedJobId: observation.lastCompletedJobId,
@@ -918,8 +1015,9 @@ function healthCheck(entry: SellerOsCapabilityHealthV1):
     blockerCode: entry.blockerCode, expectedOutput: entry.expectedOutput }
   return Object.freeze({ invariantCode:
     `CAPABILITY_EXPECTED_OUTPUT:${entry.capabilityId}`,
-  status: entry.finalHealthState === "HEALTHY" ? "PASS" : "VIOLATION",
-  failureClass: entry.finalHealthState === "HEALTHY"
+  status: entry.finalHealthState === "HEALTHY" ? "PASS"
+    : entry.finalHealthState === "UNKNOWN" ? "UNKNOWN" : "VIOLATION",
+  failureClass: ["HEALTHY", "UNKNOWN"].includes(entry.finalHealthState)
     ? null : currentFailureClass, retrySafety: "SAFE_READ_ONLY_RECONCILIATION",
   recoveryClass: "AUTO_RECOVERABLE", evidenceFingerprint: digest({
     capabilityId: entry.capabilityId,
@@ -929,15 +1027,83 @@ function healthCheck(entry: SellerOsCapabilityHealthV1):
   }),
   evidence: Object.freeze(evidence), regressionGuard: Object.freeze({
     detectionRule: "NOW_GT_LAST_EXPECTED_OUTPUT_PLUS_MAX_SILENCE_OR_LAYER_FAILURE",
-    recoveryPolicy: entry.recoveryPolicy,
+  recoveryPolicy: entry.recoveryPolicy,
     schedulerTickIsNotSuccess: true, expectedOutputRequired: true,
     recoveryRequiresVerifiedOutput: true, lastGoodStatePolicy:
       entry.lastGoodStatePolicy }) })
 }
 
+type RuntimeHealthAuthorityInputV1 = Readonly<{
+  authority: string
+  runtimeHealth: SellerOsRuntimeHealthV1
+}>
+
+type HealthContradictionV1 = Readonly<{
+  capability: "MCP" | "TUNNEL" | "WATCHDOG"
+  authorityA: string
+  valueA: "PROVEN_HEALTHY" | "PROVEN_FAILED"
+  observedAtA: string
+  authorityB: string
+  valueB: "PROVEN_HEALTHY" | "PROVEN_FAILED"
+  observedAtB: string
+  resolution: "UNRESOLVED"
+}>
+
+function healthFact(runtimeHealth: SellerOsRuntimeHealthV1,
+  capabilityId: HealthContradictionV1["capability"]) {
+  const status = capabilityId === "MCP" ? runtimeHealth.services.mcp.status
+    : capabilityId === "TUNNEL" ? runtimeHealth.services.tunnel.status
+      : runtimeHealth.services.watchdogTimer.status
+  const proven = provenConnectionV1(status)
+  return proven === null ? null : proven
+    ? "PROVEN_HEALTHY" as const : "PROVEN_FAILED" as const
+}
+
+export function detectSellerOsRuntimeHealthContradictionsV1(input: Readonly<{
+  primary: RuntimeHealthAuthorityInputV1
+  comparisons?: readonly RuntimeHealthAuthorityInputV1[]
+  now: Date
+}>) {
+  const authorities = [input.primary, ...(input.comparisons ?? [])].filter(
+    (entry) => runtimeHealthAuthorityFreshV1(entry.runtimeHealth, input.now))
+  const contradictions: HealthContradictionV1[] = []
+  for (let left = 0; left < authorities.length; left += 1) {
+    for (let right = left + 1; right < authorities.length; right += 1) {
+      for (const capabilityId of ["MCP", "TUNNEL", "WATCHDOG"] as const) {
+        const valueA = healthFact(authorities[left].runtimeHealth, capabilityId)
+        const valueB = healthFact(authorities[right].runtimeHealth, capabilityId)
+        if (valueA && valueB && valueA !== valueB) contradictions.push(
+          Object.freeze({ capability: capabilityId,
+            authorityA: authorities[left].authority, valueA,
+            observedAtA: authorities[left].runtimeHealth.observedAt,
+            authorityB: authorities[right].authority, valueB,
+            observedAtB: authorities[right].runtimeHealth.observedAt,
+            resolution: "UNRESOLVED" as const }))
+      }
+    }
+  }
+  return Object.freeze(contradictions)
+}
+
+function contradictionCheck(contradictions: readonly HealthContradictionV1[]):
+    SellerOsOperationalIntegrityCheckV1 {
+  return Object.freeze({ invariantCode: "CROSS_AUTHORITY_HEALTH_CONSISTENCY",
+    status: contradictions.length === 0 ? "PASS" : "VIOLATION",
+    failureClass: contradictions.length === 0 ? null
+      : "HEALTH_AUTHORITY_CONTRADICTION",
+    retrySafety: "ENGINEERING_REQUIRED", recoveryClass: "ENGINEERING_REQUIRED",
+    evidenceFingerprint: digest({ contradictions }),
+    evidence: Object.freeze({ healthContradictionDetected:
+      contradictions.length > 0, contradictions }),
+    regressionGuard: Object.freeze({ noSilentPrecedence: true,
+      contradictionBlocksHealthy: true,
+      unobservableIsNotAConflictingValue: true }) })
+}
+
 export function evaluateSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
   evidence: unknown
   runtimeHealth: SellerOsRuntimeHealthV1
+  comparisonRuntimeHealthAuthorities?: readonly RuntimeHealthAuthorityInputV1[]
   now?: Date
 }>) {
   const now = input.now ?? new Date()
@@ -949,12 +1115,28 @@ export function evaluateSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
   const schedulerInfrastructureHealthy = assuranceLane.enabled === true &&
     (ageSeconds(infrastructureHeartbeat, now.getTime()) ?? Infinity) <=
       2 * FIFTEEN_MINUTES
+  const contradictions = detectSellerOsRuntimeHealthContradictionsV1({
+    primary: { authority: SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1,
+      runtimeHealth: input.runtimeHealth },
+    comparisons: input.comparisonRuntimeHealthAuthorities, now,
+  })
   const preliminary = SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1.map(
-    (definition) => ({ definition, observation: observationFor({
-      definition, evidence, runtimeHealth: input.runtimeHealth }) }))
-  const matrix = Object.freeze(preliminary.map(({ definition, observation }) =>
-    evaluateCapability({ definition, observation,
-      schedulerInfrastructureHealthy, now })))
+    (unresolvedDefinition) => {
+      const definition = resolvedDefinitionV1(unresolvedDefinition,
+        input.runtimeHealth)
+      return { definition, observation: observationFor({
+        definition, evidence, runtimeHealth: input.runtimeHealth, now }) }
+    })
+  const matrix = Object.freeze(preliminary.map(({ definition, observation }) => {
+    const evaluated = evaluateCapability({ definition, observation,
+      schedulerInfrastructureHealthy, now })
+    if (!contradictions.some((entry) => entry.capability ===
+        definition.capabilityId)) return evaluated
+    return Object.freeze({ ...evaluated, capabilityHealth: "FAILED" as const,
+      blockerCode: "HEALTH_AUTHORITY_CONTRADICTION",
+      finalHealthState: "DEGRADED_INTERNAL" as const,
+      humanSummary: `${definition.capabilityId} tiene autoridades actuales contradictorias.` })
+  }))
   const counts = Object.freeze({
     healthy: matrix.filter((entry) => entry.finalHealthState === "HEALTHY").length,
     degraded: matrix.filter((entry) => ["DEGRADED_EXTERNAL",
@@ -968,17 +1150,44 @@ export function evaluateSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
     outputMissing: matrix.filter((entry) => entry.finalHealthState ===
       "OUTPUT_MISSING").length,
   })
-  const checks = Object.freeze(matrix.map(healthCheck))
+  const checks = Object.freeze([...matrix.map(healthCheck),
+    contradictionCheck(contradictions)])
   const violationCount = checks.filter((entry) => entry.status === "VIOLATION").length
+  const unknownCount = checks.filter((entry) => entry.status === "UNKNOWN").length
   const summary = Object.freeze({ checkCount: checks.length, violationCount,
-    unknownCount: 0, passCount: checks.length - violationCount })
+    unknownCount, passCount: checks.length - violationCount - unknownCount })
   const unresolved = Object.freeze(matrix.filter((entry) =>
     entry.finalHealthState !== "HEALTHY").map((entry) => ({
       capabilityId: entry.capabilityId,
       state: entry.finalHealthState, blockerCode: entry.blockerCode })))
-  const runtimeInfrastructureCanary = matrix.find((entry) =>
-    entry.capabilityId === "SCHEDULER_INFRASTRUCTURE")?.finalHealthState ===
-      "HEALTHY" ? "PASS" as const : "FAIL" as const
+  const fixedInfrastructure = ["MCP", "TUNNEL", "WATCHDOG",
+    "SCHEDULER_INFRASTRUCTURE"]
+  const runtimeInfrastructureCanary = fixedInfrastructure.every((id) =>
+    matrix.find((entry) => entry.capabilityId === id)?.finalHealthState ===
+      "HEALTHY") && contradictions.length === 0
+    ? "PASS" as const : "FAIL" as const
+  const unobservableCount = matrix.filter((entry) =>
+    entry.finalHealthState === "UNKNOWN").length
+  const confirmedTrueFailureCount = matrix.filter((entry) =>
+    entry.connectionHealth === "FAILED" && entry.blockerCode?.includes(
+      "PROVEN_FAILED")).length
+  const confirmedFalseFailureCount = contradictions.filter((entry) =>
+    (entry.valueA === "PROVEN_FAILED" && entry.valueB === "PROVEN_HEALTHY") ||
+    (entry.valueB === "PROVEN_FAILED" && entry.valueA === "PROVEN_HEALTHY"))
+    .length
+  const classificationAccuracyPass = contradictions.length === 0 &&
+    confirmedFalseFailureCount === 0
+  const infraCadences = matrix.filter((entry) => ["MCP", "TUNNEL", "WATCHDOG"]
+    .includes(entry.capabilityId))
+  const cadenceAuthorityUnified = infraCadences.every((entry) =>
+    entry.cadenceAuthority === SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1 &&
+      entry.expectedCadenceSeconds > 0) && new Set(infraCadences.map((entry) =>
+        entry.expectedCadenceSeconds)).size === 1
+  const classificationMetrics = Object.freeze({
+    canaryClassificationCount: matrix.length,
+    confirmedTrueFailureCount, confirmedFalseFailureCount,
+    unobservableCount, recoveryConfirmedCount: 0,
+  })
   const assurances = Object.freeze({
     criticalCapabilityCount: matrix.length,
     capabilityCanaryCoveragePercent: 100 as const,
@@ -990,7 +1199,15 @@ export function evaluateSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
     everyStaleableSourceHasRefreshOrExplicitGap:
       SELLER_OS_CRITICAL_CAPABILITY_REGISTRY_V1.every((entry) =>
         Boolean(entry.recoveryPolicy && entry.safeFallback)),
-    silentDisconnectionPossible: false as const,
+    infraAuthority: SELLER_OS_RUNTIME_HEALTH_AUTHORITY_V1,
+    infraAuthorityUnified: true as const,
+    cadenceAuthorityUnified,
+    unobservableNotFailed: true as const,
+    noUnavailableToFailedCoercion: true as const,
+    crossAuthorityGuardActive: true as const,
+    healthContradictionDetected: contradictions.length > 0,
+    healthClassificationAccuracyPass: classificationAccuracyPass,
+    silentDisconnectionPossible: !classificationAccuracyPass,
     schedulerTickFalseHealth: false as const,
     freshLabelAfterExpiryPossible: false as const,
     automaticFailureDetection: true as const,
@@ -1009,6 +1226,7 @@ export function evaluateSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
     observedAt: now.toISOString(), status: violationCount > 0
       ? "VIOLATION" as const : "PASS" as const,
     checks, summary, capabilityMatrix: matrix, counts, unresolved,
+    healthContradictions: contradictions, classificationMetrics,
     runtimeInfrastructureCanary, assurances,
     failureLearningPolicies: SELLER_OS_RUNTIME_FAILURE_LEARNING_V1,
     systemicRuntimeAssurancePass: runtimeInfrastructureCanary === "PASS" &&
@@ -1018,6 +1236,12 @@ export function evaluateSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
       assurances.everyWorkerHasHeartbeat &&
       assurances.everyStaleableSourceHasRefreshOrExplicitGap &&
       !assurances.silentDisconnectionPossible &&
+      assurances.infraAuthorityUnified && assurances.cadenceAuthorityUnified &&
+      assurances.unobservableNotFailed &&
+      assurances.noUnavailableToFailedCoercion &&
+      assurances.crossAuthorityGuardActive &&
+      !assurances.healthContradictionDetected &&
+      assurances.healthClassificationAccuracyPass &&
       !assurances.schedulerTickFalseHealth &&
       !assurances.freshLabelAfterExpiryPossible &&
       assurances.recoveryRequiresVerifiedOutput,
@@ -1038,14 +1262,18 @@ export async function runSellerOsRuntimeCapabilityAssuranceV1(input: Readonly<{
     input.supabase.rpc("get_seller_os_runtime_capability_evidence_v1", {
       p_marketplace_account_key: input.accountKey,
     }),
-    input.runtimeHealth ? Promise.resolve(input.runtimeHealth)
-      : collectSellerOsRuntimeHealthV1(),
+    input.runtimeHealth ? Promise.resolve({ runtimeHealth: input.runtimeHealth,
+      receiptId: null, observedAt: input.runtimeHealth.observedAt })
+      : readLatestSellerOsRuntimeHealthAuthorityV1({
+        supabase: input.supabase, accountKey: input.accountKey,
+      }),
   ])
   if (evidenceResult.error || !evidenceResult.data) {
     throw new Error("SELLER_OS_RUNTIME_CAPABILITY_EVIDENCE_READ_FAILED")
   }
   const report = evaluateSellerOsRuntimeCapabilityAssuranceV1({
-    evidence: evidenceResult.data, runtimeHealth: runtimeHealthResult,
+    evidence: evidenceResult.data,
+    runtimeHealth: runtimeHealthResult.runtimeHealth,
     now: input.now,
   })
   const { persistSellerOsOperationalIntegrityAuditV1 } = await import(

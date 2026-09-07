@@ -258,8 +258,11 @@ test("route and bundle surface regress downward", () => {
   // The current isolated base also includes prior publisher recovery surfaces;
   // this WO adds the read-only Publisher cohort and POST-only batch runtime.
   // Product Journey adds one authenticated read-only projection API.
+  // Runtime assurance adds its authenticated POST-only evaluator plus one
+  // authenticated POST-only ingestion route for the exact local
+  // SELLER_OS_RUNTIME_HEALTH_V1 receipt.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 99 + Number(temporarySellerOauthApi) +
+    countNamed("app/api", "route.ts") <= 101 + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
       Number(lunaQuickPickApi) + Number(productJourneyApi),
