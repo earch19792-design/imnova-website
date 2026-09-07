@@ -6,6 +6,13 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { normalizeProductIdentity } from "./ebay-winner-evidence-v2.ts"
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2.ts"
 import {
+  classifyCommercialComparableV1,
+  evaluateProductResearchQueryQualityV1,
+  extractProductResearchEntityV1,
+  type CommercialComparableClassificationV1,
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+} from "./ebay-product-research-query-intelligence-v1.ts"
+import {
   PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION,
   persistProductResearchVisualPatterns,
   rejectedProductResearchVisualPattern,
@@ -116,6 +123,22 @@ export type ClassifiedProductResearchCapture = NormalizedCaptureRow & {
   matchedTarget: ProductResearchCaptureTarget | null
   normalizedIdentity: ReturnType<typeof normalizeProductIdentity>
   deduplicationKey: string
+  boundedTitleEvidence: string
+  commercialComparableClassification: CommercialComparableClassificationV1 | null
+  commercialClassificationReasons: string[]
+}
+
+function commercialEvidenceEntities(rows: readonly ClassifiedProductResearchCapture[]) {
+  return rows.flatMap((row) => row.sourceListingId &&
+    row.commercialComparableClassification ? [Object.freeze({
+      itemId: row.sourceListingId,
+      boundedTitleEvidence: row.boundedTitleEvidence,
+      soldQuantity: row.totalSold,
+      price: row.averageSoldPrice,
+      shipping: row.averageShipping,
+      classification: row.commercialComparableClassification,
+      classificationReasons: Object.freeze([...row.commercialClassificationReasons]),
+    })] : [])
 }
 
 const FORBIDDEN_KEYS = new Set([
@@ -563,8 +586,21 @@ export function parseProductResearchBrowserCapture(input: {
   const captureWindowHash = sha256({ dateRange: {
     label: context.rangeLabel, start: context.rangeStart, end: context.rangeEnd,
   }, capturedAt: context.capturedAt.toISOString().slice(0, 10) })
+  const commercialEntity = input.targets.length === 1
+    ? extractProductResearchEntityV1({
+      productName: input.targets[0].productName,
+      brand: input.targets[0].identity.manufacturerBrand,
+      sourceField: "product_name",
+      sourceAuthority: input.targets[0].identityEvidenceSource ??
+        input.targets[0].sourceType ?? "LUNA_PRODUCT_TRUTH",
+    }) : null
   const rows = valid.map((row): ClassifiedProductResearchCapture => {
     const match = classifyProductResearchCaptureRow(row, input.targets)
+    const commercial = commercialEntity?.productNoun
+      ? classifyCommercialComparableV1({ entity: commercialEntity,
+        title: row.transientTitle,
+        detectedCount: row.detectedOfferPackCount,
+        detectedSize: row.detectedSize }) : null
     const normalizedIdentity = observationIdentity(row, match)
     const keywordSignals = row.keywordSignals.filter((token) =>
       (tokenFrequency.get(token) ?? 0) >= 2).slice(0, 16)
@@ -575,6 +611,9 @@ export function parseProductResearchBrowserCapture(input: {
       matchReasons: match.reasons,
       matchedTarget: match.target,
       normalizedIdentity,
+      boundedTitleEvidence: row.transientTitle.slice(0, 160),
+      commercialComparableClassification: commercial?.classification ?? null,
+      commercialClassificationReasons: [...(commercial?.reasons ?? [])],
       deduplicationKey: sha256({
         source: PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE,
         sourceListingReferenceHash: row.sourceListingReferenceHash,
@@ -586,9 +625,15 @@ export function parseProductResearchBrowserCapture(input: {
       }),
     }
   })
-  const uniqueRows = [...new Map(rows.map((row) => [row.deduplicationKey, row] as const)).values()]
+  const uniqueRows = [...new Map(rows.map((row) => [row.sourceListingId
+    ? `EBAY_ITEM_ID:${row.sourceListingId}` : row.deduplicationKey, row] as const)).values()]
   const matchCount = (classification: ProductResearchLunaMatch) =>
     uniqueRows.filter((row) => row.matchClassification === classification).length
+  const commercialClassifications = uniqueRows.flatMap((row) =>
+    row.commercialComparableClassification
+      ? [row.commercialComparableClassification] : [])
+  const commercialQuality = evaluateProductResearchQueryQualityV1(
+    commercialClassifications)
   return {
     source: PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE,
     importVersion: PRODUCT_RESEARCH_BROWSER_CAPTURE_VERSION,
@@ -620,6 +665,7 @@ export function parseProductResearchBrowserCapture(input: {
       ambiguous: matchCount("AMBIGUOUS"),
       noLunaMatch: matchCount("NO_LUNA_MATCH"),
     },
+    commercialQuality,
     rawHtmlStored: false,
     temporaryTitlesStored: false,
     competitorImagesDownloaded: 0,
@@ -636,6 +682,7 @@ export function productResearchCapturePersistenceRows(rows: ClassifiedProductRes
     source_listing_id: row.sourceListingId,
     source_listing_reference_hash: row.sourceListingReferenceHash,
     title_fingerprint: row.titleFingerprint,
+    bounded_title_evidence: row.boundedTitleEvidence,
     identity_hash: row.identityHash,
     evidence_deduplication_key: row.deduplicationKey,
     normalized_identity: row.normalizedIdentity,
@@ -655,6 +702,9 @@ export function productResearchCapturePersistenceRows(rows: ClassifiedProductRes
     keyword_signals: row.keywordSignals,
     match_classification: row.matchClassification,
     match_reasons: row.matchReasons,
+    commercial_comparable_classification:
+      row.commercialComparableClassification,
+    commercial_classification_reasons: row.commercialClassificationReasons,
     matched_queue_item_id: canBindLuna ? row.matchedTarget?.queueItemId ?? null : null,
     matched_supplier_variant_id: canBindLuna ? row.matchedTarget?.supplierVariantId ?? null : null,
   })})
@@ -886,11 +936,32 @@ export async function importProductResearchBrowserCapture(input: {
   const parsed = parseProductResearchBrowserCapture({ capture: input.capture, targets })
   const { data: duplicateBatch, error: duplicateBatchError } = await input.supabase
     .from("marketplace_product_research_capture_batches")
-    .select("id,search_query_hash,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,exact_luna_match_count,different_pack_count,different_size_count,different_variant_count,ambiguous_count,no_luna_match_count,candidates_enriched_count,error_counts,captured_at")
+    .select("id,search_query_hash,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,exact_luna_match_count,different_pack_count,different_size_count,different_variant_count,ambiguous_count,no_luna_match_count,candidates_enriched_count,error_counts,captured_at,commercial_quality_status,commercial_quality_metrics")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("capture_hash", parsed.captureHash).maybeSingle()
   if (duplicateBatchError) throw new Error("PRODUCT_RESEARCH_CAPTURE_DEDUP_READ_FAILED")
   if (duplicateBatch) {
+    const duplicateEvidenceRead = await input.supabase
+      .from("marketplace_product_research_capture_observations")
+      .select("source_listing_id,bounded_title_evidence,confirmed_sold_quantity,average_sold_price,average_shipping,commercial_comparable_classification,commercial_classification_reasons")
+      .eq("capture_batch_id", duplicateBatch.id)
+      .eq("marketplace_account_key", input.accountKey)
+    if (duplicateEvidenceRead.error) {
+      throw new Error("PRODUCT_RESEARCH_DUPLICATE_COMMERCIAL_EVIDENCE_READ_FAILED")
+    }
+    const duplicateCommercialEvidence = (duplicateEvidenceRead.data ?? []).flatMap(
+      (row) => row.source_listing_id && row.commercial_comparable_classification
+        ? [Object.freeze({
+          itemId: row.source_listing_id,
+          boundedTitleEvidence: row.bounded_title_evidence,
+          soldQuantity: row.confirmed_sold_quantity,
+          price: row.average_sold_price,
+          shipping: row.average_shipping,
+          classification: row.commercial_comparable_classification,
+          classificationReasons: Object.freeze([
+            ...(row.commercial_classification_reasons ?? []),
+          ]),
+        })] : [])
     const visual = await persistVisualEnrichment({
       supabase: input.supabase,
       accountKey: input.accountKey,
@@ -911,6 +982,9 @@ export async function importProductResearchBrowserCapture(input: {
       ambiguous: duplicateBatch.ambiguous_count, noLunaMatch: duplicateBatch.no_luna_match_count },
     candidatesEnriched: duplicateBatch.candidates_enriched_count,
     capturedAt: duplicateBatch.captured_at, reanalysisRequired: false,
+    commercialQualityStatus: duplicateBatch.commercial_quality_status ?? "UNPROVEN",
+    commercialQuality: record(duplicateBatch.commercial_quality_metrics),
+    commercialEvidence: Object.freeze(duplicateCommercialEvidence),
     zeroValidSoldRowsAccepted: Number(duplicateBatch.valid_count) === 0,
     officialNoSoldResults:
       Number(record(duplicateBatch.error_counts).OFFICIAL_NO_SOLD_RESULTS) === 1,
@@ -960,6 +1034,24 @@ export async function importProductResearchBrowserCapture(input: {
     p_observations: rpcRows,
   })
   if (persistError) throw new Error(productResearchCapturePersistenceError(persistError))
+  const qualityWrite = await input.supabase.rpc(
+    "annotate_product_research_capture_commercial_v1", {
+      p_marketplace_account_key: input.accountKey,
+      p_capture_batch_id: batchId,
+      p_quality_status: parsed.commercialQuality.status,
+      p_quality_metrics: parsed.commercialQuality,
+      p_annotations: rpcRows.map((row) => ({
+        evidence_deduplication_key: row.evidence_deduplication_key,
+        bounded_title_evidence: row.bounded_title_evidence,
+        commercial_comparable_classification:
+          row.commercial_comparable_classification,
+        commercial_classification_reasons:
+          row.commercial_classification_reasons,
+      })),
+    })
+  if (qualityWrite.error || qualityWrite.data !== true) {
+    throw new Error("PRODUCT_RESEARCH_COMMERCIAL_QUALITY_PERSIST_FAILED")
+  }
 
   const { data: importHashes, error: importHashError } = await input.supabase
     .from("marketplace_sold_evidence_import_batches").select("source_file_hash")
@@ -997,6 +1089,9 @@ export async function importProductResearchBrowserCapture(input: {
     zeroValidSoldRowsAccepted: parsed.zeroValidSoldRowsAccepted,
     officialNoSoldResults: parsed.officialNoSoldResults,
     visual,
+    commercialQualityStatus: parsed.commercialQuality.status,
+    commercialQuality: parsed.commercialQuality,
+    commercialEvidence: Object.freeze(commercialEvidenceEntities(parsed.rows)),
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }
 }

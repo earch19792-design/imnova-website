@@ -3,8 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
-  buildProductResearchQueryPlan,
-  PRODUCT_RESEARCH_QUERY_PLAN_VERSION,
+  buildProductResearchCommercialQueryPlanV1,
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 } from "./ebay-product-research-query-plan.ts"
 
@@ -12,7 +11,7 @@ export const QUICK_PICK_PRODUCT_RESEARCH_HANDOFF_V1 =
   "QUICK_PICK_PRODUCT_RESEARCH_HANDOFF_V1" as const
 
 const MAXIMUM_SCAN_ROWS = 100
-const MAXIMUM_RECONCILIATIONS = 20
+const MAXIMUM_RECONCILIATIONS = MAXIMUM_SCAN_ROWS
 const RUNTIME_CAPABILITY_ASSURANCE_AUTHORITY =
   "SELLER_OS_RUNTIME_CAPABILITY_ASSURANCE_V1"
 type JsonRecord = Record<string, unknown>
@@ -66,11 +65,15 @@ export function projectQuickPickProductResearchEligibilityV1(value: unknown) {
   const row = record(value)
   const assessment = record(row.assessment)
   const operation = record(assessment.lunaQuickPickOperationV1)
+  const productTruth = record(assessment.productTruth ??
+    assessment.productTruthV1 ?? assessment.lunaProductTruthV1)
   const candidateId = candidateKey(row.candidate_key)
   const lunaProductId = numericIdentity(row.supplier_product_id)
   const lunaVariantId = numericIdentity(row.supplier_variant_id)
   const supplierSku = text(row.supplier_sku, 160)
   const productTitle = text(row.product_title, 350)
+  const productBrand = text(productTruth.brand ?? productTruth.manufacturerBrand,
+    100) || null
   const status = familyDemandStatus(assessment)
   const exactIdentityProven = Boolean(candidateId && lunaProductId &&
     lunaVariantId && supplierSku && productTitle)
@@ -90,6 +93,7 @@ export function projectQuickPickProductResearchEligibilityV1(value: unknown) {
     lunaVariantId,
     supplierSku: supplierSku || null,
     productTitle: productTitle || null,
+    productBrand,
     familyDemandStatus: status || null,
     reasonCode: eligible
       ? "MARKET_RESEARCH_REQUIRED"
@@ -172,12 +176,15 @@ async function createOrReusePlan(input: Readonly<{
       !candidate.productTitle) {
     throw new Error("QUICK_PICK_PRODUCT_RESEARCH_HANDOFF_IDENTITY_INVALID")
   }
-  const plan = buildProductResearchQueryPlan([{
+  const plan = buildProductResearchCommercialQueryPlanV1({ candidate: {
     supplierVariantId: candidate.lunaVariantId,
     productName: candidate.productTitle,
+    brand: candidate.productBrand,
     priorityScore: Number(input.row.opportunity_score ?? 0),
-  }])
-  if (plan.queries.length !== 1 || plan.candidateCount !== 1) {
+  }, sourceField: "ebay_luna_opportunity_queue.product_title",
+  sourceAuthority: "LUNA_PRODUCT_TRUTH" })
+  if (plan.queries.length < 1 || plan.queries.length > 3 ||
+      plan.candidateCount !== 1 || !plan.entity.productNoun) {
     throw new Error("QUICK_PICK_PRODUCT_RESEARCH_QUERY_PLAN_EMPTY")
   }
   const inputHash = sha256({
@@ -188,10 +195,10 @@ async function createOrReusePlan(input: Readonly<{
     planInputHash: plan.inputHash,
   })
   const write = await input.supabase.rpc(
-    "create_or_reuse_quick_pick_product_research_plan_v1", {
+    "create_or_reuse_quick_pick_product_research_plan_v2", {
       p_plan_id: randomUUID(),
       p_marketplace_account_key: input.accountKey,
-      p_plan_version: PRODUCT_RESEARCH_QUERY_PLAN_VERSION,
+      p_plan_version: plan.queries[0].strategyVersion,
       p_input_hash: inputHash,
       p_opportunity_id: candidate.opportunityId,
       p_candidate_key: candidate.candidateId,
@@ -208,6 +215,9 @@ async function createOrReusePlan(input: Readonly<{
         category_id: query.categoryId,
         candidate_count: query.candidateCount,
         candidate_variant_hashes: query.candidateVariantHashes,
+        query_intent: query.intent,
+        evidence_basis: query.evidenceBasis,
+        strategy_version: query.strategyVersion,
       })),
     })
   if (write.error || !write.data) {

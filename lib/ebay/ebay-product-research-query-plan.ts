@@ -2,6 +2,15 @@ import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+import {
+  buildProductResearchCommercialQueryStrategyV1,
+  PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V1,
+  type ProductResearchMarketplaceTermV1,
+  type ProductResearchQueryIntentV1,
+  type ProductResearchTermEvidenceV1,
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+} from "./ebay-product-research-query-intelligence-v1.ts"
+
 export const PRODUCT_RESEARCH_QUERY_PLAN_VERSION =
   "PRODUCT_RESEARCH_QUERY_PLAN_V1_2026_07_17"
 
@@ -23,6 +32,12 @@ export type ProductResearchPlannedQuery = {
   categoryId: string | null
   candidateCount: number
   candidateVariantHashes: string[]
+}
+
+export type ProductResearchCommercialPlannedQuery = ProductResearchPlannedQuery & {
+  intent: ProductResearchQueryIntentV1
+  evidenceBasis: readonly ProductResearchTermEvidenceV1[]
+  strategyVersion: typeof PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V1
 }
 
 const STOP_WORDS = new Set([
@@ -215,6 +230,52 @@ export function buildProductResearchQueryPlan(
     candidateCount: coveredCandidateCount,
     queries,
   }
+}
+
+export function buildProductResearchCommercialQueryPlanV1(input: Readonly<{
+  candidate: ProductResearchQueryCandidate
+  sourceField?: string
+  sourceAuthority?: string
+  marketplaceTerms?: readonly ProductResearchMarketplaceTermV1[]
+}>) {
+  const candidate = input.candidate
+  const strategy = buildProductResearchCommercialQueryStrategyV1({
+    productName: candidate.productName,
+    brand: candidate.brand,
+    sourceField: input.sourceField,
+    sourceAuthority: input.sourceAuthority,
+    marketplaceTerms: input.marketplaceTerms,
+  })
+  const variant = text(candidate.supplierVariantId)
+  const queries: ProductResearchCommercialPlannedQuery[] = strategy.queries.map(
+    (query) => ({
+      ordinal: query.ordinal,
+      searchQuery: query.query,
+      queryHash: queryHash(query.query),
+      clusterKeyHash: sha256(`${text(candidate.categoryId) || "uncategorized"}:${
+        query.intent}:${query.query}`),
+      categoryId: /^\d+$/.test(text(candidate.categoryId, 30))
+        ? text(candidate.categoryId, 30) : null,
+      candidateCount: 1,
+      candidateVariantHashes: [sha256(variant)],
+      intent: query.intent,
+      evidenceBasis: query.evidenceBasis,
+      strategyVersion: PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V1,
+    }),
+  )
+  return Object.freeze({
+    inputHash: sha256({
+      version: PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V1,
+      supplierVariantId: variant,
+      entity: strategy.entity,
+      queries: queries.map((query) => ({ intent: query.intent,
+        queryHash: query.queryHash, evidenceBasis: query.evidenceBasis })),
+    }),
+    candidateCount: queries.length ? 1 : 0,
+    entity: strategy.entity,
+    semanticExpansionStatus: strategy.semanticExpansionStatus,
+    queries: Object.freeze(queries),
+  })
 }
 
 async function candidateRows(input: {

@@ -1,6 +1,10 @@
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { detectProductResearchOfferFacts } from "./ebay-product-research-browser-capture.ts"
 import type { EbaySellerComparableInput } from "./ebay-seller-keyword-demand-validation"
+import {
+  canonicalizeComparableEvidenceByItemIdV1,
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+} from "./ebay-product-research-query-intelligence-v1.ts"
 
 export const EBAY_MAIN_SEARCH_SOLD_CAPTURE_ADAPTER_VERSION =
   "EBAY_MAIN_SEARCH_SOLD_CAPTURE_ADAPTER_V1_2026_08_26"
@@ -99,7 +103,13 @@ export async function adaptMainSearchSoldCaptureForCanonicalImport(input: {
     { stale: false } => row !== null && row.stale === false)
   if (!fresh.length) throw new Error("MAIN_SEARCH_SOLD_CAPTURE_NO_FRESH_ROWS")
 
-  const uniqueItemIds = [...new Set(fresh.map((row) => row.itemId))]
+  const canonical = canonicalizeComparableEvidenceByItemIdV1(fresh.map((row) => ({
+    ...row,
+    queryProvenance: row.queryIdentity,
+    soldQuantity: 1,
+  })))
+
+  const uniqueItemIds = canonical.map((row) => row.itemId)
   const reader = input.officialItemReader ?? (await import(
     // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
     "./ebay-seller-keyword-demand-gateway.ts"
@@ -121,7 +131,7 @@ export async function adaptMainSearchSoldCaptureForCanonicalImport(input: {
   await Promise.all(Array.from({ length: Math.min(LOOKUP_CONCURRENCY, uniqueItemIds.length) },
     () => worker()))
 
-  const rows = fresh.map((row) => {
+  const rows = canonical.map((row) => {
     const detail = identityByItemId.get(row.itemId) ?? null
     const offerFacts = detectProductResearchOfferFacts(row.title)
     return {
@@ -130,6 +140,7 @@ export async function adaptMainSearchSoldCaptureForCanonicalImport(input: {
       soldAt: row.soldAt,
       capturedAt: row.capturedAt,
       queryOrResearchIdentity: row.queryIdentity,
+      queryProvenances: row.queryProvenances,
       confirmedSoldQuantity: 1,
       explicitSaleConfirmed: true,
       listingStatus: "SOLD",
@@ -158,7 +169,9 @@ export async function adaptMainSearchSoldCaptureForCanonicalImport(input: {
     version: EBAY_MAIN_SEARCH_SOLD_CAPTURE_ADAPTER_VERSION,
     rows: Object.freeze(rows),
     sourceRowCount: input.rows.length,
-    freshRowCount: fresh.length,
+    freshRowCount: canonical.length,
+    canonicalUniqueItemCount: canonical.length,
+    itemIdDuplicateCount: fresh.length - canonical.length,
     staleCount,
     malformedCount,
     browseItemLookupsAttempted: uniqueItemIds.length,

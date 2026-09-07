@@ -620,6 +620,17 @@ async function completeQuickPickProductResearchPlanV1(input: {
       capturedAt: new Date(research.capturedAt),
     })
   }
+  const qualityWrite = await input.supabase.from(
+    "marketplace_product_research_query_tasks").update({
+      quality_status: research.commercialQualityStatus,
+      quality_metrics: research.commercialQuality,
+      commercial_evidence_entities: research.commercialEvidence,
+    }).eq("id", planned.taskId).eq("plan_id", input.planId)
+    .eq("marketplace_account_key", input.accountKey)
+    .select("id").single()
+  if (qualityWrite.error || qualityWrite.data?.id !== planned.taskId) {
+    throw new Error("QUICK_PICK_PRODUCT_RESEARCH_QUALITY_READBACK_REQUIRED")
+  }
   const completedAt = new Date().toISOString()
   const completed = await input.supabase.rpc(
     "complete_quick_pick_product_research_claim_v1", {
@@ -638,6 +649,8 @@ async function completeQuickPickProductResearchPlanV1(input: {
     lunaProductId: plan.sourceLunaProductId,
     lunaVariantId: plan.subjectSupplierVariantId,
     captureBatchId: research.batchId, soldImportBatchId, soldEvidenceOutcome,
+    commercialQualityStatus: research.commercialQualityStatus,
+    commercialQuality: research.commercialQuality,
     productResearchExecuted: true as const,
     researchReceiptCreated: true as const,
     nextStageStarted: false as const,
