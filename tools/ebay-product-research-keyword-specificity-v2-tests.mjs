@@ -69,7 +69,7 @@ async function test(name,fn){await fn();console.log(name)}
 
 const migrationV2Base=await readFile(new URL('../supabase/migrations/20260908101453_product_research_keyword_intelligence_v2.sql',import.meta.url),'utf8')
 await db.exec(migrationV2Base)
-const migrationV2=await readFile(new URL('../supabase/migrations/20260908102802_product_research_keyword_concept_boundaries_v2_1.sql',import.meta.url),'utf8')
+const migrationV2=await readFile(new URL('../supabase/migrations/20260908103043_product_research_keyword_concept_boundaries_v2_1.sql',import.meta.url),'utf8')
 await db.exec(migrationV2)
 
 const good=await derive()

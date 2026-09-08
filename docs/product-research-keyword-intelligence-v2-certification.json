@@ -1,0 +1,68 @@
+{
+  "contractVersion": "PRODUCT_RESEARCH_KEYWORD_INTELLIGENCE_V2_1",
+  "previousContractVersion": "PRODUCT_RESEARCH_KEYWORD_INTELLIGENCE_V1",
+  "implementationCommit": "41b9e0f7c69e1e583aeca611a050b19de39c2349",
+  "migrationVersion": "20260908103043",
+  "migrationSha256": "9e05acc06fdd3c7a671e64947856ff5aa5567bfd4d9a0d26410f4a027e81cf30",
+  "validation": {
+    "fullSuitePassed": 359,
+    "fullSuiteFailed": 0,
+    "requiredControlsPassed": 19,
+    "directedControlsPassed": 30,
+    "lintPass": true,
+    "typescriptChanged": false,
+    "productionBuildRun": false,
+    "certificationChecksPassed": 4105,
+    "idempotentCases": 14,
+    "idempotentChanges": 0,
+    "fullSuiteLogSha256": "e36fe9b1412fd50b4a04090f6cbb7b1bf4b3f24ddcb327539dc2e5184bc4e8b5",
+    "finalDirectedLogSha256": "5a25e5c76a22ad26b0535edbe1a7d39927c2f15257144d408a9b7807494d8486"
+  },
+  "cohort": {
+    "ELIGIBLE_COHORT_COUNT": 14,
+    "PROCESSED_COHORT_COUNT": 14,
+    "READY_COHORT_COUNT": 11,
+    "UNPROVEN_COHORT_COUNT": 3,
+    "PRIMARY_CHANGED_COUNT": 2,
+    "PRIMARY_UNCHANGED_COUNT": 12,
+    "BECAME_UNPROVEN_COUNT": 1,
+    "SEMANTIC_EXPANSION_GAIN_COUNT": 0,
+    "SEMANTIC_EXPANSION_LOSS_COUNT": 0,
+    "GOLDEN_REJECTED_TERMS_COUNT": 123
+  },
+  "golden": {
+    "primary": "stainless steel strainer",
+    "score": 73.91,
+    "confidence": "MODERATE",
+    "classes": {
+      "CORE_QUALIFIERS": [
+        "stainless steel"
+      ],
+      "SEMANTIC_EXPANSIONS": [],
+      "SECONDARY_KEYWORDS": [
+        "strainer",
+        "silver",
+        "set of 4"
+      ]
+    },
+    "ready": true,
+    "frozenAt": "2026-09-08T10:32:40.880Z",
+    "frozenArtifactSha256": "98e221ab214ffbd67e33792ce55ece44d0383f8a71ad08d3a44e0b355951a2ea",
+    "inputFingerprint": "sha256:5d20a5bf557744e38c7975ee4f93610f50a3b774ae78de23a5077e27ca49bfff",
+    "evidenceArtifact": "/home/earch/seller-os-isolated-audits/keyword-intelligence-v2-1/golden-concept-evidence.json"
+  },
+  "preservation": {
+    "v1AndV2HistoryPreserved": true,
+    "canonicalInputsMatchV1": true,
+    "v2_1SourceRowsUnchanged": true,
+    "listingPackagesUnchanged": true,
+    "operationalServicesUnchanged": true,
+    "operationalServiceRestarts": 0,
+    "connectedRelayGapDeferred": true,
+    "earlierWholeRowMetadataDrift": "UNPROVEN_INITIATOR; seven plans/opportunities before V2.1; canonical inputs unchanged"
+  },
+  "runtimePass": true,
+  "physicalCanaryPass": true,
+  "e2eCertified": false,
+  "report": "/home/earch/seller-os-isolated-audits/keyword-intelligence-v2-1/report.md"
+}
