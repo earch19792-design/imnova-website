@@ -1,0 +1,1243 @@
+[
+  {
+    "supplier_product_id": "9266387058912",
+    "supplier_variant_id": "48907793826016",
+    "supplier_sku": "ITEM1046",
+    "candidate_key": "sha256:4380ea4d23afb01cc3f9230dba139941a7284e7409b9bf9d6a9f30f1b3377e43",
+    "truth": {
+      "counts": {
+        "facts": 18,
+        "missing": 6,
+        "inferred": 0,
+        "contradicted": 0,
+        "supplierClaims": 1,
+        "sourceFieldsDiscovered": 19
+      },
+      "fields": [
+        {
+          "FIELD": "LUNA_PRODUCT_ID",
+          "VALUE": "9266387058912",
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:2835ab9f7cfe94700841fb738d13bd9189f2f4df86532751e5b08e949569bb6c",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "LUNA_PRODUCT_ID",
+              "VALUE": "9266387058912",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "9266387058912",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:6bf38836fd92b409d1b936c8f6e9cc87f219d6f6cd47a5564b6f56a01349aa2f",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.supplier_product_id"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.supplier_product_id",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "LUNA_VARIANT_ID",
+          "VALUE": "48907793826016",
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:b8b3e73770c04a40556f044572cbc5da17df59308f9694501c7fcc936d70114a",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "LUNA_VARIANT_ID",
+              "VALUE": "48907793826016",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "48907793826016",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:508f0e3f2d37ef21458e16539b3a514c1125b012a1af4bff80d26d31153ee9ec",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.supplier_variant_id"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "snapshot.supplier_variant_id",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "SUPPLIER_SKU",
+          "VALUE": "ITEM1046",
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:60586642154af071b0f5cce03a0f24f034314d21f5b7a334e0b3a95af627c29d",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "SUPPLIER_SKU",
+              "VALUE": "ITEM1046",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "ITEM1046",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:7ff40f8867cf028f237b63f584fe7c1fe923dcfc1848cd088c720f4cfb42211b",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.sku"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "snapshot.sku",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "TITLE",
+          "VALUE": "U.S. Kitchen 4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:f46a882e3eccbec14e62d4e9d048926d455de3ea25ae050c8fb25e284bd6f484",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "TITLE",
+              "VALUE": "U.S. Kitchen 4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "U.S. Kitchen 4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:1a36e950062ad16aec54db2fdc5c97efd894241fa67ce80f89a44f27d905a491",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.title"
+            },
+            {
+              "FIELD": "TITLE",
+              "VALUE": "U.S. Kitchen 4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "U.S. Kitchen 4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:438ccf88522a72f90eef843182076ea41c9452387edcf35030b175be6746d25b",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.raw.product.title"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.title",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "BRAND",
+          "VALUE": null,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 0,
+          "CAPTURED_AT": null,
+          "EVIDENCE_ID": null,
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": null,
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "MISSING",
+          "EVIDENCE_STATUS": "MISSING",
+          "REASONING_BASIS": "No sufficient explicit Luna source evidence",
+          "SOURCE_EVIDENCE": [],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": null,
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "MODEL",
+          "VALUE": null,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 0,
+          "CAPTURED_AT": null,
+          "EVIDENCE_ID": null,
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": null,
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "MISSING",
+          "EVIDENCE_STATUS": "MISSING",
+          "REASONING_BASIS": "No sufficient explicit Luna source evidence",
+          "SOURCE_EVIDENCE": [],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": null,
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "MATERIAL",
+          "VALUE": "Stainless Steel",
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:be1f111ed178b6824093f4196dfb79501a3196ac1340acada17315878ec3a88c",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "MATERIAL",
+              "VALUE": "Stainless Steel",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Stainless Steel",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:9c4e69742dc80739016ca08e471ee02ae594a9617063f56f1df1fba4179ae319",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:15"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:15",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "COLOR",
+          "VALUE": "Silver",
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:f51a343ff41a06a68e5fe68345117835b98f1ec7680dd72374f64502f0ef5bb4",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "COLOR",
+              "VALUE": "Silver",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Silver",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:29a0eec93488b413159fddb676ffdaeb1690c82b9ce70a3108f5cd3dc83157ac",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:16"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:16",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "DIMENSIONS",
+          "VALUE": null,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 0,
+          "CAPTURED_AT": null,
+          "EVIDENCE_ID": null,
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": null,
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "MISSING",
+          "EVIDENCE_STATUS": "MISSING",
+          "REASONING_BASIS": "No sufficient explicit Luna source evidence",
+          "SOURCE_EVIDENCE": [],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": null,
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "SIZE_SET",
+          "VALUE": [
+            {
+              "UNIT": "in",
+              "RAW_VALUE": "3\"",
+              "SOURCE_EVIDENCE": [
+                "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+              ],
+              "NORMALIZED_VALUE": 3,
+              "ORDINAL_OR_SET_MEMBERSHIP": 1
+            },
+            {
+              "UNIT": "in",
+              "RAW_VALUE": "4\"",
+              "SOURCE_EVIDENCE": [
+                "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+              ],
+              "NORMALIZED_VALUE": 4,
+              "ORDINAL_OR_SET_MEMBERSHIP": 2
+            },
+            {
+              "UNIT": "in",
+              "RAW_VALUE": "5.5\"",
+              "SOURCE_EVIDENCE": [
+                "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+              ],
+              "NORMALIZED_VALUE": 5.5,
+              "ORDINAL_OR_SET_MEMBERSHIP": 3
+            },
+            {
+              "UNIT": "in",
+              "RAW_VALUE": "8\"",
+              "SOURCE_EVIDENCE": [
+                "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+              ],
+              "NORMALIZED_VALUE": 8,
+              "ORDINAL_OR_SET_MEMBERSHIP": 4
+            }
+          ],
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:7ea8bb4b14ae28985f5ab61cb6b59ce33773c8c7e4a0efc17c888acc6fd42632",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "SIZE_SET",
+              "VALUE": [
+                {
+                  "UNIT": "in",
+                  "RAW_VALUE": "3\"",
+                  "NORMALIZED_VALUE": 3,
+                  "ORDINAL_OR_SET_MEMBERSHIP": 1
+                },
+                {
+                  "UNIT": "in",
+                  "RAW_VALUE": "4\"",
+                  "NORMALIZED_VALUE": 4,
+                  "ORDINAL_OR_SET_MEMBERSHIP": 2
+                },
+                {
+                  "UNIT": "in",
+                  "RAW_VALUE": "5.5\"",
+                  "NORMALIZED_VALUE": 5.5,
+                  "ORDINAL_OR_SET_MEMBERSHIP": 3
+                },
+                {
+                  "UNIT": "in",
+                  "RAW_VALUE": "8\"",
+                  "NORMALIZED_VALUE": 8,
+                  "ORDINAL_OR_SET_MEMBERSHIP": 4
+                }
+              ],
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "3\", 4\", 5.5\", 8\"",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:17"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:17",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "WEIGHT",
+          "VALUE": {
+            "UNIT": "g",
+            "NORMALIZED_VALUE": 363
+          },
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:3d73edd3c27f704f69847028c6e4006df5276c2b3b0a18be3ca4f22900b7de28",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "WEIGHT",
+              "VALUE": {
+                "UNIT": "g",
+                "NORMALIZED_VALUE": 363
+              },
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": {
+                "unit": "g",
+                "weight": 363
+              },
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:c9a75faafdc313f253fb4b0af35bd7dc3dd4c5dd5b3d1eacea525d2d994e2686",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.weight,weight_unit"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "snapshot.weight,weight_unit",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "PACKAGE_CONTENTS",
+          "VALUE": [
+            {
+              "UNIT": null,
+              "RAW_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+              "SOURCE_EVIDENCE": [
+                "sha256:6ea640a1e15f458a9afac29462343bbb4e98688c296d96fed95a92e17190eada"
+              ],
+              "NORMALIZED_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+              "ORDINAL_OR_SET_MEMBERSHIP": 1
+            }
+          ],
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:e1b25fcb57729c10ed34a725bfaa6a6253c6048b5111218031c73db08e54afdc",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "PACKAGE_CONTENTS",
+              "VALUE": [
+                {
+                  "UNIT": null,
+                  "RAW_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+                  "NORMALIZED_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+                  "ORDINAL_OR_SET_MEMBERSHIP": 1
+                }
+              ],
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:6ea640a1e15f458a9afac29462343bbb4e98688c296d96fed95a92e17190eada",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.title#explicit-set-phrase"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.title#explicit-set-phrase",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "QUANTITY_OR_SET_COUNT",
+          "VALUE": 4,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:9afb373c531d9f2312a9c9d70ac384b1ddcdb7be02d258debdd9554b60a7624c",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "QUANTITY_OR_SET_COUNT",
+              "VALUE": 4,
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "4",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:d7f0842f6b630571dbeef749b115dfc4b4099b05ab5527f84288f4cfadc74a66",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#explicit-count"
+            },
+            {
+              "FIELD": "QUANTITY_OR_SET_COUNT",
+              "VALUE": 4,
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "4",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:e80157ea528f90d76be81d34748a082ea79969499103b856fe2ab808225584ae",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.title#explicit-count"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.body_html#explicit-count",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "FORM_FACTOR",
+          "VALUE": "Wide ear resting support",
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:5988cf69e61e64d004741aeb895c93fddb23348c1a1efc5c902c24665f23301d",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "FORM_FACTOR",
+              "VALUE": "Wide ear resting support",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Wide ear resting support",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:65a5e252bd93285e16b0ccd96d42ca191ae0a8d385ab760a3e2db2587de91c36",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:18"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:18",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "FEATURES",
+          "VALUE": [
+            "4 Essential Sizes: Includes 3\", 4\", 5.5\", and 8\" strainers for small to large kitchen tasks.",
+            "Dishwasher safe",
+            "Durable & Easy to Clean: Dishwasher-safe construction with sealed steel rims to prevent food from getting trapped.",
+            "Fine Mesh Stainless Steel: Rust-resistant mesh efficiently strains liquids and sifts dry ingredients.",
+            "Multi-Purpose Kitchen Tool: Ideal for sifting flour, straining sauces, rinsing fruits, vegetables, grains, and pasta.",
+            "Wide Ear Design: Provides stable resting support on bowls, pots, or sinks for hands-free straining."
+          ],
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 0.5,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:8136397094f820bd95f7b578ad7d5791705bafbbd1c69a5beb0eb36ccf79f5b9",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+          "EVIDENCE_STATUS": "UNPROVEN",
+          "REASONING_BASIS": "Supplier statement; no independent verification",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "FEATURES",
+              "VALUE": "4 Essential Sizes: Includes 3\", 4\", 5.5\", and 8\" strainers for small to large kitchen tasks.",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "4 Essential Sizes: Includes 3\", 4\", 5.5\", and 8\" strainers for small to large kitchen tasks.",
+              "CONFIDENCE": 0.5,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:0fa5e05f494ec9256c3e2b6ad3e245eda9e336c7c8ae8cae6897d5a3d7de6c69",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+              "REASONING_BASIS": "Supplier statement; no independent verification",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:4"
+            },
+            {
+              "FIELD": "FEATURES",
+              "VALUE": "Dishwasher safe",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Dishwasher safe",
+              "CONFIDENCE": 0.5,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:cc9f96edbfd0b6916a08fd3b1b6b0d3765b83cc57ef7ba4de188479fddced695",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+              "REASONING_BASIS": "Supplier statement; no independent verification",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:19"
+            },
+            {
+              "FIELD": "FEATURES",
+              "VALUE": "Durable & Easy to Clean: Dishwasher-safe construction with sealed steel rims to prevent food from getting trapped.",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Durable & Easy to Clean: Dishwasher-safe construction with sealed steel rims to prevent food from getting trapped.",
+              "CONFIDENCE": 0.5,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:609f9dbe6f5c78bcbdd617659b3a0fd12ec374067dd8e876f8f466fc0f310f6a",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+              "REASONING_BASIS": "Supplier statement; no independent verification",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:8"
+            },
+            {
+              "FIELD": "FEATURES",
+              "VALUE": "Fine Mesh Stainless Steel: Rust-resistant mesh efficiently strains liquids and sifts dry ingredients.",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Fine Mesh Stainless Steel: Rust-resistant mesh efficiently strains liquids and sifts dry ingredients.",
+              "CONFIDENCE": 0.5,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:e6b8d7c1bf0b06214fdfe7ed5e4ceb62c4b62f6ffe7ea222189428f529dc4f67",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+              "REASONING_BASIS": "Supplier statement; no independent verification",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:5"
+            },
+            {
+              "FIELD": "FEATURES",
+              "VALUE": "Multi-Purpose Kitchen Tool: Ideal for sifting flour, straining sauces, rinsing fruits, vegetables, grains, and pasta.",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Multi-Purpose Kitchen Tool: Ideal for sifting flour, straining sauces, rinsing fruits, vegetables, grains, and pasta.",
+              "CONFIDENCE": 0.5,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:cef7a197f87c78608f5bd1269f0ab40a72113f3b446e21231b37f4f5a1d4ade1",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+              "REASONING_BASIS": "Supplier statement; no independent verification",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:7"
+            },
+            {
+              "FIELD": "FEATURES",
+              "VALUE": "Wide Ear Design: Provides stable resting support on bowls, pots, or sinks for hands-free straining.",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Wide Ear Design: Provides stable resting support on bowls, pots, or sinks for hands-free straining.",
+              "CONFIDENCE": 0.5,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:2800b1fbcb6bcc9f17acb36557cea4f099a38bf7a31faad1c5b9a9536b239e4d",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+              "REASONING_BASIS": "Supplier statement; no independent verification",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:6"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:4",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "INTENDED_USES",
+          "VALUE": [
+            "Draining pasta or canned foods",
+            "Rinsing rice, quinoa, vegetables, and fruits",
+            "Sifting flour, cocoa powder, and powdered sugar",
+            "Straining sauces, broths, and juices"
+          ],
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:ef64e005f27aa85696312721c33ba6ccb8da40ad27a870219f9b31ecebc28617",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "INTENDED_USES",
+              "VALUE": "Draining pasta or canned foods",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Draining pasta or canned foods",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:501dc6bc1b81a44b1ec1929a0d44eb408f1f3d880e857a150415eb6e9e586e16",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:13"
+            },
+            {
+              "FIELD": "INTENDED_USES",
+              "VALUE": "Rinsing rice, quinoa, vegetables, and fruits",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Rinsing rice, quinoa, vegetables, and fruits",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:263a80b51d9b6c3773a395e131b1c2fd1c8d53d882fae27184291a9efd9be437",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:12"
+            },
+            {
+              "FIELD": "INTENDED_USES",
+              "VALUE": "Sifting flour, cocoa powder, and powdered sugar",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Sifting flour, cocoa powder, and powdered sugar",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:0d78a2f80624f272cd5683d30bd931dccd068ed8f3921b9eccc14aa263d04835",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:10"
+            },
+            {
+              "FIELD": "INTENDED_USES",
+              "VALUE": "Straining sauces, broths, and juices",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "Straining sauces, broths, and juices",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:1c497a19a758076dc2f4e004c364b4f53263e204aabb8c748a2bf39418236f0f",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:11"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.body_html#line:13",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "GTIN",
+          "VALUE": null,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 0,
+          "CAPTURED_AT": null,
+          "EVIDENCE_ID": null,
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": null,
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "MISSING",
+          "EVIDENCE_STATUS": "MISSING",
+          "REASONING_BASIS": "No sufficient explicit Luna source evidence",
+          "SOURCE_EVIDENCE": [],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": null,
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "MPN",
+          "VALUE": null,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 0,
+          "CAPTURED_AT": null,
+          "EVIDENCE_ID": null,
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": null,
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "MISSING",
+          "EVIDENCE_STATUS": "MISSING",
+          "REASONING_BASIS": "No sufficient explicit Luna source evidence",
+          "SOURCE_EVIDENCE": [],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": null,
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "SUPPLIER_COST",
+          "VALUE": 4,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:824a76ddda804e46298039f8b49eb361d77692ce9e87d8f3762e9d4b9c7eed4b",
+          "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "SUPPLIER_COST",
+              "VALUE": 4,
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "4.00",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:a7e10fbf932d11ca92c69974b8da2fac7b9cf0dfec0c617c5f5fc52968225790",
+              "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.raw.variant.price"
+            },
+            {
+              "FIELD": "SUPPLIER_COST",
+              "VALUE": 4,
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": 4,
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:27a7c26497989a0ff88b732e735a87ee6fa347280082f452d36c918b8f26a3eb",
+              "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.price"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "snapshot.raw.variant.price",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "REGULAR_PRICE",
+          "VALUE": 8.39,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:70b57ac0a83b1152c70171845dbd20f92d79f8a07c3b43b825203aeca0bf811c",
+          "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "REGULAR_PRICE",
+              "VALUE": 8.39,
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": "8.39",
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:3cd453c268c348fd48efd3430d9246aa14ca333524a478007d8b98a2caef85b0",
+              "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.raw.variant.compare_at_price"
+            },
+            {
+              "FIELD": "REGULAR_PRICE",
+              "VALUE": 8.39,
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": 8.39,
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:46bd22ce7f819a1fff4a2176872f512a22c1b818c982e9ce02c3dd63f7a42fa7",
+              "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.compare_at_price"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "snapshot.raw.variant.compare_at_price",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "SALE_PRICE",
+          "VALUE": 4,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:4e18eb50e3edd86bb3b7c11cb27b5870ec64366116d4d1354844a71180f14805",
+          "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "SALE_PRICE",
+              "VALUE": 4,
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": 4,
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:4ae6d328047ca98c458171b3329916816787c435e06a523ebbbc8ea621f8fffe",
+              "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.price < snapshot.compare_at_price"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "snapshot.price < snapshot.compare_at_price",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "SUPPLIER_AVAILABILITY",
+          "VALUE": "AVAILABLE",
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:4ebfa9acf811d240bf6888740113aeb96af6d57a3421936c4163f6f87e245546",
+          "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "SUPPLIER_AVAILABILITY",
+              "VALUE": "AVAILABLE",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": true,
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:0c95b77ba9aaf80878f75fe8f945cb1794bd7a56c70c7ed5120d46411288a0fe",
+              "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.available"
+            },
+            {
+              "FIELD": "SUPPLIER_AVAILABILITY",
+              "VALUE": "AVAILABLE",
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": true,
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:e477ff29d71206f7bb13962aa4cddb5837852f8d5692f27d4b10ed5fb7e750d9",
+              "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.raw.variant.available"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "snapshot.available",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "SUPPLIER_STOCK",
+          "VALUE": null,
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 0,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": null,
+          "FRESH_UNTIL": "2026-09-08T09:00:22.856+00:00",
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "MISSING",
+          "EVIDENCE_STATUS": "MISSING",
+          "QUANTITY_STATUS": "QUANTITY_UNPROVEN",
+          "REASONING_BASIS": "No sufficient explicit Luna source evidence",
+          "SOURCE_EVIDENCE": [],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": null,
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "IMAGES",
+          "VALUE": [
+            {
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "IMAGE_ORDINAL": 1,
+              "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/Kitchen-Supply-Set-of-4-Fine-Mesh-Stainless-Steel-Strainers-with-Wide-Ear-Design-3-4-5-5-8_e4e78a77-835a-4a76-8673-0facc3e50e8f.8065828387399fa15f2ab5765858026f.avif?v=1772911145",
+              "VARIANT_ASSOCIATION_IF_PROVEN": null
+            },
+            {
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "IMAGE_ORDINAL": 2,
+              "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/8ca7f452-6c4c-466b-91cd-2c1393cb3c5a.4de41ed7466b2a65dfb7ecda0203a6ae.webp?v=1772911145",
+              "VARIANT_ASSOCIATION_IF_PROVEN": null
+            },
+            {
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "IMAGE_ORDINAL": 3,
+              "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/4defcfda-6961-4053-91ed-8c43f56b036e.b8f39a3a1a88ff3adf8d655e377e171a.webp?v=1772911145",
+              "VARIANT_ASSOCIATION_IF_PROVEN": null
+            },
+            {
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "IMAGE_ORDINAL": 4,
+              "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b86404fb-5838-43e0-b023-cd80602bcdaf.72d5c29810d362ad9484001e0ddeef91.webp?v=1772911145",
+              "VARIANT_ASSOCIATION_IF_PROVEN": null
+            },
+            {
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "IMAGE_ORDINAL": 5,
+              "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b37ea7cb-3045-4dd0-94dd-13d85596f8fe.ae193493453d04da15e158727f5c3b50.webp?v=1772911145",
+              "VARIANT_ASSOCIATION_IF_PROVEN": null
+            }
+          ],
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:de6b7fb2eb99f24b7175c48b06c5cb1527f8497011abfc718ddf6f46cd364c6b",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "IMAGES",
+              "VALUE": [
+                {
+                  "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+                  "IMAGE_ORDINAL": 1,
+                  "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/Kitchen-Supply-Set-of-4-Fine-Mesh-Stainless-Steel-Strainers-with-Wide-Ear-Design-3-4-5-5-8_e4e78a77-835a-4a76-8673-0facc3e50e8f.8065828387399fa15f2ab5765858026f.avif?v=1772911145",
+                  "VARIANT_ASSOCIATION_IF_PROVEN": null
+                },
+                {
+                  "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+                  "IMAGE_ORDINAL": 2,
+                  "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/8ca7f452-6c4c-466b-91cd-2c1393cb3c5a.4de41ed7466b2a65dfb7ecda0203a6ae.webp?v=1772911145",
+                  "VARIANT_ASSOCIATION_IF_PROVEN": null
+                },
+                {
+                  "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+                  "IMAGE_ORDINAL": 3,
+                  "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/4defcfda-6961-4053-91ed-8c43f56b036e.b8f39a3a1a88ff3adf8d655e377e171a.webp?v=1772911145",
+                  "VARIANT_ASSOCIATION_IF_PROVEN": null
+                },
+                {
+                  "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+                  "IMAGE_ORDINAL": 4,
+                  "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b86404fb-5838-43e0-b023-cd80602bcdaf.72d5c29810d362ad9484001e0ddeef91.webp?v=1772911145",
+                  "VARIANT_ASSOCIATION_IF_PROVEN": null
+                },
+                {
+                  "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+                  "IMAGE_ORDINAL": 5,
+                  "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b37ea7cb-3045-4dd0-94dd-13d85596f8fe.ae193493453d04da15e158727f5c3b50.webp?v=1772911145",
+                  "VARIANT_ASSOCIATION_IF_PROVEN": null
+                }
+              ],
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": [
+                "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/Kitchen-Supply-Set-of-4-Fine-Mesh-Stainless-Steel-Strainers-with-Wide-Ear-Design-3-4-5-5-8_e4e78a77-835a-4a76-8673-0facc3e50e8f.8065828387399fa15f2ab5765858026f.avif?v=1772911145",
+                "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/8ca7f452-6c4c-466b-91cd-2c1393cb3c5a.4de41ed7466b2a65dfb7ecda0203a6ae.webp?v=1772911145",
+                "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/4defcfda-6961-4053-91ed-8c43f56b036e.b8f39a3a1a88ff3adf8d655e377e171a.webp?v=1772911145",
+                "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b86404fb-5838-43e0-b023-cd80602bcdaf.72d5c29810d362ad9484001e0ddeef91.webp?v=1772911145",
+                "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b37ea7cb-3045-4dd0-94dd-13d85596f8fe.ae193493453d04da15e158727f5c3b50.webp?v=1772911145"
+              ],
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:199abe7fd2acbe68251bfcf350d094fd4f1b1fdc2c8e4e5a862707b510e501ab",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:23+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "907425d4-081a-4342-8edd-1961d6b18326",
+              "SOURCE_LOCATOR_OR_FIELD": "product.image_urls"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "product.image_urls",
+          "CONFLICTING_EVIDENCE_IDS": []
+        },
+        {
+          "FIELD": "VARIANT_OPTIONS",
+          "VALUE": [
+            {
+              "RAW_VALUE": "Default Title",
+              "SOURCE_FIELD": "option1",
+              "NORMALIZED_VALUE": "Default Title",
+              "ORDINAL_OR_SET_MEMBERSHIP": 1
+            }
+          ],
+          "SOURCE": "LUNA_EXACT_VARIANT",
+          "CONFIDENCE": 1,
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "EVIDENCE_ID": "sha256:dfe1868c66a26f4f8323b101c6c3bfdf2d0a5501d7984ef23406ff3c7f868819",
+          "FRESH_UNTIL": null,
+          "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+          "CONTRADICTION": false,
+          "SEMANTIC_CLASS": "FACT",
+          "EVIDENCE_STATUS": "PROVEN",
+          "REASONING_BASIS": "Explicit Luna evidence; normalized without adding product facts",
+          "SOURCE_EVIDENCE": [
+            {
+              "FIELD": "VARIANT_OPTIONS",
+              "VALUE": [
+                {
+                  "RAW_VALUE": "Default Title",
+                  "SOURCE_FIELD": "option1",
+                  "NORMALIZED_VALUE": "Default Title",
+                  "ORDINAL_OR_SET_MEMBERSHIP": 1
+                }
+              ],
+              "SOURCE": "LUNA_EXACT_VARIANT",
+              "RAW_VALUE": [
+                {
+                  "RAW_VALUE": "Default Title",
+                  "SOURCE_FIELD": "option1",
+                  "NORMALIZED_VALUE": "Default Title",
+                  "ORDINAL_OR_SET_MEMBERSHIP": 1
+                }
+              ],
+              "CONFIDENCE": 1,
+              "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+              "EVIDENCE_ID": "sha256:0a20503515b07b7ce6d727c26e1e21462d8ddfe28e0848c50b7ce2ca8c96f041",
+              "FRESH_UNTIL": null,
+              "OBSERVED_AT": "2026-09-07T09:00:22.856+00:00",
+              "SEMANTIC_CLASS": "FACT",
+              "REASONING_BASIS": "Explicit exact Luna source field; normalization only",
+              "SOURCE_AUTHORITY": "SUPPLIER",
+              "SOURCE_RECEIPT_ID": "407cabbe-a9fa-4787-9206-ff5b5ea2d34e",
+              "SOURCE_LOCATOR_OR_FIELD": "snapshot.raw.variant.option1..3"
+            }
+          ],
+          "SOURCE_AUTHORITY": "SUPPLIER",
+          "RESOLUTION_STATUS": "NOT_APPLICABLE",
+          "SOURCE_LOCATOR_OR_FIELD": "snapshot.raw.variant.option1..3",
+          "CONFLICTING_EVIDENCE_IDS": []
+        }
+      ],
+      "status": "PARTIAL",
+      "capturedAt": "2026-09-07T09:00:22.856+00:00",
+      "evidenceDigest": "sha256:50abd3ff5d6eec3d1c311ae463100bc141ab0e5584764ede445425ce52834712",
+      "contractVersion": "LUNA_FIELD_PRODUCT_TRUTH_V1",
+      "sourceReceiptIds": [
+        "907425d4-081a-4342-8edd-1961d6b18326",
+        "407cabbe-a9fa-4787-9206-ff5b5ea2d34e"
+      ],
+      "marketplaceWrites": 0,
+      "sourceFingerprint": "sha256:fbd697a9762cbb9223cca8d3547273aed52c23cc23250a1ce281c9e9ea0f0ded",
+      "normalizationVersion": "LUNA_FIELD_NORMALIZATION_V2",
+      "downstreamAdvancements": 0,
+      "sourceAuthorityContract": "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
+      "unsupportedDownstreamValues": [
+        {
+          "FIELD": "BRAND",
+          "REASON": "UNSUPPORTED_DOWNSTREAM_VALUE",
+          "CONTRADICTION": true,
+          "PACKAGE_CHANGED": false,
+          "DOWNSTREAM_VALUE": "U.S. Kitchen",
+          "RESOLUTION_STATUS": "UNRESOLVED",
+          "CONFLICTING_EVIDENCE_IDS": [
+            "f6275516-ccf5-460a-8ade-5ad1e749e25e",
+            null
+          ]
+        }
+      ]
+    }
+  }
+]

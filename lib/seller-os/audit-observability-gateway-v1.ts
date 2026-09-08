@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { projectLunaFieldTruthV1 } from "./luna-field-truth-projection-v1"
 
 export const SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1 =
   "SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1" as const
@@ -39,7 +40,7 @@ export const SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1 = Object.freeze([
 export type SellerOsAuditDetailModeV1 = "SUMMARY" | "EVIDENCE" | "TRACE"
 export type SellerOsAuditEvidenceStatusV1 = "PROVEN" | "UNPROVEN" |
   "STALE" | "UNAVAILABLE" | "MISSING" | "CONTRADICTED" |
-  "NOT_APPLICABLE"
+  "NOT_APPLICABLE" | "PARTIAL"
 export type SellerOsProductCaseIdentityTypeV1 = "PRODUCT_CASE_ID" |
   "LUNA_PRODUCT_ID" | "SUPPLIER_SKU" | "EBAY_ITEM_ID" |
   "LISTING_PACKAGE_ID"
@@ -230,6 +231,7 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
   const assessment = record(queue.assessment)
   const productTruth = record(first(assessment.productTruth,
     assessment.productTruthV1, assessment.lunaProductTruthV1))
+  const lunaTruth = projectLunaFieldTruthV1(productTruth.fieldTruthV1, now)
   const packageData = record(packageRow.package_data)
   const packageId = text(packageRow.id, 80)
   const itemId = text(active.ebay_item_id, 30)
@@ -288,9 +290,9 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
     LUNA_SOURCE: { status: text(queue.id, 80) ? "PROVEN" : "MISSING",
       authority: "ebay_luna_opportunity_queue", observedAt: queueObserved,
       receipt: queue.id },
-    PRODUCT_TRUTH: { status: Object.keys(productTruth).length ? "PROVEN" : "UNPROVEN",
+    PRODUCT_TRUTH: { status: lunaTruth.status,
       authority: "ebay_luna_opportunity_queue.assessment.productTruth",
-      observedAt: queueObserved, receipt: queue.id },
+      observedAt: lunaTruth.capturedAt, receipt: lunaTruth.evidenceDigest },
     MARKET_RESEARCH: { status: research.length ? "PROVEN" : "MISSING",
       authority: "marketplace_product_research_capture_observations",
       observedAt: research[0]?.created_at, receipt: research[0]?.capture_batch_id },
@@ -358,45 +360,7 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
         ? [String(evidence.receipt)] : undefined })
   })
   const fieldTruth = [
-    field({ field: "LUNA_PRODUCT_ID", value: queue.supplier_product_id,
-      source: "LUNA", authority: "ebay_luna_opportunity_queue",
-      observedAt: queueObserved, evidenceId: queue.id,
-      consumers: ["PRODUCT_TRUTH", "LISTING_PACKAGE"] }, now),
-    field({ field: "LUNA_VARIANT_ID", value: queue.supplier_variant_id,
-      source: "LUNA", authority: "ebay_luna_opportunity_queue",
-      observedAt: queueObserved, evidenceId: queue.id,
-      consumers: ["SHIPPING", "ECONOMICS", "PUBLISHER"] }, now),
-    field({ field: "SUPPLIER_SKU", value: queue.supplier_sku,
-      source: "LUNA", authority: "ebay_luna_opportunity_queue",
-      observedAt: queueObserved, evidenceId: queue.id,
-      consumers: ["IDENTITY", "CURRENT_LIVE"] }, now),
-    field({ field: "TITLE", value: first(productTruth.title, queue.title,
-      packageData.title), source: "LUNA_PRODUCT_TRUTH",
-      authority: "ebay_luna_opportunity_queue.assessment.productTruth",
-      observedAt: queueObserved, evidenceId: queue.id,
-      consumers: ["LISTING_PACKAGE", "PUBLISHER"] }, now),
-    ...["brand", "model", "material", "color", "dimensions", "weight",
-      "packageContents", "gtin", "mpn"].map((name) => field({
-        field: name.toUpperCase(), value: first(productTruth[name],
-          assessment[name], packageData[name]), source: "PRODUCT_TRUTH",
-        authority: "ebay_luna_opportunity_queue.assessment",
-        observedAt: queueObserved, evidenceId: queue.id,
-        consumers: ["LISTING_PACKAGE", "PUBLISHER"] }, now)),
-    field({ field: "IMAGES", value: first(packageData.imageUrls,
-      packageData.images, productTruth.images), source: "PRODUCT_TRUTH_AND_PACKAGE",
-      authority: "ebay_listing_packages.package_data",
-      observedAt: packageObserved, evidenceId: packageRow.id,
-      consumers: ["OWNER_AUTHORIZATION", "PUBLISHER", "MAYEL"] }, now),
-    field({ field: "SUPPLIER_COST", value: first(economics.luna_cost,
-      queue.supplier_price, record(assessment.economics).supplierCost),
-      source: "LUNA", authority: economics.luna_cost !== undefined
-        ? "seller_os_live_economics_readbacks_v1" : "ebay_luna_opportunity_queue",
-      observedAt: first(economics.calculated_at, queueObserved),
-      evidenceId: queue.id, consumers: ["ECONOMICS"] }, now),
-    field({ field: "SUPPLIER_STOCK", value: first(queue.supplier_inventory,
-      queue.supplier_availability), source: "LUNA",
-      authority: "ebay_luna_opportunity_queue", observedAt: queueObserved,
-      evidenceId: queue.id, consumers: ["STOCK", "PUBLISHER"] }, now),
+    ...lunaTruth.fields,
     field({ field: "SUPPLIER_SHIPPING", value: first(economics.luna_shipping,
       record(packageData.shipping).amount), source: "LUNA_SHIPPING",
       authority: economics.luna_shipping !== undefined
@@ -468,6 +432,10 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
       ebayItemId: text(active.ebay_item_id, 30),
       packageId: text(packageRow.id, 80) },
     PRODUCT_JOURNEY: orderedJourney,
+    PRODUCT_TRUTH_COMPLETENESS: { STATUS: lunaTruth.status,
+      FIELD_TRUTH_CONTRACT_VERSION: lunaTruth.contractVersion,
+      COUNTS: lunaTruth.counts, EVIDENCE_ID: lunaTruth.evidenceDigest },
+    UNSUPPORTED_DOWNSTREAM_VALUES: lunaTruth.unsupportedDownstreamValues,
     FIELD_TRUTH: mode === "SUMMARY"
       ? fieldTruth.filter((entry) => ["LUNA_PRODUCT_ID", "LUNA_VARIANT_ID",
           "SUPPLIER_SKU", "EBAY_ITEM_ID", "EBAY_LIVE_PRICE", "SUPPLIER_COST",

@@ -5,6 +5,7 @@ import {
   type MarketRadarEventType,
   type MarketRadarSyncResult,
 } from "@/lib/market-radar-types"
+import { captureLunaExplicitProductFieldsV1 } from "./luna-product-source-fields-v1"
 
 const LUNAPORTEX_SOURCE_KEY =
   "lunaportex"
@@ -728,6 +729,8 @@ function getSnapshotRawProduct(
     getString(product.handle)
 
   return {
+    ...captureLunaExplicitProductFieldsV1(product),
+    body_html: getString(product.body_html) || null,
     id:
       product.id || null,
     title:
@@ -1465,6 +1468,7 @@ async function upsertProducts(
           true,
         metadata:
           {
+            source_product_fields_v1: captureLunaExplicitProductFieldsV1(product),
             collections:
               Array.from(
                 product.collections

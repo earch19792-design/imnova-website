@@ -13,6 +13,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test:seller-os": "node --test lib/ebay/*.test.mjs tools/ebay-*-tests.mjs",
+    "test:luna-product-truth": "node tools/luna-product-truth-parity-tests.mjs && node lib/seller-os/audit-observability-gateway-v1.test.mjs",
     "audit:seller-os": "node tools/ebay-seller-os-ci-guards.mjs",
     "refresh:ebay-preprod-runame-evidence": "node tools/ebay-preprod-runame-expected-evidence-refresh.mjs",
     "record:seller-os-validation": "node tools/ebay-seller-os-validation-recorder-run.mjs",
@@ -81,6 +82,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@tailwindcss/postcss": "^4.2.0",
     "@types/d3-array": "3.2.2",
     "@types/d3-color": "3.1.3",
