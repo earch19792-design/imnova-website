@@ -14,6 +14,22 @@ The audit projection then accepted package/assessment fallbacks, used generated
 package images as product evidence, read incorrect stock properties, and called
 any nonempty truth object `PROVEN`.
 
+| Fields | First loss or incorrect projection observed |
+| --- | --- |
+| Product ID, variant ID, SKU | Identity already present; projection used queue timestamps/IDs instead of field evidence. |
+| Title | Retained upstream, but projection permitted a downstream fallback. |
+| Material, color, size set, form factor, features, intended uses | Description captured; not materialized as durable fields. Multiline list bodies also required normalization without losing their content. |
+| Count, package contents | Explicit set phrase retained in title/description; structure was not materialized. Contents remain the declared phrase, not invented individual components. |
+| Weight | Numeric value/unit retained in variant snapshot; omitted from Product Truth. |
+| Supplier cost, regular price, sale price | Cost partially retained with misleading projection provenance; other explicit price relationships not materialized. |
+| Availability, stock | Availability retained; projection read incorrect queue properties. Numeric stock is not present in the Golden source and remains unproven. |
+| Images | Supplier image URLs retained; projection selected generated Package images instead. |
+| Variant options | Explicit option values retained in raw variant; not materialized. Default Title is preserved literally, not interpreted as a specification. |
+| Brand, model, MPN, GTIN, overall dimensions | No sufficient corresponding source proof in the audited Golden capture. These remain missing; downstream Brand is separately recorded as unsupported. |
+
+Optional structured attributes exposed by future product payloads are now
+allowlisted during the existing capture, closing the earlier capture-level loss.
+
 ## Contract and authority
 
 `LUNA_FIELD_PRODUCT_TRUTH_V1` reuses
@@ -67,3 +83,22 @@ that downstream packages cannot become supplier truth.
 Physical results and deployment identifiers are recorded separately after
 readback. Local test success alone does not certify runtime or the physical canary.
 `E2E_CERTIFIED=false`; no next-stage progression is authorized by this change.
+
+Run `npm run test:luna-product-truth` after installing the locked development
+dependencies. PGlite is pinned to 0.5.8; it is a test dependency, not a new runtime.
+
+## Physical outcome and remaining integration boundary
+
+The two migrations recovered 125/125 existing candidates. A repeat recovered
+zero. All 25 deployed Product Case fields matched durable values, semantic
+classes, source timestamps and evidence IDs, with zero mismatches. The Golden
+has 18 FACT fields, one SUPPLIER_CLAIM field (six statements), and six MISSING
+fields. Product Truth correctly projects PARTIAL.
+
+The connected Tunnel plugin remains pinned to an older deployment in another
+Vercel project. Its Product Case read still uses the old projection. The corrected
+preprod administrative MCP endpoint passed; its preview cloud relay is not
+activated. No relay binding, authentication secret or other-tool routing was
+changed. Overall status remains PARTIAL pending approval to align that existing
+connection. See `LUNA_PRODUCT_TRUTH_PARITY_SYSTEMIC_FIX_RESULT.json` for the full
+truth-mode output, deployment IDs and field-by-field evidence.

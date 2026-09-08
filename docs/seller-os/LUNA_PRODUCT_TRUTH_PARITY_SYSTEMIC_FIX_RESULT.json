@@ -1,0 +1,404 @@
+{
+  "TASK": "LUNA_PRODUCT_TRUTH_PARITY_SYSTEMIC_FIX",
+  "STATUS": "PARTIAL",
+  "STATUS_REASON": "Code, migrations, cohort recovery and deployed Product Case are verified; the connected MCP remains pinned to an older deployment in another Vercel project. Its binding/auth configuration was not changed.",
+  "FIRST_BROKEN_TRANSITION": "NORMALIZED_SOURCE_EVIDENCE → FIELD_LEVEL_PRODUCT_TRUTH",
+  "ROOT_CAUSE": "Intake materialized identity/required-specifics subset only; optional structured attributes were dropped at capture. Product Case used downstream fallbacks and treated any nonempty truth as PROVEN.",
+  "FILES_CHANGED": [
+    "lib/market-radar-lunaportex.ts",
+    "lib/luna-product-source-fields-v1.ts",
+    "lib/seller-os/audit-observability-gateway-v1.ts",
+    "lib/seller-os/luna-field-truth-projection-v1.ts",
+    "lib/seller-os/audit-observability-gateway-v1.test.mjs",
+    "tools/luna-product-truth-parity-tests.mjs",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "docs/seller-os/LUNA_PRODUCT_TRUTH_PARITY_SYSTEMIC_FIX.md",
+    "docs/seller-os/LUNA_PRODUCT_TRUTH_GOLDEN_CANARY.json"
+  ],
+  "MIGRATIONS": [
+    {
+      "file": "supabase/migrations/20260908002125_luna_product_truth_field_parity_v1.sql",
+      "deployedVersion": "20260908004541"
+    },
+    {
+      "file": "supabase/migrations/20260908004733_luna_product_truth_multiline_evidence_v1.sql",
+      "deployedVersion": "20260908004826"
+    }
+  ],
+  "FIELD_TRUTH_CONTRACT_VERSION": "LUNA_FIELD_PRODUCT_TRUTH_V1",
+  "NORMALIZATION_VERSION": "LUNA_FIELD_NORMALIZATION_V2",
+  "SOURCE_AUTHORITY_CONTRACT": "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
+  "EXISTING_AFFECTED_COHORT_COUNT": 125,
+  "RECOVERED_COHORT_COUNT": 125,
+  "OWNER_RESUBMIT_REQUIRED": false,
+  "CODEX_PER_PRODUCT_DISPATCH_REQUIRED": false,
+  "GOLDEN_CANONICAL_IDENTITY_PASS": true,
+  "GOLDEN_SOURCE_CAPTURE_PASS": true,
+  "GOLDEN_FIELD_SEMANTICS_PASS": true,
+  "GOLDEN_DURABLE_PRODUCT_TRUTH_PASS": true,
+  "GOLDEN_PRODUCT_CASE_PARITY_PASS": true,
+  "VERIFIED_PRODUCT_CASE_ENDPOINT": "https://imnova-seller-os-preprod.vercel.app/api/admin/ebay/assistant/mcp",
+  "VERIFIED_PRODUCT_CASE_TOOL": "seller_os_get_product_case",
+  "VERIFIED_AT": "2026-09-08T01:02:39.179Z",
+  "CONNECTED_MCP_PRODUCT_CASE_PARITY_PASS": false,
+  "CONNECTED_MCP_BLOCKER": "Configured relay URL pins imnova-website-z1qh-ckh7qtt7y-earch19792-6888s-projects.vercel.app. The corrected preprod preview relay is not activated; no secret, binding, transport or other-tool routing was changed.",
+  "PRODUCT_TRUTH_STAGE": "PARTIAL",
+  "SOURCE_FIELDS_DISCOVERED_COUNT": 19,
+  "PRODUCT_TRUTH_FIELDS_PROVEN_COUNT": 18,
+  "SUPPLIER_CLAIM_COUNT": 1,
+  "SUPPLIER_CLAIM_STATEMENT_COUNT": 6,
+  "INFERRED_FIELD_COUNT": 0,
+  "MISSING_FIELD_COUNT": 6,
+  "CONTRADICTED_FIELD_COUNT": 0,
+  "SOURCE_TO_TRUTH_PARITY_PASS": true,
+  "DURABLE_PRODUCT_TRUTH_PASS": true,
+  "PRODUCT_CASE_PROJECTION_PASS": true,
+  "GOLDEN_FIELDS": [
+    {
+      "FIELD": "LUNA_PRODUCT_ID",
+      "VALUE": "9266387058912",
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:2835ab9f7cfe94700841fb738d13bd9189f2f4df86532751e5b08e949569bb6c"
+    },
+    {
+      "FIELD": "LUNA_VARIANT_ID",
+      "VALUE": "48907793826016",
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:b8b3e73770c04a40556f044572cbc5da17df59308f9694501c7fcc936d70114a"
+    },
+    {
+      "FIELD": "SUPPLIER_SKU",
+      "VALUE": "ITEM1046",
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:60586642154af071b0f5cce03a0f24f034314d21f5b7a334e0b3a95af627c29d"
+    },
+    {
+      "FIELD": "TITLE",
+      "VALUE": "U.S. Kitchen 4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:f46a882e3eccbec14e62d4e9d048926d455de3ea25ae050c8fb25e284bd6f484"
+    },
+    {
+      "FIELD": "BRAND",
+      "VALUE": null,
+      "SEMANTIC_CLASS": "MISSING",
+      "EVIDENCE_STATUS": "MISSING",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": null
+    },
+    {
+      "FIELD": "MODEL",
+      "VALUE": null,
+      "SEMANTIC_CLASS": "MISSING",
+      "EVIDENCE_STATUS": "MISSING",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": null
+    },
+    {
+      "FIELD": "MATERIAL",
+      "VALUE": "Stainless Steel",
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:be1f111ed178b6824093f4196dfb79501a3196ac1340acada17315878ec3a88c"
+    },
+    {
+      "FIELD": "COLOR",
+      "VALUE": "Silver",
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:f51a343ff41a06a68e5fe68345117835b98f1ec7680dd72374f64502f0ef5bb4"
+    },
+    {
+      "FIELD": "DIMENSIONS",
+      "VALUE": null,
+      "SEMANTIC_CLASS": "MISSING",
+      "EVIDENCE_STATUS": "MISSING",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": null
+    },
+    {
+      "FIELD": "SIZE_SET",
+      "VALUE": [
+        {
+          "UNIT": "in",
+          "RAW_VALUE": "3\"",
+          "SOURCE_EVIDENCE": [
+            "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+          ],
+          "NORMALIZED_VALUE": 3,
+          "ORDINAL_OR_SET_MEMBERSHIP": 1
+        },
+        {
+          "UNIT": "in",
+          "RAW_VALUE": "4\"",
+          "SOURCE_EVIDENCE": [
+            "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+          ],
+          "NORMALIZED_VALUE": 4,
+          "ORDINAL_OR_SET_MEMBERSHIP": 2
+        },
+        {
+          "UNIT": "in",
+          "RAW_VALUE": "5.5\"",
+          "SOURCE_EVIDENCE": [
+            "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+          ],
+          "NORMALIZED_VALUE": 5.5,
+          "ORDINAL_OR_SET_MEMBERSHIP": 3
+        },
+        {
+          "UNIT": "in",
+          "RAW_VALUE": "8\"",
+          "SOURCE_EVIDENCE": [
+            "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+          ],
+          "NORMALIZED_VALUE": 8,
+          "ORDINAL_OR_SET_MEMBERSHIP": 4
+        }
+      ],
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:7ea8bb4b14ae28985f5ab61cb6b59ce33773c8c7e4a0efc17c888acc6fd42632"
+    },
+    {
+      "FIELD": "WEIGHT",
+      "VALUE": {
+        "UNIT": "g",
+        "NORMALIZED_VALUE": 363
+      },
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:3d73edd3c27f704f69847028c6e4006df5276c2b3b0a18be3ca4f22900b7de28"
+    },
+    {
+      "FIELD": "PACKAGE_CONTENTS",
+      "VALUE": [
+        {
+          "UNIT": null,
+          "RAW_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+          "SOURCE_EVIDENCE": [
+            "sha256:6ea640a1e15f458a9afac29462343bbb4e98688c296d96fed95a92e17190eada"
+          ],
+          "NORMALIZED_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+          "ORDINAL_OR_SET_MEMBERSHIP": 1
+        }
+      ],
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:e1b25fcb57729c10ed34a725bfaa6a6253c6048b5111218031c73db08e54afdc"
+    },
+    {
+      "FIELD": "QUANTITY_OR_SET_COUNT",
+      "VALUE": 4,
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:9afb373c531d9f2312a9c9d70ac384b1ddcdb7be02d258debdd9554b60a7624c"
+    },
+    {
+      "FIELD": "FORM_FACTOR",
+      "VALUE": "Wide ear resting support",
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:5988cf69e61e64d004741aeb895c93fddb23348c1a1efc5c902c24665f23301d"
+    },
+    {
+      "FIELD": "FEATURES",
+      "VALUE": [
+        "4 Essential Sizes: Includes 3\", 4\", 5.5\", and 8\" strainers for small to large kitchen tasks.",
+        "Dishwasher safe",
+        "Durable & Easy to Clean: Dishwasher-safe construction with sealed steel rims to prevent food from getting trapped.",
+        "Fine Mesh Stainless Steel: Rust-resistant mesh efficiently strains liquids and sifts dry ingredients.",
+        "Multi-Purpose Kitchen Tool: Ideal for sifting flour, straining sauces, rinsing fruits, vegetables, grains, and pasta.",
+        "Wide Ear Design: Provides stable resting support on bowls, pots, or sinks for hands-free straining."
+      ],
+      "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+      "EVIDENCE_STATUS": "UNPROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:8136397094f820bd95f7b578ad7d5791705bafbbd1c69a5beb0eb36ccf79f5b9"
+    },
+    {
+      "FIELD": "INTENDED_USES",
+      "VALUE": [
+        "Draining pasta or canned foods",
+        "Rinsing rice, quinoa, vegetables, and fruits",
+        "Sifting flour, cocoa powder, and powdered sugar",
+        "Straining sauces, broths, and juices"
+      ],
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:ef64e005f27aa85696312721c33ba6ccb8da40ad27a870219f9b31ecebc28617"
+    },
+    {
+      "FIELD": "GTIN",
+      "VALUE": null,
+      "SEMANTIC_CLASS": "MISSING",
+      "EVIDENCE_STATUS": "MISSING",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": null
+    },
+    {
+      "FIELD": "MPN",
+      "VALUE": null,
+      "SEMANTIC_CLASS": "MISSING",
+      "EVIDENCE_STATUS": "MISSING",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": null
+    },
+    {
+      "FIELD": "SUPPLIER_COST",
+      "VALUE": 4,
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:824a76ddda804e46298039f8b49eb361d77692ce9e87d8f3762e9d4b9c7eed4b"
+    },
+    {
+      "FIELD": "REGULAR_PRICE",
+      "VALUE": 8.39,
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:70b57ac0a83b1152c70171845dbd20f92d79f8a07c3b43b825203aeca0bf811c"
+    },
+    {
+      "FIELD": "SALE_PRICE",
+      "VALUE": 4,
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:4e18eb50e3edd86bb3b7c11cb27b5870ec64366116d4d1354844a71180f14805"
+    },
+    {
+      "FIELD": "SUPPLIER_AVAILABILITY",
+      "VALUE": "AVAILABLE",
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:4ebfa9acf811d240bf6888740113aeb96af6d57a3421936c4163f6f87e245546"
+    },
+    {
+      "FIELD": "SUPPLIER_STOCK",
+      "VALUE": null,
+      "SEMANTIC_CLASS": "MISSING",
+      "EVIDENCE_STATUS": "MISSING",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": null
+    },
+    {
+      "FIELD": "IMAGES",
+      "VALUE": [
+        {
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "IMAGE_ORDINAL": 1,
+          "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/Kitchen-Supply-Set-of-4-Fine-Mesh-Stainless-Steel-Strainers-with-Wide-Ear-Design-3-4-5-5-8_e4e78a77-835a-4a76-8673-0facc3e50e8f.8065828387399fa15f2ab5765858026f.avif?v=1772911145",
+          "VARIANT_ASSOCIATION_IF_PROVEN": null
+        },
+        {
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "IMAGE_ORDINAL": 2,
+          "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/8ca7f452-6c4c-466b-91cd-2c1393cb3c5a.4de41ed7466b2a65dfb7ecda0203a6ae.webp?v=1772911145",
+          "VARIANT_ASSOCIATION_IF_PROVEN": null
+        },
+        {
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "IMAGE_ORDINAL": 3,
+          "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/4defcfda-6961-4053-91ed-8c43f56b036e.b8f39a3a1a88ff3adf8d655e377e171a.webp?v=1772911145",
+          "VARIANT_ASSOCIATION_IF_PROVEN": null
+        },
+        {
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "IMAGE_ORDINAL": 4,
+          "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b86404fb-5838-43e0-b023-cd80602bcdaf.72d5c29810d362ad9484001e0ddeef91.webp?v=1772911145",
+          "VARIANT_ASSOCIATION_IF_PROVEN": null
+        },
+        {
+          "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+          "IMAGE_ORDINAL": 5,
+          "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b37ea7cb-3045-4dd0-94dd-13d85596f8fe.ae193493453d04da15e158727f5c3b50.webp?v=1772911145",
+          "VARIANT_ASSOCIATION_IF_PROVEN": null
+        }
+      ],
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:de6b7fb2eb99f24b7175c48b06c5cb1527f8497011abfc718ddf6f46cd364c6b"
+    },
+    {
+      "FIELD": "VARIANT_OPTIONS",
+      "VALUE": [
+        {
+          "RAW_VALUE": "Default Title",
+          "SOURCE_FIELD": "option1",
+          "NORMALIZED_VALUE": "Default Title",
+          "ORDINAL_OR_SET_MEMBERSHIP": 1
+        }
+      ],
+      "SEMANTIC_CLASS": "FACT",
+      "EVIDENCE_STATUS": "PROVEN",
+      "SOURCE_AUTHORITY": "SUPPLIER",
+      "EVIDENCE_ID": "sha256:dfe1868c66a26f4f8323b101c6c3bfdf2d0a5501d7984ef23406ff3c7f868819"
+    }
+  ],
+  "UNSUPPORTED_DOWNSTREAM_VALUES": [
+    {
+      "FIELD": "BRAND",
+      "REASON": "UNSUPPORTED_DOWNSTREAM_VALUE",
+      "CONTRADICTION": true,
+      "PACKAGE_CHANGED": false,
+      "DOWNSTREAM_VALUE": "U.S. Kitchen",
+      "RESOLUTION_STATUS": "UNRESOLVED",
+      "CONFLICTING_EVIDENCE_IDS": [
+        "f6275516-ccf5-460a-8ade-5ad1e749e25e",
+        null
+      ]
+    }
+  ],
+  "CODE_PASS": true,
+  "RUNTIME_PASS": true,
+  "PHYSICAL_CANARY_PASS": true,
+  "CANARY_SCOPE": "Deployed administrative MCP endpoint, not the still-pinned connected Tunnel plugin.",
+  "INVARIANT": "Supplier evidence only; no image inference, marketing promotion, package/reference inheritance or downstream advancement. Missing is null, never false or zero.",
+  "DETECTION_RULE": "Exact Luna source exists and derived receipt differs from current materialization, including legacy missing field receipts.",
+  "RECOVERY_POLICY": "Existing source/queue triggers and bounded cohort recovery; original snapshots and historical field receipts are preserved.",
+  "RETRY_POLICY": "recover_luna_product_truth_parity_v1(limit): 1–1000 writes; affected/recovered/remaining metrics; skip locked candidates.",
+  "IDEMPOTENCY_GUARD": "Deterministic digest; one current receipt; history deduplication; legacy truth preserved; no same-age missing-evidence degradation or older-source replacement.",
+  "REGRESSION_GUARD": "Required 14 regressions plus receipt immutability, multiline claims, source triggers/null cached ID, gateway fallback/parity, TypeScript and deployed build.",
+  "OBSERVABILITY_RECEIPT": "sha256:50abd3ff5d6eec3d1c311ae463100bc141ab0e5584764ede445425ce52834712",
+  "IMMUTABILITY_PROOF": {
+    "queueStateHashBeforeAndAfterMigration": "6caf2f5fea2e98a77411d1fd85093fae",
+    "legacyAssessmentHashBeforeAndAfterMigration": "efb98e2082d3ebf2906acf3acfcc8d97",
+    "packagesHashBeforeAndAfterMigration": "4224266a9259637f025fbd4fda290ec8",
+    "originalGoldenSnapshotHashBeforeAndAfterMigration": "2b9b77a8aa34663e3a00e0e7762962f7",
+    "repeatedRecoveryChangedCount": 0
+  },
+  "SECURITY": {
+    "newFunctions": 9,
+    "securityDefinerFunctions": 0,
+    "anonOrAuthenticatedExecutableFunctions": 0,
+    "newFunctionAdvisorFindings": 0
+  },
+  "ESCALATION_POLICY": "Leave source gaps unproven and conflicts unresolved. Request approval before rebinding/activating the connected MCP relay, which also routes other tools.",
+  "COMMIT_SHA": "cee1c7ac29813e603e2de54eff9b87f713b558a2",
+  "DEPLOYMENT_ID": "dpl_3ehFiSWWLT2buCbEDTU1jbDZMnjd",
+  "PREVIEW_DEPLOYMENT_ID": "dpl_GpfW2D4AxXo5vGnm2Ngm61zPZm6c",
+  "NEXT_BLOCKER": "Align the existing connected MCP relay with the corrected deployment under its existing authentication boundary; approval required. Brand/Model/MPN/GTIN/overall dimensions/numeric stock remain genuinely source-unproven.",
+  "E2E_CERTIFIED": false
+}
