@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+STATE_DIR="/home/earch/.local/state/imnova-seller-os"
+mkdir -p "$STATE_DIR"
+exec 9>"$STATE_DIR/watchdog.lock"
+if ! /usr/bin/flock -n 9; then
+  echo 'SELLER_OS_WATCHDOG_TRANSACTION_ALREADY_RUNNING'
+  exit 0
+fi
+if [[ -r /home/earch/.config/imnova/seller-os-tunnel-runtime.env ]]; then
+  set -a
+  source /home/earch/.config/imnova/seller-os-tunnel-runtime.env
+  set +a
+fi
+exec /home/earch/.nvm/versions/node/v22.23.0/bin/node --experimental-strip-types \
+  /home/earch/.local/lib/imnova-seller-os-watchdog/tools/seller-os-watchdog-v1.mjs "${1:-tick}"

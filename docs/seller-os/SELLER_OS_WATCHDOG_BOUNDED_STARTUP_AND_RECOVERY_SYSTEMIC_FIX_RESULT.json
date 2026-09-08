@@ -1,0 +1,429 @@
+{
+  "CONTRACT": "SELLER_OS_WATCHDOG_BOUNDED_STARTUP_AND_RECOVERY_SYSTEMIC_FIX",
+  "STATUS": "PARTIAL",
+  "OBSERVED_AT": "2026-09-08T06:26:31.707862+00:00",
+  "ROOT_CAUSE": "WATCHDOG_RECOVERY_NONCONVERGENCE",
+  "SETTLE_CONTRACT_REUSED": true,
+  "SETTLE_WINDOW_MS": 30000,
+  "PROBE_INTERVAL_MS": 5000,
+  "MAX_PROBE_COUNT": 6,
+  "CONSECUTIVE_FULL_HEALTHY_READS_REQUIRED": 2,
+  "MAX_RECOVERY_ATTEMPTS": 2,
+  "RECOVERY_COOLDOWN_POLICY": {
+    "windowMs": 3600000,
+    "anchor": "FIRST_RESERVED_ATTEMPT_IN_FIXED_WINDOW",
+    "healthyReadsResetBudget": false,
+    "hostBootResetsBudget": false,
+    "nextBoundedCycleNotBefore": "2026-09-08T07:21:34.565000+00:00"
+  },
+  "INITIALIZATION_PENDING_SUPPORTED": true,
+  "PREMATURE_RESTART_SUPPRESSED": true,
+  "SYSTEMD_TUNNEL_PROPAGATION_REUSED": true,
+  "REDUNDANT_TUNNEL_RESTART_REMOVED": true,
+  "RECOVERY_POLICY_EXHAUSTION_SUPPORTED": true,
+  "FILES_CHANGED": [
+    "lib/ebay/ebay-seller-os-controlled-restart-settle-v1.ts",
+    "lib/ebay/ebay-seller-os-controlled-restart-settle-v1.test.mjs",
+    "lib/ebay/ebay-seller-os-watchdog-recovery-v1.mjs",
+    "lib/ebay/ebay-seller-os-watchdog-recovery-v1.test.mjs",
+    "tools/imnova-seller-os-watchdog",
+    "tools/seller-os-watchdog-v1.mjs",
+    "tools/install-seller-os-watchdog-v1.py",
+    "docs/seller-os/SELLER_OS_WATCHDOG_BOUNDED_STARTUP_AND_RECOVERY_SYSTEMIC_FIX.md",
+    "docs/seller-os/SELLER_OS_WATCHDOG_BOUNDED_STARTUP_AND_RECOVERY_SYSTEMIC_FIX_RESULT.json"
+  ],
+  "CONFIG_CHANGES": {
+    "persistentUnitFiles": 0,
+    "watchdogTimerSchedule": 0,
+    "dependencyGraph": 0,
+    "relay": 0,
+    "existingReporterTransientProperties": {
+      "delayMs": {
+        "before": 5000,
+        "after": 1000
+      },
+      "accuracyMs": 1,
+      "runtimeMaxMs": 50000
+    }
+  },
+  "CODE_PASS": true,
+  "RUNTIME_PASS": false,
+  "PHYSICAL_RESTART_CANARY_PASS": false,
+  "WATCHDOG_EXTRA_TUNNEL_RESTART_COUNT": 0,
+  "RESTART_LOOP_PRESENT_AFTER": false,
+  "SAFE_TO_RESUME_TESTS": false,
+  "NO_RECOVERY_ACTION_WHEN_HEALTHY": "UNPROVEN_PHYSICALLY; PASS_IN_REGRESSION",
+  "NEXT_BLOCKER": "LOCAL_HTTP_UNRESPONSIVE; normal healthy restart and healthy no-action watchdog cycle remain uncertified",
+  "NEXT_EXACT_STEP": "Audit the unresolved HTTP startup wait without a speculative runtime/cache/bundler change; repeat healthy certification after response is restored. Do not resume the full suite or deploy.",
+  "VALIDATION": {
+    "targetedTests": {
+      "passed": 44,
+      "failed": 0,
+      "files": [
+        "lib/ebay/ebay-seller-os-watchdog-recovery-v1.test.mjs",
+        "lib/ebay/ebay-seller-os-controlled-restart-settle-v1.test.mjs",
+        "lib/ebay/ebay-seller-os-runtime-health-v1.test.mjs"
+      ],
+      "countsByFile": [
+        17,
+        12,
+        15
+      ]
+    },
+    "requiredRegressions": [
+      "PASS_INITIALIZATION_PENDING_DOES_NOT_RESTART_IMMEDIATELY",
+      "PASS_30S_SETTLE_CONTRACT_REUSED",
+      "PASS_TWO_CONSECUTIVE_HEALTHY_ENDS_RECOVERY",
+      "PASS_SETTLE_EXHAUSTION_ALLOWS_BOUNDED_RECOVERY",
+      "PASS_RECOVERY_ATTEMPTS_BOUNDED",
+      "PASS_RECOVERY_EXHAUSTION_STOPS_RESTART_STORM",
+      "PASS_MCP_RESTART_RELIES_ON_SYSTEMD_FOR_TUNNEL",
+      "PASS_NO_REDUNDANT_TUNNEL_RESTART",
+      "PASS_DOCTOR_FAILURE_PRESERVED_WITHOUT_DUPLICATE_RESTART",
+      "PASS_HEALTH_SEMANTICS_NOT_WEAKENED",
+      "PASS_EXISTING_RUNTIME_CATALOG_UNCHANGED"
+    ],
+    "scopedLint": "PASS",
+    "scopedTypecheck": "PASS",
+    "shellSyntax": "PASS",
+    "controllerSyntax": "PASS",
+    "installerSyntax": "PASS",
+    "fullRepositoryTypecheck": "NODE_2_GB_HEAP_EXHAUSTED_EXIT_134",
+    "fullSuiteRun": false,
+    "productionBuildRun": false
+  },
+  "PHYSICAL_CANARY": [
+    {
+      "at": "2026-09-08T06:12:07.831Z",
+      "event": "CONTROLLED_CANARY_MCP_RESTART",
+      "status": "INITIALIZATION_PENDING",
+      "recoveryAttemptOrdinal": 26,
+      "lastRecoveryAt": 1788847850644.482,
+      "recoveryWindow": 1788844812084.11,
+      "recoveryExhausted": true,
+      "doctorFailure": null,
+      "localHttpFailure": null,
+      "settle": {
+        "id": "CONTROLLED_CANARY:1788847927824",
+        "kind": "CONTROLLED_CANARY",
+        "startedAtMs": 1788847927824,
+        "deadlineMs": 1788847957824,
+        "previousMcpPid": 10567,
+        "previousTunnelPid": 10689,
+        "probeCount": 0
+      },
+      "tunnelOwner": "SYSTEMD_DEPENDENCY"
+    },
+    {
+      "at": "2026-09-08T06:12:08.028Z",
+      "event": "SETTLE_PROBE",
+      "transaction": "CONTROLLED_CANARY:1788847927824",
+      "probeCount": 1,
+      "elapsedMs": 204,
+      "classification": "PENDING_UNPROVEN_EVIDENCE",
+      "acceptable": false,
+      "rawOverallStatus": null,
+      "failureCode": "DOCTOR_FAILED"
+    },
+    {
+      "at": "2026-09-08T06:12:18.039Z",
+      "event": "SETTLE_PROBE",
+      "transaction": "CONTROLLED_CANARY:1788847927824",
+      "probeCount": 2,
+      "elapsedMs": 10208,
+      "classification": "PENDING_UNPROVEN_EVIDENCE",
+      "acceptable": false,
+      "rawOverallStatus": null,
+      "failureCode": "PROBE_BUDGET_EXPIRED"
+    },
+    {
+      "at": "2026-09-08T06:12:28.050Z",
+      "event": "SETTLE_PROBE",
+      "transaction": "CONTROLLED_CANARY:1788847927824",
+      "probeCount": 3,
+      "elapsedMs": 20217,
+      "classification": "PENDING_UNPROVEN_EVIDENCE",
+      "acceptable": false,
+      "rawOverallStatus": null,
+      "failureCode": "PROBE_BUDGET_EXPIRED"
+    },
+    {
+      "at": "2026-09-08T06:12:37.838Z",
+      "event": "SETTLE_RESULT",
+      "status": "RECOVERY_POLICY_EXHAUSTED",
+      "recoveryAttemptOrdinal": 26,
+      "lastRecoveryAt": 1788847850644.482,
+      "recoveryWindow": 1788844812084.11,
+      "recoveryExhausted": true,
+      "doctorFailure": {
+        "code": "DOCTOR_FAILED",
+        "exitCode": 2,
+        "at": "2026-09-08T06:12:08.012Z"
+      },
+      "localHttpFailure": "LOCAL_HTTP_UNRESPONSIVE",
+      "settle": {
+        "id": "CONTROLLED_CANARY:1788847927824",
+        "kind": "CONTROLLED_CANARY",
+        "startedAtMs": 1788847927824,
+        "deadlineMs": 1788847957824,
+        "previousMcpPid": 10567,
+        "previousTunnelPid": 10689,
+        "probeCount": 4
+      },
+      "result": "SETTLE_TIMEOUT",
+      "elapsedMs": 30001,
+      "probeCount": 4,
+      "noRecoveryActionWhenHealthy": false
+    }
+  ],
+  "PHYSICAL_OBSERVATION": {
+    "at": "2026-09-08T06:26:31.707862+00:00",
+    "mcpStartsSinceInstall": 3,
+    "tunnelStartsSinceInstall": 3,
+    "watchdogCompletedCycles": 7,
+    "automaticMcpRestarts": 2,
+    "protectedFileCount": 1802,
+    "protectedChangedFiles": [],
+    "effectiveRelayBaselineMatch": true,
+    "httpCode": "000",
+    "curlExit": 28,
+    "state": {
+      "version": "SELLER_OS_WATCHDOG_BOUNDED_RECOVERY_V1",
+      "bootId": "94c17c9d-823e-495d-81c1-4220b1cca390",
+      "recoveryWindowStartedAtMs": 1788848494565,
+      "recoveryAttemptOrdinal": 2,
+      "lastRecoveryAtMs": 1788848620615,
+      "recoveryExhausted": true,
+      "status": "RECOVERY_POLICY_EXHAUSTED",
+      "lifecycleId": "171841584be744d398ffac5cbf948250:4f8560567e004db59601a7c29f4df835",
+      "settle": {
+        "id": "RECOVERY:1788848620615",
+        "kind": "RECOVERY",
+        "startedAtMs": 1788848620615,
+        "deadlineMs": 1788848650615,
+        "previousMcpPid": 11973,
+        "previousTunnelPid": 11974,
+        "probeCount": 3
+      },
+      "doctorFailure": {
+        "code": "DOCTOR_TIMEOUT",
+        "exitCode": null,
+        "at": "2026-09-08T06:25:50.602Z"
+      },
+      "localHttpFailure": "LOCAL_HTTP_UNRESPONSIVE",
+      "importedHistory": {
+        "source": "SYSTEMD_JOURNAL_ALL_MCP_STARTS_CONSERVATIVE",
+        "count": 26,
+        "atMs": 1788847927699
+      },
+      "lastSettle": {
+        "id": "RECOVERY:1788848620615",
+        "status": "SETTLE_TIMEOUT",
+        "elapsedMs": 30003,
+        "probeCount": 3,
+        "completedAt": "2026-09-08T06:24:10.618Z"
+      }
+    },
+    "units": {
+      "imnova-seller-os-mcp.service": {
+        "Id": "imnova-seller-os-mcp.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "InvocationID": "171841584be744d398ffac5cbf948250",
+        "MainPID": "12295",
+        "Result": "success",
+        "NRestarts": "0",
+        "ExecMainStartTimestamp": "Tue 2026-09-08 00:23:40 CST"
+      },
+      "imnova-seller-os-tunnel.service": {
+        "Id": "imnova-seller-os-tunnel.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "InvocationID": "4f8560567e004db59601a7c29f4df835",
+        "MainPID": "12296",
+        "Result": "success",
+        "NRestarts": "0",
+        "ExecMainStartTimestamp": "Tue 2026-09-08 00:23:40 CST"
+      },
+      "imnova-seller-os-watchdog.service": {
+        "Id": "imnova-seller-os-watchdog.service",
+        "ActiveState": "inactive",
+        "SubState": "dead",
+        "InvocationID": "c4452428f1e441699e3f89d396b74bb9",
+        "MainPID": "0",
+        "Result": "success",
+        "NRestarts": "0",
+        "ExecMainStartTimestamp": "Tue 2026-09-08 00:25:46 CST"
+      }
+    },
+    "recentWatchdogEvents": [
+      {
+        "at": "2026-09-08T06:23:46.935Z",
+        "event": "SETTLE_PROBE",
+        "transaction": "RECOVERY:1788848620615",
+        "probeCount": 1,
+        "elapsedMs": 6310,
+        "classification": "PENDING_UNPROVEN_EVIDENCE",
+        "acceptable": false,
+        "rawOverallStatus": null,
+        "failureCode": "PROBE_BUDGET_EXPIRED",
+        "doctorFailure": null
+      },
+      {
+        "at": "2026-09-08T06:23:56.950Z",
+        "event": "SETTLE_PROBE",
+        "transaction": "RECOVERY:1788848620615",
+        "probeCount": 2,
+        "elapsedMs": 16324,
+        "classification": "PENDING_UNPROVEN_EVIDENCE",
+        "acceptable": false,
+        "rawOverallStatus": null,
+        "failureCode": "PROBE_BUDGET_EXPIRED",
+        "doctorFailure": null
+      },
+      {
+        "at": "2026-09-08T06:24:06.964Z",
+        "event": "SETTLE_PROBE",
+        "transaction": "RECOVERY:1788848620615",
+        "probeCount": 3,
+        "elapsedMs": 26338,
+        "classification": "PENDING_UNPROVEN_EVIDENCE",
+        "acceptable": false,
+        "rawOverallStatus": null,
+        "failureCode": "PROBE_BUDGET_EXPIRED",
+        "doctorFailure": null
+      },
+      {
+        "at": "2026-09-08T06:24:10.629Z",
+        "event": "SETTLE_RESULT",
+        "status": "RECOVERY_POLICY_EXHAUSTED",
+        "recoveryAttemptOrdinal": 2,
+        "lastRecoveryAt": 1788848620615,
+        "recoveryWindow": 1788848494565,
+        "recoveryExhausted": true,
+        "doctorFailure": {
+          "code": "DOCTOR_TIMEOUT",
+          "exitCode": null,
+          "at": "2026-09-08T06:23:40.615Z"
+        },
+        "localHttpFailure": "LOCAL_HTTP_UNRESPONSIVE",
+        "settle": {
+          "id": "RECOVERY:1788848620615",
+          "kind": "RECOVERY",
+          "startedAtMs": 1788848620615,
+          "deadlineMs": 1788848650615,
+          "previousMcpPid": 11973,
+          "previousTunnelPid": 11974,
+          "probeCount": 3
+        },
+        "result": "SETTLE_TIMEOUT",
+        "settleOutcome": "STARTUP_SETTLE_EXHAUSTED",
+        "elapsedMs": 30003,
+        "probeCount": 3,
+        "noRecoveryActionWhenHealthy": false
+      },
+      {
+        "at": "2026-09-08T06:24:25.661Z",
+        "event": "SELLER_OS_RUNTIME_HEALTH_REPORTER_TIMEOUT"
+      },
+      {
+        "at": "2026-09-08T06:25:50.603Z",
+        "event": "WATCHDOG_DECISION",
+        "action": "ESCALATE",
+        "reason": "RECOVERY_POLICY_EXHAUSTED",
+        "status": "RECOVERY_POLICY_EXHAUSTED",
+        "recoveryAttemptOrdinal": 2,
+        "lastRecoveryAt": 1788848620615,
+        "recoveryWindow": 1788848494565,
+        "recoveryExhausted": true,
+        "doctorFailure": {
+          "code": "DOCTOR_TIMEOUT",
+          "exitCode": null,
+          "at": "2026-09-08T06:25:50.602Z"
+        },
+        "localHttpFailure": "LOCAL_HTTP_UNRESPONSIVE",
+        "settle": {
+          "id": "RECOVERY:1788848620615",
+          "kind": "RECOVERY",
+          "startedAtMs": 1788848620615,
+          "deadlineMs": 1788848650615,
+          "previousMcpPid": 11973,
+          "previousTunnelPid": 11974,
+          "probeCount": 3
+        }
+      },
+      {
+        "at": "2026-09-08T06:25:51.698Z",
+        "event": "SETTLE_ALREADY_COMPLETED",
+        "status": "RECOVERY_POLICY_EXHAUSTED",
+        "recoveryAttemptOrdinal": 2,
+        "lastRecoveryAt": 1788848620615,
+        "recoveryWindow": 1788848494565,
+        "recoveryExhausted": true,
+        "doctorFailure": {
+          "code": "DOCTOR_TIMEOUT",
+          "exitCode": null,
+          "at": "2026-09-08T06:25:50.602Z"
+        },
+        "localHttpFailure": "LOCAL_HTTP_UNRESPONSIVE",
+        "settle": {
+          "id": "RECOVERY:1788848620615",
+          "kind": "RECOVERY",
+          "startedAtMs": 1788848620615,
+          "deadlineMs": 1788848650615,
+          "previousMcpPid": 11973,
+          "previousTunnelPid": 11974,
+          "probeCount": 3
+        },
+        "firstResult": {
+          "id": "RECOVERY:1788848620615",
+          "status": "SETTLE_TIMEOUT",
+          "elapsedMs": 30003,
+          "probeCount": 3,
+          "completedAt": "2026-09-08T06:24:10.618Z"
+        }
+      },
+      {
+        "at": "2026-09-08T06:26:06.737Z",
+        "event": "SELLER_OS_RUNTIME_HEALTH_REPORTER_TIMEOUT"
+      }
+    ]
+  },
+  "FINAL_INSTALLATION": {
+    "installedAt": "2026-09-08T06:22:21.519176+00:00",
+    "files": [
+      {
+        "path": "/home/earch/.local/lib/imnova-seller-os-watchdog/lib/ebay/ebay-seller-os-controlled-restart-settle-v1.ts",
+        "sha256": "bddb88665ebd1def17241784f129e532f5a7f5d2611e3fda3feb9a7df7ab1a05"
+      },
+      {
+        "path": "/home/earch/.local/lib/imnova-seller-os-watchdog/lib/ebay/ebay-seller-os-watchdog-recovery-v1.mjs",
+        "sha256": "843522fb447af85c9ec71ee4870aa05c36b213821638878dcd8e62b7d2dd6d4c"
+      },
+      {
+        "path": "/home/earch/.local/lib/imnova-seller-os-watchdog/tools/seller-os-watchdog-v1.mjs",
+        "sha256": "9b110ad85c4c5cdb96a32b9cc89e36cc4a418a6b37e54702d2e0bf4a5837da1b"
+      },
+      {
+        "path": "/home/earch/.local/bin/imnova-seller-os-watchdog",
+        "sha256": "c48771ba29946ef283c1c96317462654f112443b3484824b7c0e73b764fa27b0"
+      }
+    ],
+    "unitFilesChanged": 0,
+    "serviceRestarts": 0,
+    "relayChanged": false,
+    "timerScheduleChanged": false
+  },
+  "DEPLOYMENT_CREATED": false,
+  "RELAY_CHANGED": false,
+  "PRODUCT_TRUTH_CHANGED": false,
+  "KEYWORD_INTELLIGENCE_CHANGED": false,
+  "RUNTIME_SOURCE_CHANGED": false,
+  "NEXT_SWC_TURBOPACK_VERSIONS_CHANGED": false,
+  "PRODUCTION_CACHE_REPAIRED_OR_CLEARED": false,
+  "DEPENDENCIES_REINSTALLED": false,
+  "MANUAL_CANARY_MCP_RESTARTS": 1,
+  "AUTOMATIC_MCP_RESTARTS": 2,
+  "DEPENDENCY_TUNNEL_RESTARTS": 3,
+  "COMMIT_REFERENCE": "The git commit containing this receipt; exact SHA is recorded in the final delivery and private delivery.json."
+}
