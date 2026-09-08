@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { projectLunaFieldTruthV1, LUNA_FIELD_TRUTH_FIELDS_V1 } from "./luna-field-truth-projection-v1"
 import { createProductCaseReadBudgetV1, ProductCaseCriticalReadFailureV1,
   type ProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
+import { readKeywordDecisionHandoffV1, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
 
 export const SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1 =
   "SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1" as const
@@ -303,8 +304,15 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   const packageId = text(packageRow.id, 80)
   const itemId = text(active.ebay_item_id, 30)
   const variantId = text(queue.supplier_variant_id, 100)
+  const keywordBinding: KeywordBindingV1 = {
+    ACCOUNT_KEY: input.accountKey,
+    PRODUCT_ID: text(queue.supplier_product_id, 180) ?? "",
+    VARIANT_ID: variantId ?? "",
+    CANDIDATE_KEY: candidateId,
+    OPPORTUNITY_ID: text(queue.id, 80) ?? "",
+  }
   const [approvalRead, executionRead, publicationRead, childRead,
-    economicsRead, researchRead, shippingRead] = await Promise.all([
+    economicsRead, researchRead, shippingRead, keywordRead] = await Promise.all([
       packageId ? budget.read({ dependency: "AUTHORIZATION",
         authority: "ebay_draft_only_approvals", query: () => input.supabase
           .from("ebay_draft_only_approvals").select("*").eq("listing_package_id", packageId)
@@ -340,6 +348,9 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
           .eq("matched_supplier_variant_id", variantId)
           .order("created_at", { ascending: false }).limit(100) })
         : budget.skip("MARKET_RESEARCH_PROJECTION", "marketplace_product_research_capture_observations"),
+      keywordBinding.PRODUCT_ID && keywordBinding.VARIANT_ID
+        ? readKeywordDecisionHandoffV1({ supabase: input.supabase, binding: keywordBinding, budget })
+        : Promise.resolve({ STATUS: "UNAVAILABLE", BLOCKERS: ["KEYWORD_BINDING_REQUIRED"] }),
       budget.read({ dependency: "SHIPPING_PROJECTION",
         authority: "seller_os_luna_shipping_job_claims", query: () => input.supabase
           .from("seller_os_luna_shipping_job_claims").select("*")
@@ -544,6 +555,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
           "SUPPLIER_SHIPPING", "EXPECTED_PROFIT", "PACKAGE_STATE",
           "PACKAGE_DIGEST"].includes(entry.FIELD)) : fieldTruth,
     ...groups, NEXT_BLOCKING_STAGE: blocker, BUSINESS_IMPACT: impact,
+    KEYWORD_INTELLIGENCE: keywordRead,
     TECHNICAL_TRACE: mode === "TRACE" ? { approvalId: approval.id ?? null,
       executionId: execution.id ?? null, publicationId: publication.id ?? null,
       publisherChildReceiptId: batchChild.receipt_id ?? null,

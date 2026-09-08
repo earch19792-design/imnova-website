@@ -3,6 +3,8 @@ import { createHash } from "node:crypto"
 import { calculateEbayUnitEconomics } from "./ebay-unit-economics"
 import { MINIMUM_TRUTHFUL_LISTING_READINESS_V1 } from
   "./ebay-minimum-truthful-listing-readiness-v1"
+import { consumeListingPackageKeywordHandoffV1, type KeywordBindingV1 } from
+  "../seller-os/keyword-intelligence-handoff-v1"
 
 export const QUICK_PICK_MARKET_TEST_PACKAGE_AND_REMOTE_OWNER_REVIEW_V1 =
   "QUICK_PICK_MARKET_TEST_PACKAGE_AND_REMOTE_OWNER_REVIEW_V1" as const
@@ -236,6 +238,9 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   frontier?: JsonRecord | null
   catalogRow?: JsonRecord | null
   catalogProduct?: JsonRecord | null
+  keywordDecisionHandoff?: unknown
+  keywordDecisionBinding?: KeywordBindingV1
+  requireKeywordDecisionV2_1?: boolean
 }>) {
   const assessment = record(input.opportunity.assessment)
   const packageData = record(input.listingPackage.package_data)
@@ -312,8 +317,22 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   const categoryName = authoritativeCategoryName({ exactTitle, names: [
     taxonomy.categoryName, packageData.categoryName, readiness.categoryName,
   ] })
-  const keywords = keywordEvidence({ titleStrategy, aspects: aspects.values,
-    aspectEvidence: aspects.evidence, exactEvidence, marketTest })
+  const handoff = input.keywordDecisionHandoff && input.keywordDecisionBinding
+    ? consumeListingPackageKeywordHandoffV1(input.keywordDecisionHandoff, input.keywordDecisionBinding)
+    : null
+  const keywords = handoff?.STATUS === "ACCEPTED"
+    ? handoff.CLASSIFICATIONS.PRIMARY_KEYWORD.concat(
+      handoff.CLASSIFICATIONS.CORE_QUALIFIERS,
+      handoff.CLASSIFICATIONS.SEMANTIC_EXPANSIONS,
+      handoff.CLASSIFICATIONS.SECONDARY_KEYWORDS,
+    ).map((term) => ({ term, productRelevance: "EXACT_PRODUCT" as const,
+      demandEvidenceClass: "DURABLE_KEYWORD_INTELLIGENCE_V2_1" as const,
+      source: "PRODUCT_RESEARCH_KEYWORD_INTELLIGENCE_V2_1" as const,
+      exactProductDemandClaimed: false as const }))
+    : input.requireKeywordDecisionV2_1
+      ? []
+      : keywordEvidence({ titleStrategy, aspects: aspects.values,
+        aspectEvidence: aspects.evidence, exactEvidence, marketTest })
   const itemSpecificsReady = minimumContractCurrent
     ? rows(minimumReadiness.ownerLastMileActions).length === 0
       && Number(minimumReadiness.unprovenRequirementCount ?? 0) === 0
@@ -324,6 +343,7 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   const identityExact = truth.exact === true ||
     text(truth.lunaProductId, 80) === input.opportunity.supplier_product_id
   const packageReady = Boolean(identityExact && title && description.value
+    && (!input.requireKeywordDecisionV2_1 || handoff?.STATUS === "ACCEPTED")
     && categoryId && conditionId && itemSpecificsReady && marketplaceReady
     && targetPrice !== null && supplierCost !== null && shipping !== null
     && ebayFees !== null && profit !== null && margin !== null && roi !== null
@@ -409,7 +429,9 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
       ? "OWNER_AUTHORIZED_EDIT" : generatedTitle.method,
     rawSupplierTitleCopiedWithoutOptimization:
       generatedTitle.rawSupplierTitleCopiedWithoutOptimization,
-    keywords, keywordEvidenceReconciled: sourceTerms.length > 0,
+    keywords, keywordEvidenceReconciled: handoff
+      ? handoff.STATUS === "ACCEPTED" : sourceTerms.length > 0,
+    keywordIntelligenceHandoff: handoff,
     itemSpecifics: aspects.values,
     description: description.value, descriptionSource: description.source,
     category: Object.freeze({ id: categoryId, name: categoryName,
