@@ -19,6 +19,7 @@ const registeredRuntimeGraphAdditions = Object.freeze([
   "lib/ebay/ebay-sales-order-events-read-v1.ts",
   "lib/ebay/ebay-sales-order-read-model-v1.ts",
   "lib/ebay/ebay-sales-order-readonly-audit-repository-v1.ts",
+  "lib/ebay/ebay-seller-os-read-budget-v1.ts",
   "lib/ebay/ebay-seller-os-workflow-foundation-v1.ts",
   "lib/marketplace/commercial-monitor-domain.ts",
   "lib/seller-os-access-control.ts",
@@ -126,6 +127,7 @@ test("el repositorio canónico sólo contiene SELECTs y ninguna ejecución exter
   assert.deepEqual(updateCalls.sort(), [
     "lib/ebay/commercial-monitor-readonly-utilities.mjs",
     "lib/ebay/ebay-commercial-monitor-live-readonly.ts",
+    "lib/ebay/ebay-commercial-monitor-live-readonly.ts",
     "lib/ebay/ebay-current-live-authority-v1.ts",
     "lib/ebay/ebay-luna-canonical-stock-read-model-adapter-v1.ts",
     "lib/ebay/ebay-seller-account-scope.ts",
@@ -230,7 +232,9 @@ test("el reader live usa una allowlist cerrada y nunca persiste respuestas", () 
   assert.match(domain, /root !== `\$\{expectedTradingCall\}Request`/)
   assert.doesNotMatch(domain, /"(?:AddItem|ReviseItem|EndItem|AddFixedPriceItem|ReviseFixedPriceItem)"/)
   assert.doesNotMatch(reader, /\.(?:insert|upsert|delete|rpc)\s*\(/)
-  assert.equal((reader.match(/\.update\s*\(/g) ?? []).length, 1)
+  assert.equal((reader.match(/\.update\s*\(/g) ?? []).length, 2)
+  assert.match(reader, /const key = createHash\("sha256"\)\.update\(JSON\.stringify\(\[/)
+  assert.match(reader, /tokenReadsByRequest = new WeakMap/)
   assert.match(reader, /createHash\("sha256"\)\s*\.update\(/)
   assert.doesNotMatch(reader, /createShippingFulfillment|publishOffer|apply_improvement/)
   assert.match(reader, /marketplaceWrites:\s*0/)

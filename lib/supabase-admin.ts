@@ -54,7 +54,7 @@ function getSupabaseServiceRoleKey() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || ""
 }
 
-export function getSupabaseAdminClient() {
+export function getSupabaseAdminClient(options: { fetch?: typeof fetch } = {}) {
   const supabaseUrl =
     getSupabaseUrl()
 
@@ -75,6 +75,7 @@ export function getSupabaseAdminClient() {
     serviceRoleKey,
     {
       ...serverOnlyRealtimeOptions,
+      ...(options.fetch ? { global: { fetch: options.fetch } } : {}),
       auth: {
         autoRefreshToken: false,
         persistSession: false,

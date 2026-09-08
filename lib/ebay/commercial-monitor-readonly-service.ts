@@ -4124,6 +4124,7 @@ export async function getCommercialMonitorReadonly(
   scope: AccountScope,
   live: EbayCommercialMonitorLiveReadonlyResult,
   now = new Date(),
+  capturedSources?: CommercialMonitorReadonlySources,
 ) {
   if (!scope.accountKey) return unconfiguredReport(scope, live, now)
   if (!supabase) throw new Error("COMMERCIAL_MONITOR_READ_CLIENT_REQUIRED")
@@ -4132,7 +4133,7 @@ export async function getCommercialMonitorReadonly(
     marketplaceId: "EBAY_US",
     accountAlias: scope.accountAlias,
   } satisfies MarketplaceContext
-  const storedSources = await readCommercialMonitorReadonlySources(
+  const storedSources = capturedSources ?? await readCommercialMonitorReadonlySources(
     supabase,
     scope.accountKey,
   )

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { settleReadWithinBudgetV1, type ReadTimingV1 } from "./ebay-seller-os-read-budget-v1"
 
 import {
   readSalesOrderReadonlyAuditV1,
@@ -730,13 +731,29 @@ async function readExperiments(
 export async function readCommercialMonitorReadonlySources(
   supabase: SupabaseClient,
   accountKey: string,
+  options: { deadlineAt?: number; timings?: ReadTimingV1[] } = {},
 ): Promise<CommercialMonitorReadonlySources> {
-  const [registry, identityVerifications, lunaLinkageDecisions] = await Promise.all([
-    readRegistry(supabase, accountKey),
-    readIdentityVerifications(supabase, accountKey),
-    readCanonicalLunaLinkageDecisions(supabase, accountKey),
-  ])
+  const read = <T>(source: string, loader: () => Promise<ReadonlySourceResult<T>>) =>
+    options.deadlineAt === undefined ? loader() : settleReadWithinBudgetV1({
+      deadlineAt: options.deadlineAt, dependency: source, read: loader,
+      timings: options.timings, unavailable: (code) => failure<T>(source, code),
+    })
+  // Only supplies depend on registry/linkage and only lines depend on orders.
+  // A slow registry must not delay independent experiment/stock/order evidence.
+  const registryRead = read("ebay_active_listings", () => readRegistry(supabase, accountKey))
+  const identityRead = read("marketplace_listing_identity_verifications", () => readIdentityVerifications(supabase, accountKey))
+  const linkageRead = read("SELLER_OS_LUNA_LINKAGE_DECISIONS_V1", () => readCanonicalLunaLinkageDecisions(supabase, accountKey))
+  const ordersRead = read("marketplace_order_snapshots", () => readOrders(supabase, accountKey))
+  const suppliesRead = Promise.all([registryRead, linkageRead]).then(([registry, linkage]) =>
+    options.deadlineAt !== undefined && registry.status === "ERROR" && linkage.status === "ERROR"
+      ? failure<ReadonlySupplyRow>("market_radar_latest_variants", "SUPPLY_IDENTITY_EVIDENCE_UNAVAILABLE")
+      : read("market_radar_latest_variants", () => readSupplies(supabase, registry.rows, linkage.rows)))
+  const linesRead = ordersRead.then((orders) => orders.status === "ERROR"
+    ? failure<ReadonlyOrderLineRow>("marketplace_order_line_items", "ORDER_IDENTITY_EVIDENCE_UNAVAILABLE")
+    : read("marketplace_order_line_items", () => readOrderLines(supabase, accountKey,
+        [...new Set(orders.rows.map((order) => order.marketplace_order_id))])))
   const [
+    registry, identityVerifications, lunaLinkageDecisions,
     syncState,
     commercialSnapshots,
     supplies,
@@ -748,24 +765,22 @@ export async function readCommercialMonitorReadonlySources(
     learning,
     experiments,
     liveListingShippingEvidence,
+    orderLines,
   ] = await Promise.all([
-    readSyncState(supabase, accountKey),
-    readCommercialSnapshots(supabase, accountKey),
-    readSupplies(supabase, registry.rows, lunaLinkageDecisions.rows),
-    readSupplySources(supabase),
-    readCanonicalLunaStockJobs(supabase, accountKey),
-    readCanonicalLunaStockObservations(supabase, accountKey),
-    readOrders(supabase, accountKey),
-    readSalesOrderReadonlyAuditV1(supabase, accountKey),
-    readLearning(supabase, accountKey),
-    readExperiments(supabase, accountKey),
-    readLiveListingShippingEvidence(supabase, accountKey),
+    registryRead, identityRead, linkageRead,
+    read("ebay_active_listing_sync_state", () => readSyncState(supabase, accountKey)),
+    read("listing_commercial_snapshots", () => readCommercialSnapshots(supabase, accountKey)),
+    suppliesRead,
+    read("market_radar_sources", () => readSupplySources(supabase)),
+    read("SELLER_OS_LUNA_STOCK_CHECK_JOBS_V1", () => readCanonicalLunaStockJobs(supabase, accountKey)),
+    read("SELLER_OS_LUNA_STOCK_OBSERVATIONS_V1", () => readCanonicalLunaStockObservations(supabase, accountKey)),
+    ordersRead,
+    readSalesOrderReadonlyAuditV1(supabase, accountKey, options),
+    read("ebay_category_learning_adjustments", () => readLearning(supabase, accountKey)),
+    read("ebay_listing_experiments_v1", () => readExperiments(supabase, accountKey)),
+    read("seller_os_live_listing_shipping_evidence", () => readLiveListingShippingEvidence(supabase, accountKey)),
+    linesRead,
   ])
-  const orderLines = await readOrderLines(
-    supabase,
-    accountKey,
-    [...new Set(orders.rows.map((order) => order.marketplace_order_id))],
-  )
   return {
     registry,
     syncState,

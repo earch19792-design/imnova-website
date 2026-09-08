@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { settleReadWithinBudgetV1, type ReadTimingV1 } from "./ebay-seller-os-read-budget-v1"
 
 export type ReadonlySalesAuditSourceStatus = "AVAILABLE" | "PARTIAL" | "ERROR"
 
@@ -165,12 +166,22 @@ async function readSaleDeliveries(
 export async function readSalesOrderReadonlyAuditV1(
   supabase: SupabaseClient,
   accountKey: string,
+  options: { deadlineAt?: number; timings?: ReadTimingV1[] } = {},
 ): Promise<ReadonlySalesOrderAuditV1> {
-  const saleEvents = await readSaleEvents(supabase, accountKey)
-  const saleDeliveries = await readSaleDeliveries(
+  const read = <T>(source: string, loader: () => Promise<ReadonlySalesAuditSourceResult<T>>) =>
+    options.deadlineAt === undefined ? loader() : settleReadWithinBudgetV1({
+      deadlineAt: options.deadlineAt, dependency: source, read: loader,
+      timings: options.timings, unavailable: (code) => ({ source, status: "ERROR" as const,
+        rows: [], truncated: false, limitationCode: code }),
+    })
+  const saleEvents = await read("COMMERCIAL_SALE_EVENTS", () => readSaleEvents(supabase, accountKey))
+  const saleDeliveries = saleEvents.status === "ERROR"
+    ? { source: "COMMERCIAL_SALE_DELIVERY_AUDIT", status: "ERROR" as const,
+        rows: [], truncated: false, limitationCode: "SALE_EVENTS_UNAVAILABLE" }
+    : await read("COMMERCIAL_SALE_DELIVERY_AUDIT", () => readSaleDeliveries(
     supabase,
     accountKey,
     [...new Set(saleEvents.rows.map((event) => event.id))],
-  )
+  ))
   return { saleEvents, saleDeliveries }
 }

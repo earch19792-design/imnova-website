@@ -32,6 +32,7 @@ export type EbayMonitorReadonlyOperation =
   | "FULFILLMENT_GET_ORDERS"
 
 export type EbayMonitorReadonlyCallEvidence = {
+  latencyMs?: number
   operation: EbayMonitorReadonlyOperation
   method: "GET" | "POST"
   endpoint: string

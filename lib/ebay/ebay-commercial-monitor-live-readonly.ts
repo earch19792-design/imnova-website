@@ -99,7 +99,11 @@ type RequestBudget = {
   callsRemaining: number
   maximumCalls: number
   callsStarted: number
+  perCallTimeoutMs?: number
+  signal?: AbortSignal
+  reuseCredentialReads?: boolean
 }
+const tokenReadsByRequest = new WeakMap<EbayMonitorReadonlyCallEvidence[], Map<string, ReturnType<typeof mintAccessToken>>>()
 
 const requestBudgets = new WeakMap<
   EbayMonitorReadonlyCallEvidence[],
@@ -2591,7 +2595,7 @@ function emptyInventory(
   }
 }
 
-function unavailableResult(input: {
+export function unavailableResult(input: {
   accountAlias: string | null
   limitationCode: string
   bindingConfigured: boolean
@@ -2749,6 +2753,7 @@ function canonicalTradingCredentials(environment: NodeJS.ProcessEnv) {
 }
 
 function callEvidence(input: {
+  latencyMs?: number
   operation: EbayMonitorReadonlyOperation
   method: "GET" | "POST"
   endpoint: string
@@ -2792,8 +2797,9 @@ async function allowlistedFetch(input: {
     tradingBody,
   })
   const budget = requestBudgets.get(input.calls)
+  const startedAt = Date.now()
   const remainingMs = budget ? budget.deadlineAt - Date.now() : REQUEST_TIMEOUT_MS
-  if (budget && (budget.callsRemaining <= 0 || remainingMs < 250)) {
+  if (budget && (budget.signal?.aborted || budget.callsRemaining <= 0 || remainingMs < 250)) {
     throw new Error("EBAY_MONITOR_REQUEST_BUDGET_EXHAUSTED")
   }
   if (budget) {
@@ -2801,18 +2807,18 @@ async function allowlistedFetch(input: {
     budget.callsStarted += 1
   }
   try {
+    const timeoutSignal = AbortSignal.timeout(Math.max(1,
+      Math.min(budget?.perCallTimeoutMs ?? REQUEST_TIMEOUT_MS, remainingMs)))
     const response = await input.fetchImpl(input.url, {
       method: input.method,
       headers: input.headers,
       body: input.body,
       cache: "no-store",
       redirect: "error",
-      signal: AbortSignal.timeout(Math.max(
-        1,
-        Math.min(REQUEST_TIMEOUT_MS, remainingMs),
-      )),
+      signal: budget?.signal ? AbortSignal.any([timeoutSignal, budget.signal]) : timeoutSignal,
     })
     const evidence = callEvidence({
+      ...(budget?.reuseCredentialReads ? { latencyMs: Date.now() - startedAt } : {}),
       operation: input.operation,
       method: input.method,
       endpoint: new URL(input.url).pathname,
@@ -2825,6 +2831,7 @@ async function allowlistedFetch(input: {
     return response
   } catch (error) {
     input.calls.push(callEvidence({
+      ...(budget?.reuseCredentialReads ? { latencyMs: Date.now() - startedAt } : {}),
       operation: input.operation,
       method: input.method,
       endpoint: new URL(input.url).pathname,
@@ -2937,7 +2944,22 @@ function assertExactReadonlyRefreshScopes(input: {
   }
 }
 
-async function accessToken(input: {
+async function accessToken(input: Parameters<typeof mintAccessToken>[0]) {
+  assertExactReadonlyRefreshScopes(input)
+  if (!requestBudgets.get(input.calls)?.reuseCredentialReads) return mintAccessToken(input)
+  let cache = tokenReadsByRequest.get(input.calls)
+  if (!cache) { cache = new Map(); tokenReadsByRequest.set(input.calls, cache) }
+  const key = createHash("sha256").update(JSON.stringify([
+    input.credentials, [...input.scopes].sort(),
+  ])).digest("hex")
+  const existing = cache.get(key)
+  if (existing) return existing
+  const pending = mintAccessToken(input)
+  cache.set(key, pending)
+  return pending
+}
+
+async function mintAccessToken(input: {
   operation: "OAUTH_REFRESH_TRADING" | "OAUTH_REFRESH_INVENTORY" |
     "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE" |
     "OAUTH_REFRESH_ANALYTICS" | "OAUTH_REFRESH_FULFILLMENT"
@@ -5548,6 +5570,9 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
   readLimits?: {
     maximumCalls?: number
     budgetMs?: number
+    perCallTimeoutMs?: number
+    signal?: AbortSignal
+    isolateIndependentReads?: boolean
   }
 }): Promise<EbayCommercialMonitorLiveReadonlyResult> {
   const environment = input.environment ?? process.env
@@ -5587,6 +5612,10 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
     callsRemaining: maximumCalls,
     maximumCalls,
     callsStarted: 0,
+    perCallTimeoutMs: Math.min(REQUEST_TIMEOUT_MS,
+      Math.max(250, input.readLimits?.perCallTimeoutMs ?? REQUEST_TIMEOUT_MS)),
+    signal: input.readLimits?.signal,
+    reuseCredentialReads: input.readLimits?.isolateIndependentReads,
   })
   const expiries: string[] = []
   const tradingGrant = scopeGrantEvidence()
@@ -5595,6 +5624,16 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
   const fulfillmentGrant = scopeGrantEvidence()
   const credentials = generalCredentials(environment)
   const tradingCredentials = canonicalTradingCredentials(environment)
+  // Each independent authority retains its own credential/binding checks.
+  // Never make Orders depend on discovery, or launch it twice after discovery.
+  const readOrders = () => ordersRead({ credentials: fulfillmentCredentials(environment),
+    expectedUserId: identity.expectedUserId, expectedFingerprint: identity.expectedAccountFingerprint,
+    fetchImpl, calls, clock, expiries, scopeGrant: fulfillmentGrant })
+  const readInventory = () => inventoryRead({ credentials,
+    expectedUserId: identity.expectedUserId, expectedFingerprint: identity.expectedAccountFingerprint,
+    fetchImpl, calls, clock, expiries, scopeGrant: inventoryGrant })
+  const independentOrders = input.readLimits?.isolateIndependentReads ? readOrders() : null
+  const independentInventory = input.readLimits?.isolateIndependentReads ? readInventory() : null
   let tradingToken = ""
   let verifiedAccount: {
     observedAt: string
@@ -5695,16 +5734,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
     const listingIds = [...new Set(discovery.listings
       .map((listing) => listing.itemId))]
     const [inventory, analyticsReadResult, orders] = await Promise.all([
-      inventoryRead({
-        credentials,
-        expectedUserId: identity.expectedUserId,
-        expectedFingerprint: identity.expectedAccountFingerprint,
-        fetchImpl,
-        calls,
-        clock,
-        expiries,
-        scopeGrant: inventoryGrant,
-      }),
+      independentInventory ?? readInventory(),
       analyticsRead({
         credentials,
         expectedUserId: identity.expectedUserId,
@@ -5716,16 +5746,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
         expiries,
         scopeGrant: analyticsGrant,
       }),
-      ordersRead({
-        credentials: fulfillmentCredentials(environment),
-        expectedUserId: identity.expectedUserId,
-        expectedFingerprint: identity.expectedAccountFingerprint,
-        fetchImpl,
-        calls,
-        clock,
-        expiries,
-        scopeGrant: fulfillmentGrant,
-      }),
+      independentOrders ?? readOrders(),
     ])
     const analytics = marketplace.incomplete &&
         analyticsReadResult.status !== "UNAVAILABLE"
@@ -5966,6 +5987,8 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       bindingConfigured: identity.bound,
       limitationCode: safeCode(error, "EBAY_MONITOR_LIVE_READ_FAILED"),
     })
+    if (independentOrders) result.orders = await independentOrders
+    if (independentInventory) result.discovery.inventory = await independentInventory
     result.calls = calls
     if (verifiedAccount) {
       result.account = {
@@ -5988,9 +6011,11 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
     result.oauth.earliestAccessTokenExpiryAt = expiries.sort()[0] ?? null
     result.oauth.scopes = scopeEvidence({
       baseAvailable: Boolean(verifiedAccount),
-      inventoryAvailable: false,
+      inventoryAvailable: inventoryGrant.bindingVerified &&
+        inventoryGrant.granted.has(INVENTORY_READONLY_SCOPE),
       analyticsAvailable: false,
-      fulfillmentAvailable: false,
+      fulfillmentAvailable: fulfillmentGrant.bindingVerified &&
+        fulfillmentGrant.granted.has(FULFILLMENT_READONLY_SCOPE),
       tradingGrant,
       inventoryGrant,
       analyticsGrant,

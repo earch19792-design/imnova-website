@@ -2,7 +2,7 @@ import { assertCommercialMonitorAssistantDtoSafe } from
   "./commercial-monitor-readonly-contract"
 import { getCommercialMonitorReadonly } from
   "./commercial-monitor-readonly-service"
-import { getEbayCommercialMonitorLiveReadonly } from
+import { getEbayCommercialMonitorLiveReadonly, unavailableResult } from
   "./ebay-commercial-monitor-live-readonly"
 import { getEbayOfficialOrdersLiveReadonly } from
   "./ebay-commercial-monitor-live-readonly"
@@ -39,6 +39,10 @@ import { createSellerOsLunaStockObservationPrebuildStatusV1 } from
 import { getSellerWhatsAppGatewayConfiguration,
   preflightSellerWhatsAppGateway } from "./ebay-seller-whatsapp-gateway"
 import { getSupabaseAdminClient } from "../supabase-admin"
+import { readCommercialMonitorReadonlySources } from "./commercial-monitor-readonly-repository"
+import { createBudgetedReadonlyFetchV1, settleReadWithinBudgetV1,
+  SELLER_OS_COMMERCIAL_CONTEXT_BUDGET_MS, SELLER_OS_COMMERCIAL_LIVE_BUDGET_MS,
+  SELLER_OS_COMMERCIAL_DATABASE_BUDGET_MS, type ReadTimingV1 } from "./ebay-seller-os-read-budget-v1"
 
 export const SELLER_OS_ASSISTANT_MONITOR_SNAPSHOT_TTL_MS = 5 * 60_000
 export const SELLER_OS_POST_SALE_DASHBOARD_STATUS_VERSION =
@@ -59,6 +63,11 @@ function withAccountTrafficCacheTelemetryV1<T>(value: T, cacheHitCount: number):
     ? (accountTraffic as Record<string, number>).cacheHitCount : 0
   return {
     ...monitor,
+    ...(monitor.readBudget && typeof monitor.readBudget === "object"
+      ? { readBudget: { ...monitor.readBudget as Record<string, unknown>,
+          snapshotReused: cacheHitCount > 0,
+          snapshotAgeMs: Math.max(0, Date.now() - Date.parse(String(
+            (monitor.readBudget as Record<string, unknown>).capturedAt))) } } : {}),
     backend: {
       ...backend as Record<string, unknown>,
       trafficScopes: {
@@ -73,15 +82,49 @@ function withAccountTrafficCacheTelemetryV1<T>(value: T, cacheHitCount: number):
 }
 
 export async function loadSellerOsAssistantMonitorV1() {
+  const startedAt = Date.now()
   const account = getEbaySellerAccountScopeConfiguration()
-  const live = await getEbayCommercialMonitorLiveReadonly({ accountKey: account.accountKey,
-    accountAlias: account.accountAlias })
+  const databaseTimings: ReadTimingV1[] = []
+  const authorityTimings: ReadTimingV1[] = []
+  const databaseDeadlineAt = startedAt + SELLER_OS_COMMERCIAL_DATABASE_BUDGET_MS
+  const supabase = account.accountKey ? getSupabaseAdminClient({ fetch:
+    createBudgetedReadonlyFetchV1({ deadlineAt: databaseDeadlineAt, timings: databaseTimings }) }) : null
+  const storedRead = account.accountKey && supabase
+    ? readCommercialMonitorReadonlySources(supabase, account.accountKey, {
+        deadlineAt: databaseDeadlineAt, timings: authorityTimings }) : Promise.resolve(undefined)
+  const liveRead = settleReadWithinBudgetV1({
+    deadlineAt: startedAt + SELLER_OS_COMMERCIAL_LIVE_BUDGET_MS + 500,
+    dependency: "EBAY_LIVE_READONLY", timings: authorityTimings,
+    read: () => getEbayCommercialMonitorLiveReadonly({ accountKey: account.accountKey,
+      accountAlias: account.accountAlias, readLimits: {
+        budgetMs: SELLER_OS_COMMERCIAL_LIVE_BUDGET_MS, perCallTimeoutMs: 3_500,
+        maximumCalls: 60, isolateIndependentReads: true,
+        signal: AbortSignal.timeout(SELLER_OS_COMMERCIAL_LIVE_BUDGET_MS),
+      } }),
+    unavailable: (code) => unavailableResult({ accountAlias: account.accountAlias,
+      bindingConfigured: Boolean(account.accountKey), limitationCode: code }),
+  })
+  const [live, storedSources] = await Promise.all([liveRead, storedRead])
+  const projectionStartedAt = Date.now()
   const monitor = await getCommercialMonitorReadonly(
-    account.accountKey ? getSupabaseAdminClient() : null,
+    supabase,
     { accountKey: account.accountKey, accountAlias: account.accountAlias,
-      configurationReason: account.reason }, live)
+      configurationReason: account.reason }, live, new Date(), storedSources)
   return {
     ...assertCommercialMonitorAssistantDtoSafe(monitor),
+    readBudget: {
+      internalBudgetMs: SELLER_OS_COMMERCIAL_CONTEXT_BUDGET_MS,
+      elapsedMs: Date.now() - startedAt,
+      projectionMs: Date.now() - projectionStartedAt,
+      databaseReadCount: databaseTimings.length,
+      externalCallCount: live.calls.length,
+      retryCount: live.analytics.accountTraffic.retryCount ?? 0,
+      authorityTimings: authorityTimings.map((timing) => ({ ...timing })),
+      databaseTimings: databaseTimings.map((timing) => ({ ...timing })),
+      externalTimings: live.calls.map(({ operation, latencyMs, status }) => ({
+        dependency: operation, elapsedMs: latencyMs ?? null, status })),
+      capturedAt: new Date().toISOString(), snapshotReused: false,
+    },
     officialOrders: buildSellerOsOfficialOrdersReadV1({
       orders: live.orders,
       analytics: live.analytics,

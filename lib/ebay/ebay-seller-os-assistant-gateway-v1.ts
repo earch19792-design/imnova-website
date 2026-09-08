@@ -18,6 +18,7 @@ export const SELLER_OS_ASSISTANT_MAX_ITEMS = 100
 
 type SellerOsAssistantMonitorWithOfficialOrdersV1 = CommercialMonitorGetDto & {
   officialOrders?: SellerOsOfficialOrdersReadV1
+  readBudget?: Record<string, unknown>
 }
 
 export const SELLER_OS_ASSISTANT_TOOLS_V1 = Object.freeze([
@@ -257,6 +258,8 @@ export function buildAssistantCommercialContextV1(
     typeof monitor.backend.kpis.activeListings.value === "number"
   return { contractVersion: SELLER_OS_ASSISTANT_GATEWAY_VERSION,
     generatedFrom: monitor.contractVersion, observedAt: monitor.generatedAt,
+    readBudget: (monitor as SellerOsAssistantMonitorWithOfficialOrdersV1).readBudget ?? null,
+    sourceReaders: monitor.connection?.readers ?? null,
     accountTraffic: monitor.backend.trafficScopes.accountTraffic,
     currentLivePortfolio: monitor.backend.trafficScopes.currentLivePortfolio,
     monitorCoverage: monitor.backend.monitorCoverage
