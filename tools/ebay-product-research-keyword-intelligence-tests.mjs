@@ -37,7 +37,7 @@ for(const fn of ['product_research_json_text_array_v1','derive_product_research_
  const start=prior2.indexOf(`create or replace function public.${fn}(`)
  await db.exec(prior2.slice(start,prior2.indexOf('$$;',start)+3))
 }
-const migration=await readFile(new URL('../supabase/migrations/20260908093545_product_research_keyword_intelligence_v1.sql',import.meta.url),'utf8')
+const migration=await readFile(new URL('../supabase/migrations/20260908094555_product_research_keyword_intelligence_v1.sql',import.meta.url),'utf8')
 await db.exec(migration)
 const id = n => `10000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 const fact=(FIELD,VALUE)=>({FIELD,VALUE,SEMANTIC_CLASS:'FACT',EVIDENCE_STATUS:'PROVEN',
