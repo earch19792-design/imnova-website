@@ -1,5 +1,5 @@
 -- Read-only handoff. No Keyword Intelligence derivation, refresh or writes.
-create function public.read_product_research_keyword_handoff_v1(
+create or replace function public.read_product_research_keyword_handoff_v1(
  p_account_key text,p_product_id text,p_variant_id text,p_candidate_key text,
  p_opportunity_id uuid,p_plan_id uuid default null
 ) returns jsonb language plpgsql stable security invoker
