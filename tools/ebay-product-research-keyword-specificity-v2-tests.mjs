@@ -61,8 +61,11 @@ const evidence=Array.from({length:8},(_,i)=>({...ev(i+1,'nylon funnel'),query_pr
 const queries=[{query_hash:'query-a',query_intent:'CORE_FAMILY_QUERY'},{query_hash:'query-b',query_intent:'SEMANTIC_EXPANSION_QUERY'}]
 const prereq={identityMatched:true,researchComplete:true}
 async function derive(t=truth,e=evidence,q=queries,p=prereq) {
- return (await db.query('select derive_product_research_keyword_intelligence_v2_1($1,$2,$3,$4) d',
- [t,e,q,p].map(JSON.stringify))).rows[0].d
+ const args=[t,e,q,p].map(JSON.stringify)
+ const baseline=(await db.query('select derive_product_research_keyword_intelligence_v2_1_baseline($1,$2,$3,$4) d',args)).rows[0].d
+ const optimized=(await db.query('select derive_product_research_keyword_intelligence_v2_1($1,$2,$3,$4) d',args)).rows[0].d
+ assert.deepEqual(optimized,baseline)
+ return optimized
 }
 const term=(d,t)=>d.TERMS.find(x=>x.TERM===t)
 async function test(name,fn){await fn();console.log(name)}
@@ -71,6 +74,49 @@ const migrationV2Base=await readFile(new URL('../supabase/migrations/20260908101
 await db.exec(migrationV2Base)
 const migrationV2=await readFile(new URL('../supabase/migrations/20260908103043_product_research_keyword_concept_boundaries_v2_1.sql',import.meta.url),'utf8')
 await db.exec(migrationV2)
+await db.exec(`alter function public.derive_product_research_keyword_intelligence_v2_1(jsonb,jsonb,jsonb,jsonb)
+  rename to derive_product_research_keyword_intelligence_v2_1_baseline`)
+const efficiencyMigration=await readFile(new URL('../supabase/migrations/20260908134000_product_research_keyword_operational_efficiency_v1.sql',import.meta.url),'utf8')
+await db.exec(efficiencyMigration)
+
+await test('SELLER_OS_OPERATIONAL_EFFICIENCY_GATE_V1',async()=>{
+ const start=efficiencyMigration.indexOf('create or replace function public.derive_product_research_keyword_intelligence_v2_1_from_inputs(')
+ const end=efficiencyMigration.indexOf('$$;',efficiencyMigration.indexOf('as $$',start))+3
+ const body=efficiencyMigration.slice(start,end)
+ assert.doesNotMatch(body,/derive_product_research_keyword_intelligence_v1\s*\(/)
+ assert.equal((body.match(/supported as materialized\s*\(/g)??[]).length,1)
+ assert.doesNotMatch(body,/from supported s\s+where s\.term\s*=\s*c\.term/)
+ assert.match(body,/title_tokens/)
+ assert.match(body,/term_tokens/)
+ assert.match(body,/keyword_contains_tokens_v2_1/)
+ for(const [textValue,termValue] of [
+  ['Nylon Funnels, Set of 3','nylon funnel'],
+  ['stainless-steel strainers','stainless steel strainer'],
+  ['holder for funnel','funnel'],
+  ['', 'funnel'],
+  [null, 'funnel']
+ ]) {
+  const row=(await db.query(`select
+    keyword_contains_v1($1,$2) baseline,
+    keyword_contains_tokens_v2_1(keyword_tokens_v1($1),keyword_tokens_v1($2)) optimized`,
+    [textValue,termValue])).rows[0]
+  assert.equal(row.optimized,row.baseline)
+ }
+ for(const title of ['nylon funnel','nylon tapered funnel','nylon narrow tapered funnel']) {
+  const row=(await db.query(`select
+    keyword_observed_concept_span_v2_1($1,'nylon','funnel',$2) baseline,
+    keyword_observed_concept_span_tokens_v2_1(
+      keyword_tokens_v1(regexp_replace(lower($1),
+        '\\m(for|with|fits|fit|compatible|replacement|by|brand|model|mpn)\\M.*$','','g')),
+      keyword_tokens_v1('nylon'),keyword_tokens_v1('funnel'),$2) optimized`,
+    [title,['nylon','tapered','funnel']])).rows[0]
+  assert.deepEqual(row.optimized,row.baseline)
+ }
+ console.log('FULL_V1_RANKING_INSIDE_V2_1=0')
+ console.log('SUPPORTED_RELATION_BUILDS=1')
+ console.log('SUPPORTED_CORRELATED_RESCANS=0')
+ console.log('TOKEN_NORMALIZATION_REUSE=true')
+})
 
 const good=await derive()
 const promoted=d=>d.TERMS.filter(t=>t.CLASSIFICATION!=='REJECTED_TERMS')
@@ -281,6 +327,46 @@ await test('PASS_UNIT_HEAD_FAILS_CLOSED_WITHOUT_CHANGING_CLASSIFIER',async()=>{
  assert.equal(d.PRIMARY_KEYWORD,'UNPROVEN')
  assert.ok(d.BLOCKERS.includes('UNIT_OR_NUMERIC_TOKEN_IS_NOT_A_PRODUCT_ENTITY'))
  assert.equal(d.KEYWORD_DECISION_READY,false)
+})
+
+await test('PASS_OPTIMIZED_INPUT_BOUNDS_AND_FAIL_CLOSED_PARITY',async()=>{
+ for(const args of [
+  [null,evidence,queries,prereq],
+  [truth,null,queries,prereq],
+  [truth,evidence,null,prereq],
+  [{...truth,contractVersion:'UNKNOWN'},evidence,queries,prereq],
+  [truth,evidence,queries,{...prereq,identityMatched:false}]
+ ]) {
+  const d=await derive(...args)
+  assert.equal(d.KEYWORD_DECISION_READY,false)
+  assert.equal(d.PRIMARY_KEYWORD,'UNPROVEN')
+ }
+})
+
+await test('PASS_SEMANTIC_NOOP_FULL_DERIVE_ZERO',async()=>{
+ await db.exec(`
+   create table efficiency_derive_counter(calls integer not null);
+   insert into efficiency_derive_counter values(0);
+   alter function public.derive_product_research_keyword_intelligence_v2_1_from_inputs(jsonb,jsonb,jsonb,jsonb)
+     rename to derive_product_research_keyword_intelligence_v2_1_from_inputs_actual;
+   create function public.derive_product_research_keyword_intelligence_v2_1_from_inputs(
+     p_truth jsonb,p_queries jsonb,p_prerequisites jsonb,p_base jsonb
+   ) returns jsonb language plpgsql as $$
+   begin
+     update efficiency_derive_counter set calls=calls+1;
+     return public.derive_product_research_keyword_intelligence_v2_1_from_inputs_actual(
+       p_truth,p_queries,p_prerequisites,p_base);
+   end;
+   $$;
+ `)
+ const result=(await db.query(
+   'select refresh_product_research_keyword_intelligence_v1($1) result',[id(2)]
+ )).rows[0].result
+ assert.equal(result.CHANGED,false)
+ assert.equal(Number((await db.query(
+   'select calls from efficiency_derive_counter'
+ )).rows[0].calls),0)
+ console.log('SEMANTIC_NOOP_FULL_DERIVE=0')
 })
 
 await db.close()
