@@ -22,10 +22,12 @@ export function projectLunaFieldTruthV1(value: unknown, now: Date) {
       candidate.SOURCE_EVIDENCE.length > 0 && typeof candidate.EVIDENCE_ID === "string"
     const semantic = candidate.SEMANTIC_CLASS
     const explicitMissing = semantic === "MISSING" && candidate.VALUE === null
-    const proven = semantic === "FACT" && candidate.EVIDENCE_STATUS === "PROVEN" && supported
+    const proven = semantic === "FACT" && candidate.EVIDENCE_STATUS === "PROVEN" && supported && candidate.VALUE !== null
     const claim = semantic === "SUPPLIER_CLAIM" && candidate.EVIDENCE_STATUS === "UNPROVEN" && supported
+    const inferred = semantic === "INFERRED" && candidate.EVIDENCE_STATUS === "UNPROVEN" &&
+      supported && typeof candidate.REASONING_BASIS === "string"
     const contradicted = semantic === "CONTRADICTED" && candidate.CONTRADICTION === true && supported
-    const accepted = explicitMissing || proven || claim || contradicted
+    const accepted = explicitMissing || proven || claim || inferred || contradicted
     const source = accepted ? candidate : {
       FIELD: name, VALUE: null, SEMANTIC_CLASS: "MISSING", EVIDENCE_STATUS: "MISSING",
       SOURCE: "LUNA_EXACT_VARIANT", SOURCE_AUTHORITY: "SUPPLIER",
