@@ -1,0 +1,4907 @@
+{
+  "TASK": "SELLER_OS_PRODUCT_CASE_RELAY_STABILITY_SYSTEMIC_FIX",
+  "STATUS": "PASS",
+  "FIRST_BROKEN_TRANSITION": "OPTIONAL_DURABLE_AUTHORITY_READ → UNCONDITIONAL_ASSERT_READ → WHOLE_PRODUCT_CASE_RELAY_502",
+  "ROOT_CAUSE": "Product Case treated optional DB projections as fatal and its relay mapped every thrown error to 502. Critical queue resolution, optional package and optional active-listing enrichment formed a serial chain without a Product Case deadline; SDK retries were enabled. Source reads had no abort signal. Expected transient/slow DB failures could therefore destroy independently proven Luna truth or exceed MCP's 30-second deadline.",
+  "HTTP_502_ORIGIN": "APPLICATION",
+  "TIMEOUT_ORIGIN": "PRODUCT_CASE_UNBOUNDED_DATABASE_READ_CHAIN",
+  "SYSTEMIC_FAILURE_PATH_PROVEN": true,
+  "HISTORICAL_EXACT_FAILING_DEPENDENCY": "UNPROVEN: previous deployed relay sanitized the original cause; no fabricated retrospective per-query timing.",
+  "OBSERVED_UPSTREAM_FAILURE": "Direct existing DB Data API scope preflight returned HTTP 521 in this session. The underlying infrastructure producing 521 is not independently proven.",
+  "FILES_CHANGED": [
+    "lib/seller-os/audit-observability-gateway-v1.ts",
+    "lib/seller-os/product-case-read-budget-v1.ts",
+    "lib/seller-os/product-case-read-budget-v1.test.mjs",
+    "lib/ebay/ebay-seller-os-cloud-read-relay-v1.ts"
+  ],
+  "CODE_CHANGES": [
+    "One request-local global budget; critical identity reads separately bounded; independent package/active reads concurrent.",
+    "Every source query scoped and capped, abortable including transfer, with retry(false). No portfolio pagination or new API authority.",
+    "Expected optional DB failures map to existing UNAVAILABLE field/stage semantics with explicit failure codes. Independent Luna truth and successful fallback authorities preserved.",
+    "Critical read failure returns an explicit UNAVAILABLE identity/truth envelope; no invented identity, empty success case, zero or false.",
+    "Unexpected programming errors rethrow, emit bounded safe diagnostics, and remain visible as application 500; not swallowed as missing evidence.",
+    "SUMMARY now retains all 25 canonical Luna fields alongside its existing selected downstream fields. Same durable Product Truth projector, classifications and values.",
+    "Added safe READ_DIAGNOSTICS for authority, latency, query count, HTTP/SQL classification, retry count and budget."
+  ],
+  "PRODUCT_CASE_INTERNAL_BUDGET_MS": 18000,
+  "PRODUCT_CASE_CRITICAL_BUDGET_MS": 7000,
+  "PRODUCT_CASE_PER_READ_BUDGET_MS": 4000,
+  "PRODUCT_CASE_PROJECTION_RESERVE_MS": 1000,
+  "MCP_DEADLINE_MS": 30000,
+  "AUTH_UNCHANGED": true,
+  "READ_ONLY_SAFETY_UNCHANGED": true,
+  "CURRENT_CONNECTED_RELAY_CHANGED": false,
+  "CODE_PASS": true,
+  "COMMIT_SHA": "c5d4ae2ae440f8ad8c0718500545031f684e7ceb",
+  "DEPLOYMENT_ID": "dpl_rhnJUx3ucMRDL2rTEXoGS7PaVL6E",
+  "CANDIDATE_PREVIEW_URL": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app/api/seller-os/assistant/cloud-read-relay",
+  "BASE_CORRECTED_COMMIT": "cee1c7ac29813e603e2de54eff9b87f713b558a2",
+  "COMMERCIAL_CONTEXT_FIX_COMMIT": "9bb108f434fcb3b42b61cceabdefaecab8ba1c6f",
+  "MIGRATIONS": [],
+  "PRODUCT_TRUTH_SEMANTICS_CHANGED": false,
+  "KNOWN_RESEARCH_SHIPPING_GAPS": "Unchanged. No source acquisition, reclassification, inferred receipts or fabricated evidence.",
+  "BASELINE_COMPONENT_AUDIT": [
+    {
+      "DEPENDENCY": "IDENTITY_RESOLUTION",
+      "AUTHORITY": "ebay_luna_opportunity_queue",
+      "LATENCY_MS": 822,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": null,
+      "FAILURE_MODE": "BEFORE: read error thrown into whole-case relay 502; no product-case application deadline.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Critical canonical queue identity; other entry routes can first read product-case/package/item identity."
+    },
+    {
+      "DEPENDENCY": "LUNA_SOURCE",
+      "AUTHORITY": "ebay_luna_opportunity_queue",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No additional I/O; existing missing/unproven semantics or shared evidence.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Reuses the captured queue row; no new Luna fetch."
+    },
+    {
+      "DEPENDENCY": "PRODUCT_TRUTH",
+      "AUTHORITY": "ebay_luna_opportunity_queue.assessment.productTruth",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No additional I/O; existing missing/unproven semantics or shared evidence.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Pure projection of durable assessment.productTruth.fieldTruthV1; no acquisition or materialization."
+    },
+    {
+      "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+      "AUTHORITY": "marketplace_product_research_capture_observations",
+      "LATENCY_MS": 1223,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": null,
+      "FAILURE_MODE": "BEFORE: read error thrown into whole-case relay 502; no product-case application deadline.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Existing variant-scoped projection; known coverage gap retained."
+    },
+    {
+      "DEPENDENCY": "SHIPPING_PROJECTION",
+      "AUTHORITY": "seller_os_luna_shipping_job_claims",
+      "LATENCY_MS": 727,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": null,
+      "FAILURE_MODE": "BEFORE: read error thrown into whole-case relay 502; no product-case application deadline.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Existing candidate-scoped trace receipt; no new shipping facts."
+    },
+    {
+      "DEPENDENCY": "PRICING_ECONOMICS",
+      "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No additional I/O; existing missing/unproven semantics or shared evidence.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Not queried for Golden because no current eBay item is resolved; existing UNPROVEN/MISSING retained."
+    },
+    {
+      "DEPENDENCY": "PACKAGE",
+      "AUTHORITY": "ebay_listing_packages",
+      "LATENCY_MS": 498,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": null,
+      "FAILURE_MODE": "BEFORE: read error thrown into whole-case relay 502; no product-case application deadline.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Optional enrichment by account and canonical candidate."
+    },
+    {
+      "DEPENDENCY": "AUTHORIZATION",
+      "AUTHORITY": "ebay_draft_only_approvals",
+      "LATENCY_MS": 1270,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": null,
+      "FAILURE_MODE": "BEFORE: read error thrown into whole-case relay 502; no product-case application deadline.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Read existing package authorization only."
+    },
+    {
+      "DEPENDENCY": "PUBLISHER",
+      "AUTHORITY": "ebay_draft_only_execution_ledger + ebay_authorized_listing_publications + seller_os_publisher_batch_children_v1",
+      "LATENCY_MS": 1350,
+      "DB_READ_COUNT": 3,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": null,
+      "FAILURE_MODE": "BEFORE: read error thrown into whole-case relay 502; no product-case application deadline.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Existing scoped execution/publication/child receipts; no dispatch."
+    },
+    {
+      "DEPENDENCY": "OFFICIAL_EBAY_READBACK",
+      "AUTHORITY": "ebay_active_listings",
+      "LATENCY_MS": 168,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": null,
+      "FAILURE_MODE": "BEFORE: read error thrown into whole-case relay 502; no product-case application deadline.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Existing account+SKU scoped durable readback; no official eBay API call in Product Case."
+    },
+    {
+      "DEPENDENCY": "STOCK",
+      "AUTHORITY": "ebay_luna_opportunity_queue",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No additional I/O; existing missing/unproven semantics or shared evidence.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Reuse queue projection; do not invent numeric stock or refresh it."
+    },
+    {
+      "DEPENDENCY": "ANALYTICS",
+      "AUTHORITY": "ebay_listing_performance_snapshots",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No additional I/O; existing missing/unproven semantics or shared evidence.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Existing UNPROVEN stage; no reader executed."
+    },
+    {
+      "DEPENDENCY": "ORDERS",
+      "AUTHORITY": "marketplace_order_snapshots",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No additional I/O; existing missing/unproven semantics or shared evidence.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Existing UNPROVEN stage; no reader executed."
+    },
+    {
+      "DEPENDENCY": "MAYEL",
+      "AUTHORITY": "ebay_mayel_visual_phase_b_executions_v1",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No additional I/O; existing missing/unproven semantics or shared evidence.",
+      "LATENCY_DEFINITION": "Max individual full-response transport latency across two measured baseline requests; 0 means no additional I/O, not measured CPU zero.",
+      "NOTE": "Existing UNPROVEN stage; no reader executed."
+    }
+  ],
+  "BASELINE_SOURCE_READS": [
+    {
+      "phase": "baseline-source-audit",
+      "run": 1,
+      "elapsedMs": 2704,
+      "stage": "PARTIAL",
+      "fieldCount": 37,
+      "readBudget": null,
+      "calls": [
+        {
+          "dependency": "ebay_luna_opportunity_queue",
+          "startedMs": 2,
+          "method": "GET",
+          "scoped": true,
+          "limit": "3",
+          "elapsedMs": 662,
+          "httpStatus": 200,
+          "bytes": 464688
+        },
+        {
+          "dependency": "ebay_listing_packages",
+          "startedMs": 669,
+          "method": "GET",
+          "scoped": true,
+          "limit": "1",
+          "elapsedMs": 498,
+          "httpStatus": 200,
+          "bytes": 638382
+        },
+        {
+          "dependency": "ebay_active_listings",
+          "startedMs": 1172,
+          "method": "GET",
+          "scoped": true,
+          "limit": "1",
+          "elapsedMs": 168,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "ebay_draft_only_execution_ledger",
+          "startedMs": 1342,
+          "method": "GET",
+          "scoped": true,
+          "limit": "5",
+          "elapsedMs": 541,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "ebay_authorized_listing_publications",
+          "startedMs": 1343,
+          "method": "GET",
+          "scoped": true,
+          "limit": "5",
+          "elapsedMs": 345,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "seller_os_publisher_batch_children_v1",
+          "startedMs": 1344,
+          "method": "GET",
+          "scoped": true,
+          "limit": "5",
+          "elapsedMs": 1350,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "marketplace_product_research_capture_observations",
+          "startedMs": 1345,
+          "method": "GET",
+          "scoped": true,
+          "limit": "100",
+          "elapsedMs": 1223,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "seller_os_luna_shipping_job_claims",
+          "startedMs": 1346,
+          "method": "GET",
+          "scoped": true,
+          "limit": "1",
+          "elapsedMs": 709,
+          "httpStatus": 200,
+          "bytes": 630
+        },
+        {
+          "dependency": "ebay_draft_only_approvals",
+          "startedMs": 1347,
+          "method": "GET",
+          "scoped": true,
+          "limit": "5",
+          "elapsedMs": 1270,
+          "httpStatus": 200,
+          "bytes": 2
+        }
+      ],
+      "externalCallCount": 0,
+      "writeCount": 0
+    },
+    {
+      "phase": "baseline-source-audit",
+      "run": 2,
+      "elapsedMs": 2183,
+      "stage": "PARTIAL",
+      "fieldCount": 37,
+      "readBudget": null,
+      "calls": [
+        {
+          "dependency": "ebay_luna_opportunity_queue",
+          "startedMs": 2,
+          "method": "GET",
+          "scoped": true,
+          "limit": "3",
+          "elapsedMs": 822,
+          "httpStatus": 200,
+          "bytes": 464688
+        },
+        {
+          "dependency": "ebay_listing_packages",
+          "startedMs": 828,
+          "method": "GET",
+          "scoped": true,
+          "limit": "1",
+          "elapsedMs": 450,
+          "httpStatus": 200,
+          "bytes": 638382
+        },
+        {
+          "dependency": "ebay_active_listings",
+          "startedMs": 1285,
+          "method": "GET",
+          "scoped": true,
+          "limit": "1",
+          "elapsedMs": 166,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "ebay_draft_only_execution_ledger",
+          "startedMs": 1452,
+          "method": "GET",
+          "scoped": true,
+          "limit": "5",
+          "elapsedMs": 331,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "ebay_authorized_listing_publications",
+          "startedMs": 1453,
+          "method": "GET",
+          "scoped": true,
+          "limit": "5",
+          "elapsedMs": 364,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "seller_os_publisher_batch_children_v1",
+          "startedMs": 1454,
+          "method": "GET",
+          "scoped": true,
+          "limit": "5",
+          "elapsedMs": 606,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "marketplace_product_research_capture_observations",
+          "startedMs": 1454,
+          "method": "GET",
+          "scoped": true,
+          "limit": "100",
+          "elapsedMs": 429,
+          "httpStatus": 200,
+          "bytes": 2
+        },
+        {
+          "dependency": "seller_os_luna_shipping_job_claims",
+          "startedMs": 1455,
+          "method": "GET",
+          "scoped": true,
+          "limit": "1",
+          "elapsedMs": 727,
+          "httpStatus": 200,
+          "bytes": 630
+        },
+        {
+          "dependency": "ebay_draft_only_approvals",
+          "startedMs": 1455,
+          "method": "GET",
+          "scoped": true,
+          "limit": "5",
+          "elapsedMs": 507,
+          "httpStatus": 200,
+          "bytes": 2
+        }
+      ],
+      "externalCallCount": 0,
+      "writeCount": 0
+    }
+  ],
+  "DIAGNOSTIC_PREFLIGHT_FAILURES": [
+    {
+      "phase": "initial-corrected-local-diagnostic",
+      "status": "FAILED",
+      "exitCode": 1,
+      "perCaseRowsRecorded": 0,
+      "exactFailureCode": "UNPROVEN: preflight code was not instrumented in that attempt",
+      "retained": true
+    },
+    {
+      "phase": "scope-preflight",
+      "status": "FAILED",
+      "httpStatus": 521,
+      "code": null,
+      "scopeCount": 0,
+      "productCaseReaderStarted": false,
+      "secretsDisplayed": false
+    }
+  ],
+  "BASELINE_PREVIOUS_FAILURES": [
+    {
+      "source": "previous Commercial Context certification report",
+      "failure": "Product Case HTTP 502"
+    },
+    {
+      "source": "previous Commercial Context certification report",
+      "failure": "Product Case MCP timeout at 30000ms"
+    }
+  ],
+  "REGRESSION_TESTS": {
+    "PASS_PRODUCT_CASE_WITHIN_MCP_BUDGET": true,
+    "PASS_OPTIONAL_SLOW_DEPENDENCY_DOES_NOT_502_WHOLE_CASE": true,
+    "PASS_CRITICAL_IDENTITY_FAILURE_FAILS_CLOSED": true,
+    "PASS_TIMEOUT_REMAINS_UNAVAILABLE_NOT_ZERO": true,
+    "PASS_INDEPENDENT_EVIDENCE_PRESERVED": true,
+    "PASS_GLOBAL_DEADLINE_ENFORCED": true,
+    "PASS_NO_UNBOUNDED_RETRIES": true,
+    "PASS_NO_PORTFOLIO_SCAN": true,
+    "PASS_25_OF_25_PRODUCT_TRUTH_PARITY_PRESERVED": true,
+    "PASS_PRODUCT_TRUTH_STAGE_PARTIAL_PRESERVED": true,
+    "PASS_READ_ONLY_SAFETY": true
+  },
+  "ADDITIONAL_GUARDS": [
+    "HTTP521 classified without payload exposure",
+    "CONTRADICTED Luna evidence remains contradicted",
+    "Unexpected TypeError remains visible and logged safely",
+    "Actual relay handler returns 200 partial for optional timeout and 500 for injected programming exception"
+  ],
+  "VALIDATION": {
+    "typescript": "PASS --noEmit --incremental false, 8GB heap",
+    "suites": "8/8: Product Case budget, audit projection, relay, MCP transport, assistant runtime, gateway, commercial coordinator and read-only foundation",
+    "productCaseFocusedTests": 15,
+    "diffCheck": "PASS",
+    "harnessSetupNote": "Initial local diagnostic used a previously redacted environment export and stopped before I/O on ACCOUNT_BINDING_MISSING. It was replaced with the already configured read-only admin environment and canonical package account-scope read; no credentials or runtime configuration were written."
+  },
+  "PREVIEW_DEPLOYMENT_PREFLIGHT": [
+    {
+      "phase": "preflight",
+      "configDigest": "ee12bcd756ee81dfe7f0ad06cbba023d0cc5aaa4a7df5ccfdc4faf0332d9bdb9",
+      "projectId": "prj_a6N1XDfeaKAiR5QmmNFYF16Nmqe5",
+      "sourceSha": "c5d4ae2ae440f8ad8c0718500545031f684e7ceb",
+      "previewEnvironmentScope": "feature/centralize-ebay-mobile-center",
+      "protection": {
+        "deploymentType": "all_except_custom_domains"
+      },
+      "secretReuse": "EXISTING_VERCEL_BRANCH_SCOPE_NO_COPY",
+      "connectedRelayChanged": false
+    },
+    {
+      "phase": "deployment",
+      "id": "dpl_rhnJUx3ucMRDL2rTEXoGS7PaVL6E",
+      "url": "imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "readyState": "INITIALIZING",
+      "target": null,
+      "gitSource": {
+        "type": "github",
+        "repoId": 1239344127,
+        "ref": "feature/centralize-ebay-mobile-center",
+        "sha": "c5d4ae2ae440f8ad8c0718500545031f684e7ceb"
+      },
+      "reused": false,
+      "projectConfigurationChanged": false,
+      "connectedRelayChanged": false
+    }
+  ],
+  "RUNTIME_BEFORE": {
+    "observedAt": "2026-09-08T02:01:32.421Z",
+    "overallStatus": "HEALTHY",
+    "mcpPid": 2400478,
+    "tunnelPid": 2425013,
+    "restartCount": 0,
+    "catalog": 28,
+    "workspaceBinding": "MATCHED"
+  },
+  "CONNECTED_RELAY_URL": "https://imnova-website-z1qh-ckh7qtt7y-earch19792-6888s-projects.vercel.app/api/seller-os/assistant/cloud-read-relay",
+  "CONNECTED_CONFIG_SHA256_BEFORE": "ee12bcd756ee81dfe7f0ad06cbba023d0cc5aaa4a7df5ccfdc4faf0332d9bdb9",
+  "SOURCE_PRIORITY": "Existing canonical queue and durable field-truth receipts only. Optional package/reference values cannot become Luna truth.",
+  "SUPABASE_SKILL_APPLICATION": "Verified official abortSignal documentation and installed SDK per-call retry(false); no schema/RLS/auth or credentials changes.",
+  "DOCS_REFERENCES": [
+    "https://supabase.com/docs/reference/javascript/using-modifiers-abortsignal",
+    "https://supabase.com/changelog/45071-automatic-postgrest-retries-for-transient-errors"
+  ],
+  "CANARY_RULES": {
+    "product": "Golden LUNA_PRODUCT_ID 9266387058912 only",
+    "modes": [
+      "SUMMARY",
+      "EVIDENCE",
+      "TRACE"
+    ],
+    "repetitionsPerMode": 3,
+    "pauseBetweenRunsMs": 20000,
+    "parallelLoadTest": false,
+    "route": "Existing MCP server factory + SDK in-memory transport + existing signed protected cloud-read-relay executor",
+    "requestDeadlineMs": 30000,
+    "reference": "Existing immutable corrected endpoint canary receipt; field values never manually introduced",
+    "newRuntimeOrService": false
+  },
+  "KEYWORD_INTELLIGENCE_ADVANCED": false,
+  "E2E_CERTIFIED": false,
+  "GENERATED_AT": "2026-09-08T02:09:03.540Z",
+  "HTTP_502_ORIGIN_BASIS": "Legacy application/relay error mapping and controlled regression identify the systemic amplification path. The exact upstream trigger for each previous physical 502/timeout remains unrecoverable from prior sanitized logs.",
+  "SLOWEST_DEPENDENCY": "PACKAGE",
+  "SLOWEST_DEPENDENCY_AUTHORITY": "ebay_listing_packages",
+  "SLOWEST_DEPENDENCY_LATENCY_MS": 875,
+  "CANARY_RUN_COUNT": 9,
+  "SUCCESS_COUNT": 9,
+  "HTTP_502_COUNT": 0,
+  "HTTP_500_COUNT": 0,
+  "MCP_TIMEOUT_COUNT": 0,
+  "P50_LATENCY_MS": 1869,
+  "P95_LATENCY_MS": 3117,
+  "MAX_LATENCY_MS": 3117,
+  "GOLDEN_PRODUCT_TRUTH_STAGE": "PARTIAL",
+  "GOLDEN_FIELD_PARITY": "25/25",
+  "GOLDEN_PARITY_PASS": true,
+  "GOLDEN_FIELD_COMPARISON": [
+    {
+      "FIELD": "LUNA_PRODUCT_ID",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "LUNA_PRODUCT_ID",
+        "VALUE": "9266387058912",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "LUNA_PRODUCT_ID",
+        "VALUE": "9266387058912",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "LUNA_VARIANT_ID",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "LUNA_VARIANT_ID",
+        "VALUE": "48907793826016",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "LUNA_VARIANT_ID",
+        "VALUE": "48907793826016",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "SUPPLIER_SKU",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "SUPPLIER_SKU",
+        "VALUE": "ITEM1046",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "SUPPLIER_SKU",
+        "VALUE": "ITEM1046",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "TITLE",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "TITLE",
+        "VALUE": "U.S. Kitchen 4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "TITLE",
+        "VALUE": "U.S. Kitchen 4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "BRAND",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "BRAND",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "BRAND",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "MODEL",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "MODEL",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "MODEL",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "MATERIAL",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "MATERIAL",
+        "VALUE": "Stainless Steel",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "MATERIAL",
+        "VALUE": "Stainless Steel",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "COLOR",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "COLOR",
+        "VALUE": "Silver",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "COLOR",
+        "VALUE": "Silver",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "DIMENSIONS",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "DIMENSIONS",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "DIMENSIONS",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "SIZE_SET",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "SIZE_SET",
+        "VALUE": [
+          {
+            "UNIT": "in",
+            "RAW_VALUE": "3\"",
+            "SOURCE_EVIDENCE": [
+              "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+            ],
+            "NORMALIZED_VALUE": 3,
+            "ORDINAL_OR_SET_MEMBERSHIP": 1
+          },
+          {
+            "UNIT": "in",
+            "RAW_VALUE": "4\"",
+            "SOURCE_EVIDENCE": [
+              "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+            ],
+            "NORMALIZED_VALUE": 4,
+            "ORDINAL_OR_SET_MEMBERSHIP": 2
+          },
+          {
+            "UNIT": "in",
+            "RAW_VALUE": "5.5\"",
+            "SOURCE_EVIDENCE": [
+              "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+            ],
+            "NORMALIZED_VALUE": 5.5,
+            "ORDINAL_OR_SET_MEMBERSHIP": 3
+          },
+          {
+            "UNIT": "in",
+            "RAW_VALUE": "8\"",
+            "SOURCE_EVIDENCE": [
+              "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+            ],
+            "NORMALIZED_VALUE": 8,
+            "ORDINAL_OR_SET_MEMBERSHIP": 4
+          }
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "SIZE_SET",
+        "VALUE": [
+          {
+            "UNIT": "in",
+            "RAW_VALUE": "3\"",
+            "SOURCE_EVIDENCE": [
+              "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+            ],
+            "NORMALIZED_VALUE": 3,
+            "ORDINAL_OR_SET_MEMBERSHIP": 1
+          },
+          {
+            "UNIT": "in",
+            "RAW_VALUE": "4\"",
+            "SOURCE_EVIDENCE": [
+              "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+            ],
+            "NORMALIZED_VALUE": 4,
+            "ORDINAL_OR_SET_MEMBERSHIP": 2
+          },
+          {
+            "UNIT": "in",
+            "RAW_VALUE": "5.5\"",
+            "SOURCE_EVIDENCE": [
+              "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+            ],
+            "NORMALIZED_VALUE": 5.5,
+            "ORDINAL_OR_SET_MEMBERSHIP": 3
+          },
+          {
+            "UNIT": "in",
+            "RAW_VALUE": "8\"",
+            "SOURCE_EVIDENCE": [
+              "sha256:52bf10b6a4bae810f27e71a9594c436b98011aa6493b4d8e6f0bf4337f77becb"
+            ],
+            "NORMALIZED_VALUE": 8,
+            "ORDINAL_OR_SET_MEMBERSHIP": 4
+          }
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "WEIGHT",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "WEIGHT",
+        "VALUE": {
+          "UNIT": "g",
+          "NORMALIZED_VALUE": 363
+        },
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "WEIGHT",
+        "VALUE": {
+          "UNIT": "g",
+          "NORMALIZED_VALUE": 363
+        },
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "PACKAGE_CONTENTS",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "PACKAGE_CONTENTS",
+        "VALUE": [
+          {
+            "UNIT": null,
+            "RAW_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+            "SOURCE_EVIDENCE": [
+              "sha256:6ea640a1e15f458a9afac29462343bbb4e98688c296d96fed95a92e17190eada"
+            ],
+            "NORMALIZED_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+            "ORDINAL_OR_SET_MEMBERSHIP": 1
+          }
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "PACKAGE_CONTENTS",
+        "VALUE": [
+          {
+            "UNIT": null,
+            "RAW_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+            "SOURCE_EVIDENCE": [
+              "sha256:6ea640a1e15f458a9afac29462343bbb4e98688c296d96fed95a92e17190eada"
+            ],
+            "NORMALIZED_VALUE": "4 Piece Set - Stainless Steel Round Mesh Strainers With Wide Ears",
+            "ORDINAL_OR_SET_MEMBERSHIP": 1
+          }
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "QUANTITY_OR_SET_COUNT",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "QUANTITY_OR_SET_COUNT",
+        "VALUE": 4,
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "QUANTITY_OR_SET_COUNT",
+        "VALUE": 4,
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "FORM_FACTOR",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "FORM_FACTOR",
+        "VALUE": "Wide ear resting support",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "FORM_FACTOR",
+        "VALUE": "Wide ear resting support",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "FEATURES",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "FEATURES",
+        "VALUE": [
+          "4 Essential Sizes: Includes 3\", 4\", 5.5\", and 8\" strainers for small to large kitchen tasks.",
+          "Dishwasher safe",
+          "Durable & Easy to Clean: Dishwasher-safe construction with sealed steel rims to prevent food from getting trapped.",
+          "Fine Mesh Stainless Steel: Rust-resistant mesh efficiently strains liquids and sifts dry ingredients.",
+          "Multi-Purpose Kitchen Tool: Ideal for sifting flour, straining sauces, rinsing fruits, vegetables, grains, and pasta.",
+          "Wide Ear Design: Provides stable resting support on bowls, pots, or sinks for hands-free straining."
+        ],
+        "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+        "EVIDENCE_STATUS": "UNPROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "FEATURES",
+        "VALUE": [
+          "4 Essential Sizes: Includes 3\", 4\", 5.5\", and 8\" strainers for small to large kitchen tasks.",
+          "Dishwasher safe",
+          "Durable & Easy to Clean: Dishwasher-safe construction with sealed steel rims to prevent food from getting trapped.",
+          "Fine Mesh Stainless Steel: Rust-resistant mesh efficiently strains liquids and sifts dry ingredients.",
+          "Multi-Purpose Kitchen Tool: Ideal for sifting flour, straining sauces, rinsing fruits, vegetables, grains, and pasta.",
+          "Wide Ear Design: Provides stable resting support on bowls, pots, or sinks for hands-free straining."
+        ],
+        "SEMANTIC_CLASS": "SUPPLIER_CLAIM",
+        "EVIDENCE_STATUS": "UNPROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "INTENDED_USES",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "INTENDED_USES",
+        "VALUE": [
+          "Draining pasta or canned foods",
+          "Rinsing rice, quinoa, vegetables, and fruits",
+          "Sifting flour, cocoa powder, and powdered sugar",
+          "Straining sauces, broths, and juices"
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "INTENDED_USES",
+        "VALUE": [
+          "Draining pasta or canned foods",
+          "Rinsing rice, quinoa, vegetables, and fruits",
+          "Sifting flour, cocoa powder, and powdered sugar",
+          "Straining sauces, broths, and juices"
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "GTIN",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "GTIN",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "GTIN",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "MPN",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "MPN",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "MPN",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "SUPPLIER_COST",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "SUPPLIER_COST",
+        "VALUE": 4,
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "SUPPLIER_COST",
+        "VALUE": 4,
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "REGULAR_PRICE",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "REGULAR_PRICE",
+        "VALUE": 8.39,
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "REGULAR_PRICE",
+        "VALUE": 8.39,
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "SALE_PRICE",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "SALE_PRICE",
+        "VALUE": 4,
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "SALE_PRICE",
+        "VALUE": 4,
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "SUPPLIER_AVAILABILITY",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "SUPPLIER_AVAILABILITY",
+        "VALUE": "AVAILABLE",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "SUPPLIER_AVAILABILITY",
+        "VALUE": "AVAILABLE",
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "SUPPLIER_STOCK",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "SUPPLIER_STOCK",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "SUPPLIER_STOCK",
+        "VALUE": null,
+        "SEMANTIC_CLASS": "MISSING",
+        "EVIDENCE_STATUS": "MISSING",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "IMAGES",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "IMAGES",
+        "VALUE": [
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 1,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/Kitchen-Supply-Set-of-4-Fine-Mesh-Stainless-Steel-Strainers-with-Wide-Ear-Design-3-4-5-5-8_e4e78a77-835a-4a76-8673-0facc3e50e8f.8065828387399fa15f2ab5765858026f.avif?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          },
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 2,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/8ca7f452-6c4c-466b-91cd-2c1393cb3c5a.4de41ed7466b2a65dfb7ecda0203a6ae.webp?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          },
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 3,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/4defcfda-6961-4053-91ed-8c43f56b036e.b8f39a3a1a88ff3adf8d655e377e171a.webp?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          },
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 4,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b86404fb-5838-43e0-b023-cd80602bcdaf.72d5c29810d362ad9484001e0ddeef91.webp?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          },
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 5,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b37ea7cb-3045-4dd0-94dd-13d85596f8fe.ae193493453d04da15e158727f5c3b50.webp?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          }
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "IMAGES",
+        "VALUE": [
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 1,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/Kitchen-Supply-Set-of-4-Fine-Mesh-Stainless-Steel-Strainers-with-Wide-Ear-Design-3-4-5-5-8_e4e78a77-835a-4a76-8673-0facc3e50e8f.8065828387399fa15f2ab5765858026f.avif?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          },
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 2,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/8ca7f452-6c4c-466b-91cd-2c1393cb3c5a.4de41ed7466b2a65dfb7ecda0203a6ae.webp?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          },
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 3,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/4defcfda-6961-4053-91ed-8c43f56b036e.b8f39a3a1a88ff3adf8d655e377e171a.webp?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          },
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 4,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b86404fb-5838-43e0-b023-cd80602bcdaf.72d5c29810d362ad9484001e0ddeef91.webp?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          },
+          {
+            "CAPTURED_AT": "2026-09-07T09:00:22.856+00:00",
+            "IMAGE_ORDINAL": 5,
+            "SOURCE_IMAGE_URL": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/b37ea7cb-3045-4dd0-94dd-13d85596f8fe.ae193493453d04da15e158727f5c3b50.webp?v=1772911145",
+            "VARIANT_ASSOCIATION_IF_PROVEN": null
+          }
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    },
+    {
+      "FIELD": "VARIANT_OPTIONS",
+      "equal": true,
+      "endpoint": {
+        "FIELD": "VARIANT_OPTIONS",
+        "VALUE": [
+          {
+            "RAW_VALUE": "Default Title",
+            "SOURCE_FIELD": "option1",
+            "NORMALIZED_VALUE": "Default Title",
+            "ORDINAL_OR_SET_MEMBERSHIP": 1
+          }
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      },
+      "candidate": {
+        "FIELD": "VARIANT_OPTIONS",
+        "VALUE": [
+          {
+            "RAW_VALUE": "Default Title",
+            "SOURCE_FIELD": "option1",
+            "NORMALIZED_VALUE": "Default Title",
+            "ORDINAL_OR_SET_MEMBERSHIP": 1
+          }
+        ],
+        "SEMANTIC_CLASS": "FACT",
+        "EVIDENCE_STATUS": "PROVEN",
+        "SOURCE_AUTHORITY": "SUPPLIER"
+      }
+    }
+  ],
+  "GOLDEN_SEMANTIC_COUNTS": {
+    "FACT": 18,
+    "MISSING": 6,
+    "SUPPLIER_CLAIM": 1
+  },
+  "CATALOG_COMPATIBLE": "28/28",
+  "SHARED_RELAY_TOOLS_COMPATIBLE": "21/21",
+  "UNRELATED_TOOL_EXCEPTION_COUNT": 0,
+  "COMMERCIAL_CONTEXT_REGRESSION": false,
+  "COMMERCIAL_CONTEXT_STILL_PASS": true,
+  "COMMERCIAL_CONTEXT_CANARY": {
+    "phase": "latency-summary",
+    "runs": 3,
+    "successWithin30s": 3,
+    "timeoutCount": 0,
+    "errorCount": 0,
+    "p50": 739,
+    "p95": 6811,
+    "max": 6811,
+    "uncachedRuns": 1,
+    "snapshotCaptureTimes": [
+      "2026-09-08T02:05:26.695Z"
+    ],
+    "percentileMethod": "NEAREST_RANK"
+  },
+  "SOURCE_AVAILABILITY_CAVEAT": "Commercial Context returned explicit per-authority DB errors/timeouts under its existing 6-second budget while retaining independently completed evidence. Tool compatibility PASS means truthful bounded response, not that every external/DB authority was available. This task did not change Commercial Context code.",
+  "RUNTIME_PASS": true,
+  "PHYSICAL_PREVIEW_CANARY_PASS": true,
+  "SAFE_TO_ALIGN_RELAY_NEXT": true,
+  "NEXT_BLOCKER": "NONE_FOR_RELAY_TARGET_CERTIFICATION; alignment remains a separate authorized task and was not performed.",
+  "PRODUCT_CASE_CANARY_ROWS": [
+    {
+      "phase": "reference",
+      "authority": "IMMUTABLE_PREVIOUS_CORRECTED_ENDPOINT_CANARY_RECEIPT",
+      "sourceCommit": "cee1c7ac29813e603e2de54eff9b87f713b558a2",
+      "fieldCount": 25,
+      "fieldValuesManuallyIntroduced": false
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 548,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::f7sfn-1788832903355-b84c240131a0"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 2563,
+      "bytes": 53452,
+      "upstreamRequestId": "iad1::iad1::mf6pd-1788832903756-17e21066b55d"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 1,
+      "detailMode": "SUMMARY",
+      "elapsedMs": 3117,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 1869,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 716,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 732,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 417,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 417,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 371,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 374,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 133,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 412,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 297,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 419,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::w7s59-1788832926354-f0673682da9d"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 1449,
+      "bytes": 55542,
+      "upstreamRequestId": "iad1::iad1::6zrck-1788832926768-542068c5af89"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 2,
+      "detailMode": "EVIDENCE",
+      "elapsedMs": 1873,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 1035,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 309,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 386,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 113,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 284,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 338,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 153,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 302,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 169,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 122,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 316,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::bgf9l-1788832948236-024ee4e75ec1"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 1549,
+      "bytes": 56251,
+      "upstreamRequestId": "iad1::iad1::zm2vh-1788832948573-ff1140ff7e6f"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 3,
+      "detailMode": "TRACE",
+      "elapsedMs": 1869,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 1143,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 490,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 443,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 150,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 174,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 145,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 140,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 168,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 210,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 191,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 405,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::24krn-1788832970143-6e8197a77b0b"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 2297,
+      "bytes": 53452,
+      "upstreamRequestId": "iad1::iad1::pv24k-1788832970517-0598dcc5d308"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 4,
+      "detailMode": "SUMMARY",
+      "elapsedMs": 2706,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 1879,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 419,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 875,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 121,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 578,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 135,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 122,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 585,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 579,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 130,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 391,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::5gdqw-1788832992842-11115c6515a3"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 1421,
+      "bytes": 55542,
+      "upstreamRequestId": "iad1::iad1::ckcdt-1788832993221-591af4faee40"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 5,
+      "detailMode": "EVIDENCE",
+      "elapsedMs": 1817,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 1101,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 376,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 561,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 112,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 160,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 163,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 122,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 161,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 139,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 139,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 415,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::5gdqw-1788833014701-3886fd542a3f"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 1414,
+      "bytes": 56251,
+      "upstreamRequestId": "iad1::iad1::7zqbl-1788833015101-88df2b30a78d"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 6,
+      "detailMode": "TRACE",
+      "elapsedMs": 1835,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 1056,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 334,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 423,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 134,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 143,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 158,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 151,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 137,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 298,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 143,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 420,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::n2czr-1788833036558-e0d3c080880b"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 1486,
+      "bytes": 53452,
+      "upstreamRequestId": "iad1::iad1::mf6pd-1788833036950-0b5eabac45c2"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 7,
+      "detailMode": "SUMMARY",
+      "elapsedMs": 1910,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 1104,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 512,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 421,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 133,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 157,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 121,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 169,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 171,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 138,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 150,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 387,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::hnlkv-1788833058442-de537721fc06"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 1411,
+      "bytes": 55542,
+      "upstreamRequestId": "iad1::iad1::8zznz-1788833058842-4fe0e95a6849"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 8,
+      "detailMode": "EVIDENCE",
+      "elapsedMs": 1803,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 1073,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 338,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 517,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 131,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 196,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 192,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 216,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 208,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 213,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 140,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 307,
+      "elapsedMs": 388,
+      "bytes": 15,
+      "upstreamRequestId": "iad1::c5rr6-1788833080265-f1a6589a6b79"
+    },
+    {
+      "phase": "relay-http",
+      "origin": "https://imnova-website-z1qh-364r7k8wg-earch19792-6888s-projects.vercel.app",
+      "status": 200,
+      "elapsedMs": 1456,
+      "bytes": 56250,
+      "upstreamRequestId": "iad1::iad1::p2fdh-1788833080668-c52c3501355b"
+    },
+    {
+      "phase": "product-case-canary",
+      "run": 9,
+      "detailMode": "TRACE",
+      "elapsedMs": 1848,
+      "isError": false,
+      "status": null,
+      "stage": "PARTIAL",
+      "matchingFields": 25,
+      "fieldCount": 25,
+      "fieldDigest": "56b5d7aa75442e0f78ebb1c7f30199804488f8d38352ab68fb37ee61d72058ed",
+      "differences": [],
+      "readDiagnostics": {
+        "INTERNAL_BUDGET_MS": 18000,
+        "ELAPSED_MS": 964,
+        "DB_READ_COUNT": 9,
+        "EXTERNAL_CALL_COUNT": 0,
+        "RETRY_COUNT": 0,
+        "READERS": [
+          {
+            "DEPENDENCY": "IDENTITY_TRUTH",
+            "AUTHORITY": "ebay_luna_opportunity_queue",
+            "CRITICAL": true,
+            "LATENCY_MS": 306,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PACKAGE",
+            "AUTHORITY": "ebay_listing_packages",
+            "CRITICAL": false,
+            "LATENCY_MS": 465,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "ACTIVE_LISTING",
+            "AUTHORITY": "ebay_active_listings",
+            "CRITICAL": false,
+            "LATENCY_MS": 166,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "AUTHORIZATION",
+            "AUTHORITY": "ebay_draft_only_approvals",
+            "CRITICAL": false,
+            "LATENCY_MS": 127,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_EXECUTION",
+            "AUTHORITY": "ebay_draft_only_execution_ledger",
+            "CRITICAL": false,
+            "LATENCY_MS": 113,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLICATION",
+            "AUTHORITY": "ebay_authorized_listing_publications",
+            "CRITICAL": false,
+            "LATENCY_MS": 105,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PUBLISHER_CHILD",
+            "AUTHORITY": "seller_os_publisher_batch_children_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 134,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "PRICING_ECONOMICS",
+            "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+            "CRITICAL": false,
+            "LATENCY_MS": 0,
+            "DB_READ_COUNT": 0,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 0,
+            "STATUS": "NOT_APPLICABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": null
+          },
+          {
+            "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+            "AUTHORITY": "marketplace_product_research_capture_observations",
+            "CRITICAL": false,
+            "LATENCY_MS": 148,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          },
+          {
+            "DEPENDENCY": "SHIPPING_PROJECTION",
+            "AUTHORITY": "seller_os_luna_shipping_job_claims",
+            "CRITICAL": false,
+            "LATENCY_MS": 193,
+            "DB_READ_COUNT": 1,
+            "EXTERNAL_CALL_COUNT": 0,
+            "RETRY_COUNT": 0,
+            "TIMEOUT_BUDGET_MS": 4000,
+            "STATUS": "AVAILABLE",
+            "FAILURE_MODE": null,
+            "DATABASE_ERROR_CODE": null,
+            "HTTP_STATUS": 200
+          }
+        ],
+        "RETRIES_DISABLED": true,
+        "EXISTING_DURABLE_AUTHORITIES_ONLY": true
+      },
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeout": false,
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ],
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "success": true
+    },
+    {
+      "phase": "product-case-summary",
+      "runCount": 9,
+      "successCount": 9,
+      "http502Count": 0,
+      "http500Count": 0,
+      "mcpTimeoutCount": 0,
+      "p50": 1869,
+      "p95": 3117,
+      "max": 3117,
+      "allGoldenParity": true,
+      "percentileMethod": "NEAREST_RANK",
+      "interRunPauseMs": 20000,
+      "parallelLoadTest": false
+    },
+    {
+      "phase": "invariant",
+      "currentConnectedRelayChanged": false,
+      "configDigest": "ee12bcd756ee81dfe7f0ad06cbba023d0cc5aaa4a7df5ccfdc4faf0332d9bdb9",
+      "persistentRuntimeCreated": false,
+      "secretsDisplayed": false
+    }
+  ],
+  "SHARED_CANARY_ROWS": [
+    {
+      "phase": "catalog",
+      "expectedCount": 28,
+      "candidateCount": 28,
+      "equal": true,
+      "allReadOnly": true,
+      "toolNames": [
+        "seller_os_get_commercial_context",
+        "seller_os_get_exception_queue",
+        "seller_os_get_listing_intelligence",
+        "seller_os_get_opportunity_radar",
+        "seller_os_get_opportunity_case",
+        "seller_os_get_experiments",
+        "seller_os_get_stock_status",
+        "seller_os_get_quality_guidance",
+        "seller_os_get_learning_signals",
+        "seller_os_get_operational_readiness",
+        "seller_os_get_system_review_bundle",
+        "seller_os_get_recent_system_changes",
+        "seller_os_get_strategic_review_queue",
+        "seller_os_get_product_case",
+        "seller_os_get_publication_execution",
+        "seller_os_get_demand_first_broad_net_replay",
+        "seller_os_get_runtime_health",
+        "seller_os_get_dev_status",
+        "seller_os_get_ci_status",
+        "seller_os_get_data_status",
+        "seller_os_get_official_orders",
+        "seller_os_get_sales_order_events",
+        "seller_os_get_recent_sales_feed",
+        "seller_os_get_sale_alerts",
+        "seller_os_get_whatsapp_sale_alert_status",
+        "seller_os_get_buyer_thank_you_status",
+        "search",
+        "fetch"
+      ]
+    },
+    {
+      "phase": "invariant",
+      "currentConnectedRelayChanged": false,
+      "configDigest": "ee12bcd756ee81dfe7f0ad06cbba023d0cc5aaa4a7df5ccfdc4faf0332d9bdb9",
+      "persistentRuntimeCreated": false,
+      "secretsDisplayed": false
+    },
+    {
+      "phase": "outer-auth",
+      "label": "current",
+      "status": 401
+    },
+    {
+      "phase": "inner-auth",
+      "label": "current",
+      "status": 401,
+      "code": "SELLER_OS_CLOUD_READ_RELAY_AUTH_REQUIRED",
+      "readOnly": "READ_ONLY"
+    },
+    {
+      "phase": "signed-unknown-operation",
+      "label": "current",
+      "status": 400,
+      "code": "SELLER_OS_CLOUD_READ_RELAY_REQUEST_NOT_ALLOWLISTED"
+    },
+    {
+      "phase": "outer-auth",
+      "label": "candidate",
+      "status": 401
+    },
+    {
+      "phase": "inner-auth",
+      "label": "candidate",
+      "status": 401,
+      "code": "SELLER_OS_CLOUD_READ_RELAY_AUTH_REQUIRED",
+      "readOnly": "READ_ONLY"
+    },
+    {
+      "phase": "signed-unknown-operation",
+      "label": "candidate",
+      "status": 400,
+      "code": "SELLER_OS_CLOUD_READ_RELAY_REQUEST_NOT_ALLOWLISTED"
+    },
+    {
+      "phase": "invariant",
+      "currentConnectedRelayChanged": false,
+      "configDigest": "ee12bcd756ee81dfe7f0ad06cbba023d0cc5aaa4a7df5ccfdc4faf0332d9bdb9",
+      "persistentRuntimeCreated": false,
+      "secretsDisplayed": false
+    },
+    {
+      "phase": "latency-run",
+      "run": 1,
+      "elapsedMs": 6811,
+      "isError": false,
+      "timeout": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "readBudget": {
+        "internalBudgetMs": 18000,
+        "elapsedMs": 6057,
+        "projectionMs": 44,
+        "databaseReadCount": 11,
+        "externalCallCount": 11,
+        "retryCount": 0,
+        "authorityTimings": [
+          {
+            "dependency": "EBAY_LIVE_READONLY",
+            "elapsedMs": 1700,
+            "status": "AVAILABLE",
+            "limitationCode": null
+          },
+          {
+            "dependency": "ebay_active_listings",
+            "elapsedMs": 5999,
+            "status": "UNAVAILABLE",
+            "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+          },
+          {
+            "dependency": "marketplace_listing_identity_verifications",
+            "elapsedMs": 5999,
+            "status": "UNAVAILABLE",
+            "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+          },
+          {
+            "dependency": "SELLER_OS_LUNA_LINKAGE_DECISIONS_V1",
+            "elapsedMs": 6000,
+            "status": "UNAVAILABLE",
+            "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+          },
+          {
+            "dependency": "marketplace_order_snapshots",
+            "elapsedMs": 6000,
+            "status": "UNAVAILABLE",
+            "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+          },
+          {
+            "dependency": "ebay_active_listing_sync_state",
+            "elapsedMs": 6004,
+            "status": "AVAILABLE",
+            "limitationCode": null
+          },
+          {
+            "dependency": "market_radar_sources",
+            "elapsedMs": 6004,
+            "status": "AVAILABLE",
+            "limitationCode": null
+          },
+          {
+            "dependency": "SELLER_OS_LUNA_STOCK_OBSERVATIONS_V1",
+            "elapsedMs": 6004,
+            "status": "AVAILABLE",
+            "limitationCode": null
+          },
+          {
+            "dependency": "COMMERCIAL_SALE_EVENTS",
+            "elapsedMs": 6005,
+            "status": "AVAILABLE",
+            "limitationCode": null
+          },
+          {
+            "dependency": "ebay_category_learning_adjustments",
+            "elapsedMs": 6006,
+            "status": "AVAILABLE",
+            "limitationCode": null
+          },
+          {
+            "dependency": "seller_os_live_listing_shipping_evidence",
+            "elapsedMs": 6006,
+            "status": "AVAILABLE",
+            "limitationCode": null
+          },
+          {
+            "dependency": "listing_commercial_snapshots",
+            "elapsedMs": 6012,
+            "status": "AVAILABLE",
+            "limitationCode": null
+          },
+          {
+            "dependency": "SELLER_OS_LUNA_STOCK_CHECK_JOBS_V1",
+            "elapsedMs": 6012,
+            "status": "UNAVAILABLE",
+            "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+          },
+          {
+            "dependency": "ebay_listing_experiments_v1",
+            "elapsedMs": 6012,
+            "status": "UNAVAILABLE",
+            "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+          }
+        ],
+        "databaseTimings": [
+          {
+            "dependency": "/rest/v1/seller_os_luna_linkage_decisions",
+            "elapsedMs": 5985,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/marketplace_order_snapshots",
+            "elapsedMs": 5985,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/ebay_active_listing_sync_state",
+            "elapsedMs": 5971,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/market_radar_sources",
+            "elapsedMs": 5968,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/seller_os_luna_stock_observations",
+            "elapsedMs": 5967,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/commercial_alert_events",
+            "elapsedMs": 5967,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/ebay_category_learning_adjustments",
+            "elapsedMs": 5967,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/seller_os_live_listing_shipping_evidence",
+            "elapsedMs": 5966,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/ebay_active_listings",
+            "elapsedMs": 5997,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/marketplace_listing_identity_verifications",
+            "elapsedMs": 5995,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          },
+          {
+            "dependency": "/rest/v1/listing_commercial_snapshots",
+            "elapsedMs": 5978,
+            "status": "UNAVAILABLE",
+            "limitationCode": "DATABASE_READ_FAILED_OR_TIMED_OUT"
+          }
+        ],
+        "externalTimings": [
+          {
+            "dependency": "OAUTH_REFRESH_FULFILLMENT",
+            "elapsedMs": 307,
+            "status": "SUCCEEDED"
+          },
+          {
+            "dependency": "OAUTH_REFRESH_FULFILLMENT",
+            "elapsedMs": 320,
+            "status": "SUCCEEDED"
+          },
+          {
+            "dependency": "TRADING_GET_USER",
+            "elapsedMs": 104,
+            "status": "FAILED"
+          },
+          {
+            "dependency": "TRADING_GET_USER",
+            "elapsedMs": 147,
+            "status": "FAILED"
+          },
+          {
+            "dependency": "OAUTH_REFRESH_INVENTORY",
+            "elapsedMs": 523,
+            "status": "SUCCEEDED"
+          },
+          {
+            "dependency": "TRADING_GET_USER",
+            "elapsedMs": 383,
+            "status": "FAILED"
+          },
+          {
+            "dependency": "FULFILLMENT_GET_ORDERS",
+            "elapsedMs": 631,
+            "status": "SUCCEEDED"
+          },
+          {
+            "dependency": "FULFILLMENT_GET_ORDERS",
+            "elapsedMs": 634,
+            "status": "SUCCEEDED"
+          },
+          {
+            "dependency": "TRADING_GET_MY_EBAY_SELLING",
+            "elapsedMs": 125,
+            "status": "FAILED"
+          },
+          {
+            "dependency": "TRADING_GET_SELLER_LIST",
+            "elapsedMs": 132,
+            "status": "FAILED"
+          },
+          {
+            "dependency": "FULFILLMENT_GET_ORDERS",
+            "elapsedMs": 647,
+            "status": "SUCCEEDED"
+          }
+        ],
+        "capturedAt": "2026-09-08T02:05:26.695Z",
+        "snapshotReused": false,
+        "snapshotAgeMs": 0
+      },
+      "sourceReaders": [
+        {
+          "source": "ebay_active_listings",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+        },
+        {
+          "source": "EBAY_ACTIVE_LISTING_SYNC_STATE",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "COMMERCIAL_SYNC_STATE_READ_FAILED"
+        },
+        {
+          "source": "marketplace_listing_identity_verifications",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+        },
+        {
+          "source": "COMMERCIAL_SNAPSHOT_REGISTRY",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "COMMERCIAL_SNAPSHOT_READ_FAILED"
+        },
+        {
+          "source": "market_radar_latest_variants",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "SUPPLY_IDENTITY_EVIDENCE_UNAVAILABLE"
+        },
+        {
+          "source": "LUNA_PORTEX_SOURCE_HEALTH",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "COMMERCIAL_LUNA_SOURCE_HEALTH_READ_FAILED"
+        },
+        {
+          "source": "SELLER_OS_LUNA_LINKAGE_DECISIONS_V1",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+        },
+        {
+          "source": "SELLER_OS_LUNA_STOCK_CHECK_JOBS_V1",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+        },
+        {
+          "source": "SELLER_OS_LUNA_STOCK_OBSERVATIONS_V1",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "CANONICAL_LUNA_STOCK_OBSERVATION_READ_FAILED"
+        },
+        {
+          "source": "marketplace_order_snapshots",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+        },
+        {
+          "source": "marketplace_order_line_items",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "ORDER_IDENTITY_EVIDENCE_UNAVAILABLE"
+        },
+        {
+          "source": "EBAY_CATEGORY_LEARNING",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "COMMERCIAL_LEARNING_READ_FAILED"
+        },
+        {
+          "source": "ebay_listing_experiments_v1",
+          "status": "ERROR",
+          "observedAt": null,
+          "limitationCode": "SELLER_OS_READ_BUDGET_EXHAUSTED"
+        },
+        {
+          "source": "EBAY_TRADING_GET_USER",
+          "status": "AVAILABLE",
+          "observedAt": "2026-09-08T02:05:21.748Z",
+          "limitationCode": null
+        },
+        {
+          "source": "EBAY_TRADING_GET_MY_EBAY_SELLING",
+          "status": "ERROR",
+          "observedAt": "2026-09-08T02:05:21.873Z",
+          "limitationCode": "SELLER_WIDE_DISCOVERY_PAGE_FAILED"
+        },
+        {
+          "source": "EBAY_TRADING_GET_ITEM",
+          "status": "UNKNOWN",
+          "observedAt": null,
+          "limitationCode": null
+        },
+        {
+          "source": "EBAY_SELL_INVENTORY_READONLY",
+          "status": "UNAVAILABLE",
+          "observedAt": null,
+          "limitationCode": "EBAY_MONITOR_ACCOUNT_IDENTITY_TRADING_ERROR_518"
+        },
+        {
+          "source": "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
+          "status": "UNAVAILABLE",
+          "observedAt": null,
+          "limitationCode": "EBAY_MONITOR_SELLER_LIST_TRADING_ERROR_518"
+        },
+        {
+          "source": "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+          "status": "AVAILABLE",
+          "observedAt": "2026-09-08T02:05:22.339Z",
+          "limitationCode": "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY"
+        }
+      ],
+      "limitations": null,
+      "safety": null,
+      "commercialMetrics": null,
+      "shape": [
+        "accountTraffic",
+        "activeExperiments",
+        "bounded",
+        "buyerPiiIncluded",
+        "capabilityBlockers",
+        "commercialIntelligence",
+        "contractVersion",
+        "credentialsIncluded",
+        "currentLivePortfolio",
+        "doNotTouch",
+        "economicsCompleteness",
+        "generatedFrom",
+        "learningSignals",
+        "livePortfolioIntegrity",
+        "marketplaceWrites",
+        "monitorCoverage",
+        "newOpportunities",
+        "observedAt",
+        "officialOrders",
+        "orderSourceHealth",
+        "qualityGuidance",
+        "readBudget",
+        "readyToEvaluate",
+        "recentSales",
+        "replacementCandidates",
+        "sourceReaders",
+        "stockSupplierExceptions",
+        "supplierReadiness",
+        "todaysPriorities"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_commercial_context",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "latency-run",
+      "run": 2,
+      "elapsedMs": 739,
+      "isError": false,
+      "timeout": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "readBudget": {
+        "internalBudgetMs": 18000,
+        "elapsedMs": 6057,
+        "projectionMs": 44,
+        "databaseReadCount": 11,
+        "externalCallCount": 11,
+        "retryCount": 0,
+        "capturedAt": "2026-09-08T02:05:26.695Z",
+        "snapshotReused": true,
+        "snapshotAgeMs": 20744
+      },
+      "limitations": null,
+      "safety": null,
+      "commercialMetrics": null,
+      "shape": [
+        "accountTraffic",
+        "activeExperiments",
+        "bounded",
+        "buyerPiiIncluded",
+        "capabilityBlockers",
+        "commercialIntelligence",
+        "contractVersion",
+        "credentialsIncluded",
+        "currentLivePortfolio",
+        "doNotTouch",
+        "economicsCompleteness",
+        "generatedFrom",
+        "learningSignals",
+        "livePortfolioIntegrity",
+        "marketplaceWrites",
+        "monitorCoverage",
+        "newOpportunities",
+        "observedAt",
+        "officialOrders",
+        "orderSourceHealth",
+        "qualityGuidance",
+        "readBudget",
+        "readyToEvaluate",
+        "recentSales",
+        "replacementCandidates",
+        "sourceReaders",
+        "stockSupplierExceptions",
+        "supplierReadiness",
+        "todaysPriorities"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_commercial_context",
+          "ok": true
+        }
+      ],
+      "sourceEvidenceReference": "First Commercial Context acquisition with the same capturedAt"
+    },
+    {
+      "phase": "latency-run",
+      "run": 3,
+      "elapsedMs": 705,
+      "isError": false,
+      "timeout": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "readBudget": {
+        "internalBudgetMs": 18000,
+        "elapsedMs": 6057,
+        "projectionMs": 44,
+        "databaseReadCount": 11,
+        "externalCallCount": 11,
+        "retryCount": 0,
+        "capturedAt": "2026-09-08T02:05:26.695Z",
+        "snapshotReused": true,
+        "snapshotAgeMs": 41461
+      },
+      "limitations": null,
+      "safety": null,
+      "commercialMetrics": null,
+      "shape": [
+        "accountTraffic",
+        "activeExperiments",
+        "bounded",
+        "buyerPiiIncluded",
+        "capabilityBlockers",
+        "commercialIntelligence",
+        "contractVersion",
+        "credentialsIncluded",
+        "currentLivePortfolio",
+        "doNotTouch",
+        "economicsCompleteness",
+        "generatedFrom",
+        "learningSignals",
+        "livePortfolioIntegrity",
+        "marketplaceWrites",
+        "monitorCoverage",
+        "newOpportunities",
+        "observedAt",
+        "officialOrders",
+        "orderSourceHealth",
+        "qualityGuidance",
+        "readBudget",
+        "readyToEvaluate",
+        "recentSales",
+        "replacementCandidates",
+        "sourceReaders",
+        "stockSupplierExceptions",
+        "supplierReadiness",
+        "todaysPriorities"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_commercial_context",
+          "ok": true
+        }
+      ],
+      "sourceEvidenceReference": "First Commercial Context acquisition with the same capturedAt"
+    },
+    {
+      "phase": "latency-summary",
+      "runs": 3,
+      "successWithin30s": 3,
+      "timeoutCount": 0,
+      "errorCount": 0,
+      "p50": 739,
+      "p95": 6811,
+      "max": 6811,
+      "uncachedRuns": 1,
+      "snapshotCaptureTimes": [
+        "2026-09-08T02:05:26.695Z"
+      ],
+      "percentileMethod": "NEAREST_RANK"
+    },
+    {
+      "phase": "invariant",
+      "currentConnectedRelayChanged": false,
+      "configDigest": "ee12bcd756ee81dfe7f0ad06cbba023d0cc5aaa4a7df5ccfdc4faf0332d9bdb9",
+      "persistentRuntimeCreated": false,
+      "secretsDisplayed": false
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_commercial_context",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "accountTraffic",
+        "activeExperiments",
+        "bounded",
+        "buyerPiiIncluded",
+        "capabilityBlockers",
+        "commercialIntelligence",
+        "contractVersion",
+        "credentialsIncluded",
+        "currentLivePortfolio",
+        "doNotTouch",
+        "economicsCompleteness",
+        "generatedFrom",
+        "learningSignals",
+        "livePortfolioIntegrity",
+        "marketplaceWrites",
+        "monitorCoverage",
+        "newOpportunities",
+        "observedAt",
+        "officialOrders",
+        "orderSourceHealth",
+        "qualityGuidance",
+        "readBudget",
+        "readyToEvaluate",
+        "recentSales",
+        "replacementCandidates",
+        "sourceReaders",
+        "stockSupplierExceptions",
+        "supplierReadiness",
+        "todaysPriorities"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_commercial_context",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_exception_queue",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "deterministic",
+        "entries",
+        "marketplaceWrites"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_exception_queue",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_listing_intelligence",
+      "isError": false,
+      "status": "NOT_FOUND",
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": {
+        "readOnly": true,
+        "buyerPiiIncluded": false,
+        "rawPayloadIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "databaseWrites": 0,
+        "marketplaceWrites": 0,
+        "woMutations": 0,
+        "lunaMutations": 0
+      },
+      "shape": [
+        "conflict",
+        "currentLiveFacts",
+        "itemId",
+        "reason",
+        "safety",
+        "status"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_listing_intelligence",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_experiments",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "authoritativeStatus",
+        "entries",
+        "marketplaceWrites",
+        "resultCount"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_experiments",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_stock_status",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "duplicateItemIds",
+        "entries",
+        "historicalOrNonliveEvidence",
+        "marketplaceWrites",
+        "resultCount",
+        "scope",
+        "stockUnknownIsRisk"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_stock_status",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_quality_guidance",
+      "isError": false,
+      "status": "UNAVAILABLE_NO_CURRENT_REPORT",
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "autoExecutionAllowed",
+        "comparisons",
+        "recommendations",
+        "resultCount",
+        "status"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_quality_guidance",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_learning_signals",
+      "isError": false,
+      "status": "ERROR",
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "categoryAdjustments",
+        "limitationCode",
+        "resultCount",
+        "status",
+        "universalRuleAllowed"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_learning_signals",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_operational_readiness",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "automationHealth",
+        "capabilities",
+        "livePortfolioIntegrity",
+        "marketplaceWrites",
+        "portfolio",
+        "productCaseState"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_operational_readiness",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_system_review_bundle",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": {
+        "mode": "READ_ONLY",
+        "buyerPiiIncluded": false,
+        "credentialsIncluded": false,
+        "arbitrarySqlAllowed": false,
+        "arbitraryUrlFetchAllowed": false,
+        "marketplaceWrites": 0,
+        "inventoryWrites": 0,
+        "registryBusinessDataMutations": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "whatsappSends": 0
+      },
+      "shape": [
+        "aiOperationalStatus",
+        "auditDrilldown",
+        "automationCandidates",
+        "automationHealth",
+        "bounds",
+        "canonicalOpportunities",
+        "capabilityFaultIsolation",
+        "commercialAnomalies",
+        "contractVersion",
+        "crossModuleIntegrity",
+        "dataParity",
+        "decisions",
+        "deterministicIntegrityGuards",
+        "economicsCompleteness",
+        "evidenceSource",
+        "experiments",
+        "generatedAt",
+        "learning",
+        "operationalBurden",
+        "opportunityPersistence",
+        "orderOperations",
+        "portfolio",
+        "qualityReport",
+        "recentSystemChanges",
+        "recentSystemChangesStatus",
+        "registryIntegrity",
+        "safety",
+        "strategicReviewQueue",
+        "supplierAndStock",
+        "trafficScopeIntegrity"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_system_review_bundle",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_recent_system_changes",
+      "isError": false,
+      "status": "UNPROVEN_NO_DURABLE_CHANGE_LEDGER",
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "bounded",
+        "entries",
+        "inferredChanges",
+        "marketplaceWrites",
+        "maximumEntries",
+        "resultCount",
+        "status"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_recent_system_changes",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_strategic_review_queue",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "activeViolationCount",
+        "bounded",
+        "capabilityBlockerCount",
+        "contractVersion",
+        "dedupeApplied",
+        "deterministicEvidenceOnly",
+        "entries",
+        "generatedByModel",
+        "marketplaceWrites",
+        "maximumSignals",
+        "mitigatedFindingCount",
+        "mitigatedFindings",
+        "observedAt",
+        "totalMaterialSignals",
+        "unresolvedHumanIdentityCount"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_strategic_review_queue",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_product_case",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "arbitraryPath": false,
+        "arbitraryShell": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "productPatches": 0,
+        "taskAdvancements": 0
+      },
+      "shape": [
+        "AUDIT_CONTRACT_VERSION",
+        "BUSINESS_IMPACT",
+        "CONTRADICTED",
+        "DETAIL_MODE",
+        "FIELD_TRUTH",
+        "INPUT_IDENTITY",
+        "KNOWN",
+        "MISSING",
+        "NEXT_BLOCKING_STAGE",
+        "OBSERVED_AT",
+        "PRODUCT_JOURNEY",
+        "PRODUCT_TRUTH_COMPLETENESS",
+        "READ_DIAGNOSTICS",
+        "RESOLVED_CANONICAL_IDENTITY",
+        "STALE",
+        "UNAVAILABLE",
+        "UNPROVEN",
+        "UNSUPPORTED_DOWNSTREAM_VALUES",
+        "safety"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_product_case",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_publication_execution",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": {
+        "readOnly": true,
+        "arbitrarySql": false,
+        "arbitraryUrl": false,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "databaseBusinessWrites": 0,
+        "marketplaceWrites": 0,
+        "historicalAmbiguityPreserved": true
+      },
+      "shape": [
+        "AUDIT_CONTRACT_VERSION",
+        "AUTHORIZATION_STATUS",
+        "AUTHORIZED_AT",
+        "AUTHORIZED_PACKAGE_DIGEST",
+        "BLOCKER_CODE",
+        "DETAIL_MODE",
+        "EBAY_SKU",
+        "EXACT_MISMATCH_FIELD",
+        "FINAL_STATE",
+        "INVENTORY_ITEM_STATE",
+        "LAST_PROVEN_STEP",
+        "LISTING_ID",
+        "MANAGEMENT_MODEL",
+        "MARKETPLACE_WRITE_COUNT",
+        "OBSERVED_AT",
+        "OFFER_ID",
+        "OFFER_STATE",
+        "OFFICIAL_FINAL_READBACK",
+        "OWNER_AUTHORIZATION_ID",
+        "PACKAGE_ID",
+        "POST_AUTH_PACKAGE_MUTATION_COUNT",
+        "PREWRITE_STATE",
+        "PRODUCT_ID",
+        "PUBLICATION_EXECUTION_ID",
+        "RETRY_POLICY",
+        "SAFE_TO_RESUME",
+        "SELF_LINEAGE_STATE",
+        "STEP_TRACE",
+        "SUPPLIER_SKU",
+        "safety"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_publication_execution",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_demand_first_broad_net_replay",
+      "isError": false,
+      "status": "PASS",
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": {
+        "readOnly": true,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "familyPersistenceWrites": 0,
+        "observationPersistenceWrites": 0,
+        "enrollmentWrites": 0,
+        "shippingRuns": 0,
+        "externalAlerts": 0,
+        "marketplaceWrites": 0,
+        "nightlyPolicyEnabled": false
+      },
+      "shape": [
+        "browseItemLookupsAttempted",
+        "browseItemLookupsSucceeded",
+        "candidateFamiliesAfterCap",
+        "candidateFamiliesBeforeCap",
+        "capAppliedPostClustering",
+        "categoryUnavailable",
+        "clusterSizeDistribution",
+        "clusterSoldQuantityScoped",
+        "clustersAfterDedupe",
+        "contractVersion",
+        "crossBatchAggregation",
+        "crossBatchClustersAggregated",
+        "duplicatesSuppressed",
+        "existingFamilyMatches",
+        "numericStringWindowsParsed",
+        "qualifiedFamilies",
+        "rawClustersFormed",
+        "rejectionReasonCounts",
+        "replayCohortId",
+        "safety",
+        "secondaryClustersEvaluated",
+        "serverRuntimeAuthority",
+        "signalsEnteringClustering",
+        "signalsRelevant",
+        "signalsTotal",
+        "signalsWithCategoryAuthority",
+        "signalsWithKeywordDna",
+        "signalsWithValidIdentity",
+        "status",
+        "topCandidateClusters"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_demand_first_broad_net_replay",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_official_orders",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": "PARTIAL",
+      "limitations": [
+        "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY"
+      ],
+      "safety": {
+        "readOnly": true,
+        "buyerPiiIncluded": false,
+        "rawUpstreamPayloadIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "arbitraryUrlAllowed": false,
+        "callerControlledAccountAllowed": false,
+        "databaseWrites": 0,
+        "marketplaceWrites": 0,
+        "inventoryWrites": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "whatsappSends": 0
+      },
+      "shape": [
+        "bounded",
+        "boundedWindow",
+        "contractVersion",
+        "evidenceCompleteness",
+        "limitations",
+        "observedAt",
+        "officialLineItemQuantity",
+        "officialOrderCount",
+        "orders",
+        "pagination",
+        "reconciliation",
+        "safety",
+        "source",
+        "sourceStatus",
+        "sourceUpdatedAt"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_official_orders",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_sales_order_events",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": "PARTIAL",
+      "limitations": [
+        "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY"
+      ],
+      "safety": {
+        "readOnly": true,
+        "buyerPiiIncluded": false,
+        "rawUpstreamPayloadIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "arbitraryUrlAllowed": false,
+        "callerControlledAccountAllowed": false,
+        "callerControlledTokenAllowed": false,
+        "databaseWrites": 0,
+        "marketplaceWrites": 0,
+        "inventoryWrites": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "whatsappSends": 0,
+        "buyerMessageSends": 0
+      },
+      "shape": [
+        "authority",
+        "bounded",
+        "boundedWindow",
+        "contractVersion",
+        "deduplication",
+        "eventCount",
+        "eventType",
+        "eventVersion",
+        "events",
+        "evidenceCompleteness",
+        "idempotencyPolicyVersion",
+        "limitations",
+        "observedAt",
+        "observedEventCount",
+        "pagination",
+        "persistenceStatus",
+        "projectionType",
+        "safety",
+        "source",
+        "sourceStatus"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_official_orders",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_recent_sales_feed",
+      "isError": false,
+      "status": "AVAILABLE",
+      "evidenceCompleteness": "PARTIAL",
+      "limitations": [
+        "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY"
+      ],
+      "safety": {
+        "readOnly": true,
+        "buyerPiiIncluded": false,
+        "rawUpstreamPayloadIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "arbitraryUrlAllowed": false,
+        "callerControlledAccountAllowed": false,
+        "callerControlledTokenAllowed": false,
+        "databaseWrites": 0,
+        "marketplaceWrites": 0,
+        "inventoryWrites": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "whatsappSends": 0,
+        "buyerMessageSends": 0
+      },
+      "shape": [
+        "authority",
+        "bounded",
+        "boundedWindow",
+        "contractVersion",
+        "deduplication",
+        "entries",
+        "evidenceCompleteness",
+        "feedCount",
+        "limitations",
+        "observedAt",
+        "observedFeedCount",
+        "ordering",
+        "pagination",
+        "persistence",
+        "safety",
+        "source",
+        "sourceContractVersion",
+        "sourceStatus",
+        "status"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_official_orders",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_sale_alerts",
+      "isError": false,
+      "status": "AVAILABLE",
+      "evidenceCompleteness": "PARTIAL",
+      "limitations": [
+        "DASHBOARD_ALERTS_NOT_DURABLY_PERSISTED",
+        "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY"
+      ],
+      "safety": {
+        "readOnlyAuditSurface": true,
+        "automationAuthority": "READ_ONLY",
+        "buyerPiiIncluded": false,
+        "rawUpstreamPayloadIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "arbitraryUrlAllowed": false,
+        "callerControlledAccountAllowed": false,
+        "callerControlledTokenAllowed": false,
+        "databaseWrites": 0,
+        "internalIdempotentMaintenanceWrites": 0,
+        "internalBusinessStateWrites": 0,
+        "marketplaceWrites": 0,
+        "inventoryWrites": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "whatsappSends": 0,
+        "buyerMessageSends": 0,
+        "paymentTransactions": 0
+      },
+      "shape": [
+        "alertContractVersion",
+        "alertCount",
+        "alerts",
+        "auditTrail",
+        "authoritativeRootSource",
+        "authority",
+        "bounded",
+        "boundedWindow",
+        "contractVersion",
+        "deduplication",
+        "evidenceCompleteness",
+        "historicalReplayPolicy",
+        "limitations",
+        "observedAlertCount",
+        "observedAt",
+        "ordering",
+        "pagination",
+        "persistence",
+        "safety",
+        "source",
+        "sourceContractVersion",
+        "sourceStatus",
+        "status"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_official_orders",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_whatsapp_sale_alert_status",
+      "isError": false,
+      "status": "AVAILABLE",
+      "evidenceCompleteness": "PARTIAL",
+      "limitations": [
+        "DASHBOARD_ALERTS_NOT_DURABLY_PERSISTED",
+        "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY",
+        "PRODUCTION_NEW_SALE_SEND_OBSERVED_SEPARATE_FROM_DELIVERY_PATH_READY"
+      ],
+      "safety": {
+        "readOnlyCertificationSurface": true,
+        "sideEffectsByThisRead": 0,
+        "buyerPiiIncluded": false,
+        "rawUpstreamPayloadIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "phoneNumberIncluded": false,
+        "arbitraryUrlAllowed": false,
+        "callerControlledAccountAllowed": false,
+        "callerControlledTokenAllowed": false,
+        "callerControlledDestinationAllowed": false,
+        "databaseWritesByThisRead": 0,
+        "marketplaceWrites": 0,
+        "inventoryWrites": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "whatsappSendsByThisRead": 0,
+        "buyerMessageSends": 0,
+        "paymentTransactions": 0
+      },
+      "shape": [
+        "auditTrail",
+        "authoritativeRootSource",
+        "authority",
+        "bounded",
+        "boundedWindow",
+        "contractVersion",
+        "deduplication",
+        "deliveryContractVersion",
+        "deliveryOutcomes",
+        "deliveryPathStatus",
+        "deliverySemantics",
+        "entries",
+        "evidenceCompleteness",
+        "limitations",
+        "maximumStatusEntries",
+        "observedAt",
+        "observedStatusCount",
+        "providerReadiness",
+        "safety",
+        "source",
+        "sourceContractVersion",
+        "sourceStatus",
+        "status",
+        "statusCount"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_whatsapp_sale_alert_status",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "seller_os_get_buyer_thank_you_status",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": "COMPLETE",
+      "limitations": [
+        "DASHBOARD_ALERTS_NOT_DURABLY_PERSISTED",
+        "EBAY_BUYER_MESSAGE_AUTHORIZATION_BLOCKED_INVALID_SCOPE",
+        "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY"
+      ],
+      "safety": {
+        "readOnlyCertificationSurface": true,
+        "buyerPiiIncluded": false,
+        "buyerIdentityIncluded": false,
+        "rawUpstreamPayloadIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "arbitraryRecipientAllowed": false,
+        "callerControlledAccountAllowed": false,
+        "arbitraryUrlAllowed": false,
+        "callerControlledTokenAllowed": false,
+        "arbitraryMessageTextAllowed": false,
+        "databaseWritesByThisRead": 0,
+        "marketplaceWritesByThisRead": 0,
+        "buyerMessageSendsByThisRead": 0,
+        "whatsappSendsByThisRead": 0,
+        "inventoryWrites": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "paymentTransactions": 0
+      },
+      "shape": [
+        "activation",
+        "auditTrail",
+        "authoritativeRootSource",
+        "bounded",
+        "buyerMessageSendCount",
+        "capability",
+        "contractVersion",
+        "deliveryContractVersion",
+        "deliverySemantics",
+        "entries",
+        "evidenceCompleteness",
+        "limitations",
+        "maximumStatusEntries",
+        "message",
+        "observedAt",
+        "productionNewSaleBuyerMessageObserved",
+        "safety",
+        "source",
+        "sourceContractVersion",
+        "sourceStatus",
+        "statusCount"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_buyer_thank_you_status",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "shared-tool",
+      "label": "candidate",
+      "name": "fetch",
+      "isError": false,
+      "status": null,
+      "evidenceCompleteness": null,
+      "limitations": null,
+      "safety": null,
+      "shape": [
+        "accountTraffic",
+        "activeExperiments",
+        "bounded",
+        "buyerPiiIncluded",
+        "capabilityBlockers",
+        "commercialIntelligence",
+        "contractVersion",
+        "credentialsIncluded",
+        "currentLivePortfolio",
+        "doNotTouch",
+        "economicsCompleteness",
+        "generatedFrom",
+        "learningSignals",
+        "livePortfolioIntegrity",
+        "marketplaceWrites",
+        "monitorCoverage",
+        "newOpportunities",
+        "observedAt",
+        "officialOrders",
+        "orderSourceHealth",
+        "qualityGuidance",
+        "readBudget",
+        "readyToEvaluate",
+        "recentSales",
+        "replacementCandidates",
+        "sourceReaders",
+        "stockSupplierExceptions",
+        "supplierReadiness",
+        "todaysPriorities"
+      ],
+      "trace": [
+        {
+          "tool": "seller_os_get_commercial_context",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "invariant",
+      "currentConnectedRelayChanged": false,
+      "configDigest": "ee12bcd756ee81dfe7f0ad06cbba023d0cc5aaa4a7df5ccfdc4faf0332d9bdb9",
+      "persistentRuntimeCreated": false,
+      "secretsDisplayed": false
+    }
+  ],
+  "RUNTIME_AFTER": {
+    "contractVersion": "SELLER_OS_RUNTIME_HEALTH_V1",
+    "observedAt": "2026-09-08T02:07:21.332Z",
+    "overallStatus": "HEALTHY",
+    "services": {
+      "mcp": {
+        "service": "imnova-seller-os-mcp.service",
+        "status": "HEALTHY",
+        "activeState": "active",
+        "subState": "running",
+        "result": "success",
+        "mainPid": 2400478,
+        "restartCount": 0,
+        "activeEnterTimestamp": "2026-09-07T02:57:51.000Z"
+      },
+      "tunnel": {
+        "service": "imnova-seller-os-tunnel.service",
+        "status": "HEALTHY",
+        "activeState": "active",
+        "subState": "running",
+        "result": "success",
+        "mainPid": 2425013,
+        "restartCount": 0,
+        "activeEnterTimestamp": "2026-09-07T03:16:41.000Z"
+      },
+      "watchdogTimer": {
+        "service": "imnova-seller-os-watchdog.timer",
+        "status": "HEALTHY",
+        "activeState": "active",
+        "subState": "waiting",
+        "lastTrigger": "2026-09-08T02:06:37.134Z",
+        "nextTrigger": "2026-09-08T02:08:37.135Z"
+      }
+    },
+    "port3000": {
+      "host": "127.0.0.1",
+      "port": 3000,
+      "status": "AVAILABLE",
+      "observedAt": "2026-09-08T02:07:21.332Z"
+    },
+    "watchdog": {
+      "lastRunAt": "2026-09-08T02:06:37.000Z",
+      "lastSuccessAt": "2026-09-08T02:06:37.000Z",
+      "lastResult": "success"
+    },
+    "runtimeCatalog": {
+      "contractVersion": "SELLER_OS_RUNTIME_CATALOG_ATTESTATION_V1",
+      "observedAt": "2026-09-08T02:07:21.332Z",
+      "serviceIdentity": "imnova-seller-os-mcp.service",
+      "runtimeEntrypointIdentity": "NEXT_APP_ROUTE_SELLER_OS_ASSISTANT_MCP",
+      "runtimeWorkingDirectoryIdentity": "SELLER_OS_CANONICAL_REPOSITORY",
+      "runtimeWorkingDirectoryMatch": true,
+      "loadedMcpImplementationVersion": "SELLER_OS_MCP_READONLY_V1_2026_09_06_AUDIT_OBSERVABILITY",
+      "catalogSource": "MCP_SERVER_FACTORY_REGISTRATION_LEDGER",
+      "runtimeCatalogCount": 28,
+      "expectedCatalogCount": 28,
+      "officialOrdersToolPresent": true,
+      "salesOrderEventsToolPresent": true,
+      "recentSalesFeedToolPresent": true,
+      "saleAlertsToolPresent": true,
+      "whatsappSaleAlertStatusToolPresent": true,
+      "buyerThankYouStatusToolPresent": true,
+      "exactCatalogMatch": true,
+      "workspaceRuntimeBindingStatus": "MATCHED",
+      "limitations": [],
+      "safety": {
+        "readOnly": true,
+        "callerControlledPathAllowed": false,
+        "fileContentsIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false
+      }
+    },
+    "evidenceCompleteness": "COMPLETE",
+    "limitations": [],
+    "safety": {
+      "readOnly": true,
+      "arbitraryShellAllowed": false,
+      "callerControlledServiceAllowed": false,
+      "credentialsIncluded": false,
+      "environmentValuesIncluded": false,
+      "marketplaceWrites": 0,
+      "inventoryWrites": 0,
+      "productCaseMutations": 0,
+      "lunaLinkMutations": 0,
+      "whatsappSends": 0
+    }
+  },
+  "CONNECTED_CONFIG_SHA256_AFTER": "ee12bcd756ee81dfe7f0ad06cbba023d0cc5aaa4a7df5ccfdc4faf0332d9bdb9",
+  "CONFIG_CHANGES": {
+    "connectedRelay": [],
+    "mcpService": [],
+    "tunnelService": [],
+    "authentication": [],
+    "environmentVariables": [],
+    "deploymentProtection": [],
+    "projectSettings": [],
+    "previewDeployment": "One pinned Preview of the code commit, using the existing protected project/environment and existing scoped secret; no Production promotion.",
+    "automaticPreviewAlias": "imnova-website-z1qh-git-featur-faaee4-earch19792-6888s-projects.vercel.app"
+  },
+  "INVARIANT": "Same MCP/Tunnel services, authentication, protected Preview-only relay, 28-tool catalog and durable Product Truth. Optional unavailability cannot erase independent Luna field truth.",
+  "DETECTION_RULE": "Inspect READ_DIAGNOSTICS by dependency/authority for timeout, SQL/HTTP error, skipped prerequisite or unexpected runtime exception.",
+  "RECOVERY_POLICY": "A subsequent ordinary Product Case read can reacquire current durable evidence. No mutation, resubmit, new ledger, per-product dispatch or synthetic fallback.",
+  "RETRY_POLICY": "No per-query client retry; each request settles or cancels within its scoped/per-case deadlines.",
+  "REGRESSION_GUARD": "15 focused Product Case tests plus seven existing suites and typecheck; nine Golden physical requests spanning all three modes.",
+  "OBSERVABILITY_RECEIPT": "READ_DIAGNOSTICS plus this technical report; original business receipts not modified.",
+  "ESCALATION_POLICY": "Critical identity unavailability is explicit and cannot become a fabricated case. Unexpected runtime exceptions remain HTTP 500 with safe diagnostics; do not label them optional missing evidence.",
+  "LIMITATIONS": [
+    "Finite sequential sample establishes observed stability; it is not a guarantee against all future network/platform outages.",
+    "Prior failed Golden requests are retained as baseline history, not removed from certification records.",
+    "The direct HTTP521 observation proves a DB transport failure on that diagnostic path, not the precise origin of every earlier production incident.",
+    "Incremental I/O latency is zero for reused/non-executed authorities; CPU latency of each pure projection was not separately instrumented.",
+    "Summary now exposes all Luna fields without changing the underlying 25-field Product Truth semantics; downstream summary remains bounded."
+  ],
+  "COMPONENT_AUDIT_AFTER": [
+    {
+      "DEPENDENCY": "IDENTITY_RESOLUTION",
+      "AUTHORITY": "ebay_luna_opportunity_queue",
+      "LATENCY_MS": 716,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 4000,
+      "FAILURE_MODE": "No failure observed in 9 runs; expected errors return UNAVAILABLE",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Critical canonical queue identity; other entry routes can first read product-case/package/item identity."
+    },
+    {
+      "DEPENDENCY": "LUNA_SOURCE",
+      "AUTHORITY": "ebay_luna_opportunity_queue",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No new I/O; original reused or UNPROVEN projection",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Reuses the captured queue row; no new Luna fetch."
+    },
+    {
+      "DEPENDENCY": "PRODUCT_TRUTH",
+      "AUTHORITY": "ebay_luna_opportunity_queue.assessment.productTruth",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No new I/O; original reused or UNPROVEN projection",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Pure projection of durable assessment.productTruth.fieldTruthV1; no acquisition or materialization."
+    },
+    {
+      "DEPENDENCY": "MARKET_RESEARCH_PROJECTION",
+      "AUTHORITY": "marketplace_product_research_capture_observations",
+      "LATENCY_MS": 579,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 4000,
+      "FAILURE_MODE": "No failure observed in 9 runs; expected errors return UNAVAILABLE",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Existing variant-scoped projection; known coverage gap retained."
+    },
+    {
+      "DEPENDENCY": "SHIPPING_PROJECTION",
+      "AUTHORITY": "seller_os_luna_shipping_job_claims",
+      "LATENCY_MS": 297,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 4000,
+      "FAILURE_MODE": "No failure observed in 9 runs; expected errors return UNAVAILABLE",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Existing candidate-scoped trace receipt; no new shipping facts."
+    },
+    {
+      "DEPENDENCY": "PRICING_ECONOMICS",
+      "AUTHORITY": "seller_os_live_economics_readbacks_v1",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No failure observed in 9 runs; expected errors return UNAVAILABLE",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Not queried for Golden because no current eBay item is resolved; existing UNPROVEN/MISSING retained."
+    },
+    {
+      "DEPENDENCY": "PACKAGE",
+      "AUTHORITY": "ebay_listing_packages",
+      "LATENCY_MS": 875,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 4000,
+      "FAILURE_MODE": "No failure observed in 9 runs; expected errors return UNAVAILABLE",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Optional enrichment by account and canonical candidate."
+    },
+    {
+      "DEPENDENCY": "AUTHORIZATION",
+      "AUTHORITY": "ebay_draft_only_approvals",
+      "LATENCY_MS": 578,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 4000,
+      "FAILURE_MODE": "No failure observed in 9 runs; expected errors return UNAVAILABLE",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Read existing package authorization only."
+    },
+    {
+      "DEPENDENCY": "PUBLISHER",
+      "AUTHORITY": "ebay_draft_only_execution_ledger + ebay_authorized_listing_publications + seller_os_publisher_batch_children_v1",
+      "LATENCY_MS": 585,
+      "DB_READ_COUNT": 3,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 4000,
+      "FAILURE_MODE": "No failure observed in 9 runs; expected errors return UNAVAILABLE",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Existing scoped execution/publication/child receipts; no dispatch."
+    },
+    {
+      "DEPENDENCY": "OFFICIAL_EBAY_READBACK",
+      "AUTHORITY": "ebay_active_listings",
+      "LATENCY_MS": 417,
+      "DB_READ_COUNT": 1,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 4000,
+      "FAILURE_MODE": "No failure observed in 9 runs; expected errors return UNAVAILABLE",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Existing account+SKU scoped durable readback; no official eBay API call in Product Case."
+    },
+    {
+      "DEPENDENCY": "STOCK",
+      "AUTHORITY": "ebay_luna_opportunity_queue",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No new I/O; original reused or UNPROVEN projection",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Reuse queue projection; do not invent numeric stock or refresh it."
+    },
+    {
+      "DEPENDENCY": "ANALYTICS",
+      "AUTHORITY": "ebay_listing_performance_snapshots",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No new I/O; original reused or UNPROVEN projection",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Existing UNPROVEN stage; no reader executed."
+    },
+    {
+      "DEPENDENCY": "ORDERS",
+      "AUTHORITY": "marketplace_order_snapshots",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No new I/O; original reused or UNPROVEN projection",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Existing UNPROVEN stage; no reader executed."
+    },
+    {
+      "DEPENDENCY": "MAYEL",
+      "AUTHORITY": "ebay_mayel_visual_phase_b_executions_v1",
+      "LATENCY_MS": 0,
+      "DB_READ_COUNT": 0,
+      "EXTERNAL_CALL_COUNT": 0,
+      "RETRY_COUNT": 0,
+      "TIMEOUT_BUDGET_MS": 0,
+      "FAILURE_MODE": "No new I/O; original reused or UNPROVEN projection",
+      "LATENCY_DEFINITION": "Maximum individual reader full-completion latency across nine sequential Preview requests; grouped publisher reads are concurrent, so values are not summed.",
+      "NOTE": "Existing UNPROVEN stage; no reader executed."
+    }
+  ]
+}
