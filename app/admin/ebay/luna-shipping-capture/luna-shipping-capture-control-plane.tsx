@@ -616,6 +616,7 @@ export function LunaShippingCaptureControlPlane({
     const exactDispatchDurable = new Set<string>()
     const exactDispatchSnapshotDurable = new Set<string>()
     const exactDispatchConfirmed = new Set<string>()
+    const economicFailureCloseStarted = new Set<string>()
     let exactDispatchReceiptReceived = false
     let traceFlushTimer: number | null = null
     let traceFlushChain = Promise.resolve()
@@ -748,6 +749,21 @@ export function LunaShippingCaptureControlPlane({
 
     const fail = (value: unknown, source = "UNCLASSIFIED_ASYNC_FAILURE") => {
       if (!active) return
+      const economicRefresh = jobs[index]?.economicRefresh
+      if (economicRefresh &&
+          !economicFailureCloseStarted.has(economicRefresh.jobId)) {
+        economicFailureCloseStarted.add(economicRefresh.jobId)
+        const rawReason = value instanceof Error ? value.message : source
+        const reasonCode = /^[A-Z][A-Z0-9_]{7,159}$/.test(rawReason)
+          ? rawReason : "LUNA_ECONOMIC_SHIPPING_EXECUTOR_FAILED"
+        void adminPost("report_economic_shipping_failure", {
+          runtimeInstanceId,
+          binding: { jobId: economicRefresh.jobId,
+            freshnessGeneration: economicRefresh.freshnessGeneration,
+            reasonCode },
+        }, `${economicRefresh.jobId}:${economicRefresh.attemptOrdinal}`)
+          .catch(() => undefined)
+      }
       busy = false
       setRunning(false)
       setStatus("FAIL")
@@ -1726,8 +1742,27 @@ export function LunaShippingCaptureControlPlane({
             if (result.productOosConfirmed !== true ||
                 result.stockEvidenceReconciled !== true ||
                 result.durableReadbackMatch !== true ||
-                result.candidateDecision !== "REJECT_STOCK") {
-              throw new Error("LUNA_PRODUCT_PAGE_OOS_DURABLE_READBACK_FAILED")
+                result.candidateDecision !== "REJECT_STOCK" ||
+                (job.economicRefresh &&
+                  result.shippingClaimCompleted !== true)) {
+                throw new Error("LUNA_PRODUCT_PAGE_OOS_DURABLE_READBACK_FAILED")
+              }
+            if (job.economicRefresh &&
+                !economicFailureCloseStarted.has(job.economicRefresh.jobId)) {
+              economicFailureCloseStarted.add(job.economicRefresh.jobId)
+              const close = await adminPost(
+                "report_economic_shipping_failure", {
+                  runtimeInstanceId,
+                  binding: { jobId: job.economicRefresh.jobId,
+                    freshnessGeneration:
+                      job.economicRefresh.freshnessGeneration,
+                    reasonCode: "LUNA_PRODUCT_PAGE_OUT_OF_STOCK",
+                    retryable: false },
+                }, `${job.economicRefresh.jobId}:terminal-stock`)
+              if (close.result?.status !== "FAILED_TERMINAL") {
+                throw new Error(
+                  "LUNA_ECONOMIC_SHIPPING_STOCK_TERMINAL_CLOSE_FAILED")
+              }
             }
             port?.postMessage({
               type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",

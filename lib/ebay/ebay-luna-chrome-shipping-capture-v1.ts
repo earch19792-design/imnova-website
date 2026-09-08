@@ -228,6 +228,13 @@ export type LunaChromeShippingJobV1 = Readonly<{
   salePriceUsd: number
   supplierCostUsd: number
   productName: string
+  economicRefresh?: Readonly<{
+    jobId: string
+    workerId: string
+    freshnessGeneration: string
+    requiredEvidenceAfter: string
+    attemptOrdinal: number
+  }>
 }>
 
 export type LunaChromeShippingVisibleCaptureV1 = Readonly<{

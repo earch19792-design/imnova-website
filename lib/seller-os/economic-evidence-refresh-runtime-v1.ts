@@ -27,6 +27,8 @@ import {
   type EconomicRefreshStatusV1,
   type LatestEconomicEvidenceV1,
 } from "./economic-evidence-refresh-v1"
+import { economicShippingExpiredLeaseDecisionV1 } from
+  "./economic-shipping-refresh-reclaim-loop-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -312,13 +314,23 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
       const activeLease = prior?.status === "REFRESHING" &&
         Boolean(prior.lease_expires_at) &&
         Date.parse(prior.lease_expires_at as string) > now.getTime()
+      const expiredShippingLease = evidenceType === "LUNA_CURRENT_SHIPPING" &&
+        prior?.status === "REFRESHING" && Boolean(prior.lease_expires_at) &&
+        Date.parse(prior.lease_expires_at as string) <= now.getTime()
+      const expiredShippingDecision = expiredShippingLease
+        ? economicShippingExpiredLeaseDecisionV1({
+          attemptCount: prior?.attempt_count ?? 0,
+          leaseExpiresAt: prior?.lease_expires_at ?? null,
+          now: now.getTime(),
+        }) : null
       const status: EconomicRefreshStatusV1 = evidenceIsFreshV1(evidence,
         now.getTime()) ? "FRESH"
         : prior?.status === "FAILED_TERMINAL" ? "FAILED_TERMINAL"
           : activeLease ? "REFRESHING"
-          : prior && !due && ["WAITING_FOR_WORKER", "SOURCE_UNAVAILABLE",
-            "FAILED_RETRYABLE"].includes(prior.status) ? prior.status
-            : evidence ? "STALE" : "MISSING"
+          : expiredShippingDecision?.status ??
+            (prior && !due && ["WAITING_FOR_WORKER", "SOURCE_UNAVAILABLE",
+              "FAILED_RETRYABLE"].includes(prior.status) ? prior.status
+              : evidence ? "STALE" : "MISSING")
       return {
         idempotency_key: economicRefreshJobKeyV1({
           accountKey: input.accountKey, marketplaceId: "EBAY_US",
@@ -331,12 +343,22 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
         source_identity: sourceIdentity,
         status,
         last_evidence_id: evidence?.evidence_id ?? prior?.last_evidence_id ?? null,
-        failure_class: status === "FRESH" ? null : prior?.failure_class ?? null,
-        next_retry_at: status === "FRESH" ? null : prior?.next_retry_at ?? null,
+        failure_class: status === "FRESH" ? null
+          : expiredShippingDecision
+            ? expiredShippingDecision.deadLetter
+              ? "ECONOMIC_SHIPPING_EXECUTOR_LEASE_EXPIRED_MAX_ATTEMPTS"
+              : "ECONOMIC_SHIPPING_EXECUTOR_LEASE_EXPIRED"
+            : prior?.failure_class ?? null,
+        next_retry_at: status === "FRESH" ? null
+          : expiredShippingDecision?.nextRetryAt ?? prior?.next_retry_at ?? null,
         attempt_count: prior?.attempt_count ?? 0,
         first_detected_at: prior?.first_detected_at ?? now.toISOString(),
         last_detected_at: now.toISOString(),
         updated_at: now.toISOString(),
+        ...(expiredShippingDecision
+          ? { lease_owner: null, lease_expires_at: null } : {}),
+        ...(expiredShippingDecision?.deadLetter
+          ? { dead_letter_at: now.toISOString() } : {}),
       }
     })
   })

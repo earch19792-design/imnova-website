@@ -33,6 +33,7 @@ import {
   persistLunaShippingRuntimeTraceV1,
   readLatestLunaShippingRuntimeTraceV1,
   acquireLunaChromeShippingJobsV1,
+  closeLunaEconomicShippingExecutionFailureV1,
   resolveLunaChromeShippingJobsV1,
   resolveLunaChromeShippingLiveListingJobV1,
 } from
@@ -73,6 +74,25 @@ function runtimeInstanceId(value: unknown, fallback: string) {
 
 function claimAuthoritySessionId(value: unknown) {
   return runtimeInstanceId(value, "")
+}
+
+function economicShippingFailureBinding(value: unknown) {
+  const binding = listingAiRecord(value)
+  const jobId = typeof binding.jobId === "string" ? binding.jobId.trim() : ""
+  const freshnessGeneration = typeof binding.freshnessGeneration === "string"
+    ? binding.freshnessGeneration.trim() : ""
+  const reasonCode = typeof binding.reasonCode === "string"
+    ? binding.reasonCode.trim() : ""
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(jobId) ||
+      !/^economic-shipping-refresh-v1:sha256:[0-9a-f]{64}$/
+        .test(freshnessGeneration) ||
+      !/^[A-Z][A-Z0-9_]{7,159}$/.test(reasonCode)) {
+    throw new Error("LUNA_ECONOMIC_SHIPPING_FAILURE_BINDING_INVALID")
+  }
+  const retryable = binding.retryable !== false ||
+    reasonCode !== "LUNA_PRODUCT_PAGE_OUT_OF_STOCK"
+  return Object.freeze({ jobId, freshnessGeneration, reasonCode, retryable })
 }
 
 function liveListingTarget(value: unknown, accountKey: string) {
@@ -163,6 +183,22 @@ export async function POST(req: Request) {
       return listingAiResponse({ success: true, result,
         safety: { businessOutputWrites: 0, lunaPurchases: 0,
           marketplaceWrites: 0 } })
+    }
+    if (body.action === "report_economic_shipping_failure") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const binding = economicShippingFailureBinding(body.binding)
+      const result = await closeLunaEconomicShippingExecutionFailureV1({
+        supabase: auth.supabase,
+        jobId: binding.jobId,
+        workerId: runtimeInstanceId(body.runtimeInstanceId, auth.actorId),
+        freshnessGeneration: binding.freshnessGeneration,
+        reasonCode: binding.reasonCode,
+        retryable: binding.retryable,
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { durableWriteScope:
+          "SELLER_OS_ECONOMIC_SHIPPING_FAILURE_CLOSE_V1",
+          lunaPurchases: 0, marketplaceWrites: 0 } })
     }
     if (body.action === "resolve_jobs") {
       enforceListingAiRouteRateLimit(auth.actorId, "READ")
