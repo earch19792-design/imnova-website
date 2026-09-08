@@ -1,0 +1,36 @@
+{
+  "contractVersion": "PRODUCT_RESEARCH_KEYWORD_INTELLIGENCE_V2_1",
+  "sourceCertification": "docs/product-research-keyword-intelligence-v2-certification.json",
+  "digestAlgorithm": "sha256-canonical-json",
+  "golden": {
+    "planId": "47e287d5-4e28-4b57-b36c-7c61f8c2c74e",
+    "primaryKeyword": "stainless steel strainer",
+    "decisionSha256": "dc34083db1dda9fb221f0e4826e4f9cc41dc9fca7b3e22604894e8cf2c2d1c5f"
+  },
+  "unproven": [
+    {
+      "planId": "05335b69-c135-4715-95c4-107e10548127",
+      "decisionSha256": "8fbc3b95aa0b7e3ff10ee2525c0f650f5560eff393052db94db95cf6aa655118",
+      "blockers": [
+        "UNIT_OR_NUMERIC_TOKEN_IS_NOT_A_PRODUCT_ENTITY",
+        "NO_DEFENSIBLE_PRIMARY_QUERY_CONCEPT"
+      ]
+    },
+    {
+      "planId": "1db48220-ad65-4971-8739-0f3e010f373e",
+      "decisionSha256": "0524a7aa1c3837ff61b4fdaf57e0bd66848f4e2155a7e7973df411658452f863",
+      "blockers": [
+        "INSUFFICIENT_CURRENT_COMPATIBLE_SOLD_ITEMS",
+        "NO_DEFENSIBLE_PRIMARY_QUERY_CONCEPT"
+      ]
+    },
+    {
+      "planId": "7e9f78fb-7a86-4605-bcc5-1b4e061e3cce",
+      "decisionSha256": "168a3a452b986077dbdabdb3fb1881f676d62c377ce6fb807facde840c469744",
+      "blockers": [
+        "INSUFFICIENT_CURRENT_COMPATIBLE_SOLD_ITEMS",
+        "NO_DEFENSIBLE_PRIMARY_QUERY_CONCEPT"
+      ]
+    }
+  ]
+}
