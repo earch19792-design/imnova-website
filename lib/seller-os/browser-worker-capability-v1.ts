@@ -4,6 +4,7 @@ export const SELLER_OS_BROWSER_WORKER_LIVENESS_V1 =
   "INDEPENDENT_WORKER_LIVENESS" as const
 export const SELLER_OS_BROWSER_WORKER_HEARTBEAT_INTERVAL_MS = 60_000
 export const SELLER_OS_BROWSER_WORKER_CAPABILITY_TTL_SECONDS = 300
+export const SELLER_OS_BROWSER_WORKLOAD_LEASE_SECONDS = 150
 
 export type SellerOsBrowserWorkerFamilyV1 =
   "PRODUCT_RESEARCH" | "LUNA_SHIPPING"
@@ -90,11 +91,12 @@ export async function persistSellerOsBrowserWorkerHeartbeatV1(input: Readonly<{
   extensionVersion: string
   extensionIdentityMatch: boolean
   workerState: SellerOsBrowserWorkerStateV1
+  claimAuthoritySessionId: string
   observedAt?: Date
 }>) {
   const observedAt = input.observedAt ?? new Date()
   const write = await input.supabase.rpc(
-    "record_seller_os_browser_worker_heartbeat_v1", {
+    "record_seller_os_browser_worker_heartbeat_v2", {
       p_marketplace_account_key: input.accountKey,
       p_worker_family: input.workerFamily,
       p_worker_instance_id: input.workerInstanceId,
@@ -102,14 +104,19 @@ export async function persistSellerOsBrowserWorkerHeartbeatV1(input: Readonly<{
       p_extension_identity_match: input.extensionIdentityMatch,
       p_worker_state: input.workerState,
       p_observed_at: observedAt.toISOString(),
+      p_claim_authority_session_id: input.claimAuthoritySessionId,
       p_ttl_seconds: SELLER_OS_BROWSER_WORKER_CAPABILITY_TTL_SECONDS,
+      p_claim_authority_lease_seconds:
+        SELLER_OS_BROWSER_WORKLOAD_LEASE_SECONDS,
     })
   if (write.error || !write.data) {
     throw new Error("SELLER_OS_BROWSER_WORKER_HEARTBEAT_PERSIST_FAILED")
   }
   const receipt = record(write.data)
   if (receipt.heartbeatSource !== SELLER_OS_BROWSER_WORKER_LIVENESS_V1 ||
-      receipt.capabilityFresh !== true || receipt.marketplaceWrites !== 0) {
+      receipt.capabilityFresh !== true || receipt.marketplaceWrites !== 0 ||
+      receipt.claimAuthorityContractVersion !==
+        "SELLER_OS_BROWSER_WORKLOAD_LEASE_V1") {
     throw new Error("SELLER_OS_BROWSER_WORKER_HEARTBEAT_READBACK_FAILED")
   }
   return Object.freeze({
@@ -120,6 +127,46 @@ export async function persistSellerOsBrowserWorkerHeartbeatV1(input: Readonly<{
     observedAt: text(receipt.observedAt, 80),
     freshUntil: text(receipt.freshUntil, 80),
     capabilityFresh: true as const,
+    claimAuthorityGranted: receipt.claimAuthorityGranted === true,
+    claimAuthorityLeaseExpiresAt:
+      text(receipt.claimAuthorityLeaseExpiresAt, 80) || null,
+    claimAuthorityLeaseGeneration:
+      Number.isSafeInteger(receipt.claimAuthorityLeaseGeneration)
+        ? Number(receipt.claimAuthorityLeaseGeneration) : null,
     marketplaceWrites: 0 as const,
+  })
+}
+
+export async function verifySellerOsBrowserWorkloadLeaseV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  workerFamily: SellerOsBrowserWorkerFamilyV1
+  workerInstanceId: string
+  claimAuthoritySessionId: string
+  observedAt?: Date
+}>) {
+  const read = await input.supabase.rpc(
+    "verify_seller_os_browser_workload_lease_v1", {
+      p_marketplace_account_key: input.accountKey,
+      p_worker_family: input.workerFamily,
+      p_worker_instance_id: input.workerInstanceId,
+      p_claim_authority_session_id: input.claimAuthoritySessionId,
+      p_observed_at: (input.observedAt ?? new Date()).toISOString(),
+    })
+  if (read.error || !read.data) {
+    throw new Error("SELLER_OS_BROWSER_WORKLOAD_LEASE_VERIFY_FAILED")
+  }
+  const receipt = record(read.data)
+  if (receipt.claimAuthorityContractVersion !==
+      "SELLER_OS_BROWSER_WORKLOAD_LEASE_V1") {
+    throw new Error("SELLER_OS_BROWSER_WORKLOAD_LEASE_READBACK_FAILED")
+  }
+  return Object.freeze({
+    claimAuthorityGranted: receipt.claimAuthorityGranted === true,
+    claimAuthorityLeaseExpiresAt:
+      text(receipt.claimAuthorityLeaseExpiresAt, 80) || null,
+    claimAuthorityLeaseGeneration:
+      Number.isSafeInteger(receipt.claimAuthorityLeaseGeneration)
+        ? Number(receipt.claimAuthorityLeaseGeneration) : null,
   })
 }

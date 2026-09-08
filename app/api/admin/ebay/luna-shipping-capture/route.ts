@@ -49,7 +49,10 @@ import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { preflightEbayCategoryProductIdentifiers } from
   "@/lib/ebay/ebay-draft-only-gateway"
-import { persistSellerOsBrowserWorkerHeartbeatV1 } from
+import {
+  persistSellerOsBrowserWorkerHeartbeatV1,
+  verifySellerOsBrowserWorkloadLeaseV1,
+} from
   "@/lib/seller-os/browser-worker-capability-v1"
 
 function candidateIds(value: unknown) {
@@ -66,6 +69,10 @@ function runtimeInstanceId(value: unknown, fallback: string) {
     throw new Error("LUNA_SHIPPING_RUNTIME_INSTANCE_INVALID")
   }
   return resolved
+}
+
+function claimAuthoritySessionId(value: unknown) {
+  return runtimeInstanceId(value, "")
 }
 
 function liveListingTarget(value: unknown, accountKey: string) {
@@ -150,6 +157,8 @@ export async function POST(req: Request) {
         extensionIdentityMatch: body.extensionIdentityMatch === true,
         workerState: body.workerState === "WORKING" ? "WORKING" :
           body.workerState === "AVAILABLE" ? "AVAILABLE" : "IDLE",
+        claimAuthoritySessionId: claimAuthoritySessionId(
+          body.leaderSessionId),
       })
       return listingAiResponse({ success: true, result,
         safety: { businessOutputWrites: 0, lunaPurchases: 0,
@@ -159,11 +168,29 @@ export async function POST(req: Request) {
       enforceListingAiRouteRateLimit(auth.actorId, "READ")
       const requested = candidateIds(body.candidateIds)
       if (!requested.length) {
+        const workerInstance = runtimeInstanceId(body.runtimeInstanceId,
+          auth.actorId)
+        const authority = await verifySellerOsBrowserWorkloadLeaseV1({
+          supabase: auth.supabase, accountKey: auth.accountKey,
+          workerFamily: "LUNA_SHIPPING",
+          workerInstanceId: workerInstance,
+          claimAuthoritySessionId: claimAuthoritySessionId(
+            body.leaderSessionId),
+        })
+        if (!authority.claimAuthorityGranted) {
+          return listingAiResponse({ success: true, jobs: [], acquisition: {
+            jobs: [], eligiblePendingJobCount: 0, claimedJobCount: 0,
+            leaseConflictCount: 0, claimFailureCount: 0,
+            suppressedDuplicatePoll: true,
+          }, safety: { readOnly: false,
+            durableWriteScope: "NONE_SERVER_LEADER_SUPPRESSED",
+            cookieAccess: false, credentialAccess: false,
+            lunaPurchases: 0, marketplaceWrites: 0 } })
+        }
         const acquisition = await acquireLunaChromeShippingJobsV1({
           supabase: auth.supabase,
           accountKey: auth.accountKey,
-          runtimeInstanceId: runtimeInstanceId(body.runtimeInstanceId,
-            auth.actorId),
+          runtimeInstanceId: workerInstance,
           sessionSecret: sessionSecret(),
         })
         return listingAiResponse({ success: true,

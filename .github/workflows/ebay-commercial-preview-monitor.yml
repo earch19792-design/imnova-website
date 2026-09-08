@@ -2,7 +2,9 @@ name: eBay commercial Preview monitor
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "1-59/5 * * * *"
+    - cron: "3-59/5 * * * *"
+    - cron: "4-59/5 * * * *"
   workflow_dispatch:
     inputs:
       preview_url:
@@ -72,7 +74,7 @@ jobs:
   active-listing-luna-monitor:
     # Runs for the full lifetime of the active listings. The endpoint remains
     # Preview-only and also enforces its own runtime kill switch and lease.
-    if: vars.EBAY_TARGETED_LUNA_ACTIVE_MONITOR_ENABLED == 'true'
+    if: vars.EBAY_TARGETED_LUNA_ACTIVE_MONITOR_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '1-59/5 * * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -97,7 +99,7 @@ jobs:
           curl "${args[@]}" "$PREVIEW_URL/api/cron/ebay-active-listing-luna-monitor$query"
 
   commercial-monitor:
-    if: vars.EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED == 'true' && inputs.refresh_only != true
+    if: vars.EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED == 'true' && inputs.refresh_only != true && (github.event_name == 'workflow_dispatch' || github.event.schedule == '3-59/5 * * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -119,7 +121,7 @@ jobs:
   whatsapp-dispatcher:
     # The delivery flag remains independent, but the endpoint also requires the
     # same durable dry-run authorization as the commercial scheduler.
-    if: vars.EBAY_COMMERCIAL_PREVIEW_WHATSAPP_DISPATCHER_ENABLED == 'true' && inputs.refresh_only != true
+    if: vars.EBAY_COMMERCIAL_PREVIEW_WHATSAPP_DISPATCHER_ENABLED == 'true' && inputs.refresh_only != true && (github.event_name == 'workflow_dispatch' || github.event.schedule == '4-59/5 * * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

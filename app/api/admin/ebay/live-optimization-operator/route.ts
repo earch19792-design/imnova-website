@@ -46,7 +46,10 @@ import {
   resumeMayelMarketRevalidationDownstreamV1,
   startMayelLiveMarketRevalidationV1,
 } from "@/lib/ebay/ebay-mayel-live-market-revalidation-v1"
-import { persistSellerOsBrowserWorkerHeartbeatV1 } from
+import {
+  persistSellerOsBrowserWorkerHeartbeatV1,
+  verifySellerOsBrowserWorkloadLeaseV1,
+} from
   "@/lib/seller-os/browser-worker-capability-v1"
 import { currentLiveListingsForMonitorV1 } from
   "@/lib/ebay/ebay-seller-os-live-portfolio-integrity-v1"
@@ -423,6 +426,7 @@ export async function POST(request: Request) {
         extensionIdentityMatch: body?.extensionIdentityMatch === true,
         workerState: body?.workerState === "WORKING" ? "WORKING" :
           body?.workerState === "AVAILABLE" ? "AVAILABLE" : "IDLE",
+        claimAuthoritySessionId: uuid(body?.leaderSessionId) ?? "",
       })
       return NextResponse.json({ success: true, result,
         safety: { businessOutputWrites: 0, marketplaceWrites: 0 } },
@@ -451,8 +455,26 @@ export async function POST(request: Request) {
     try {
       const account = getEbaySellerAccountScopeConfiguration()
       if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const claimAuthoritySessionId = uuid(body?.leaderSessionId)
+      if (!claimAuthoritySessionId) {
+        throw new Error("PRODUCT_RESEARCH_CLAIM_AUTHORITY_REQUIRED")
+      }
+      const supabase = getSupabaseAdminClient()
+      const authority = await verifySellerOsBrowserWorkloadLeaseV1({
+        supabase, accountKey: account.accountKey,
+        workerFamily: "PRODUCT_RESEARCH",
+        workerInstanceId: String(body?.workerId ?? ""),
+        claimAuthoritySessionId,
+      })
+      if (!authority.claimAuthorityGranted) {
+        return NextResponse.json({ success: true, result: {
+          claimed: false, planId: null, leaseExpiresAt: null, plan: null,
+          suppressedDuplicatePoll: true, marketplaceWrites: 0,
+        }, safety: { marketplaceWrites: 0, priceWrites: 0 } },
+        { headers: { "Cache-Control": "private, no-store" } })
+      }
       const result = await claimMayelAutonomousResearchPlanV1({
-        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        supabase, accountKey: account.accountKey,
         workerId: body?.workerId, workerCapability: body?.workerCapability,
         planId: body?.planId,
       })

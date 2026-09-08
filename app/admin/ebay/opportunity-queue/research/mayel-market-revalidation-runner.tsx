@@ -12,6 +12,12 @@ import {
   establishEbayOneClickResearchHandshake,
 } from "@/lib/ebay/ebay-one-click-research-session-v1"
 import { supabase } from "@/lib/supabase"
+import {
+  createSellerOsBackgroundWorkloadControllerV1,
+  holdSellerOsCrossTabBrowserLeaderV1,
+  SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS,
+  sellerOsBackgroundMetricsPublisherV1,
+} from "@/lib/seller-os/background-workload-optimization-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -51,6 +57,7 @@ async function stableProductResearchWorkerId(extensionId: string) {
 }
 
 async function authorizedPost(body: JsonRecord) {
+  const startedAt = performance.now()
   const session = await supabase.auth.getSession()
   const token = session.data.session?.access_token
   if (!token) throw new Error("SESSION_REQUIRED")
@@ -61,12 +68,20 @@ async function authorizedPost(body: JsonRecord) {
         "Content-Type": "application/json" },
       body: JSON.stringify(body),
     })
-  const payload = await response.json() as JsonRecord
+  const payload = await response.json().catch(() => ({})) as JsonRecord
   if (!response.ok || payload.success !== true) {
-    throw new Error(typeof payload.error === "string" ? payload.error :
-      "MARKET_REVALIDATION_REQUEST_FAILED")
+    const error = new Error(typeof payload.error === "string" ? payload.error :
+      "MARKET_REVALIDATION_REQUEST_FAILED") as Error & {
+        httpStatus?: number
+        latencyMs?: number
+      }
+    error.httpStatus = response.status
+    error.latencyMs = performance.now() - startedAt
+    throw error
   }
-  return payload
+  return Object.assign(payload, {
+    backgroundRequestLatencyMs: performance.now() - startedAt,
+  })
 }
 
 function extensionCommand<T extends JsonRecord>(command: JsonRecord,
@@ -114,7 +129,25 @@ export function MayelMarketRevalidationRunner() {
     if ((!planId && !autonomous) || started.current) return
     started.current = true
     setActive(true)
-    void (async () => {
+    const leadershipAbort = new AbortController()
+    const leaderSessionStorageKey =
+      "seller-os-product-research-leader-session-v1"
+    const storedLeaderSessionId = window.sessionStorage.getItem(
+      leaderSessionStorageKey)
+    const leaderSessionId = storedLeaderSessionId &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(storedLeaderSessionId)
+      ? storedLeaderSessionId : crypto.randomUUID()
+    window.sessionStorage.setItem(leaderSessionStorageKey, leaderSessionId)
+    const controller = createSellerOsBackgroundWorkloadControllerV1({
+      producer: "PRODUCT_RESEARCH", storage: window.localStorage,
+      publish: sellerOsBackgroundMetricsPublisherV1,
+    })
+    let heartbeatInterval: number | null = null
+    void holdSellerOsCrossTabBrowserLeaderV1({
+      scope: "PRODUCT_RESEARCH", signal: leadershipAbort.signal,
+      onLeaderState: (leaderState) => controller.setLeaderState(leaderState),
+      run: async () => {
       setState("Conectando Product Research…")
       const probe = await establishEbayOneClickResearchHandshake({
         probe: (timeoutMs) => extensionCommand<{
@@ -137,9 +170,12 @@ export function MayelMarketRevalidationRunner() {
         manifestOriginMatch: probe.extensionId === probe.bridgeExtensionId,
       })
       const workerId = await stableProductResearchWorkerId(probe.extensionId)
+      let workerState: "IDLE" | "WORKING" = "IDLE"
+      let claimAuthorityGranted = false
       const persistHeartbeat = async (workerState: "IDLE" | "WORKING") => {
         const payload = await authorizedPost({
           action: "HEARTBEAT_PRODUCT_RESEARCH_WORKER", workerId,
+          leaderSessionId,
           extensionVersion: probe.extensionVersion,
           extensionIdentityMatch: probe.extensionId === probe.bridgeExtensionId,
           workerState,
@@ -149,15 +185,71 @@ export function MayelMarketRevalidationRunner() {
             heartbeat.heartbeatSource !== "INDEPENDENT_WORKER_LIVENESS") {
           throw new Error("PRODUCT_RESEARCH_WORKER_HEARTBEAT_INVALID")
         }
-        return heartbeat
+        claimAuthorityGranted = heartbeat.claimAuthorityGranted === true
+        return Object.assign(heartbeat, {
+          backgroundRequestLatencyMs:
+            Number(payload.backgroundRequestLatencyMs ?? 0),
+        })
       }
-      let heartbeat = await persistHeartbeat("IDLE")
+      const initialHeartbeatPermit = controller.acquirePollPermit()
+      if (!initialHeartbeatPermit.allowed) {
+        setState("Supabase está degradado. Esperando la sonda acotada…")
+        if (browserWorkerControl) {
+          await new Promise<void>((resolve) => {
+            const reload = window.setTimeout(() => {
+              window.location.reload()
+              resolve()
+            }, initialHeartbeatPermit.retryInMs)
+            leadershipAbort.signal.addEventListener("abort", () => {
+              window.clearTimeout(reload)
+              resolve()
+            }, { once: true })
+          })
+        } else {
+          window.setTimeout(() => window.location.replace(safeReturnPath()),
+            initialHeartbeatPermit.retryInMs)
+        }
+        return
+      }
+      let heartbeat = await persistHeartbeat(workerState)
+      controller.recordProbeSuccess(
+        Number(heartbeat.backgroundRequestLatencyMs ?? 0))
+      let heartbeatInFlight = false
+      heartbeatInterval = window.setInterval(() => {
+        if (heartbeatInFlight) {
+          controller.suppressDuplicatePoll()
+          return
+        }
+        const permit = controller.acquirePollPermit()
+        if (!permit.allowed) return
+        heartbeatInFlight = true
+        void persistHeartbeat(workerState).then((payload) => {
+          controller.recordProbeSuccess(
+            Number(payload.backgroundRequestLatencyMs ?? 0))
+        }).catch((heartbeatError) => {
+          claimAuthorityGranted = false
+          const requestError = heartbeatError as Error & {
+            httpStatus?: number
+            latencyMs?: number
+          }
+          controller.recordFailure({
+            httpStatus: requestError.httpStatus,
+            errorCode: requestError.message,
+            latencyMs: requestError.latencyMs,
+          })
+        }).finally(() => { heartbeatInFlight = false })
+      }, SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS)
       const maximumPlans = autonomous ? 4 : 1
       let completed = 0
-      for (; completed < maximumPlans; completed += 1) {
+      const pollStartedAt = performance.now()
+      const permit = controller.acquirePollPermit()
+      if (!permit.allowed || !claimAuthorityGranted) {
+        controller.suppressDuplicatePoll()
+      } else for (; completed < maximumPlans; completed += 1) {
         if (completed > 0) heartbeat = await persistHeartbeat("IDLE")
         const claimPayload = await authorizedPost({
           action: "CLAIM_AUTONOMOUS_RESEARCH_PLAN", workerId,
+          leaderSessionId,
           ...(planId ? { planId } : {}),
           workerCapability: {
             handshakeStatus: "PASS", workerCapability: "PASS",
@@ -173,7 +265,17 @@ export function MayelMarketRevalidationRunner() {
           },
         })
         const claim = claimPayload.result as JsonRecord
-        if (claim.claimed !== true) break
+        if (claim.suppressedDuplicatePoll === true) {
+          controller.suppressDuplicatePoll()
+          break
+        }
+        if (claim.claimed !== true) {
+          controller.recordEmptyPoll(performance.now() - pollStartedAt)
+          break
+        }
+        controller.recordClaimedJobs(1,
+          Number(claimPayload.backgroundRequestLatencyMs ?? 0))
+        workerState = "WORKING"
         heartbeat = await persistHeartbeat("WORKING")
         const claimedPlanId = String(claim.planId ?? "")
         try {
@@ -225,6 +327,7 @@ export function MayelMarketRevalidationRunner() {
                 pagesCapturedMinimum: 1, pagesCapturedMaximum: 2 } })
           }
         } catch (error) {
+          workerState = "IDLE"
           await authorizedPost({ action: "RELEASE_AUTONOMOUS_RESEARCH_PLAN",
             workerId, planId: claimedPlanId,
             errorCode: error instanceof Error ? error.message :
@@ -232,29 +335,64 @@ export function MayelMarketRevalidationRunner() {
           if (browserWorkerControl && autonomous) continue
           throw error
         }
+        workerState = "IDLE"
         if (!autonomous) break
       }
       if (browserWorkerControl) {
         setState(completed > 0
           ? "Research completado. Buscando trabajo pendiente…"
           : "Worker disponible · sin trabajo pendiente")
-        window.setTimeout(() => window.location.reload(), 60_000)
+        const delayMs = controller.nextDelayMs()
+        await new Promise<void>((resolve) => {
+          const reload = window.setTimeout(() => {
+            if (heartbeatInterval !== null) {
+              window.clearInterval(heartbeatInterval)
+            }
+            window.location.reload()
+            resolve()
+          }, delayMs)
+          leadershipAbort.signal.addEventListener("abort", () => {
+            window.clearTimeout(reload)
+            if (heartbeatInterval !== null) {
+              window.clearInterval(heartbeatInterval)
+            }
+            resolve()
+          }, { once: true })
+        })
         return
       }
+      if (heartbeatInterval !== null) window.clearInterval(heartbeatInterval)
       setState("Mercado revalidado. Volviendo a Mayel…")
       window.setTimeout(() => window.location.replace(
         autonomous ? safeReturnPath() :
           `/admin/ebay/mayel?marketRevalidation=${planId}`), 900)
-    })().catch((error) => {
+      },
+    }).catch((error) => {
+      if (leadershipAbort.signal.aborted) return
+      const requestError = error as Error & {
+        httpStatus?: number
+        latencyMs?: number
+      }
+      controller.recordFailure({
+        httpStatus: requestError.httpStatus,
+        errorCode: requestError.message,
+        latencyMs: requestError.latencyMs,
+      })
+      if (heartbeatInterval !== null) window.clearInterval(heartbeatInterval)
       setFailed(true)
       setState(error instanceof Error ? error.message :
         "No fue posible cerrar la investigación automática.")
       if (browserWorkerControl) {
-        window.setTimeout(() => window.location.reload(), 60_000)
+        window.setTimeout(() => window.location.reload(),
+          controller.nextDelayMs())
       } else if (autonomous) {
         window.setTimeout(() => window.location.replace(safeReturnPath()), 4_000)
       }
     })
+    return () => {
+      leadershipAbort.abort()
+      if (heartbeatInterval !== null) window.clearInterval(heartbeatInterval)
+    }
   }, [])
 
   if (!active) return null

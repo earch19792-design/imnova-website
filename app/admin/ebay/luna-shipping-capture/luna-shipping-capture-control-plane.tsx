@@ -13,6 +13,12 @@ import { detectAndWakeLunaShippingExtensionV1,
 import { canonicalSellerOsLunaPreviewOriginV1,
   SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN } from
   "@/lib/ebay/ebay-luna-shipping-preview-origin-v1.mjs"
+import {
+  createSellerOsBackgroundWorkloadControllerV1,
+  holdSellerOsCrossTabBrowserLeaderV1,
+  SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS,
+  sellerOsBackgroundMetricsPublisherV1,
+} from "@/lib/seller-os/background-workload-optimization-v1"
 
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
@@ -419,6 +425,7 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
 
 async function adminPost(action: string, body: Record<string, unknown>,
   idempotencyKey?: string) {
+  const startedAt = performance.now()
   const { data: { session } } = await supabase.auth.getSession()
   if (!session?.access_token) throw new Error("LUNA_SHIPPING_ADMIN_SESSION_REQUIRED")
   const response = await fetch("/api/admin/ebay/luna-shipping-capture", {
@@ -428,11 +435,18 @@ async function adminPost(action: string, body: Record<string, unknown>,
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}) },
     body: JSON.stringify({ action, ...body }),
   })
-  const payload = await response.json() as any
+  const payload = await response.json().catch(() => ({})) as any
   if (!response.ok || !payload.success) {
-    throw new Error(typeof payload.error === "string"
-      ? payload.error : "LUNA_SHIPPING_CAPTURE_REQUEST_FAILED")
+    const error = new Error(typeof payload.error === "string"
+      ? payload.error : "LUNA_SHIPPING_CAPTURE_REQUEST_FAILED") as Error & {
+        httpStatus?: number
+        latencyMs?: number
+      }
+    error.httpStatus = response.status
+    error.latencyMs = performance.now() - startedAt
+    throw error
   }
+  payload.backgroundRequestLatencyMs = performance.now() - startedAt
   return payload
 }
 
@@ -525,6 +539,14 @@ export function LunaShippingCaptureControlPlane({
   const liveTriggerRef = useRef<(() => void) | null>(null)
   const bindDestinationRef = useRef<(() => void) | null>(null)
   const heartbeatWorkerIdRef = useRef<string | null>(null)
+  const claimAuthoritySessionIdRef = useRef<string | null>(null)
+  const browserClaimLeaderRef = useRef(false)
+  const serverClaimLeaderRef = useRef(false)
+  const acquisitionWakeRef = useRef<(() => void) | null>(null)
+  const heartbeatNowRef = useRef<(() => void) | null>(null)
+  const workerRunningRef = useRef(running)
+  const workloadControllerRef = useRef<ReturnType<
+    typeof createSellerOsBackgroundWorkloadControllerV1> | null>(null)
 
   useEffect(() => {
     let active = true
@@ -557,7 +579,18 @@ export function LunaShippingCaptureControlPlane({
       ((automatic: boolean) => void) | null = null
     let activeJobStatusReady = false
     let recoveredActiveJob: LunaChromeShippingJobV1 | null = null
-    const runtimeInstanceId = crypto.randomUUID()
+    const runtimeInstanceId = heartbeatWorkerIdRef.current ?? crypto.randomUUID()
+    heartbeatWorkerIdRef.current = runtimeInstanceId
+    const claimAuthoritySessionId = claimAuthoritySessionIdRef.current ??
+      crypto.randomUUID()
+    claimAuthoritySessionIdRef.current = claimAuthoritySessionId
+    const workloadController = workloadControllerRef.current ??
+      createSellerOsBackgroundWorkloadControllerV1({
+        producer: "LUNA_SHIPPING", storage: window.localStorage,
+        publish: sellerOsBackgroundMetricsPublisherV1,
+      })
+    workloadControllerRef.current = workloadController
+    const leadershipAbort = new AbortController()
     let discoveryInFlight = false
     let discoveryRetryTimer: number | null = null
     let port: ExternalPort | null = null
@@ -864,7 +897,8 @@ export function LunaShippingCaptureControlPlane({
         throw new Error("LUNA_EXACT_LIVE_TARGET_GLOBAL_QUEUE_FORBIDDEN")
       }
       const payload = await adminPost("resolve_jobs", { candidateIds,
-        ...(nextMode === "AUTO" ? { runtimeInstanceId } : {}) })
+        ...(nextMode === "AUTO" ? { runtimeInstanceId,
+          leaderSessionId: claimAuthoritySessionId } : {}) })
       const resolved = Array.isArray(payload.jobs) ? payload.jobs : []
       const pendingCount = Number(
         payload.acquisition?.eligiblePendingJobCount ?? resolved.length)
@@ -876,6 +910,13 @@ export function LunaShippingCaptureControlPlane({
         throw new Error("LUNA_SHIPPING_EXTENSION_JOB_UNAVAILABLE")
       }
       if (!resolved.length) {
+        if (nextMode === "AUTO" &&
+            payload.acquisition?.suppressedDuplicatePoll === true) {
+          workloadController.suppressDuplicatePoll()
+        } else if (nextMode === "AUTO") {
+          workloadController.recordEmptyPoll(
+            Number(payload.backgroundRequestLatencyMs ?? 0))
+        }
         busy = false
         setRunning(false)
         setError("")
@@ -885,6 +926,10 @@ export function LunaShippingCaptureControlPlane({
         return false
       }
       jobs = resolved
+      if (nextMode === "AUTO") {
+        workloadController.recordClaimedJobs(resolved.length,
+          Number(payload.backgroundRequestLatencyMs ?? 0))
+      }
       index = 0
       mode = nextMode
       busy = true
@@ -893,21 +938,29 @@ export function LunaShippingCaptureControlPlane({
       return true
     }
 
-    const scheduleProductionAcquisition = (delayMs =
-      DISCOVERY_RETRY_INTERVAL_MS) => {
+    const scheduleProductionAcquisition = (delayMs?: number) => {
       if (!productionRuntimeAuthorized || hasExactLiveTarget || !active || busy ||
           discoveryRetryTimer !== null) {
         return
       }
+      const boundedDelay = delayMs ?? Math.max(DISCOVERY_RETRY_INTERVAL_MS,
+        workloadController.nextDelayMs())
       discoveryRetryTimer = window.setTimeout(() => {
         discoveryRetryTimer = null
         attemptProductionAcquisition()
-      }, Math.max(0, delayMs))
+      }, Math.max(0, boundedDelay))
     }
 
     const attemptProductionAcquisition = () => {
       if (!productionRuntimeAuthorized || hasExactLiveTarget || !active ||
-          discoveryInFlight || busy) {
+          discoveryInFlight || busy || !browserClaimLeaderRef.current ||
+          !serverClaimLeaderRef.current) {
+        return
+      }
+      if (workloadController.metrics().circuitBreakerState !== "CLOSED") {
+        scheduleProductionAcquisition(Math.max(
+          SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS,
+          workloadController.nextDelayMs()))
         return
       }
       if (extensionReady && canonicalBindingStatusRead &&
@@ -942,6 +995,11 @@ export function LunaShippingCaptureControlPlane({
         lastProgressState = "PRODUCTION_JOB_CLAIMED"
         return
       }
+      const pollPermit = workloadController.acquirePollPermit()
+      if (!pollPermit.allowed) {
+        scheduleProductionAcquisition(pollPermit.retryInMs)
+        return
+      }
       discoveryInFlight = true
       setStatus("INITIAL_AUTO_CLAIM_STARTED")
       void loadJobs(undefined, "AUTO").then((found) => {
@@ -953,9 +1011,35 @@ export function LunaShippingCaptureControlPlane({
         setStatus("DISCOVERY_RETRY_SCHEDULED")
         setError(discoveryError instanceof Error ? discoveryError.message
           : "LUNA_SHIPPING_DISCOVERY_FAILED")
+        const requestError = discoveryError as Error & {
+          httpStatus?: number
+          latencyMs?: number
+        }
+        workloadController.recordFailure({
+          httpStatus: requestError.httpStatus,
+          errorCode: requestError.message,
+          latencyMs: requestError.latencyMs,
+        })
         scheduleProductionAcquisition()
       }).finally(() => { discoveryInFlight = false })
     }
+    acquisitionWakeRef.current = attemptProductionAcquisition
+    void holdSellerOsCrossTabBrowserLeaderV1({
+      scope: "LUNA_SHIPPING", signal: leadershipAbort.signal,
+      onLeaderState: (leaderState) => {
+        workloadController.setLeaderState(leaderState)
+        browserClaimLeaderRef.current = leaderState === "BROWSER_LEADER" ||
+          leaderState === "SERVER_LEASE_ONLY"
+        if (browserClaimLeaderRef.current) heartbeatNowRef.current?.()
+      },
+      run: () => new Promise<void>((resolve) => {
+        leadershipAbort.signal.addEventListener("abort", () => resolve(),
+          { once: true })
+      }),
+    }).catch(() => {
+      browserClaimLeaderRef.current = false
+      serverClaimLeaderRef.current = false
+    })
 
     const beginCanary = () => {
       if (hasExactLiveTarget || busy || !extensionReady ||
@@ -2008,6 +2092,8 @@ export function LunaShippingCaptureControlPlane({
       if (discoveryRetryTimer !== null) {
         window.clearTimeout(discoveryRetryTimer)
       }
+      leadershipAbort.abort()
+      acquisitionWakeRef.current = null
       triggerRef.current = null
       liveTriggerRef.current = null
       bindDestinationRef.current = null
@@ -2015,28 +2101,71 @@ export function LunaShippingCaptureControlPlane({
     }
   }, [runtimeOnly])
 
+  workerRunningRef.current = running
+
   useEffect(() => {
     if (!connected) return
     if (!heartbeatWorkerIdRef.current) {
       heartbeatWorkerIdRef.current = crypto.randomUUID()
     }
     let active = true
+    if (!claimAuthoritySessionIdRef.current) {
+      claimAuthoritySessionIdRef.current = crypto.randomUUID()
+    }
+    let heartbeatInFlight = false
     const heartbeat = () => {
-      if (!active || !heartbeatWorkerIdRef.current) return
+      if (!active || !heartbeatWorkerIdRef.current ||
+          !claimAuthoritySessionIdRef.current ||
+          !browserClaimLeaderRef.current) return
+      const controller = workloadControllerRef.current
+      if (heartbeatInFlight) {
+        controller?.suppressDuplicatePoll()
+        return
+      }
+      const permit = controller?.acquirePollPermit()
+      if (permit && !permit.allowed) return
+      heartbeatInFlight = true
       void adminPost("heartbeat_worker_capability", {
         runtimeInstanceId: heartbeatWorkerIdRef.current,
+        leaderSessionId: claimAuthoritySessionIdRef.current,
         extensionVersion: EXPECTED_EXTENSION_VERSION,
         extensionIdentityMatch: true,
-        workerState: running ? "WORKING" : "IDLE",
-      }).catch(() => undefined)
+        workerState: workerRunningRef.current ? "WORKING" : "IDLE",
+      }).then((payload) => {
+        const previouslyGranted = serverClaimLeaderRef.current
+        serverClaimLeaderRef.current =
+          payload.result?.claimAuthorityGranted === true
+        if (!serverClaimLeaderRef.current) {
+          controller?.suppressDuplicatePoll()
+        }
+        controller?.recordProbeSuccess(
+          Number(payload.backgroundRequestLatencyMs ?? 0))
+        if (!previouslyGranted && serverClaimLeaderRef.current) {
+          acquisitionWakeRef.current?.()
+        }
+      }).catch((heartbeatError) => {
+        serverClaimLeaderRef.current = false
+        const requestError = heartbeatError as Error & {
+          httpStatus?: number
+          latencyMs?: number
+        }
+        controller?.recordFailure({
+          httpStatus: requestError.httpStatus,
+          errorCode: requestError.message,
+          latencyMs: requestError.latencyMs,
+        })
+      }).finally(() => { heartbeatInFlight = false })
     }
+    heartbeatNowRef.current = heartbeat
     heartbeat()
-    const interval = window.setInterval(heartbeat, 60_000)
+    const interval = window.setInterval(heartbeat,
+      SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS)
     return () => {
       active = false
       window.clearInterval(interval)
+      heartbeatNowRef.current = null
     }
-  }, [connected, running])
+  }, [connected])
 
   useEffect(() => {
     const workerSnapshot: LunaShippingOwnerWorkerSnapshot = {
