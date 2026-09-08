@@ -1,3 +1,6 @@
+// @ts-expect-error Node direct TypeScript tests require the explicit extension.
+import { getEbayProRuntimeBoundary } from "./environment-boundaries.ts"
+
 export const SELLER_OS_MCP_TUNNEL_DEVELOPMENT_VERSION =
   "SELLER_OS_MCP_TUNNEL_DEVELOPMENT_V1_2026_08_12"
 export const SELLER_OS_MCP_TUNNEL_DEVELOPMENT_MODE = "TUNNEL_DEVELOPMENT"
@@ -21,6 +24,7 @@ export type SellerOsMcpRuntimePolicyV1 = Readonly<{
   requiredScope: "seller_os.read" | null
   loopbackOnly: boolean
   bindHost: string
+  nextCompilationMode: "production" | "development" | "other"
   productionContext: boolean
   vercelContext: boolean
   assistantWriteTools: number
@@ -61,7 +65,18 @@ export function getSellerOsMcpRuntimePolicyV1(
   ).toLowerCase()
   const vercelContext = normalize(environment.VERCEL) === "1" ||
     Boolean(vercelEnvironment) || Boolean(vercelTargetEnvironment)
-  const productionContext = nodeEnvironment === "production" ||
+  // Compilation mode is not the business/security deployment classification.
+  // Only the existing explicit local VM classification opts production builds
+  // into the private Tunnel contract; absent/other labels remain fail-closed.
+  const localPrecompiled = nodeEnvironment === "production" &&
+    sellerOsRuntime === "local_vm_lab" &&
+    !getEbayProRuntimeBoundary({ nodeEnv: nodeEnvironment,
+      vercelEnv: vercelEnvironment, ebayProRuntime: sellerOsRuntime,
+      pathname: "/api/seller-os/assistant/mcp" }).isProductionRuntime
+  const nextCompilationMode = nodeEnvironment === "production"
+    ? "production" as const : nodeEnvironment === "development"
+      ? "development" as const : "other" as const
+  const productionContext = (nodeEnvironment === "production" && !localPrecompiled) ||
     sellerOsRuntime === "production" ||
     sellerOsRuntime === "production_core" ||
     vercelEnvironment === "production" ||
@@ -79,6 +94,7 @@ export function getSellerOsMcpRuntimePolicyV1(
       requiredScope: "seller_os.read",
       loopbackOnly: false,
       bindHost,
+      nextCompilationMode,
       productionContext,
       vercelContext,
       assistantWriteTools: input.assistantWriteTools,
@@ -120,6 +136,7 @@ export function getSellerOsMcpRuntimePolicyV1(
     requiredScope: requestHandlingAllowed ? null : "seller_os.read",
     loopbackOnly: bindHost === SELLER_OS_MCP_TUNNEL_LOOPBACK_HOST,
     bindHost,
+    nextCompilationMode,
     productionContext,
     vercelContext,
     assistantWriteTools: input.assistantWriteTools,

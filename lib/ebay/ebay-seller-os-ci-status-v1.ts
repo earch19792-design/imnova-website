@@ -352,7 +352,7 @@ export async function collectSellerOsCiStatusV1(options: {
   const limitations: string[] = []
   if (Object.keys(artifact).some((key) => !["artifactVersion", "source", "validatedHeadSha",
     "startedAt", "completedAt", "headChangedDuringValidation",
-    "workspaceChangedDuringValidation", "validationSubject", "producer", "checks"].includes(key))) {
+    "workspaceChangedDuringValidation", "validationSubject", "producer", "checks", "buildArtifact"].includes(key))) {
     limitations.push("VALIDATION_ARTIFACT_FIELDS_OMITTED_UNSAFE")
   }
   const validatedHeadSha = safeSha(artifact.validatedHeadSha)

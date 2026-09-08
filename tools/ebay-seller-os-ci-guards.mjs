@@ -1,3 +1,4 @@
+import { hasExplicitSellerOsTableRevokeV1 } from "./seller-os-table-acl-v1.mjs"
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
@@ -135,17 +136,12 @@ for (const name of migrationNames) {
   )].map((match) => match[1])
 
   for (const table of createdSellerOsTables) {
-    const escapedTable = table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    const explicitRevoke = new RegExp(
-      `revoke\\s+all\\s+on\\s+table\\s+public\\.${escapedTable}\\s+from\\s+(?:public\\s*,\\s*)?anon\\s*,\\s*authenticated\\s*;`,
-      "i",
-    )
     const remediationName = sellerOsAclRemediations.get(`${timestamp}:${table}`)
     const remediationSource = remediationName &&
       migrationNames.includes(remediationName)
       ? readFileSync(join(migrationDirectory, remediationName), "utf8")
       : ""
-    if (!explicitRevoke.test(source) && !explicitRevoke.test(remediationSource)) {
+    if (!hasExplicitSellerOsTableRevokeV1(source, table) && !hasExplicitSellerOsTableRevokeV1(remediationSource, table)) {
       failures.push(`SELLER_OS_TABLE_ACL_REVOKE_MISSING:${name}:${table}`)
     }
   }

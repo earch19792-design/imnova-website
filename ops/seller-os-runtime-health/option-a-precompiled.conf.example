@@ -1,0 +1,12 @@
+# PROPOSAL ONLY. Do not install before separately approved physical activation.
+# Stage and verify the exact validated artifact with the previous runtime stopped.
+# Preserve all existing EnvironmentFile bindings and dependency units.
+[Service]
+WorkingDirectory=/home/earch/imnova-seller-os-canonical-integration-foundation-v1
+Environment=NODE_ENV=production
+Environment=EBAY_PRO_RUNTIME=local_vm_lab
+Environment=SELLER_OS_MCP_DEPLOYMENT_MODE=TUNNEL_DEVELOPMENT
+Environment=SELLER_OS_MCP_BIND_HOST=127.0.0.1
+ExecStartPre=/home/earch/.nvm/versions/node/v22.23.0/bin/node tools/seller-os-precompiled-certify-v1.mjs verify
+ExecStart=
+ExecStart=/home/earch/.nvm/versions/node/v22.23.0/bin/npm run start -- -H 127.0.0.1 -p 3000

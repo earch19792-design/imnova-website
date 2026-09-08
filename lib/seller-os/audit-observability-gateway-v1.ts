@@ -136,6 +136,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
   if (input.identityType === "PRODUCT_CASE_ID") {
     const read = await budget.read({ dependency: "IDENTITY_PRODUCT_CASE",
       authority: "seller_os_prelinked_launch_candidates", critical: true,
+      retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
       query: () => input.supabase.from("seller_os_prelinked_launch_candidates")
         .select("*").eq("product_case_id", identity).limit(2) })
     assertRead("PRODUCT_CASE", read)
@@ -147,6 +148,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
     if (candidate) {
       const queueRead = await budget.read({ dependency: "IDENTITY_TRUTH",
         authority: "ebay_luna_opportunity_queue", critical: true,
+        retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
         query: () => input.supabase.from("ebay_luna_opportunity_queue")
           .select("*").eq("candidate_key", candidate).limit(2) })
       assertRead("QUEUE", queueRead); queueRows = rows(queueRead.data)
@@ -157,6 +159,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
       ? "supplier_product_id" : "supplier_sku"
     const read = await budget.read({ dependency: "IDENTITY_TRUTH",
       authority: "ebay_luna_opportunity_queue", critical: true,
+      retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
       query: () => input.supabase.from("ebay_luna_opportunity_queue")
         .select("*").eq(column, identity).order("updated_at", { ascending: false })
         .limit(3) })
@@ -165,6 +168,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
     if (!UUID.test(identity)) throw new Error("AUDIT_PACKAGE_ID_INVALID")
     const read = await budget.read({ dependency: "IDENTITY_PACKAGE",
       authority: "ebay_listing_packages", critical: true,
+      retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
       query: () => input.supabase.from("ebay_listing_packages").select("*")
         .eq("id", identity).eq("account_key", input.accountKey).limit(1)
         .maybeSingle() })
@@ -173,6 +177,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
     if (candidate) {
       const queueRead = await budget.read({ dependency: "IDENTITY_TRUTH",
         authority: "ebay_luna_opportunity_queue", critical: true,
+        retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
         query: () => input.supabase.from("ebay_luna_opportunity_queue")
           .select("*").eq("candidate_key", candidate).limit(2) })
       assertRead("QUEUE", queueRead); queueRows = rows(queueRead.data)
@@ -181,6 +186,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
     if (!/^\d{9,19}$/.test(identity)) throw new Error("AUDIT_ITEM_ID_INVALID")
     const read = await budget.read({ dependency: "IDENTITY_ACTIVE_LISTING",
       authority: "ebay_active_listings", critical: true,
+      retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
       query: () => input.supabase.from("ebay_active_listings").select("*")
         .eq("account_key", input.accountKey).eq("ebay_item_id", identity).limit(1)
         .maybeSingle() })
@@ -188,12 +194,15 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
     const variantId = text(activeRow.supplier_variant_id, 100)
     const supplierSku = text(activeRow.supplier_sku, 180)
     if (variantId || supplierSku) {
-      let query = input.supabase.from("ebay_luna_opportunity_queue").select("*")
-      query = variantId ? query.eq("supplier_variant_id", variantId)
-        : query.eq("supplier_sku", supplierSku as string)
       const queueRead = await budget.read({ dependency: "IDENTITY_TRUTH",
         authority: "ebay_luna_opportunity_queue", critical: true,
-        query: () => query.order("updated_at", { ascending: false }).limit(3) })
+        retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
+        query: () => {
+          const query = input.supabase.from("ebay_luna_opportunity_queue").select("*")
+          return (variantId ? query.eq("supplier_variant_id", variantId)
+            : query.eq("supplier_sku", supplierSku as string))
+            .order("updated_at", { ascending: false }).limit(3)
+        } })
       assertRead("QUEUE", queueRead); queueRows = rows(queueRead.data)
     }
   }

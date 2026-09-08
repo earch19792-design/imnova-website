@@ -1,0 +1,15 @@
+# Precompiled local private Tunnel runtime (Option A)
+
+The existing root application can use its existing `next build --webpack` and `next start -H 127.0.0.1 -p 3000` commands. Compilation in production requires the explicit existing `EBAY_PRO_RUNTIME=local_vm_lab` classification for TUNNEL_DEVELOPMENT. Business production, Vercel contexts, non-loopback binds, unknown modes and write tools remain rejected. Handler and OAuth metadata share the existing policy; no credentials, relay authority or auth scheme change.
+
+Use a clean isolated worktree and the unchanged dependency versions. Run `node tools/seller-os-precompiled-certify-v1.mjs certify`. This extends the existing validation recorder and retains the build in that isolated worktree. It requires targeted security/retry/watchdog tests, the full Seller OS suite, typecheck, lint, production build and existing CI guards. Logs and the SHA/fingerprint/build ID/digest receipt stay under ignored `.seller-os`. Build output and generated Next/typecheck files must never enter a source commit. Do not copy the old `.next/BUILD_ID`.
+
+`node tools/seller-os-precompiled-certify-v1.mjs verify` verifies the source subject, compiled payload and all receipt gates. The runtime health catalog additionally recognizes a verified precompiled worktree of the same canonical Git repository. It explicitly reports `operationalServiceBound=false` and DEGRADED for an isolated worktree; it does not reinterpret active host units as the isolated process. Artifact/catalog binding is separate from service health.
+
+The payload digest covers `.next` executable outputs, public assets, package manifests and Next config. Compiler caches/dev output/trace/diagnostics are excluded. External dependencies must remain the same isolated installation used by validation; this receipt is not a transferable standalone package. Dependency upgrades/reinstallation invalidate certification and require validation again.
+
+`ops/seller-os-runtime-health/option-a-precompiled.conf.example` is an unapplied future unit proposal. Physical activation needs separate authorization, atomic staged artifact installation with the old process stopped, exact restoration material, and the existing coupled MCP/Tunnel settle policy: 30 seconds, 5-second probes, at most six, two consecutive full healthy reads. Preserve the watchdog lock/state, two-attempt hourly limit, and no explicit extra Tunnel restart. Restore exact previous source/config/cache on rollback; restoring today's unhealthy dev baseline does not guarantee recovery.
+
+The recovered three-file scoped 521 implementation is included byte-for-byte from its prior validated hashes. It does not add global SDK retry or change Product Truth. The ACL checker now recognizes explicit multi-table REVOKE statements; no SQL migration changed. PGlite 0.5.8 is already pinned by the repository and is a test dependency, not an operational database change.
+
+This change does not activate a service, change relay routing, certify external reachability, or certify E2E business results. Those require the explicit isolated/physical canary receipts.

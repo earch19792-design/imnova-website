@@ -1,3 +1,4 @@
+import type { PrecompiledRuntimeBindingV1 } from "./ebay-seller-os-precompiled-artifact-v1.mjs"
 import { execFile } from "node:child_process"
 import { createConnection } from "node:net"
 
@@ -101,6 +102,7 @@ type WatchdogTimerHealthV1 = Readonly<{
 }>
 
 export type SellerOsRuntimeHealthV1 = Readonly<{
+  runtimeBuild?: PrecompiledRuntimeBindingV1
   contractVersion: typeof SELLER_OS_RUNTIME_HEALTH_CONTRACT_VERSION
   observedAt: string
   overallStatus: RuntimeStatusV1

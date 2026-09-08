@@ -1,3 +1,4 @@
+import { inspectPrecompiledRuntimeArtifactV1 } from "./ebay-seller-os-precompiled-artifact-v1.mjs"
 import { resolve } from "node:path"
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
@@ -599,10 +600,21 @@ export function createSellerOsMcpServerV1(options: {
     } catch {
       result = createUnavailableSellerOsRuntimeHealthV1()
     }
+    const precompiled = process.env.NODE_ENV === "production" &&
+      applicationAuthMode === "TUNNEL_TRANSPORT_ONLY"
+      ? await inspectPrecompiledRuntimeArtifactV1() : null
+    if (precompiled) {
+      result = { ...result, runtimeBuild: precompiled,
+        ...(precompiled.operationalServiceBound ? {} : {
+          overallStatus: "DEGRADED" as const,
+          limitations: [...result.limitations,
+            "ISOLATED_PRECOMPILED_RUNTIME_NOT_OPERATIONAL_SERVICE"],
+        }) }
+    }
     result = attestSellerOsRuntimeCatalogV1(result, {
       registeredToolNames: [...registeredToolNames],
       expectedToolNames: SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1,
-      runtimeWorkingDirectoryMatch: resolve(process.cwd()) === resolve(
+      runtimeWorkingDirectoryMatch: precompiled ? precompiled.runtimeBuildShaMatch : resolve(process.cwd()) === resolve(
         SELLER_OS_CANONICAL_REPOSITORY_V1.directory,
       ),
       loadedMcpImplementationVersion: SELLER_OS_MCP_ENDPOINT_VERSION,
