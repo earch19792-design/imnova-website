@@ -5,6 +5,10 @@ import { NextResponse } from "next/server"
 
 import { evaluateEbayListingWorkspaceEligibility } from "@/lib/ebay/ebay-first-luna-opportunity-queue"
 import { getEbayFirstLunaQueueDashboard } from "@/lib/ebay/ebay-first-luna-scan-service"
+import {
+  COMMAND_CENTER_BACKGROUND_FANOUT_CONTRACT_V1,
+  readCommandCenterBackgroundSingleFlightV1,
+} from "@/lib/ebay/command-center-background-single-flight-v1"
 import { selectApplicableSafeListingDefaults } from "@/lib/ebay/ebay-manual-listing-service"
 import { ebayDraftOnlyEconomicsConfig } from "@/lib/ebay/ebay-draft-only-readiness"
 import { calculateEbayUnitEconomics } from "@/lib/ebay/ebay-unit-economics"
@@ -519,72 +523,97 @@ export async function GET(req: Request) {
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     const url = new URL(req.url)
     const opportunityId = url.searchParams.get("opportunity") ?? ""
-    const smartStockingCandidate = url.searchParams.get("smartStockingCandidate")
-    const [dashboard, sessions, packages, alertOutbox] = await Promise.all([
-      getEbayFirstLunaQueueDashboard(supabase),
-      supabase
-        .from("ebay_command_center_reviews")
-        .select("*")
-        .eq("user_id", reviewer)
-        .in("status", OPEN_REVIEW_STATUSES)
-        .order("updated_at", { ascending: false })
-        .limit(50),
-      supabase
-        .from("ebay_listing_packages")
-        .select("*")
-        .eq("created_by", reviewer)
-        .eq("account_key", accountKey ?? "__unconfigured__")
-        .order("updated_at", { ascending: false })
-        .limit(50),
-      supabase
-        .from("ebay_seller_alert_outbox")
-        .select("id,alert_type,priority,entity_type,entity_id,candidate_key,status,payload,due_at,created_at,delivered_at")
-        .eq("payload->>accountKey", accountKey ?? "__unconfigured__")
-        .in("status", ["pending", "leased", "failed", "dead_letter"])
-        .order("created_at", { ascending: false })
-        .limit(50),
-    ])
+    const smartStockingCandidates = [...new Set(
+      url.searchParams.getAll("smartStockingCandidate").filter(Boolean),
+    )]
+    if (smartStockingCandidates.length > 2) {
+      throw new Error("COMMAND_CENTER_SMART_STOCKING_BATCH_LIMIT")
+    }
+    const baseState = await readCommandCenterBackgroundSingleFlightV1({
+      scopeKey: `${reviewer}:${accountKey ?? "__unconfigured__"}`,
+      load: async () => {
+        const [dashboard, sessions, packages, alertOutbox] = await Promise.all([
+          getEbayFirstLunaQueueDashboard(supabase, {
+            readShape: "COMMAND_CENTER_SUMMARY_V1",
+          }),
+          supabase
+            .from("ebay_command_center_reviews")
+            .select("*")
+            .eq("user_id", reviewer)
+            .in("status", OPEN_REVIEW_STATUSES)
+            .order("updated_at", { ascending: false })
+            .limit(50),
+          supabase
+            .from("ebay_listing_packages")
+            .select("id,account_key,opportunity_id,candidate_key,status,readiness,source_observed_at,created_by,updated_at")
+            .eq("created_by", reviewer)
+            .eq("account_key", accountKey ?? "__unconfigured__")
+            .order("updated_at", { ascending: false })
+            .limit(50),
+          supabase
+            .from("ebay_seller_alert_outbox")
+            .select("id,alert_type,priority,entity_type,entity_id,candidate_key,status,payload,due_at,created_at,delivered_at")
+            .eq("payload->>accountKey", accountKey ?? "__unconfigured__")
+            .in("status", ["pending", "leased", "failed", "dead_letter"])
+            .order("created_at", { ascending: false })
+            .limit(50),
+        ])
+        return { dashboard, sessions, packages, alertOutbox }
+      },
+    })
+    const { dashboard, sessions, packages, alertOutbox } = baseState.value
     const firstError = sessions.error ?? packages.error ?? alertOutbox.error
     if (firstError) throw new Error("COMMAND_CENTER_STATE_READ_FAILED")
     const selectedOpportunity = opportunityId ? await opportunity(supabase, opportunityId) : null
-    let smartStockingListingIntake: Record<string, unknown> | null = null
-    if (smartStockingCandidate === CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku) {
-      const decision = await readWinnerEvidenceDecisionPackage(
-        supabase,
-        CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.packageId,
-        accountKey ?? "",
-      )
-      const profile = decision.smartStockingLearningProfile
-      const { data: existingIntake, error: intakeError } = await supabase
-        .from("ebay_luna_opportunity_queue")
-        .select("id,candidate_key,decision")
-        .eq("candidate_key", CAKE_TURNTABLE_LISTING_INTAKE_KEY)
-        .maybeSingle()
-      if (intakeError) throw new Error("COMMAND_CENTER_SMART_STOCKING_INTAKE_READ_FAILED")
-      smartStockingListingIntake = {
-        decisionPackageId: decision.packageId,
-        candidateKey: CAKE_TURNTABLE_LISTING_INTAKE_KEY,
-        supplierSku: CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku,
-        gtin: CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.gtin,
-        productTitle: "11 in Revolving Plastic Cake Turntable Non-Slip Base",
-        finalDecision: profile?.decisionSnapshot.finalEconomics.status === "PASS" &&
-          profile.decisionSnapshot.parkReason === null
-          ? "LISTING_READY" : "BLOCKED",
-        finalPriceUsd: profile?.decisionSnapshot.finalEconomics.salePriceUsd ?? null,
-        entryPotentialScore: profile?.entrySnapshot.entryPotentialScore ?? null,
-        intakeMaterialized: Boolean(existingIntake),
-        listingWorkspaceUrl: existingIntake
-          ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(String(existingIntake.id))}&candidate=${encodeURIComponent(CAKE_TURNTABLE_LISTING_INTAKE_KEY)}`
-          : null,
-        publicationAuthorized: false,
-      }
-    } else if (smartStockingCandidate ===
-      WINDOW_FILM_LISTING_INTAKE_TARGET_V1.lunaSku) {
-      smartStockingListingIntake = await readWindowFilmListingIntakeSummaryV1({
-        supabase,
-        accountKey: accountKey ?? "",
-      })
-    }
+    const smartStockingListingIntakes = Object.fromEntries(await Promise.all(
+      smartStockingCandidates.map(async (smartStockingCandidate) => {
+        let intake: Record<string, unknown> | null = null
+        if (smartStockingCandidate ===
+            CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku) {
+          const decision = await readWinnerEvidenceDecisionPackage(
+            supabase,
+            CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.packageId,
+            accountKey ?? "",
+          )
+          const profile = decision.smartStockingLearningProfile
+          const { data: existingIntake, error: intakeError } = await supabase
+            .from("ebay_luna_opportunity_queue")
+            .select("id,candidate_key,decision")
+            .eq("candidate_key", CAKE_TURNTABLE_LISTING_INTAKE_KEY)
+            .maybeSingle()
+          if (intakeError) {
+            throw new Error("COMMAND_CENTER_SMART_STOCKING_INTAKE_READ_FAILED")
+          }
+          intake = {
+            decisionPackageId: decision.packageId,
+            candidateKey: CAKE_TURNTABLE_LISTING_INTAKE_KEY,
+            supplierSku: CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku,
+            gtin: CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.gtin,
+            productTitle: "11 in Revolving Plastic Cake Turntable Non-Slip Base",
+            finalDecision: profile?.decisionSnapshot.finalEconomics.status === "PASS" &&
+              profile.decisionSnapshot.parkReason === null
+              ? "LISTING_READY" : "BLOCKED",
+            finalPriceUsd: profile?.decisionSnapshot.finalEconomics.salePriceUsd ?? null,
+            entryPotentialScore: profile?.entrySnapshot.entryPotentialScore ?? null,
+            intakeMaterialized: Boolean(existingIntake),
+            listingWorkspaceUrl: existingIntake
+              ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(String(existingIntake.id))}&candidate=${encodeURIComponent(CAKE_TURNTABLE_LISTING_INTAKE_KEY)}`
+              : null,
+            publicationAuthorized: false,
+          }
+        } else if (smartStockingCandidate ===
+          WINDOW_FILM_LISTING_INTAKE_TARGET_V1.lunaSku) {
+          intake = await readWindowFilmListingIntakeSummaryV1({
+            supabase,
+            accountKey: accountKey ?? "",
+          })
+        }
+        return [smartStockingCandidate, intake] as const
+      }),
+    ))
+    const smartStockingListingIntake = smartStockingCandidates.length === 1
+      ? smartStockingListingIntakes[smartStockingCandidates[0]] ?? null
+      : null
     return NextResponse.json({
       success: true,
       dashboard,
@@ -596,7 +625,13 @@ export async function GET(req: Request) {
       },
       selectedOpportunity,
       smartStockingListingIntake,
+      smartStockingListingIntakes,
       refreshedAt: new Date().toISOString(),
+      backgroundFanout: {
+        contractVersion: COMMAND_CENTER_BACKGROUND_FANOUT_CONTRACT_V1,
+        source: baseState.source,
+        concurrentRequestReused: baseState.source === "SINGLE_FLIGHT_JOIN",
+      },
       safety: { ebayReadOnly: true, ebayWriteUsed: false, canPublish: false },
     })
   } catch (error) {

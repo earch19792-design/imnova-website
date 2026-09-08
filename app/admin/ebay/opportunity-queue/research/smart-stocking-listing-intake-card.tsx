@@ -49,17 +49,21 @@ export function SmartStockingListingIntakeCard() {
     void (async () => {
       try {
         const token = await bearer()
-        const entries = await Promise.all(CANDIDATES.map(async (candidate) => {
-          const response = await fetch(
-            `/api/admin/ebay/command-center?smartStockingCandidate=${encodeURIComponent(candidate.supplierSku)}`,
-            { cache: "no-store", headers: { Authorization: `Bearer ${token}` } },
-          )
-          const payload = await response.json() as {
-            success?: boolean
-            smartStockingListingIntake?: Intake
-            error?: string
-          }
-          const intake = payload.smartStockingListingIntake
+        const params = new URLSearchParams()
+        for (const candidate of CANDIDATES) {
+          params.append("smartStockingCandidate", candidate.supplierSku)
+        }
+        const response = await fetch(
+          `/api/admin/ebay/command-center?${params.toString()}`,
+          { cache: "no-store", headers: { Authorization: `Bearer ${token}` } },
+        )
+        const payload = await response.json() as {
+          success?: boolean
+          smartStockingListingIntakes?: Record<string, Intake | null>
+          error?: string
+        }
+        const entries = CANDIDATES.map((candidate) => {
+          const intake = payload.smartStockingListingIntakes?.[candidate.supplierSku]
           if (!response.ok || !payload.success || !intake
             || intake.supplierSku !== candidate.supplierSku
             || intake.candidateKey !== candidate.candidateKey) {
@@ -67,7 +71,7 @@ export function SmartStockingListingIntakeCard() {
               ?? "SMART_STOCKING_INTAKE_CONTEXT_MISMATCH")
           }
           return [candidate.supplierSku, intake] as const
-        }))
+        })
         if (active) setIntakes(Object.fromEntries(entries))
       } catch (caught) {
         if (active) setErrors({ general: caught instanceof Error

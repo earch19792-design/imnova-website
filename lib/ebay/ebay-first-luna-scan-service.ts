@@ -60,6 +60,9 @@ import { buildSellerOsDashboardOpportunityAuthorityV1 } from
 
 const SCAN_BATCH_SIZE = 2
 const QUEUE_LIMIT = 250
+const COMMAND_CENTER_QUEUE_LIMIT = 100
+const FULL_QUEUE_PROJECTION = "id,candidate_key,market_radar_product_id,supplier_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at"
+const COMMAND_CENTER_QUEUE_PROJECTION = "id,candidate_key,market_radar_product_id,supplier_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,listing_readiness_score,active_comparables,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,hard_gates,evidence_guards,assessment,last_scanned_at"
 export const EBAY_LUNA_SCAN_STRATEGY = "priority_first"
 const ALL_SCAN_LANES: SellerScanLane[] = ["protection", "event", "hot", "baseline", "coverage"]
 
@@ -1037,7 +1040,23 @@ export async function recordEbayFirstLunaScanFailure(
   return code
 }
 
-export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
+export async function getEbayFirstLunaQueueDashboard(
+  supabase: SupabaseClient,
+  options: Readonly<{
+    readShape?: "FULL_QUEUE" | "COMMAND_CENTER_SUMMARY_V1"
+  }> = {},
+) {
+  const commandCenterSummary =
+    options.readShape === "COMMAND_CENTER_SUMMARY_V1"
+  const queueQuery = commandCenterSummary
+    ? supabase.from("ebay_luna_opportunity_queue")
+      .select(COMMAND_CENTER_QUEUE_PROJECTION)
+      .order("opportunity_score", { ascending: false })
+      .limit(COMMAND_CENTER_QUEUE_LIMIT)
+    : supabase.from("ebay_luna_opportunity_queue")
+      .select(FULL_QUEUE_PROJECTION, { count: "exact" })
+      .order("opportunity_score", { ascending: false })
+      .limit(QUEUE_LIMIT)
   const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
   const activeRisksQuery = accountKey
     ? supabase
@@ -1050,7 +1069,7 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
     : Promise.resolve({ data: [], error: null })
   const [runs, queue, events, activeRisks] = await Promise.all([
     supabase.from("ebay_luna_scan_runs").select("*").order("started_at", { ascending: false }).limit(5),
-    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,supplier_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at", { count: "exact" }).order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
+    queueQuery,
     supabase.from("ebay_luna_opportunity_queue_events").select("*,ebay_luna_opportunity_queue(product_title,supplier_sku)").order("created_at", { ascending: false }).limit(40),
     activeRisksQuery,
   ])
@@ -1196,7 +1215,9 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
       watchlist: rows.filter((row) => row.queue_status === "watchlist").length,
       supplierHolds: rows.filter((row) => row.queue_status === "hold" || row.queue_status === "rejected").length,
       activeListingRisks: scopedActiveRisks.length,
-      scopeComplete: (queue.count ?? rows.length) <= rows.length,
+      scopeComplete: commandCenterSummary
+        ? rows.length < COMMAND_CENTER_QUEUE_LIMIT
+        : (queue.count ?? rows.length) <= rows.length,
     },
     safety: {
       ebayReadOnly: true,
@@ -1232,5 +1253,16 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
         : null,
     },
     commercialOpportunityAuthority: opportunityAuthority,
+    readModel: {
+      contractVersion: commandCenterSummary
+        ? "COMMAND_CENTER_QUEUE_SUMMARY_V1"
+        : "FULL_QUEUE_V1",
+      selectedQueueFieldCount: commandCenterSummary ? 27 : 30,
+      boundedRowLimit: commandCenterSummary
+        ? COMMAND_CENTER_QUEUE_LIMIT
+        : QUEUE_LIMIT,
+      exactCountRequested: !commandCenterSummary,
+      listDetailSeparated: commandCenterSummary,
+    },
   }
 }
