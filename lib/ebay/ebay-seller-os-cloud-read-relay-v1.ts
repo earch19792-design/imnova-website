@@ -690,6 +690,15 @@ export async function handleSellerOsCloudReadRelayRequestV1(
         marketplaceWrites: 0 },
     }, { status: 200, headers: SAFE_HEADERS })
   } catch {
+    if (envelope.toolName === "seller_os_get_product_case") {
+      // Expected source failures are returned as bounded Product Case
+      // limitations by the canonical reader. A thrown exception is unexpected.
+      console.error("SELLER_OS_PRODUCT_CASE_RELAY_FAILURE", {
+        classification: "UNEXPECTED_RUNTIME_EXCEPTION", origin: "APPLICATION",
+        operation: "seller_os_get_product_case",
+      })
+      return relayError(500, "SELLER_OS_PRODUCT_CASE_UNEXPECTED_EXCEPTION")
+    }
     return relayError(502, "SELLER_OS_CLOUD_READ_RELAY_SOURCE_READ_FAILED")
   }
 }

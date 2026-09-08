@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { projectLunaFieldTruthV1 } from "./luna-field-truth-projection-v1"
+import { projectLunaFieldTruthV1, LUNA_FIELD_TRUTH_FIELDS_V1 } from "./luna-field-truth-projection-v1"
+import { createProductCaseReadBudgetV1, ProductCaseCriticalReadFailureV1,
+  type ProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
 
 export const SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1 =
   "SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1" as const
@@ -124,7 +126,7 @@ function field(input: Readonly<{ field: string; value: unknown;
 
 async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient;
   accountKey: string; identityType: SellerOsProductCaseIdentityTypeV1;
-  identity: string }>) {
+  identity: string }>, budget: ProductCaseReadBudgetV1) {
   const identity = input.identity.normalize("NFKC").trim()
   if (!identity || identity.length > 220) throw new Error("AUDIT_IDENTITY_INVALID")
   let queueRows: Row[] = []
@@ -132,8 +134,10 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
   let activeRow: Row = {}
   let productCaseRow: Row = {}
   if (input.identityType === "PRODUCT_CASE_ID") {
-    const read = await input.supabase.from("seller_os_prelinked_launch_candidates")
-      .select("*").eq("product_case_id", identity).limit(2)
+    const read = await budget.read({ dependency: "IDENTITY_PRODUCT_CASE",
+      authority: "seller_os_prelinked_launch_candidates", critical: true,
+      query: () => input.supabase.from("seller_os_prelinked_launch_candidates")
+        .select("*").eq("product_case_id", identity).limit(2) })
     assertRead("PRODUCT_CASE", read)
     const matches = rows(read.data)
     if (matches.length !== 1) return { contradiction: matches.length > 1
@@ -141,35 +145,45 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
     productCaseRow = matches[0]
     const candidate = text(productCaseRow.opportunity_candidate_key, 100)
     if (candidate) {
-      const queueRead = await input.supabase.from("ebay_luna_opportunity_queue")
-        .select("*").eq("candidate_key", candidate).limit(2)
+      const queueRead = await budget.read({ dependency: "IDENTITY_TRUTH",
+        authority: "ebay_luna_opportunity_queue", critical: true,
+        query: () => input.supabase.from("ebay_luna_opportunity_queue")
+          .select("*").eq("candidate_key", candidate).limit(2) })
       assertRead("QUEUE", queueRead); queueRows = rows(queueRead.data)
     }
   } else if (input.identityType === "LUNA_PRODUCT_ID" ||
       input.identityType === "SUPPLIER_SKU") {
     const column = input.identityType === "LUNA_PRODUCT_ID"
       ? "supplier_product_id" : "supplier_sku"
-    const read = await input.supabase.from("ebay_luna_opportunity_queue")
-      .select("*").eq(column, identity).order("updated_at", { ascending: false })
-      .limit(3)
+    const read = await budget.read({ dependency: "IDENTITY_TRUTH",
+      authority: "ebay_luna_opportunity_queue", critical: true,
+      query: () => input.supabase.from("ebay_luna_opportunity_queue")
+        .select("*").eq(column, identity).order("updated_at", { ascending: false })
+        .limit(3) })
     assertRead("QUEUE", read); queueRows = rows(read.data)
   } else if (input.identityType === "LISTING_PACKAGE_ID") {
     if (!UUID.test(identity)) throw new Error("AUDIT_PACKAGE_ID_INVALID")
-    const read = await input.supabase.from("ebay_listing_packages").select("*")
-      .eq("id", identity).eq("account_key", input.accountKey).limit(1)
-      .maybeSingle()
+    const read = await budget.read({ dependency: "IDENTITY_PACKAGE",
+      authority: "ebay_listing_packages", critical: true,
+      query: () => input.supabase.from("ebay_listing_packages").select("*")
+        .eq("id", identity).eq("account_key", input.accountKey).limit(1)
+        .maybeSingle() })
     assertRead("PACKAGE", read); packageRow = record(read.data)
     const candidate = text(packageRow.candidate_key, 100)
     if (candidate) {
-      const queueRead = await input.supabase.from("ebay_luna_opportunity_queue")
-        .select("*").eq("candidate_key", candidate).limit(2)
+      const queueRead = await budget.read({ dependency: "IDENTITY_TRUTH",
+        authority: "ebay_luna_opportunity_queue", critical: true,
+        query: () => input.supabase.from("ebay_luna_opportunity_queue")
+          .select("*").eq("candidate_key", candidate).limit(2) })
       assertRead("QUEUE", queueRead); queueRows = rows(queueRead.data)
     }
   } else {
     if (!/^\d{9,19}$/.test(identity)) throw new Error("AUDIT_ITEM_ID_INVALID")
-    const read = await input.supabase.from("ebay_active_listings").select("*")
-      .eq("account_key", input.accountKey).eq("ebay_item_id", identity).limit(1)
-      .maybeSingle()
+    const read = await budget.read({ dependency: "IDENTITY_ACTIVE_LISTING",
+      authority: "ebay_active_listings", critical: true,
+      query: () => input.supabase.from("ebay_active_listings").select("*")
+        .eq("account_key", input.accountKey).eq("ebay_item_id", identity).limit(1)
+        .maybeSingle() })
     assertRead("ACTIVE_LISTING", read); activeRow = record(read.data)
     const variantId = text(activeRow.supplier_variant_id, 100)
     const supplierSku = text(activeRow.supplier_sku, 180)
@@ -177,7 +191,9 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
       let query = input.supabase.from("ebay_luna_opportunity_queue").select("*")
       query = variantId ? query.eq("supplier_variant_id", variantId)
         : query.eq("supplier_sku", supplierSku as string)
-      const queueRead = await query.order("updated_at", { ascending: false }).limit(3)
+      const queueRead = await budget.read({ dependency: "IDENTITY_TRUTH",
+        authority: "ebay_luna_opportunity_queue", critical: true,
+        query: () => query.order("updated_at", { ascending: false }).limit(3) })
       assertRead("QUEUE", queueRead); queueRows = rows(queueRead.data)
     }
   }
@@ -185,32 +201,74 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
   if (candidateIds.length !== 1) return { contradiction: candidateIds.length > 1
     ? "IDENTITY_RESOLUTION_AMBIGUOUS" : "CANONICAL_PRODUCT_IDENTITY_NOT_FOUND" }
   const queue = queueRows.find((row) => row.candidate_key === candidateIds[0]) ?? {}
-  if (!Object.keys(packageRow).length) {
-    const read = await input.supabase.from("ebay_listing_packages").select("*")
-      .eq("account_key", input.accountKey).eq("candidate_key", candidateIds[0])
-      .order("updated_at", { ascending: false }).limit(1).maybeSingle()
-    assertRead("PACKAGE", read); packageRow = record(read.data)
-  }
-  if (!Object.keys(activeRow).length) {
-    const sku = text(queue.supplier_sku, 180)
-    if (sku) {
-      const read = await input.supabase.from("ebay_active_listings").select("*")
-        .eq("account_key", input.accountKey).eq("supplier_sku", sku)
-        .order("last_ebay_sync_at", { ascending: false }).limit(1).maybeSingle()
-      assertRead("ACTIVE_LISTING", read); activeRow = record(read.data)
-    }
-  }
+  // These enrichments are not required to prove the Luna identity/truth.
+  // Read both independently; an optional failure must not discard the queue.
+  const sku = text(queue.supplier_sku, 180)
+  const [packageRead, activeRead] = await Promise.all([
+    !Object.keys(packageRow).length ? budget.read({ dependency: "PACKAGE",
+      authority: "ebay_listing_packages", query: () => input.supabase
+        .from("ebay_listing_packages").select("*").eq("account_key", input.accountKey)
+        .eq("candidate_key", candidateIds[0]).order("updated_at", { ascending: false })
+        .limit(1).maybeSingle() }) : Promise.resolve({ data: packageRow, error: null }),
+    !Object.keys(activeRow).length && sku ? budget.read({ dependency: "ACTIVE_LISTING",
+      authority: "ebay_active_listings", query: () => input.supabase
+        .from("ebay_active_listings").select("*").eq("account_key", input.accountKey)
+        .eq("supplier_sku", sku).order("last_ebay_sync_at", { ascending: false })
+        .limit(1).maybeSingle() }) : Promise.resolve({ data: activeRow, error: null }),
+  ])
+  packageRow = record(packageRead.data)
+  activeRow = record(activeRead.data)
   return { contradiction: null, queue, packageRow, activeRow, productCaseRow,
     candidateId: candidateIds[0] }
 }
 
-export async function readSellerOsProductCaseAuditV1(input: Readonly<{
+type ProductCaseAuditInputV1 = Readonly<{
   supabase: SupabaseClient; accountKey: string;
   identityType: SellerOsProductCaseIdentityTypeV1; identity: string;
-  detailMode?: SellerOsAuditDetailModeV1; now?: Date }>) {
+  detailMode?: SellerOsAuditDetailModeV1; now?: Date;
+  readBudget?: { internalBudgetMs?: number; perReadBudgetMs?: number } }>
+
+export async function readSellerOsProductCaseAuditV1(input: ProductCaseAuditInputV1) {
+  const budget = createProductCaseReadBudgetV1(input.readBudget)
+  try {
+    const result = await readProductCaseWithinBudgetV1(input, budget)
+    return Object.freeze({ ...result, READ_DIAGNOSTICS: budget.snapshot() })
+  } catch (error) {
+    if (!(error instanceof ProductCaseCriticalReadFailureV1)) {
+      console.error("SELLER_OS_PRODUCT_CASE_READ_FAILURE", {
+        classification: "UNEXPECTED_RUNTIME_EXCEPTION",
+        diagnostics: budget.snapshot(),
+      })
+      throw error
+    }
+    // Identity cannot safely be constructed. This is not an empty/zero case.
+    return Object.freeze({
+      AUDIT_CONTRACT_VERSION: SELLER_OS_PRODUCT_CASE_AUDIT_V1,
+      OBSERVED_AT: (input.now ?? new Date()).toISOString(),
+      DETAIL_MODE: cleanDetailMode(input.detailMode), STATUS: "UNAVAILABLE" as const,
+      INPUT_IDENTITY: { type: input.identityType, value: input.identity },
+      RESOLVED_CANONICAL_IDENTITY: null, FIELD_TRUTH: [],
+      PRODUCT_TRUTH_COMPLETENESS: { STATUS: "UNAVAILABLE" as const },
+      PRODUCT_JOURNEY: [{ STAGE: "LUNA_SOURCE", STATUS: "UNAVAILABLE",
+        FAILURE_CLASS: error.failureCode }],
+      KNOWN: [], STALE: [], UNPROVEN: [], MISSING: [], CONTRADICTED: [],
+      UNAVAILABLE: ["EXACT_PRODUCT_IDENTITY", "PRODUCT_TRUTH"],
+      FAILURE_CLASS: error.failureCode, FAILED_DEPENDENCY: error.dependency,
+      NEXT_BLOCKING_STAGE: "LUNA_SOURCE", BUSINESS_IMPACT: "REVENUE_BLOCKING",
+      READ_DIAGNOSTICS: budget.snapshot(),
+      safety: { readOnly: true, arbitrarySql: false, arbitraryUrl: false,
+        credentialsIncluded: false, buyerPiiIncluded: false,
+        databaseBusinessWrites: 0, marketplaceWrites: 0,
+        productPatches: 0, taskAdvancements: 0 },
+    })
+  } finally { budget.close() }
+}
+
+async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
+  budget: ProductCaseReadBudgetV1) {
   const now = input.now ?? new Date()
   const mode = cleanDetailMode(input.detailMode)
-  const resolved = await resolveProductIdentity(input)
+  const resolved = await resolveProductIdentity(input, budget)
   if (resolved.contradiction) return Object.freeze({
     AUDIT_CONTRACT_VERSION: SELLER_OS_PRODUCT_CASE_AUDIT_V1,
     OBSERVED_AT: now.toISOString(), DETAIL_MODE: mode,
@@ -238,41 +296,47 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
   const variantId = text(queue.supplier_variant_id, 100)
   const [approvalRead, executionRead, publicationRead, childRead,
     economicsRead, researchRead, shippingRead] = await Promise.all([
-      packageId ? input.supabase.from("ebay_draft_only_approvals").select("*")
-        .eq("listing_package_id", packageId).order("updated_at",
-          { ascending: false }).limit(5) : Promise.resolve({ data: [], error: null }),
-      packageId ? input.supabase.from("ebay_draft_only_execution_ledger")
-        .select("*").eq("listing_package_id", packageId).order("updated_at",
-          { ascending: false }).limit(5) : Promise.resolve({ data: [], error: null }),
-      packageId ? input.supabase.from("ebay_authorized_listing_publications")
-        .select("*").eq("listing_package_id", packageId).order("updated_at",
-          { ascending: false }).limit(5) : Promise.resolve({ data: [], error: null }),
-      input.supabase.from("seller_os_publisher_batch_children_v1").select("*")
-        .eq("marketplace_account_key", input.accountKey)
-        .eq("candidate_id", candidateId).order("updated_at",
-          { ascending: false }).limit(5),
-      itemId ? input.supabase.from("seller_os_live_economics_readbacks_v1")
-        .select("*").eq("marketplace_account_key", input.accountKey)
-        .eq("ebay_item_id", itemId).order("calculated_at",
-          { ascending: false }).limit(1).maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
-      variantId ? input.supabase.from(
-        "marketplace_product_research_capture_observations")
-        .select("id,capture_batch_id,match_classification,evidence_reviewed,created_at")
-        .eq("marketplace_account_key", input.accountKey)
-        .eq("matched_supplier_variant_id", variantId)
-        .order("created_at", { ascending: false }).limit(100)
-        : Promise.resolve({ data: [], error: null }),
-      input.supabase.from("seller_os_luna_shipping_job_claims").select("*")
-        .eq("account_key", input.accountKey).eq("candidate_id", candidateId)
-        .order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+      packageId ? budget.read({ dependency: "AUTHORIZATION",
+        authority: "ebay_draft_only_approvals", query: () => input.supabase
+          .from("ebay_draft_only_approvals").select("*").eq("listing_package_id", packageId)
+          .order("updated_at", { ascending: false }).limit(5) })
+        : budget.skip("AUTHORIZATION", "ebay_draft_only_approvals", budget.failure("PACKAGE")),
+      packageId ? budget.read({ dependency: "PUBLISHER_EXECUTION",
+        authority: "ebay_draft_only_execution_ledger", query: () => input.supabase
+          .from("ebay_draft_only_execution_ledger").select("*").eq("listing_package_id", packageId)
+          .order("updated_at", { ascending: false }).limit(5) })
+        : budget.skip("PUBLISHER_EXECUTION", "ebay_draft_only_execution_ledger", budget.failure("PACKAGE")),
+      packageId ? budget.read({ dependency: "PUBLICATION",
+        authority: "ebay_authorized_listing_publications", query: () => input.supabase
+          .from("ebay_authorized_listing_publications").select("*").eq("listing_package_id", packageId)
+          .order("updated_at", { ascending: false }).limit(5) })
+        : budget.skip("PUBLICATION", "ebay_authorized_listing_publications", budget.failure("PACKAGE")),
+      budget.read({ dependency: "PUBLISHER_CHILD",
+        authority: "seller_os_publisher_batch_children_v1", query: () => input.supabase
+          .from("seller_os_publisher_batch_children_v1").select("*")
+          .eq("marketplace_account_key", input.accountKey).eq("candidate_id", candidateId)
+          .order("updated_at", { ascending: false }).limit(5) }),
+      itemId ? budget.read({ dependency: "PRICING_ECONOMICS",
+        authority: "seller_os_live_economics_readbacks_v1", query: () => input.supabase
+          .from("seller_os_live_economics_readbacks_v1").select("*")
+          .eq("marketplace_account_key", input.accountKey).eq("ebay_item_id", itemId)
+          .order("calculated_at", { ascending: false }).limit(1).maybeSingle() })
+        : budget.skip("PRICING_ECONOMICS", "seller_os_live_economics_readbacks_v1",
+            budget.failure("ACTIVE_LISTING")),
+      variantId ? budget.read({ dependency: "MARKET_RESEARCH_PROJECTION",
+        authority: "marketplace_product_research_capture_observations",
+        query: () => input.supabase.from("marketplace_product_research_capture_observations")
+          .select("id,capture_batch_id,match_classification,evidence_reviewed,created_at")
+          .eq("marketplace_account_key", input.accountKey)
+          .eq("matched_supplier_variant_id", variantId)
+          .order("created_at", { ascending: false }).limit(100) })
+        : budget.skip("MARKET_RESEARCH_PROJECTION", "marketplace_product_research_capture_observations"),
+      budget.read({ dependency: "SHIPPING_PROJECTION",
+        authority: "seller_os_luna_shipping_job_claims", query: () => input.supabase
+          .from("seller_os_luna_shipping_job_claims").select("*")
+          .eq("account_key", input.accountKey).eq("candidate_id", candidateId)
+          .order("updated_at", { ascending: false }).limit(1).maybeSingle() }),
     ])
-  for (const [code, result] of [["APPROVAL", approvalRead],
-    ["EXECUTION", executionRead], ["PUBLICATION", publicationRead],
-    ["BATCH_CHILD", childRead], ["ECONOMICS", economicsRead],
-    ["RESEARCH", researchRead], ["SHIPPING", shippingRead]] as const) {
-    assertRead(code, result)
-  }
   const approval = latest(rows(approvalRead.data)) ?? {}
   const execution = latest(rows(executionRead.data)) ?? {}
   const publication = latest(rows(publicationRead.data)) ?? {}
@@ -350,6 +414,23 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
     MAYEL: { status: "UNPROVEN", authority:
       "ebay_mayel_visual_phase_b_executions_v1", observedAt: null },
   }
+  // Only unavailable authorities affect their own dependent stages. Do not
+  // replace independent Luna truth or turn a failed read into MISSING.
+  const affectedStages: Record<string, string[]> = {
+    MARKET_RESEARCH: ["MARKET_RESEARCH_PROJECTION"],
+    PRICING: ["PRICING_ECONOMICS"], ECONOMICS: ["PRICING_ECONOMICS"],
+    CATEGORY: ["PACKAGE"], ASPECTS: ["PACKAGE"], LISTING_PACKAGE: ["PACKAGE"],
+    OWNER_AUTHORIZATION: ["AUTHORIZATION"],
+    PUBLISHER: ["PUBLISHER_EXECUTION", "PUBLISHER_CHILD"],
+    OFFICIAL_EBAY_READBACK: ["ACTIVE_LISTING"], CURRENT_LIVE: ["ACTIVE_LISTING"],
+    EBAY_IDENTITY: itemId ? ["ACTIVE_LISTING"] : ["PUBLISHER_EXECUTION"],
+  }
+  for (const [stage, dependencies] of Object.entries(affectedStages)) {
+    const failure = dependencies.map(name => budget.failure(name)).find(Boolean)
+    if (failure && stageEvidence[stage].status !== "CONTRADICTED") {
+      stageEvidence[stage] = { ...stageEvidence[stage], status: "UNAVAILABLE", failure }
+    }
+  }
   const orderedJourney = JOURNEY_STAGES.map((code) => {
     const evidence = stageEvidence[code]
     return Object.freeze({ STAGE: code, STATUS: evidence.status,
@@ -359,6 +440,8 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
       RECEIPT_REFERENCES: mode === "TRACE" && evidence.receipt
         ? [String(evidence.receipt)] : undefined })
   })
+  const authorityFailures = new Map(budget.snapshot().READERS
+    .filter(r => r.FAILURE_MODE).map(r => [r.AUTHORITY, r.FAILURE_MODE]))
   const fieldTruth = [
     ...lunaTruth.fields,
     field({ field: "SUPPLIER_SHIPPING", value: first(economics.luna_shipping,
@@ -401,7 +484,16 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
       packageRow.payload_hash, packageData.packageDigest), source: "SELLER_OS",
       authority: "ebay_listing_packages", observedAt: packageObserved,
       evidenceId: packageRow.id, consumers: ["OWNER_AUTHORIZATION", "PUBLISHER"] }, now),
-  ]
+  ].map(truth => {
+    // Luna's 25 fields, including FACT/CLAIM/MISSING/CONTRADICTED, are immutable
+    // projections of their existing durable contract; never reinterpret them.
+    if ((LUNA_FIELD_TRUTH_FIELDS_V1 as readonly string[]).includes(truth.FIELD)) return truth
+    const authority = text(record(truth).SOURCE_AUTHORITY, 240) ?? ""
+    const failure = [...authorityFailures].find(([name]) =>
+      authority === name || authority.startsWith(name + "."))?.[1]
+    return failure ? Object.freeze({ ...truth, VALUE: null,
+      EVIDENCE_STATUS: "UNAVAILABLE" as const, FAILURE_CLASS: failure }) : truth
+  })
   const groups: Record<string, string[]> = { KNOWN: [], STALE: [], UNPROVEN: [],
     UNAVAILABLE: [], MISSING: [], CONTRADICTED: [] }
   for (const truth of fieldTruth) {
@@ -437,7 +529,8 @@ export async function readSellerOsProductCaseAuditV1(input: Readonly<{
       COUNTS: lunaTruth.counts, EVIDENCE_ID: lunaTruth.evidenceDigest },
     UNSUPPORTED_DOWNSTREAM_VALUES: lunaTruth.unsupportedDownstreamValues,
     FIELD_TRUTH: mode === "SUMMARY"
-      ? fieldTruth.filter((entry) => ["LUNA_PRODUCT_ID", "LUNA_VARIANT_ID",
+      ? fieldTruth.filter((entry) => (LUNA_FIELD_TRUTH_FIELDS_V1 as readonly string[]).includes(entry.FIELD) ||
+        ["LUNA_PRODUCT_ID", "LUNA_VARIANT_ID",
           "SUPPLIER_SKU", "EBAY_ITEM_ID", "EBAY_LIVE_PRICE", "SUPPLIER_COST",
           "SUPPLIER_SHIPPING", "EXPECTED_PROFIT", "PACKAGE_STATE",
           "PACKAGE_DIGEST"].includes(entry.FIELD)) : fieldTruth,
