@@ -13,6 +13,7 @@ const CURRENT_MAXIMUM_AGE_MS = 20 * 60 * 1_000
 const RETRY_DELAY_MS = 15 * 60 * 1_000
 const ITEM_ID = /^\d{9,20}$/
 const SAFE_CODE = /^[A-Z0-9_]{3,160}$/
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
 
 function safeCode(value: unknown, fallback: string) {
   return typeof value === "string" && SAFE_CODE.test(value)
@@ -23,15 +24,28 @@ function rowsForPersistence(live: EbayCommercialMonitorLiveReadonlyResult) {
   const byItem = new Map<string, Record<string, unknown>>()
   for (const listing of live.discovery.currentLiveListings) {
     if (listing.marketplaceCertification.status !== "US_CERTIFIED" ||
-        !ITEM_ID.test(listing.itemId) || byItem.has(listing.itemId) ||
+        !ITEM_ID.test(listing.itemId) ||
         !listing.title?.trim() || !/^[A-Z]{3}$/.test(listing.currency ?? "")) {
       continue
+    }
+    if (listing.identityAmbiguous) throw new Error(
+      listing.variationKey === null
+        ? "CURRENT_LIVE_AUTHORITY_VARIATION_IDENTITY_UNPROVEN"
+        : "CURRENT_LIVE_AUTHORITY_VARIATION_IDENTITY_AMBIGUOUS")
+    if (byItem.has(listing.itemId)) throw new Error(
+      "CURRENT_LIVE_AUTHORITY_VARIATION_IDENTITY_AMBIGUOUS")
+    const variationKey = listing.variationKey
+    if (variationKey !== null &&
+        (variationKey.length < 1 || variationKey.length > 120 ||
+         variationKey !== variationKey.trim() ||
+         CONTROL_CHARACTER.test(variationKey))) {
+      throw new Error("CURRENT_LIVE_AUTHORITY_VARIATION_IDENTITY_UNPROVEN")
     }
     byItem.set(listing.itemId, {
       itemId: listing.itemId, title: listing.title.trim(),
       sku: listing.sku, quantity: listing.availableQuantity,
       price: listing.price, currency: listing.currency,
-      variationKey: listing.variationKey,
+      variationKey,
       primaryImageUrl: listing.primaryImageUrl,
       observedAt: new Date(live.discovery.observedAt!).toISOString(),
     })
