@@ -246,6 +246,9 @@ export async function POST(req: Request) {
         runtimeInstanceId: workerInstance, leaderSessionId,
         sessionSecret: sessionSecret(), gate: legacyRecoveryGate(body.gate),
       })
+      if (result.jobs.length > 1) {
+        throw new Error("SELLER_OS_LEGACY_RECOVERY_MULTIPLE_JOBS_FORBIDDEN")
+      }
       return listingAiResponse({ success: true, result,
         safety: { exactlyOneJob: true,
           durableWriteScope:

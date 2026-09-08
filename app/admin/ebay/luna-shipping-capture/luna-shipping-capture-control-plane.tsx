@@ -19,6 +19,20 @@ import {
   SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS,
   sellerOsBackgroundMetricsPublisherV1,
 } from "@/lib/seller-os/background-workload-optimization-v1"
+import {
+  SELLER_OS_LEGACY_SHIPPING_RECOVERY_CLIENT_LOAD_BUDGET_V1,
+  certifySellerOsLegacyShippingRecoveryClientGateV1,
+  publishSellerOsLegacyShippingRecoveryClientReceiptV1,
+  sellerOsLegacyShippingRecoveryClientReceiptV1,
+  sellerOsLegacyShippingRecoveryResultJobV1,
+  type SellerOsLegacyShippingRecoveryClientReceiptEventV1,
+  type SellerOsLegacyShippingRecoveryClientReceiptV1,
+  type SellerOsLegacyShippingRecoveryJobBindingV1,
+} from "@/lib/seller-os/legacy-shipping-recovery-client-bridge-v1"
+import {
+  isSellerOsOwnerRole,
+  sellerOsAccessRoleFromUser,
+} from "@/lib/seller-os-access-control"
 
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
@@ -535,13 +549,28 @@ export function LunaShippingCaptureControlPlane({
     useState<ExactDispatchStages>(EMPTY_EXACT_DISPATCH_STAGES)
   const [portDeliveryDiagnostic, setPortDeliveryDiagnostic] =
     useState<PortDeliveryDiagnostic>(EMPTY_PORT_DELIVERY_DIAGNOSTIC)
+  const [legacyRecoveryJobId, setLegacyRecoveryJobId] = useState("")
+  const [legacyRecoveryInFlight, setLegacyRecoveryInFlight] = useState(false)
+  const [legacyRecoveryReceipts, setLegacyRecoveryReceipts] =
+    useState<SellerOsLegacyShippingRecoveryClientReceiptV1[]>([])
+  const [browserClaimLeader, setBrowserClaimLeader] = useState(false)
+  const [serverClaimLeader, setServerClaimLeader] = useState(false)
+  const [serverLeaderLeaseExpiresAt, setServerLeaderLeaseExpiresAt] =
+    useState<number | null>(null)
+  const [heartbeatV2FreshUntil, setHeartbeatV2FreshUntil] =
+    useState<number | null>(null)
+  const [ownerAdminAuthenticated, setOwnerAdminAuthenticated] = useState(false)
   const triggerRef = useRef<(() => void) | null>(null)
   const liveTriggerRef = useRef<(() => void) | null>(null)
+  const legacyRecoveryTriggerRef =
+    useRef<((jobId: string) => Promise<void>) | null>(null)
   const bindDestinationRef = useRef<(() => void) | null>(null)
   const heartbeatWorkerIdRef = useRef<string | null>(null)
   const claimAuthoritySessionIdRef = useRef<string | null>(null)
   const browserClaimLeaderRef = useRef(false)
   const serverClaimLeaderRef = useRef(false)
+  const serverLeaderLeaseExpiresAtRef = useRef<number | null>(null)
+  const heartbeatV2FreshUntilRef = useRef<number | null>(null)
   const acquisitionWakeRef = useRef<(() => void) | null>(null)
   const heartbeatNowRef = useRef<(() => void) | null>(null)
   const workerRunningRef = useRef(running)
@@ -550,9 +579,19 @@ export function LunaShippingCaptureControlPlane({
 
   useEffect(() => {
     let active = true
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!active) return
+      setOwnerAdminAuthenticated(Boolean(session?.access_token) &&
+        isSellerOsOwnerRole(sellerOsAccessRoleFromUser(session?.user)))
+    })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    let active = true
     let jobs: LunaChromeShippingJobV1[] = []
     let index = 0
-    let mode: "CANARY" | "AUTO" | "LIVE" = "CANARY"
+    let mode: "CANARY" | "AUTO" | "LIVE" | "RECOVERY" = "CANARY"
     const params = new URLSearchParams(window.location.search)
     const productionRuntimeAuthorized = runtimeOnly ||
       params.get("bridgeOnly") === "1"
@@ -617,9 +656,32 @@ export function LunaShippingCaptureControlPlane({
     const exactDispatchSnapshotDurable = new Set<string>()
     const exactDispatchConfirmed = new Set<string>()
     const economicFailureCloseStarted = new Set<string>()
+    let legacyRecoveryDispatchInFlight = false
+    let legacyRecoveryBinding:
+      SellerOsLegacyShippingRecoveryJobBindingV1 | null = null
+    let legacyRecoveryChromeAcked = false
     let exactDispatchReceiptReceived = false
     let traceFlushTimer: number | null = null
     let traceFlushChain = Promise.resolve()
+
+    const emitLegacyRecoveryReceipt = (
+      event: SellerOsLegacyShippingRecoveryClientReceiptEventV1,
+      jobId: string,
+      recoveryGeneration?: string | null,
+    ) => {
+      const receipt = sellerOsLegacyShippingRecoveryClientReceiptV1({
+        event, jobId, recoveryGeneration,
+      })
+      setLegacyRecoveryReceipts((current) => [...current, receipt].slice(-20))
+      publishSellerOsLegacyShippingRecoveryClientReceiptV1(receipt)
+    }
+
+    const releaseLegacyRecoveryDispatch = () => {
+      legacyRecoveryDispatchInFlight = false
+      legacyRecoveryBinding = null
+      legacyRecoveryChromeAcked = false
+      setLegacyRecoveryInFlight(false)
+    }
 
     const markExactDispatchStage = (stage: keyof ExactDispatchStages) => {
       setExactDispatchStages((current) => ({ ...current, [stage]: true }))
@@ -756,7 +818,7 @@ export function LunaShippingCaptureControlPlane({
         const rawReason = value instanceof Error ? value.message : source
         const reasonCode = /^[A-Z][A-Z0-9_]{7,159}$/.test(rawReason)
           ? rawReason : "LUNA_ECONOMIC_SHIPPING_EXECUTOR_FAILED"
-        void adminPost("report_economic_shipping_failure", {
+        const failureClose = adminPost("report_economic_shipping_failure", {
           runtimeInstanceId,
           binding: { jobId: economicRefresh.jobId,
             freshnessGeneration: economicRefresh.freshnessGeneration,
@@ -764,7 +826,25 @@ export function LunaShippingCaptureControlPlane({
               economicRefresh.legacyRecoveryGeneration,
             reasonCode },
         }, `${economicRefresh.jobId}:${economicRefresh.attemptOrdinal}`)
-          .catch(() => undefined)
+        if (mode === "RECOVERY" &&
+            economicRefresh.legacyRecoveryGeneration) {
+          void failureClose.then((payload) => {
+            const finalStatus = String(payload.result?.status ?? "")
+            if (!new Set(["FAILED_RETRYABLE", "FAILED_TERMINAL"])
+                .has(finalStatus)) {
+              throw new Error(
+                "SELLER_OS_LEGACY_RECOVERY_FAILURE_CLOSE_UNPROVEN")
+            }
+            emitLegacyRecoveryReceipt("RECOVERY_FAILURE_ROUTED",
+              economicRefresh.jobId,
+              economicRefresh.legacyRecoveryGeneration)
+            releaseLegacyRecoveryDispatch()
+          }).catch(() => {
+            setError("SELLER_OS_LEGACY_RECOVERY_FAILURE_ROUTING_FAILED")
+          })
+        } else {
+          void failureClose.catch(() => undefined)
+        }
       }
       busy = false
       setRunning(false)
@@ -872,13 +952,19 @@ export function LunaShippingCaptureControlPlane({
       preDispatchTrace?: LunaShippingRuntimeTraceEventV1,
     ) => {
       const job = jobs[index]
-      if (!job || (mode !== "LIVE" && !port)) return
+      if (!job) return false
+      if (mode !== "LIVE" && !port) {
+        if (mode === "RECOVERY") {
+          throw new Error("SELLER_OS_LEGACY_RECOVERY_CHROME_PORT_REQUIRED")
+        }
+        return false
+      }
       if (mode === "LIVE" && (!preDispatchTrace ||
           preDispatchTrace.state !== "EXACT_JOB_RESOLVED" ||
           preDispatchTrace.candidateId !== job.identity.candidateId ||
           !exactDispatchDurable.has(preDispatchTrace.traceId))) {
         fail(new Error("LUNA_EXACT_DISPATCH_DURABLE_TRACE_REQUIRED"))
-        return
+        return false
       }
       setError("")
       setRuntimeTrace(EMPTY_RUNTIME_TRACE)
@@ -897,16 +983,23 @@ export function LunaShippingCaptureControlPlane({
         dispatchPendingExactPortJob()
       } else {
         const currentPort = port
-        if (!currentPort) return
-        currentPort.postMessage({ type: "START_SHIPPING_JOB", job,
-          productionAutoClaim: mode === "AUTO",
-          requireDurableDispatchAck: false })
+        if (!currentPort) return false
+        try {
+          currentPort.postMessage({ type: "START_SHIPPING_JOB", job,
+            productionAutoClaim: mode === "AUTO",
+            requireDurableDispatchAck: false })
+        } catch (dispatchError) {
+          if (mode === "RECOVERY") throw dispatchError
+          fail(dispatchError, "PORT_POSTMESSAGE_THROWN")
+          return false
+        }
       }
       if (mode !== "LIVE") {
         window.setTimeout(() => {
           if (active && busy) setStatus("CAPTURING")
         }, 0)
       }
+      return true
     }
 
     const loadJobs = async (candidateIds: readonly string[] | undefined,
@@ -955,6 +1048,85 @@ export function LunaShippingCaptureControlPlane({
       sendCurrent()
       return true
     }
+
+    const beginLegacyRecovery = async (requestedJobId: string) => {
+      const jobId = requestedJobId.trim()
+      const { data: { session } } = await supabase.auth.getSession()
+      const ownerAdminAuthenticated = Boolean(session?.access_token) &&
+        isSellerOsOwnerRole(sellerOsAccessRoleFromUser(session?.user))
+      const heartbeatFresh = heartbeatV2FreshUntilRef.current !== null &&
+        heartbeatV2FreshUntilRef.current > Date.now()
+      const serverLeaseActive = serverClaimLeaderRef.current &&
+        serverLeaderLeaseExpiresAtRef.current !== null &&
+        serverLeaderLeaseExpiresAtRef.current > Date.now()
+      certifySellerOsLegacyShippingRecoveryClientGateV1({
+        ownerAdminAuthenticated,
+        browserLeader: browserClaimLeaderRef.current,
+        serverLeaderLeaseActive: serverLeaseActive,
+        heartbeatV2Fresh: heartbeatFresh,
+        shippingCapabilityFresh: heartbeatFresh,
+        chromePortConnected: Boolean(port) && extensionReady &&
+          readyPortGeneration === currentPortGeneration && !busy,
+        recoveryDispatchInFlight: legacyRecoveryDispatchInFlight,
+      })
+      if (!heartbeatWorkerIdRef.current ||
+          !claimAuthoritySessionIdRef.current) {
+        throw new Error("SELLER_OS_LEGACY_RECOVERY_LEADER_IDENTITY_MISSING")
+      }
+      legacyRecoveryDispatchInFlight = true
+      setLegacyRecoveryInFlight(true)
+      setLegacyRecoveryReceipts([])
+      setError("")
+      setStatus("LEGACY_RECOVERY_CONTROL_INVOKED")
+      emitLegacyRecoveryReceipt("RECOVERY_CONTROL_INVOKED", jobId)
+      try {
+        const payload = await adminPost(
+          "recover_one_legacy_economic_shipping_job", {
+            jobId,
+            runtimeInstanceId: heartbeatWorkerIdRef.current,
+            leaderSessionId: claimAuthoritySessionIdRef.current,
+            gate: { legacyShippingRuntimeActive: false,
+              heartbeatV1Total: 0, phaseAV2Active: true,
+              b618RuntimeActive: true },
+          }, `legacy-recovery:${jobId}`)
+        const recovered = sellerOsLegacyShippingRecoveryResultJobV1(
+          payload, jobId)
+        if (!recovered.job || !recovered.binding) {
+          setStatus("LEGACY_RECOVERY_NO_JOB_RETURNED")
+          releaseLegacyRecoveryDispatch()
+          return
+        }
+        legacyRecoveryBinding = recovered.binding
+        legacyRecoveryChromeAcked = false
+        jobs = [recovered.job as LunaChromeShippingJobV1]
+        index = 0
+        mode = "RECOVERY"
+        busy = true
+        setRunning(true)
+        setEligiblePendingJobCount(1)
+        setStatus("LEGACY_RECOVERY_JOB_RETURNED")
+        emitLegacyRecoveryReceipt("RECOVERY_JOB_RETURNED", jobId,
+          recovered.binding.recoveryGeneration)
+        if (!sendCurrent()) {
+          throw new Error("SELLER_OS_LEGACY_RECOVERY_CHROME_DISPATCH_FAILED")
+        }
+        emitLegacyRecoveryReceipt("RECOVERY_JOB_DISPATCHED_TO_CHROME", jobId,
+          recovered.binding.recoveryGeneration)
+        setStatus("LEGACY_RECOVERY_DISPATCHED_TO_CHROME")
+      } catch (recoveryError) {
+        if (legacyRecoveryBinding && jobs[index]?.economicRefresh) {
+          fail(recoveryError, "LEGACY_RECOVERY_DISPATCH_FAILED")
+          return
+        }
+        releaseLegacyRecoveryDispatch()
+        busy = false
+        setRunning(false)
+        setStatus("FAIL")
+        setError(recoveryError instanceof Error ? recoveryError.message
+          : "SELLER_OS_LEGACY_RECOVERY_CLIENT_BRIDGE_FAILED")
+      }
+    }
+    legacyRecoveryTriggerRef.current = beginLegacyRecovery
 
     const scheduleProductionAcquisition = (delayMs?: number) => {
       if (!productionRuntimeAuthorized || hasExactLiveTarget || !active || busy ||
@@ -1048,6 +1220,7 @@ export function LunaShippingCaptureControlPlane({
         workloadController.setLeaderState(leaderState)
         browserClaimLeaderRef.current = leaderState === "BROWSER_LEADER" ||
           leaderState === "SERVER_LEASE_ONLY"
+        setBrowserClaimLeader(browserClaimLeaderRef.current)
         if (browserClaimLeaderRef.current) heartbeatNowRef.current?.()
       },
       run: () => new Promise<void>((resolve) => {
@@ -1057,6 +1230,10 @@ export function LunaShippingCaptureControlPlane({
     }).catch(() => {
       browserClaimLeaderRef.current = false
       serverClaimLeaderRef.current = false
+      serverLeaderLeaseExpiresAtRef.current = null
+      setBrowserClaimLeader(false)
+      setServerClaimLeader(false)
+      setServerLeaderLeaseExpiresAt(null)
     })
 
     const beginCanary = () => {
@@ -1475,6 +1652,14 @@ export function LunaShippingCaptureControlPlane({
           return
         }
         if (message?.type === "LUNA_SHIPPING_JOB_PROGRESS") {
+          if (mode === "RECOVERY" && legacyRecoveryBinding &&
+              !legacyRecoveryChromeAcked &&
+              message.candidateId === legacyRecoveryBinding.candidateId) {
+            legacyRecoveryChromeAcked = true
+            emitLegacyRecoveryReceipt("RECOVERY_CHROME_ACK",
+              legacyRecoveryBinding.jobId,
+              legacyRecoveryBinding.recoveryGeneration)
+          }
           const allowed = new Set(["CONTENT_SCRIPT_LOADED",
             "ACTIVE_JOB_REQUESTED", "ACTIVE_JOB_RECOVERED",
             "PRODUCT_PAGE_DOM_READY", "PRODUCT_IDENTITY_CHECK_STARTED",
@@ -1767,6 +1952,12 @@ export function LunaShippingCaptureControlPlane({
                 throw new Error(
                   "LUNA_ECONOMIC_SHIPPING_STOCK_TERMINAL_CLOSE_FAILED")
               }
+              if (mode === "RECOVERY" && legacyRecoveryBinding) {
+                emitLegacyRecoveryReceipt("RECOVERY_FAILURE_ROUTED",
+                  legacyRecoveryBinding.jobId,
+                  legacyRecoveryBinding.recoveryGeneration)
+                releaseLegacyRecoveryDispatch()
+              }
             }
             port?.postMessage({
               type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",
@@ -1876,6 +2067,18 @@ export function LunaShippingCaptureControlPlane({
               shippingUsd: Number(result.capture?.shippingUsd),
               totalUsd: Number(result.capture?.totalUsd),
             })
+            if (mode === "RECOVERY" && legacyRecoveryBinding) {
+              if (result.economicRefreshJobId !==
+                  legacyRecoveryBinding.jobId) {
+                throw new Error(
+                  "SELLER_OS_LEGACY_RECOVERY_FINISH_BINDING_UNPROVEN")
+              }
+              emitLegacyRecoveryReceipt("RECOVERY_FINISH_ROUTED",
+                legacyRecoveryBinding.jobId,
+                legacyRecoveryBinding.recoveryGeneration)
+              releaseLegacyRecoveryDispatch()
+              setStatus("LEGACY_RECOVERY_FINISH_ROUTED")
+            }
             index += 1
             if (index < jobs.length) {
               sendCurrent()
@@ -2135,6 +2338,7 @@ export function LunaShippingCaptureControlPlane({
       acquisitionWakeRef.current = null
       triggerRef.current = null
       liveTriggerRef.current = null
+      legacyRecoveryTriggerRef.current = null
       bindDestinationRef.current = null
       port?.disconnect()
     }
@@ -2174,6 +2378,17 @@ export function LunaShippingCaptureControlPlane({
         const previouslyGranted = serverClaimLeaderRef.current
         serverClaimLeaderRef.current =
           payload.result?.claimAuthorityGranted === true
+        setServerClaimLeader(serverClaimLeaderRef.current)
+        const leaseExpiresAt = Date.parse(String(
+          payload.result?.claimAuthorityLeaseExpiresAt ?? ""))
+        serverLeaderLeaseExpiresAtRef.current = Number.isFinite(leaseExpiresAt)
+          ? leaseExpiresAt : null
+        setServerLeaderLeaseExpiresAt(
+          serverLeaderLeaseExpiresAtRef.current)
+        const freshUntil = Date.parse(String(payload.result?.freshUntil ?? ""))
+        heartbeatV2FreshUntilRef.current = Number.isFinite(freshUntil)
+          ? freshUntil : null
+        setHeartbeatV2FreshUntil(heartbeatV2FreshUntilRef.current)
         if (!serverClaimLeaderRef.current) {
           controller?.suppressDuplicatePoll()
         }
@@ -2184,6 +2399,11 @@ export function LunaShippingCaptureControlPlane({
         }
       }).catch((heartbeatError) => {
         serverClaimLeaderRef.current = false
+        setServerClaimLeader(false)
+        serverLeaderLeaseExpiresAtRef.current = null
+        setServerLeaderLeaseExpiresAt(null)
+        heartbeatV2FreshUntilRef.current = null
+        setHeartbeatV2FreshUntil(null)
         const requestError = heartbeatError as Error & {
           httpStatus?: number
           latencyMs?: number
@@ -2242,6 +2462,17 @@ export function LunaShippingCaptureControlPlane({
     canonicalDestinationMismatch, running)
   const showCanonicalBindControl = canonicalBindControlVisible(connected,
     canonicalBindingStatusReady, canonicalDestinationBound)
+  const heartbeatV2Fresh = heartbeatV2FreshUntil !== null &&
+    heartbeatV2FreshUntil > Date.now()
+  const serverLeaderLeaseActive = serverClaimLeader &&
+    serverLeaderLeaseExpiresAt !== null && serverLeaderLeaseExpiresAt > Date.now()
+  const legacyRecoveryJobIdValid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(legacyRecoveryJobId.trim())
+  const canStartLegacyRecovery = ownerAdminAuthenticated &&
+    browserClaimLeader && serverLeaderLeaseActive && heartbeatV2Fresh && connected &&
+    canonicalBindingStatusReady && canonicalDestinationBound &&
+    legacyRecoveryJobIdValid && !running && !legacyRecoveryInFlight
 
   if (runtimeOnly) return <output hidden aria-hidden="true"
     data-luna-owner-runtime={dashboardWorkerStatus(connected, running,
@@ -2269,6 +2500,53 @@ export function LunaShippingCaptureControlPlane({
         Identidad exacta preparada: Item {liveTarget.ebayItemId} · SKU {liveTarget.sourceSku}.
         Una sola captura; sin compra ni escritura en eBay.
       </p> : null}
+      {!liveTarget ? <section className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.04] p-4">
+        <h2 className="text-sm font-black">Recuperación legacy acotada</h2>
+        <p className="mt-2 text-xs text-white/60">
+          Acción OWNER_ADMIN explícita. Admite y entrega como máximo un job al
+          puerto Chrome existente; nunca incorpora la recuperación al polling.
+        </p>
+        <label className="mt-3 block text-xs font-bold text-violet-100">
+          Job ID autorizado
+          <input value={legacyRecoveryJobId}
+            onChange={(event) => setLegacyRecoveryJobId(event.target.value)}
+            disabled={legacyRecoveryInFlight}
+            placeholder="00000000-0000-4000-8000-000000000000"
+            className="mt-2 w-full rounded-xl border border-white/15 bg-black/25 px-3 py-2 font-mono text-xs text-white outline-none disabled:opacity-40" />
+        </label>
+        <button type="button" disabled={!canStartLegacyRecovery}
+          onClick={() => {
+            const trigger = legacyRecoveryTriggerRef.current
+            if (!trigger) return
+            void trigger(legacyRecoveryJobId).catch((recoveryError) => {
+              setStatus("FAIL")
+              setError(recoveryError instanceof Error
+                ? recoveryError.message
+                : "SELLER_OS_LEGACY_RECOVERY_CLIENT_BRIDGE_FAILED")
+            })
+          }}
+          className="mt-3 w-full rounded-2xl bg-violet-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+          Recuperar exactamente un job legacy
+        </button>
+        <code className="mt-3 block whitespace-pre-wrap break-all text-xs text-violet-100">
+          {`OWNER_ADMIN_AUTHENTICATED=${ownerAdminAuthenticated}\n` +
+            `BROWSER_LEADER=${browserClaimLeader}\n` +
+            `SERVER_LEADER_LEASE_ACTIVE=${serverLeaderLeaseActive}\n` +
+            `HEARTBEAT_V2_FRESH=${heartbeatV2Fresh}\n` +
+            `CHROME_PORT_CONNECTED=${connected}\n` +
+            `RECOVERY_DISPATCH_IN_FLIGHT=${legacyRecoveryInFlight}\n` +
+            `RPC_PER_MANUAL_RECOVERY_MAX=${SELLER_OS_LEGACY_SHIPPING_RECOVERY_CLIENT_LOAD_BUDGET_V1.rpcPerManualRecoveryMax}\n` +
+            `JOBS_PER_MANUAL_RECOVERY_MAX=${SELLER_OS_LEGACY_SHIPPING_RECOVERY_CLIENT_LOAD_BUDGET_V1.jobsPerManualRecoveryMax}\n` +
+            `CHROME_DISPATCH_PER_RECOVERY_MAX=${SELLER_OS_LEGACY_SHIPPING_RECOVERY_CLIENT_LOAD_BUDGET_V1.chromeDispatchPerRecoveryMax}\n` +
+            `ADDITIONAL_POLLERS=${SELLER_OS_LEGACY_SHIPPING_RECOVERY_CLIENT_LOAD_BUDGET_V1.additionalPollers}`}
+        </code>
+        <ol className="mt-3 space-y-1 text-xs text-white/70">
+          {legacyRecoveryReceipts.map((receipt) =>
+            <li key={`${receipt.event}:${receipt.observedAt}`}>
+              {receipt.event} · {receipt.jobId} · {receipt.recoveryGeneration ?? "PENDING"}
+            </li>)}
+        </ol>
+      </section> : null}
       {liveTarget ? <code className="mt-3 block whitespace-pre-wrap text-xs text-emerald-100">
         {`TARGET_SCOPE=EXACT_LIVE\n` +
           `TARGET_EBAY_ITEM_ID=${liveTarget.ebayItemId}\n` +
