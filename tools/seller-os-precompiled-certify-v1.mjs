@@ -1,7 +1,7 @@
 // Retain an isolated build using the existing validation producer/receipt.
 // This command never changes systemd, relay configuration, or runtime services.
 import { spawn } from "node:child_process"
-import { createWriteStream } from "node:fs"
+import { openSync, closeSync, statSync } from "node:fs"
 import { readFile, writeFile, mkdir, readdir, rename } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -23,27 +23,31 @@ const targeted = ["lib/ebay/ebay-seller-os-mcp-tunnel-development-v1.test.mjs",
   "lib/seller-os/product-case-read-budget-v1.test.mjs"]
 
 async function runCheck(name, args, timeoutMs = 15 * 60 * 1000) {
-  const started = Date.now(), log = createWriteStream(resolve(root, `.seller-os/${name}.log`))
-  let tail = "", byteCount = 0, overflow = false, timedOut = false
-  const child = spawn(node, args, { cwd: root, detached: true,
+  const started = Date.now(), logPath = resolve(root, `.seller-os/${name}.log`)
+  const fd = openSync(logPath, "w", 0o600)
+  let overflow = false, timedOut = false
+  const child = spawn(node, ["--max-old-space-size=3072", ...args], { cwd: root, detached: true,
     env: { ...process.env, NODE_ENV: name === "build" ? "production" : "test", NEXT_TELEMETRY_DISABLED: "1",
       EBAY_DRAFT_ONLY_WRITES_ENABLED: "false", EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "false",
-      EBAY_SELLER_WHATSAPP_ENABLED: "false" }, stdio: ["ignore", "pipe", "pipe"] })
+      EBAY_SELLER_WHATSAPP_ENABLED: "false" }, stdio: ["ignore", fd, fd] })
   const stop = () => { try { process.kill(-child.pid, "SIGTERM") } catch {} }
   const timer = setTimeout(() => { timedOut = true; stop() }, timeoutMs)
   const killTimer = setTimeout(() => { try { process.kill(-child.pid, "SIGKILL") } catch {} }, timeoutMs + 2000)
-  const capture = chunk => {
-    if ((byteCount += chunk.length) > 16 * 1024 * 1024) { overflow = true; stop(); return }
-    log.write(chunk); tail = (tail + chunk.toString()).slice(-16000)
-  }
-  child.stdout.on("data", capture); child.stderr.on("data", capture)
-  const exitCode = await new Promise(res => { child.once("error", () => res(null)); child.once("close", res) })
-  clearTimeout(timer); clearTimeout(killTimer)
-  await new Promise(res => log.end(res))
-  const count = key => { const m = new RegExp(`^# ${key} (\\d+)`, "m").exec(tail); return m ? Number(m[1]) : null }
+  const outputBound = setInterval(() => {
+    if (statSync(logPath).size > 16 * 1024 * 1024) { overflow = true; stop() }
+  }, 1000)
+  const { exitCode, signal } = await new Promise(res => {
+    child.once("error", () => res({ exitCode: null, signal: "SPAWN_ERROR" }))
+    child.once("close", (exitCode, signal) => res({ exitCode, signal }))
+  })
+  clearTimeout(timer); clearTimeout(killTimer); clearInterval(outputBound); closeSync(fd)
+  const output = overflow ? "" : await readFile(logPath, "utf8")
+  const count = key => { const m = new RegExp(`^# ${key} (\\d+)`, "m").exec(output); return m ? Number(m[1]) : null }
+  const failures = [...output.matchAll(/^not ok \d+ - ([^\r\n]+)/gm)].slice(0, 20)
+    .map(x => ({ identifier: x[1].slice(0, 180) }))
   const result = { status: exitCode === 0 && !overflow && !timedOut ? "PASS" : "FAIL",
-    exitCode, durationMs: Date.now() - started, completedAt: new Date().toISOString(),
-    ...(name === "tests" ? { scope: "FULL_SELLER_OS_SUITE", passed: count("pass"), failed: count("fail"), skipped: count("skipped"), failureSummaries: [], failuresTruncated: false } : {}) }
+    exitCode, signal, durationMs: Date.now() - started, completedAt: new Date().toISOString(),
+    ...(name === "tests" ? { scope: "FULL_SELLER_OS_SUITE", passed: count("pass"), failed: count("fail"), skipped: count("skipped"), failureSummaries: failures, failuresTruncated: failures.length === 20 } : {}) }
   console.log(JSON.stringify({ check: name, ...result }))
   return result
 }
