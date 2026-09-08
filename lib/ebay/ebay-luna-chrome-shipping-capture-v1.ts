@@ -232,6 +232,7 @@ export type LunaChromeShippingJobV1 = Readonly<{
     jobId: string
     workerId: string
     freshnessGeneration: string
+    legacyRecoveryGeneration?: string
     requiredEvidenceAfter: string
     attemptOrdinal: number
   }>

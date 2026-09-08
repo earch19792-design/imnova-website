@@ -760,6 +760,8 @@ export function LunaShippingCaptureControlPlane({
           runtimeInstanceId,
           binding: { jobId: economicRefresh.jobId,
             freshnessGeneration: economicRefresh.freshnessGeneration,
+            legacyRecoveryGeneration:
+              economicRefresh.legacyRecoveryGeneration,
             reasonCode },
         }, `${economicRefresh.jobId}:${economicRefresh.attemptOrdinal}`)
           .catch(() => undefined)
@@ -1756,6 +1758,8 @@ export function LunaShippingCaptureControlPlane({
                   binding: { jobId: job.economicRefresh.jobId,
                     freshnessGeneration:
                       job.economicRefresh.freshnessGeneration,
+                    legacyRecoveryGeneration:
+                      job.economicRefresh.legacyRecoveryGeneration,
                     reasonCode: "LUNA_PRODUCT_PAGE_OUT_OF_STOCK",
                     retryable: false },
                 }, `${job.economicRefresh.jobId}:terminal-stock`)

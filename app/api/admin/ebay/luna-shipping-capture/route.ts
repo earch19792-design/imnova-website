@@ -33,6 +33,7 @@ import {
   persistLunaShippingRuntimeTraceV1,
   readLatestLunaShippingRuntimeTraceV1,
   acquireLunaChromeShippingJobsV1,
+  acquireOneLegacyEconomicShippingRecoveryV1,
   closeLunaEconomicShippingExecutionFailureV1,
   resolveLunaChromeShippingJobsV1,
   resolveLunaChromeShippingLiveListingJobV1,
@@ -83,16 +84,36 @@ function economicShippingFailureBinding(value: unknown) {
     ? binding.freshnessGeneration.trim() : ""
   const reasonCode = typeof binding.reasonCode === "string"
     ? binding.reasonCode.trim() : ""
+  const legacyRecoveryGeneration =
+    typeof binding.legacyRecoveryGeneration === "string"
+      ? binding.legacyRecoveryGeneration.trim() : ""
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(jobId) ||
       !/^economic-shipping-refresh-v1:sha256:[0-9a-f]{64}$/
         .test(freshnessGeneration) ||
+      (legacyRecoveryGeneration &&
+        !/^economic-shipping-legacy-recovery-v1:sha256:[0-9a-f]{64}$/
+          .test(legacyRecoveryGeneration)) ||
       !/^[A-Z][A-Z0-9_]{7,159}$/.test(reasonCode)) {
     throw new Error("LUNA_ECONOMIC_SHIPPING_FAILURE_BINDING_INVALID")
   }
   const retryable = binding.retryable !== false ||
     reasonCode !== "LUNA_PRODUCT_PAGE_OUT_OF_STOCK"
-  return Object.freeze({ jobId, freshnessGeneration, reasonCode, retryable })
+  return Object.freeze({ jobId, freshnessGeneration,
+    legacyRecoveryGeneration: legacyRecoveryGeneration || undefined,
+    reasonCode, retryable })
+}
+
+function legacyRecoveryGate(value: unknown) {
+  const gate = listingAiRecord(value)
+  if (gate.legacyShippingRuntimeActive !== false ||
+      gate.heartbeatV1Total !== 0 || gate.phaseAV2Active !== true ||
+      gate.b618RuntimeActive !== true) {
+    throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERY_GATE_FAILED")
+  }
+  return Object.freeze({ legacyShippingRuntimeActive: false as const,
+    heartbeatV1Total: 0 as const, phaseAV2Active: true as const,
+    b618RuntimeActive: true as const })
 }
 
 function liveListingTarget(value: unknown, accountKey: string) {
@@ -189,15 +210,46 @@ export async function POST(req: Request) {
       const binding = economicShippingFailureBinding(body.binding)
       const result = await closeLunaEconomicShippingExecutionFailureV1({
         supabase: auth.supabase,
+        accountKey: auth.accountKey,
         jobId: binding.jobId,
         workerId: runtimeInstanceId(body.runtimeInstanceId, auth.actorId),
         freshnessGeneration: binding.freshnessGeneration,
+        legacyRecoveryGeneration: binding.legacyRecoveryGeneration,
         reasonCode: binding.reasonCode,
         retryable: binding.retryable,
       })
       return listingAiResponse({ success: true, result,
         safety: { durableWriteScope:
           "SELLER_OS_ECONOMIC_SHIPPING_FAILURE_CLOSE_V1",
+          lunaPurchases: 0, marketplaceWrites: 0 } })
+    }
+    if (body.action === "recover_one_legacy_economic_shipping_job") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const jobId = typeof body.jobId === "string" ? body.jobId.trim() : ""
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+          .test(jobId)) {
+        throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERY_JOB_ID_INVALID")
+      }
+      const workerInstance = runtimeInstanceId(body.runtimeInstanceId,
+        auth.actorId)
+      const leaderSessionId = claimAuthoritySessionId(body.leaderSessionId)
+      const authority = await verifySellerOsBrowserWorkloadLeaseV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        workerFamily: "LUNA_SHIPPING", workerInstanceId: workerInstance,
+        claimAuthoritySessionId: leaderSessionId,
+      })
+      if (!authority.claimAuthorityGranted) {
+        throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERY_LEADER_UNPROVEN")
+      }
+      const result = await acquireOneLegacyEconomicShippingRecoveryV1({
+        supabase: auth.supabase, accountKey: auth.accountKey, jobId,
+        runtimeInstanceId: workerInstance, leaderSessionId,
+        sessionSecret: sessionSecret(), gate: legacyRecoveryGate(body.gate),
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { exactlyOneJob: true,
+          durableWriteScope:
+            "SELLER_OS_ECONOMIC_SHIPPING_LEGACY_RECOVERY_AUTHORITY_V1",
           lunaPurchases: 0, marketplaceWrites: 0 } })
     }
     if (body.action === "resolve_jobs") {

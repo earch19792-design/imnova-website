@@ -33,6 +33,13 @@ import {
   economicShippingFreshnessGenerationV1,
   reusableEconomicShippingEvidenceV1,
 } from "../seller-os/economic-shipping-refresh-reclaim-loop-v1"
+import {
+  SELLER_OS_ECONOMIC_SHIPPING_LEGACY_RECOVERY_MAX_ATTEMPTS_V1,
+  SELLER_OS_ECONOMIC_SHIPPING_LEGACY_RECOVERY_RUNTIME_SHA_V1,
+  certifySellerOsEconomicShippingLegacyRecoveryGateV1,
+  sellerOsEconomicShippingLegacyRecoveryGenerationV1,
+  type SellerOsEconomicShippingLegacyRecoveryGateV1,
+} from "../seller-os/economic-shipping-legacy-recovery-authority-v1"
 import { LUNA_HTTP_SHIPPING_SOURCE } from
   "./ebay-luna-authoritative-shipping-v1"
 import {
@@ -700,6 +707,7 @@ type EconomicShippingRefreshJobV1 = Readonly<{
   lease_expires_at: string | null
   shipping_freshness_generation?: string | null
   shipping_required_evidence_after?: string | null
+  shipping_legacy_recovery_generation?: string | null
 }>
 
 function economicLiveTarget(job: EconomicShippingRefreshJobV1,
@@ -729,11 +737,12 @@ async function acquireEconomicLiveListingShippingJobsV1(input: Readonly<{
   const observedAt = new Date(input.now ?? Date.now()).toISOString()
   const pending = await input.supabase.from(
     "seller_os_economic_evidence_refresh_jobs_v1")
-    .select("job_id,marketplace_account_key,ebay_item_id,source_identity,status,last_evidence_id,next_retry_at,attempt_count,first_detected_at,lease_owner,lease_expires_at")
+    .select("job_id,marketplace_account_key,ebay_item_id,source_identity,status,last_evidence_id,next_retry_at,attempt_count,first_detected_at,lease_owner,lease_expires_at,shipping_legacy_recovery_generation")
     .eq("marketplace_account_key", input.accountKey)
     .eq("evidence_type", "LUNA_CURRENT_SHIPPING")
     .in("status", ["STALE", "MISSING", "WAITING_FOR_WORKER",
       "FAILED_RETRYABLE"])
+    .is("shipping_legacy_recovery_generation", null)
     .or(`next_retry_at.is.null,next_retry_at.lte.${observedAt}`)
     .order("last_detected_at", { ascending: true })
     .limit(SELLER_OS_ECONOMIC_SHIPPING_BATCH_LIMIT_V1)
@@ -879,10 +888,21 @@ async function acquireEconomicLiveListingShippingJobsV1(input: Readonly<{
 }
 
 export async function closeLunaEconomicShippingExecutionFailureV1(input:
-  Readonly<{ supabase: SupabaseClient; jobId: string; workerId: string;
-    freshnessGeneration: string; reasonCode: string; retryable?: boolean }>) {
-  const result = await input.supabase.rpc(
-    "fail_seller_os_economic_shipping_refresh_v1", {
+  Readonly<{ supabase: SupabaseClient; accountKey?: string; jobId: string;
+    workerId: string; freshnessGeneration: string;
+    legacyRecoveryGeneration?: string; reasonCode: string;
+    retryable?: boolean }>) {
+  const legacy = Boolean(input.legacyRecoveryGeneration)
+  const result = await input.supabase.rpc(legacy
+    ? "fail_seller_os_economic_shipping_legacy_recovery_v1"
+    : "fail_seller_os_economic_shipping_refresh_v1", legacy ? {
+      p_marketplace_account_key: input.accountKey,
+      p_job_id: input.jobId, p_worker_id: input.workerId,
+      p_recovery_generation: input.legacyRecoveryGeneration,
+      p_shipping_freshness_generation: input.freshnessGeneration,
+      p_reason_code: input.reasonCode,
+      p_retryable: input.retryable !== false,
+    } : {
       p_job_id: input.jobId, p_worker_id: input.workerId,
       p_freshness_generation: input.freshnessGeneration,
       p_reason_code: input.reasonCode,
@@ -893,6 +913,210 @@ export async function closeLunaEconomicShippingExecutionFailureV1(input:
     throw new Error("LUNA_ECONOMIC_SHIPPING_FAILURE_CLOSE_FAILED")
   }
   return Object.freeze(record(result.data))
+}
+
+export async function acquireOneLegacyEconomicShippingRecoveryV1(input:
+  Readonly<{ supabase: SupabaseClient; accountKey: string; jobId: string;
+    runtimeInstanceId: string; leaderSessionId: string; sessionSecret: string;
+    gate: Omit<SellerOsEconomicShippingLegacyRecoveryGateV1,
+      "jobLegacyClassificationProven">; now?: number }>) {
+  const gate = certifySellerOsEconomicShippingLegacyRecoveryGateV1({
+    ...input.gate, jobLegacyClassificationProven: true,
+  })
+  const recoveryRead = await input.supabase.from(
+    "seller_os_economic_shipping_legacy_recoveries_v1")
+    .select("recovery_generation,classification,classification_fingerprint,runtime_commit_sha,status,historical_attempt_count,recovery_attempt_count,recovery_next_retry_at,candidate_id,snapshot_digest,capture_session_id,shipping_freshness_generation,required_evidence_after,last_reason_code")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("job_id", input.jobId).limit(1).maybeSingle()
+  if (recoveryRead.error) {
+    throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERY_READ_FAILED")
+  }
+  const existing = recoveryRead.data ? record(recoveryRead.data) : null
+  let classification: JsonRecord
+  if (existing) {
+    if (existing.runtime_commit_sha !==
+        SELLER_OS_ECONOMIC_SHIPPING_LEGACY_RECOVERY_RUNTIME_SHA_V1) {
+      throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERY_RUNTIME_MISMATCH")
+    }
+    classification = {
+      classification: existing.classification,
+      classificationProven: true,
+      classificationFingerprint: existing.classification_fingerprint,
+      historicalAttemptCount: existing.historical_attempt_count,
+      reasonCode: existing.last_reason_code,
+    }
+  } else {
+    const classified = await input.supabase.rpc(
+      "classify_seller_os_economic_shipping_legacy_job_v1", {
+        p_marketplace_account_key: input.accountKey, p_job_id: input.jobId,
+      })
+    if (classified.error) {
+      throw new Error("SELLER_OS_LEGACY_SHIPPING_CLASSIFICATION_READ_FAILED")
+    }
+    classification = record(classified.data)
+  }
+  const fingerprint = text(classification.classificationFingerprint, 80)
+  if (classification.classificationProven !== true || !fingerprint ||
+      !/^sha256:[0-9a-f]{64}$/.test(fingerprint)) {
+    throw new Error("SELLER_OS_LEGACY_SHIPPING_CLASSIFICATION_UNPROVEN")
+  }
+  const recoveryGeneration =
+    sellerOsEconomicShippingLegacyRecoveryGenerationV1({
+      accountKey: input.accountKey, jobId: input.jobId,
+      classificationFingerprint: fingerprint,
+    })
+  if (existing && existing.recovery_generation !== recoveryGeneration) {
+    throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERY_BINDING_MISMATCH")
+  }
+  const commonGate = {
+    p_marketplace_account_key: input.accountKey, p_job_id: input.jobId,
+    p_runtime_commit_sha:
+      SELLER_OS_ECONOMIC_SHIPPING_LEGACY_RECOVERY_RUNTIME_SHA_V1,
+    p_legacy_shipping_runtime_active: gate.legacyShippingRuntimeActive,
+    p_heartbeat_v1_total: gate.heartbeatV1Total,
+    p_phase_a_v2_active: gate.phaseAV2Active,
+    p_b618_runtime_active: gate.b618RuntimeActive,
+    p_classification_fingerprint: fingerprint,
+    p_recovery_generation: recoveryGeneration,
+  }
+  if (existing && ["COMPLETED", "FAILED_TERMINAL"].includes(
+    String(existing.status))) {
+    return Object.freeze({ jobs: Object.freeze([]), classification,
+      recoveryGeneration, outOfScopeClosed:
+        existing.classification === "OUT_OF_SCOPE_NO_ACTIVE_LISTING",
+      terminal: true as const,
+      historicalAttemptCount: Number(classification.historicalAttemptCount) })
+  }
+  if (classification.classification === "OUT_OF_SCOPE_NO_ACTIVE_LISTING") {
+    const closed = await input.supabase.rpc(
+      "close_seller_os_economic_shipping_legacy_out_of_scope_v1",
+      commonGate)
+    if (closed.error || record(closed.data).closed !== true) {
+      throw new Error("SELLER_OS_LEGACY_SHIPPING_OUT_OF_SCOPE_CLOSE_FAILED")
+    }
+    return Object.freeze({ jobs: Object.freeze([]), classification,
+      recoveryGeneration, outOfScopeClosed: true as const,
+      historicalAttemptCount: Number(classification.historicalAttemptCount) })
+  }
+  if (classification.classification !== "RECOVERABLE_VALID_SCOPE") {
+    throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERABLE_SCOPE_REQUIRED")
+  }
+  const jobRead = await input.supabase.from(
+    "seller_os_economic_evidence_refresh_jobs_v1")
+    .select("job_id,marketplace_account_key,ebay_item_id,source_identity,status,last_evidence_id,next_retry_at,attempt_count,first_detected_at,lease_owner,lease_expires_at,shipping_legacy_recovery_generation")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("job_id", input.jobId).limit(1).maybeSingle()
+  if (jobRead.error || !jobRead.data) {
+    throw new Error("SELLER_OS_LEGACY_SHIPPING_JOB_READ_FAILED")
+  }
+  const row = jobRead.data as EconomicShippingRefreshJobV1
+  const job = await resolveLunaChromeShippingLiveListingJobV1({
+    supabase: input.supabase, target: economicLiveTarget(row, input.accountKey),
+    sessionSecret: input.sessionSecret, now: input.now,
+  })
+  const requiredEvidenceAfter = text(existing?.required_evidence_after, 48) ??
+    text(classification.legacyLastDetectedAt, 48) ??
+    new Date(input.now ?? Date.now()).toISOString()
+  const computedFreshnessGeneration = economicShippingFreshnessGenerationV1({
+    jobId: row.job_id, accountKey: input.accountKey,
+    ebayItemId: row.ebay_item_id, lunaProductId: job.identity.lunaProductId,
+    lunaVariantId: job.identity.lunaVariantId,
+    sourceSku: job.identity.supplierSku, requiredEvidenceAfter,
+  })
+  const freshnessGeneration = text(existing?.shipping_freshness_generation,
+    160) ?? computedFreshnessGeneration
+  if (existing?.shipping_freshness_generation &&
+      freshnessGeneration !== computedFreshnessGeneration) {
+    throw new Error("SELLER_OS_LEGACY_SHIPPING_FRESHNESS_BINDING_MISMATCH")
+  }
+  const priorShipping = await readLatestLiveListingShippingEvidenceV1({
+    supabase: input.supabase,
+    identity: { accountKey: input.accountKey, marketplaceId: "EBAY_US",
+      ebayItemId: row.ebay_item_id,
+      linkageId: String(row.source_identity.linkageId ?? ""),
+      lunaProductId: job.identity.lunaProductId,
+      lunaVariantId: job.identity.lunaVariantId,
+      sourceSku: job.identity.supplierSku },
+    now: input.now,
+  })
+  const reuseFresh = reusableEconomicShippingEvidenceV1({
+    evidence: priorShipping.evidence ? {
+      observedAt: priorShipping.evidence.observed_at,
+      maximumAgeSeconds: priorShipping.evidence.maximum_age_seconds,
+    } : null,
+    requiredEvidenceAfter,
+    bindingMatches: priorShipping.status === "AVAILABLE" &&
+      priorShipping.freshness === "FRESH",
+    now: input.now,
+  })
+  const admission = await input.supabase.rpc(
+    "begin_seller_os_economic_shipping_legacy_recovery_v1", {
+      ...commonGate, p_worker_id: input.runtimeInstanceId,
+      p_leader_session_id: input.leaderSessionId,
+      p_candidate_id: job.identity.candidateId,
+      p_snapshot_digest: job.snapshotDigest,
+      p_capture_session_id: job.captureSessionId,
+      p_shipping_freshness_generation: freshnessGeneration,
+      p_required_evidence_after: requiredEvidenceAfter,
+      p_reuse_fresh_evidence: reuseFresh,
+      p_lease_seconds: 900,
+      p_max_recovery_attempts:
+        SELLER_OS_ECONOMIC_SHIPPING_LEGACY_RECOVERY_MAX_ATTEMPTS_V1,
+    })
+  const admitted = record(admission.data)
+  if (admission.error) {
+    throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERY_ADMISSION_FAILED")
+  }
+  if (admitted.admitted !== true) {
+    return Object.freeze({ jobs: Object.freeze([]), classification,
+      recoveryGeneration, admission: Object.freeze(admitted),
+      outOfScopeClosed: false as const,
+      historicalAttemptCount: Number(classification.historicalAttemptCount) })
+  }
+  if (reuseFresh && priorShipping.evidence) {
+    const evidence = buildEconomicEvidenceV1({
+      accountKey: input.accountKey, itemId: row.ebay_item_id,
+      evidenceType: "LUNA_CURRENT_SHIPPING",
+      value: Number(priorShipping.evidence.shipping_cost),
+      sourceAuthority: priorShipping.evidence.source_authority,
+      sourceEntityId: priorShipping.evidence.evidence_id,
+      capturedAt: priorShipping.evidence.observed_at, status: "FRESH",
+      metadata: { exactBindingReuse: true, freshnessGeneration,
+        legacyRecoveryGeneration: recoveryGeneration },
+    })
+    const evidenceWrite = await input.supabase.from(
+      "seller_os_live_economic_evidence_v1").upsert(evidence, {
+        onConflict: "evidence_id", ignoreDuplicates: true,
+      })
+    if (evidenceWrite.error) {
+      throw new Error("SELLER_OS_LEGACY_SHIPPING_FRESH_REUSE_WRITE_FAILED")
+    }
+    const finish = await input.supabase.rpc(
+      "finish_seller_os_economic_shipping_legacy_recovery_v1", {
+        p_marketplace_account_key: input.accountKey,
+        p_job_id: row.job_id, p_worker_id: input.runtimeInstanceId,
+        p_recovery_generation: recoveryGeneration,
+        p_shipping_freshness_generation: freshnessGeneration,
+        p_last_evidence_id: evidence.evidence_id,
+      })
+    if (finish.error || record(finish.data).finished !== true) {
+      throw new Error("SELLER_OS_LEGACY_SHIPPING_FRESH_REUSE_FINISH_FAILED")
+    }
+    return Object.freeze({ jobs: Object.freeze([]), classification,
+      recoveryGeneration, admission: Object.freeze(admitted),
+      outOfScopeClosed: false as const, reusedEvidenceCount: 1 as const,
+      historicalAttemptCount: Number(classification.historicalAttemptCount) })
+  }
+  const recoveryJob = Object.freeze({ ...job, economicRefresh: Object.freeze({
+    jobId: row.job_id, workerId: input.runtimeInstanceId,
+    freshnessGeneration, recoveryGeneration,
+    legacyRecoveryGeneration: recoveryGeneration, requiredEvidenceAfter,
+    attemptOrdinal: Number(admitted.recoveryAttemptOrdinal),
+  }) })
+  return Object.freeze({ jobs: Object.freeze([recoveryJob]), classification,
+    recoveryGeneration, admission: Object.freeze(admitted),
+    outOfScopeClosed: false as const,
+    historicalAttemptCount: Number(classification.historicalAttemptCount) })
 }
 
 export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
@@ -969,7 +1193,7 @@ export async function tryPersistEconomicLiveListingShippingCaptureV1(
 ) {
   const candidates = await input.supabase.from(
     "seller_os_economic_evidence_refresh_jobs_v1")
-    .select("job_id,ebay_item_id,source_identity,lease_owner,lease_expires_at,shipping_freshness_generation,shipping_required_evidence_after")
+    .select("job_id,ebay_item_id,source_identity,lease_owner,lease_expires_at,shipping_freshness_generation,shipping_required_evidence_after,shipping_legacy_recovery_generation")
     .eq("marketplace_account_key", input.accountKey)
     .eq("evidence_type", "LUNA_CURRENT_SHIPPING")
     .eq("status", "REFRESHING")
@@ -1045,8 +1269,17 @@ export async function tryPersistEconomicLiveListingShippingCaptureV1(
     if (shippingClaim.error || shippingClaim.data !== true) {
       throw new Error("LUNA_ECONOMIC_SHIPPING_SECONDARY_FINISH_FAILED")
     }
-    const finish = await input.supabase.rpc(
-      "finish_seller_os_economic_refresh_job_v1", {
+    const recoveryGeneration = text(
+      row.shipping_legacy_recovery_generation, 180)
+    const finish = await input.supabase.rpc(recoveryGeneration
+      ? "finish_seller_os_economic_shipping_legacy_recovery_v1"
+      : "finish_seller_os_economic_refresh_job_v1", recoveryGeneration ? {
+        p_marketplace_account_key: input.accountKey,
+        p_job_id: row.job_id, p_worker_id: row.lease_owner,
+        p_recovery_generation: recoveryGeneration,
+        p_shipping_freshness_generation: freshnessGeneration,
+        p_last_evidence_id: evidence.evidence_id,
+      } : {
         p_job_id: row.job_id,
         p_worker_id: row.lease_owner,
         p_status: "FRESH",
@@ -1054,7 +1287,8 @@ export async function tryPersistEconomicLiveListingShippingCaptureV1(
         p_failure_class: null,
         p_next_retry_at: null,
       })
-    if (finish.error || finish.data !== true) {
+    if (finish.error || (recoveryGeneration
+      ? record(finish.data).finished !== true : finish.data !== true)) {
       throw new Error("LUNA_ECONOMIC_SHIPPING_JOB_FINISH_FAILED")
     }
     return Object.freeze({ ...persisted,
