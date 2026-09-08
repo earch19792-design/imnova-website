@@ -108,6 +108,36 @@ and fixed search paths. No new table, worker, runtime, public endpoint or ledger
 No Listing Package, reference, category/aspect, pricing, publisher, relay or operational
 service changes occur in this migration.
 
+## V2.1: bounded concept boundaries
+
+The first V2 cohort readback is frozen independently. It exposed a noncommercial unit
+selected as a head and showed that the original omission rule discarded an otherwise
+supported attribute/head relationship whenever a comparable added an extra modifier.
+An audit of all fourteen cases found no contiguous head-before-material cases, so word
+order was not changed to influence this cohort.
+
+V2.1 keeps V2's score weights, eligibility thresholds, classification gates and pure
+function intact. A unit or numeric head now makes the decision UNPROVEN with
+`UNIT_OR_NUMERIC_TOKEN_IS_NOT_A_PRODUCT_ENTITY`. It does not guess another entity or
+change the Research classifier.
+
+An ordered span can additionally omit one comparator-only alphabetic word when another
+intervening word is a lexical anchor present in the current product title. The existing
+three-word gap bound and accessory/use/brand clause boundaries still apply. This is
+generalization from an already structurally compatible comparable, not authorization of
+the omitted property. For example, with proven nylon and a title containing `tapered`,
+`nylon narrow tapered funnel` supports the broader `nylon funnel`; it does not prove or
+promote `narrow`. `nylon narrow funnel`, identifiers, unanchored gaps and clauses such as
+`nylon holder for funnel` remain unsupported. Every observed span and omitted token is
+retained with its Item ID. The existing noncontiguous coherence discount still applies.
+
+Missing explicit Product Truth attributes still cannot be recovered from marketing
+title adjectives. Cross-noun synonyms without licensed equivalence remain UNPROVEN.
+These recall limits are intentional evidence boundaries, not evidence of no demand.
+
+The final contract is `PRODUCT_RESEARCH_KEYWORD_INTELLIGENCE_V2_1`. V1 and V2 decisions
+and executable derivations remain auditable; the existing plan history preserves both.
+
 ## Regression scope
 
 `tools/ebay-product-research-keyword-specificity-v2-tests.mjs` runs the actual V1 and V2 SQL

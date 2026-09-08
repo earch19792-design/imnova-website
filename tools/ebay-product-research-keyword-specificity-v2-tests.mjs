@@ -61,13 +61,15 @@ const evidence=Array.from({length:8},(_,i)=>({...ev(i+1,'nylon funnel'),query_pr
 const queries=[{query_hash:'query-a',query_intent:'CORE_FAMILY_QUERY'},{query_hash:'query-b',query_intent:'SEMANTIC_EXPANSION_QUERY'}]
 const prereq={identityMatched:true,researchComplete:true}
 async function derive(t=truth,e=evidence,q=queries,p=prereq) {
- return (await db.query('select derive_product_research_keyword_intelligence_v2($1,$2,$3,$4) d',
+ return (await db.query('select derive_product_research_keyword_intelligence_v2_1($1,$2,$3,$4) d',
  [t,e,q,p].map(JSON.stringify))).rows[0].d
 }
 const term=(d,t)=>d.TERMS.find(x=>x.TERM===t)
 async function test(name,fn){await fn();console.log(name)}
 
-const migrationV2=await readFile(new URL('../supabase/migrations/20260908095916_product_research_keyword_intelligence_v2.sql',import.meta.url),'utf8')
+const migrationV2Base=await readFile(new URL('../supabase/migrations/20260908101453_product_research_keyword_intelligence_v2.sql',import.meta.url),'utf8')
+await db.exec(migrationV2Base)
+const migrationV2=await readFile(new URL('../supabase/migrations/20260908102802_product_research_keyword_concept_boundaries_v2_1.sql',import.meta.url),'utf8')
 await db.exec(migrationV2)
 
 const good=await derive()
@@ -230,7 +232,7 @@ await test('PASS_EXISTING_AUTHORITY_HISTORY_COHORT_AND_NORMAL_TRIGGERS',async()=
  assert.equal(r.PROCESSED_COUNT,3);assert.ok(r.RESULTS.every(x=>x.READY&&x.CHANGED))
  const rows=(await db.query('select * from marketplace_product_research_query_plans order by id')).rows
  rows.forEach((p,n)=>{
-  assert.equal(p.keyword_intelligence_decision.DECISION_VERSION,'PRODUCT_RESEARCH_KEYWORD_INTELLIGENCE_V2')
+  assert.equal(p.keyword_intelligence_decision.DECISION_VERSION,'PRODUCT_RESEARCH_KEYWORD_INTELLIGENCE_V2_1')
   assert.ok(p.keyword_intelligence_history.some(h=>JSON.stringify(h)===JSON.stringify(originals[n])))
  })
  const again=(await db.query('select recover_product_research_keyword_intelligence_v1() r')).rows[0].r
@@ -252,6 +254,33 @@ await test('PASS_HISTORICAL_DECISIONS_CANNOT_BE_REWRITTEN',async()=>{
 })
 await test('PASS_NO_NEW_LEDGER_AND_SERVICE_ONLY_PERMISSIONS',async()=>{
  assert.doesNotMatch(migrationV2,/create table|security definer|update public.ebay_listing_packages/i)
- for(const role of ['anon','authenticated']) assert.equal((await db.query("select has_function_privilege($1,'derive_product_research_keyword_intelligence_v2(jsonb,jsonb,jsonb,jsonb)','EXECUTE') allowed",[role])).rows[0].allowed,false)
+ for(const role of ['anon','authenticated']) assert.equal((await db.query("select has_function_privilege($1,'derive_product_research_keyword_intelligence_v2_1(jsonb,jsonb,jsonb,jsonb)','EXECUTE') allowed",[role])).rows[0].allowed,false)
 })
+
+await test('PASS_COMPARATOR_MODIFIER_OMISSION_DOES_NOT_PROMOTE_ATTRIBUTE',async()=>{
+ const t={...truth,fields:truth.fields.map(f=>f.FIELD==='TITLE'?fact('TITLE','nylon tapered funnel'):f)}
+ const e=evidence.map(e=>({...e,source_bounded_title_evidence:'nylon narrow tapered funnel'}))
+ const d=await derive(t,e)
+ assert.equal(d.PRIMARY_KEYWORD,'nylon funnel')
+ assert.equal(term(d,'nylon funnel').COMPARABLE_ITEM_COUNT,8)
+ assert.ok(term(d,'nylon funnel').SOURCE_RECEIPTS.every(r=>r.OBSERVED_CONCEPT.OMITTED_TOKENS_PROMOTED===false))
+ assert.ok(!promoted(d).some(t=>t.TERM.includes('narrow')))
+ const old=(await db.query('select derive_product_research_keyword_intelligence_v2($1,$2,$3,$4) d',[t,e,queries,prereq].map(JSON.stringify))).rows[0].d
+ assert.equal(old.PRIMARY_KEYWORD,'funnel') // Historical V2 remains executable.
+})
+await test('PASS_OMISSION_REQUIRES_SHARED_ANCHOR_AND_REJECTS_IDENTIFIERS',async()=>{
+ for(const title of ['nylon narrow funnel','nylon unknown mystery funnel','nylon Z991 tapered funnel','nylon holder for tapered funnel']) {
+  const span=(await db.query('select keyword_observed_concept_span_v2_1($1,$2,$3,$4) s',[title,'nylon','funnel',['nylon','tapered','funnel']])).rows[0].s
+  assert.equal(span,null)
+ }
+})
+await test('PASS_UNIT_HEAD_FAILS_CLOSED_WITHOUT_CHANGING_CLASSIFIER',async()=>{
+ const t={...truth,fields:[fact('TITLE','coating liquid 12 oz')]}
+ const e=evidence.map(e=>({...e,source_bounded_title_evidence:'coating liquid 12 oz',structural_evidence:{PRODUCT_ENTITY:{target:'oz'}}}))
+ const d=await derive(t,e)
+ assert.equal(d.PRIMARY_KEYWORD,'UNPROVEN')
+ assert.ok(d.BLOCKERS.includes('UNIT_OR_NUMERIC_TOKEN_IS_NOT_A_PRODUCT_ENTITY'))
+ assert.equal(d.KEYWORD_DECISION_READY,false)
+})
+
 await db.close()
