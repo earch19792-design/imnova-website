@@ -600,7 +600,10 @@ export function createSellerOsMcpServerV1(options: {
     } catch {
       result = createUnavailableSellerOsRuntimeHealthV1()
     }
-    const precompiled = process.env.NODE_ENV === "production" &&
+    const precompiled = getSellerOsMcpRuntimePolicyV1({
+      assistantWriteTools: toolSafety.assistantWriteTools,
+      dedicatedMode: SELLER_OS_DEDICATED_MCP_MODE,
+    }).nextCompilationMode === "production" &&
       applicationAuthMode === "TUNNEL_TRANSPORT_ONLY"
       ? await inspectPrecompiledRuntimeArtifactV1() : null
     if (precompiled) {

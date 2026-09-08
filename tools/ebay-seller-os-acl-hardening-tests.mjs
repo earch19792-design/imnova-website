@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import test from "node:test"
+import { hasExplicitSellerOsTableRevokeV1 } from "./seller-os-table-acl-v1.mjs"
 
 const migrationPath =
   "supabase/migrations/20260713100000_revoke_unsafe_ebay_table_privileges.sql"
@@ -115,7 +116,13 @@ test("CI forbids managed-role changes and requires explicit future table revokes
   assert.match(ciGuard, /MANAGED_SUPABASE_ADMIN_SET_ROLE_FORBIDDEN/)
   assert.match(ciGuard, /sellerOsAclEnforcementStart = "20260713100000"/)
   assert.match(ciGuard, /create\\s\+table/)
-  assert.ok(ciGuard.includes("`revoke\\\\s+all"))
+  assert.match(ciGuard, /hasExplicitSellerOsTableRevokeV1\(source, table\)/)
+  assert.match(ciGuard, /hasExplicitSellerOsTableRevokeV1\(remediationSource, table\)/)
+  assert.equal(hasExplicitSellerOsTableRevokeV1(
+    "revoke all on table public.ebay_one, public.ebay_two from public, anon, authenticated;",
+    "ebay_two"), true)
+  assert.equal(hasExplicitSellerOsTableRevokeV1(
+    "revoke all on table public.ebay_one from anon;", "ebay_one"), false)
   assert.match(ciGuard, /SELLER_OS_TABLE_ACL_REVOKE_MISSING/)
 })
 

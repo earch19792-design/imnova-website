@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import nodeTest from "node:test"
 import ts from "typescript"
 
@@ -143,7 +144,10 @@ export {
 
   fs.writeFileSync(
     outputPath,
-    transpiled
+    // The temporary module must resolve the real source dependency from the
+    // checkout, rather than looking for an unrelated module in /tmp.
+    transpiled.replace('"./luna-product-source-fields-v1"',
+      JSON.stringify(pathToFileURL(path.resolve("lib/luna-product-source-fields-v1.ts")).href))
   )
 
   lunaPortexTestInternals =
