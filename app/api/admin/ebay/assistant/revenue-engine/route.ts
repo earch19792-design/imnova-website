@@ -8,9 +8,9 @@ import { isSameSellerOsAdminOriginV1 } from "@/lib/admin-session-origin-v1"
 import { getEbayProRuntimeBoundary } from "@/lib/ebay/environment-boundaries"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { loadSellerOsAssistantMonitorSnapshotV1 } from "@/lib/ebay/ebay-seller-os-assistant-runtime"
-import { currentLiveListingsForMonitorV1 } from "@/lib/ebay/ebay-seller-os-live-portfolio-integrity-v1"
+import { readMayelListingSelectionV1 } from "@/lib/seller-os/mayel-listing-selection-v1"
 import { readListingTreatmentsV1, prepareTreatmentPreviewV1, persistTreatmentSimulationReceiptV1, measureLatestTreatmentV1 } from "@/lib/seller-os/listing-treatment-runtime-v1"
-import { MAX_TREATMENT_LISTINGS, METRIC_WINDOWS, type MetricWindow, type PromotionPolicy } from "@/lib/seller-os/listing-treatment-engine-v1"
+import { METRIC_WINDOWS, type MetricWindow, type PromotionPolicy } from "@/lib/seller-os/listing-treatment-engine-v1"
 import { revenueTraceIdV1 } from "@/lib/seller-os/revenue-first-diagnostics-v1"
 
 const reply = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } })
@@ -21,16 +21,19 @@ async function authorize(request: Request) {
   return auth.ok && auth.authenticationMode === "seller_os_user" && auth.accessRole && auth.userId ? auth : false
 }
 export async function GET(request: Request) {
-  if (!await authorize(request)) return reply({ error: "REVENUE_OWNER_PREPROD_REQUIRED" }, 403)
-  const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
-  const cursor = new URL(request.url).searchParams.get("after") ?? ""
-  const live = currentLiveListingsForMonitorV1(monitor).filter(l => l.identity.itemId > cursor)
-    .sort((a, b) => a.identity.itemId.localeCompare(b.identity.itemId))
-  const rows = live.slice(0, MAX_TREATMENT_LISTINGS)
-  return reply({ success: true, listings: rows.map(l => ({ itemId: l.identity.itemId, title: l.identity.title })),
-    nextCursor: live.length > rows.length ? rows.at(-1)?.identity.itemId : null,
-    timeZone: process.env.SELLER_OS_MARKETPLACE_TIMEZONE?.trim() || null,
-    scope: "CURRENT_PAGE_MAXIMUM_20", marketplaceWrites: 0 })
+  const traceId = revenueTraceIdV1(request.headers.get("x-seller-os-trace-id"))
+  if (!await authorize(request)) return reply({ success: false, error: "REVENUE_OWNER_PREPROD_REQUIRED", traceId }, 403)
+  try {
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) throw Error("REVENUE_ACCOUNT_REQUIRED")
+    const selection = await readMayelListingSelectionV1({ supabase: getSupabaseAdminClient(), accountKey,
+      after: new URL(request.url).searchParams.get("after") ?? undefined })
+    return reply({ success: true, ...selection, traceId,
+      timeZone: process.env.SELLER_OS_MARKETPLACE_TIMEZONE?.trim() || null })
+  } catch (error) {
+    const code = error instanceof Error && /^[A-Z0-9_]{3,120}$/.test(error.message) ? error.message : "LISTING_SELECTION_READ_FAILED"
+    return reply({ success: false, error: code, traceId }, code.includes("INVALID") ? 400 : 503)
+  }
 }
 export async function POST(request: Request) {
   const traceId = revenueTraceIdV1(request.headers.get("x-seller-os-trace-id"))

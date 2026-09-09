@@ -8,22 +8,28 @@ import type { prepareTreatmentPreviewV1 } from "@/lib/seller-os/listing-treatmen
 import { OwnerListingQualityReportControl } from "@/app/admin/owner-listing-quality-report-control"
 
 type Result = Awaited<ReturnType<typeof prepareTreatmentPreviewV1>>
+type ListingChoice = { itemId: string; title: string; sku?: string | null; observedAt?: string | null }
 const money = (n: number | null | undefined) => n === null || n === undefined ? "Por comprobar" : `$${n.toFixed(2)}`
 const button = "min-h-11 rounded-xl border border-[#c7d0c3] bg-white px-4 py-2 text-sm font-semibold disabled:opacity-50"
 const presets = { Conservador: [2, 3, 10, 20], Equilibrado: [3, 5, 8, 15], Acelerar: [3, 7, 8, 15] } as const
 async function request(body?: unknown, after?: string) {
   const { data } = await supabase.auth.getSession()
   if (!data.session) throw Error("AUTH_REQUIRED")
-  const response = await fetch(`/api/admin/ebay/assistant/revenue-engine${after ? `?after=${encodeURIComponent(after)}` : ""}`, { method: body ? "POST" : "GET", cache: "no-store",
+  const response = await fetch(`/api/admin/ebay/assistant/revenue-engine${after ? `?after=${encodeURIComponent(after)}` : ""}`, { method: body ? "POST" : "GET", cache: "no-store", signal: AbortSignal.timeout(65000),
     headers: { Authorization: `Bearer ${data.session.access_token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}) })
-  const payload = await response.json()
+  const payload = await response.json().catch(() => { throw Error(`HTTP_${response.status}_INVALID_RESPONSE`) })
   if (!response.ok || !payload.success) throw Error(`${payload.error ?? "REQUEST_FAILED"} · ${payload.traceId ?? ""}`)
   return payload
 }
 export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const [menu, setMenu] = useState(0)
-  const [listings, setListings] = useState<{ itemId: string; title: string }[]>([])
+  const [listings, setListings] = useState<ListingChoice[]>([])
+  const [loadingListings, setLoadingListings] = useState(true)
+  const [actionsAvailable, setActionsAvailable] = useState(false)
+  const [authoritativeZero, setAuthoritativeZero] = useState(false)
+  const [selectionDetails, setSelectionDetails] = useState("")
+  const [savedListingsOpen, setSavedListingsOpen] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [pageCursor, setPageCursor] = useState<string | null>(null)
   const [selected, setSelected] = useState<string[]>([])
@@ -40,13 +46,17 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [previewItemId, setPreviewItemId] = useState<string | null>(null)
   useEffect(() => { let active = true; void request().then(p => {
-    if (active) { setListings(p.listings); setNextCursor(p.nextCursor); if (p.timeZone) setPolicy(old => ({ ...old, timeZone: p.timeZone })) }
-  }).catch(e => { if (active) setError(String(e.message)) }); return () => { active = false } }, [])
+    if (active) { setListings(p.listings); setNextCursor(p.nextCursor); setActionsAvailable(p.actionsAvailable === true);
+      setAuthoritativeZero(p.authoritativeZero === true); setSelectionDetails([p.sourceFailureCode, p.traceId].filter(Boolean).join(" · "));
+      if (p.timeZone) setPolicy(old => ({ ...old, timeZone: p.timeZone })) }
+  }).catch(e => { if (active) setError(String(e.message)) }).finally(() => { if (active) setLoadingListings(false) }); return () => { active = false } }, [])
   async function page(after?: string) {
-    setBusy(true); setError("")
-    try { const p = await request(undefined, after); setListings(p.listings); setNextCursor(p.nextCursor); setPageCursor(after ?? null); setSelected([]); setResult(null) }
+    setBusy(true); setLoadingListings(true); setError("")
+    try { const p = await request(undefined, after); setListings(p.listings); setNextCursor(p.nextCursor); setPageCursor(after ?? null); setSelected([]); setResult(null);
+      setActionsAvailable(p.actionsAvailable === true); setAuthoritativeZero(p.authoritativeZero === true); setSavedListingsOpen(false);
+      setSelectionDetails([p.sourceFailureCode, p.traceId].filter(Boolean).join(" · ")); if (p.timeZone) setPolicy(old => ({ ...old, timeZone: p.timeZone })) }
     catch (e) { setError(e instanceof Error ? e.message : "REQUEST_FAILED") }
-    finally { setBusy(false) }
+    finally { setBusy(false); setLoadingListings(false) }
   }
   async function analyze(mode: "PREVIEW" | "SIMULATE" | "RECEIPT" | "MEASURE" | "IMAGE", itemId?: string) {
     if (busy) return
@@ -80,7 +90,13 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
       <div className="rounded-2xl bg-white p-5">
         <h2 className="text-xl font-semibold">{menu === 0 ? "¿Qué listings quieres mejorar?" : menu === 1 ? "Prepara un impulso que proteja tu beneficio" : "¿Dónde hay una oportunidad ahora?"}</h2>
         <p className="mt-2 text-sm text-slate-600">Mayel revisa primero el rendimiento y explica qué conviene hacer. Hasta 20 listings por selección.</p>
-        <label className="mt-4 block"><input type="checkbox" checked={listings.length > 0 && selected.length === listings.length} disabled={busy}
+        {loadingListings ? <p role="status" className="mt-3">Cargando tus listings…</p> : !actionsAvailable && <div className="mt-3 space-y-2" role="status">
+          <p>{listings.length ? "eBay no pudo confirmar el estado actual. Puedes consultar la última información guardada; las mejoras y promociones esperan una nueva verificación." : authoritativeZero ? "No hay listings activos en la última lectura confirmada." : "No se pudo obtener la lista actual. Esto no significa que tus listings hayan desaparecido."}</p>
+          <button className={button} disabled={busy} onClick={() => void page(pageCursor ?? undefined)}>Volver a consultar</button>
+          <details><summary>Ver detalles</summary><p className="break-all text-xs">{selectionDetails}</p></details>
+        </div>}
+        {!loadingListings && actionsAvailable && !listings.length && <p className="mt-3">No hay listings activos en esta página.</p>}
+        <label className="mt-4 block"><input type="checkbox" checked={listings.length > 0 && selected.length === listings.length} disabled={busy || loadingListings || !listings.length}
           onChange={e => { setSelected(e.target.checked ? listings.map(l => l.itemId) : []); setResult(null) }} /> Seleccionar todos los mostrados</label>
         <div className="mt-3 grid max-h-64 gap-2 overflow-auto sm:grid-cols-2">{listings.map(l => <label className="flex gap-3 rounded-xl border p-3 text-sm" key={l.itemId}>
           <input type="checkbox" checked={selected.includes(l.itemId)} disabled={busy} onChange={e => {
@@ -111,8 +127,16 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
           <input type="datetime-local" className="w-full rounded border p-2" value={dates[key]} onChange={e => { setDates(old => ({ ...old, [key]: e.target.value })); setResult(null) }} /></label>)}</div>}
         <p className="text-sm text-slate-600">Los presets rellenan tus límites. Esta vista prepara una simulación; aún no activa publicidad.</p>
       </section>}
-      <button className={`${button} bg-[#dcebdc]`} disabled={busy || !selected.length || !policy.timeZone} onClick={() => void analyze(menu === 0 ? "PREVIEW" : "SIMULATE")}>
-        {busy ? "Mayel está analizando…" : menu === 0 ? "Analizar y preparar Preview" : "Calcular Preview"}</button>
+      <button className={`${button} bg-[#dcebdc]`} disabled={busy || loadingListings || !selected.length || (actionsAvailable && !policy.timeZone)} onClick={() => actionsAvailable ? void analyze(menu === 0 ? "PREVIEW" : "SIMULATE") : setSavedListingsOpen(true)}>
+        {busy ? "Mayel está analizando…" : !actionsAvailable ? "Ver información guardada" : menu === 0 ? "Analizar y preparar Preview" : "Calcular Preview"}</button>
+      {actionsAvailable && selected.length > 0 && !policy.timeZone && <p role="status">Selecciona el horario de la cuenta para continuar.</p>}
+      {savedListingsOpen && !actionsAvailable && <section className="space-y-3" aria-label="Información guardada de los listings">
+        {listings.filter(l => selected.includes(l.itemId)).map(l => <article key={l.itemId} className="rounded-2xl bg-white p-5">
+          <h3 className="font-semibold">{l.title}</h3><p>Última información guardada · pendiente de verificar</p>
+          <p>SKU: {l.sku ?? "Por comprobar"}</p><p>Última verificación: {l.observedAt ? new Date(l.observedAt).toLocaleString("es") : "Por comprobar"}</p>
+          <a className="underline" href={`https://www.ebay.com/itm/${l.itemId}`} target="_blank" rel="noopener noreferrer">Ver listing en eBay</a>
+        </article>)}
+      </section>}
       {result && <section className="space-y-4" aria-label="Recomendación de Mayel">
         {menu !== 0 && <div className="rounded-2xl bg-[#dcebdc] p-5"><p>{result.summary.selected} seleccionados · {result.summary.ready} listos para impulsar · {result.summary.optimizeFirst} mejorar primero</p>
           <p>{result.summary.blockedMargin} bloqueados por margen · {result.summary.blockedEvidence} por evidencia · {result.summary.blockedStock} por stock</p>
@@ -167,6 +191,6 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
     </>}
     {message && <p role="status">{message}</p>}
     {imagePreview && <figure className="rounded-xl bg-white p-4"><Image src={imagePreview} alt="Preview del borrador de imagen autorizado" width={480} height={480} unoptimized /><figcaption>Imagen en borrador · revisión de calidad completada</figcaption></figure>}
-    {error && <div role="alert"><p>No se pudo completar el análisis. Revisa la sesión, los listings seleccionados y la política.</p><details><summary>Ver detalles</summary><p className="break-all text-xs">{error}</p></details></div>}
+    {error && <div role="alert"><p>No se pudo completar la consulta. Puedes volver a intentarlo.</p><button className={button} disabled={busy} onClick={() => void page(pageCursor ?? undefined)}>Volver a cargar listings</button><details><summary>Ver detalles</summary><p className="break-all text-xs">{error}</p></details></div>}
   </section>
 }
