@@ -1,0 +1,73 @@
+{
+  "observedAt": "2026-09-09T20:10:17.498Z",
+  "scope": "READ_ONLY_STAGING_HISTORICAL_CAPABILITY_AUDIT",
+  "tasks": [
+    {
+      "id": "95fa1336-89be-4738-bb94-b8d71be73ee5",
+      "status": "OWNER_PREVIEW_READY",
+      "updated_at": "2026-09-06T12:00:35.425+00:00",
+      "ebay_item_id": "366643122092"
+    },
+    {
+      "id": "7b8172df-d6bd-4345-a1c7-4b4acd3d51c5",
+      "status": "PROMPT_READY",
+      "updated_at": "2026-09-06T11:00:50.412976+00:00",
+      "ebay_item_id": "366650121192"
+    },
+    {
+      "id": "3ffbef33-92cd-4d79-b1ce-ee259b971608",
+      "status": "PROMPT_READY",
+      "updated_at": "2026-09-06T11:00:49.665043+00:00",
+      "ebay_item_id": "366650113488"
+    },
+    {
+      "id": "ece7f92a-ec4a-4498-87a1-a08dff0069e5",
+      "status": "PROMPT_READY",
+      "updated_at": "2026-09-06T11:00:49.187484+00:00",
+      "ebay_item_id": "366650071972"
+    },
+    {
+      "id": "4ca2a049-a30e-49f1-ada3-276964b802a5",
+      "status": "PROMPT_READY",
+      "updated_at": "2026-09-06T11:00:48.746007+00:00",
+      "ebay_item_id": "366650065203"
+    }
+  ],
+  "authority": [
+    {
+      "status": "ACTIVE",
+      "updated_at": "2026-09-06T02:57:38.608869+00:00",
+      "main_image_authority": true,
+      "owner_per_image_approval": false,
+      "owner_per_listing_visual_approval": false
+    }
+  ],
+  "executions": [
+    {
+      "id": "009ce3f1-629c-4aa5-a87c-c66cf29dc48c",
+      "phase": "APPLIED_AND_OFFICIALLY_VERIFIED",
+      "created_at": "2026-09-06T12:30:43.033272+00:00",
+      "updated_at": "2026-09-06T12:30:46.754+00:00",
+      "ebay_item_id": "366643122092",
+      "visual_task_id": "95fa1336-89be-4738-bb94-b8d71be73ee5",
+      "marketplace_write_count": 1
+    },
+    {
+      "id": "f61e91ee-28ef-49fe-832e-28e735bda86c",
+      "phase": "APPLIED_AND_OFFICIALLY_VERIFIED",
+      "created_at": "2026-09-06T09:00:28.694827+00:00",
+      "updated_at": "2026-09-06T09:00:32.456+00:00",
+      "ebay_item_id": "366643122092",
+      "visual_task_id": "95fa1336-89be-4738-bb94-b8d71be73ee5",
+      "marketplace_write_count": 1
+    }
+  ],
+  "marketplaceWritesThisAudit": 0,
+  "ebayReadsThisAudit": 0,
+  "conclusion": "Historical image application is proven. This does not certify the new Revenue Engine preview-to-application handoff or other listing fields.",
+  "sourcePaths": [
+    "lib/ebay/ebay-mayel-visual-delegated-runtime-v1.ts",
+    "app/api/admin/ebay/assistant/revenue-engine/route.ts",
+    "lib/seller-os/listing-treatment-image-v1.ts"
+  ]
+}
