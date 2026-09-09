@@ -76,3 +76,19 @@ executions with exact registry, task and manifest bindings. Existing publication
 package evidence remains attached when present; no package is fabricated. A
 saved draft missing its registry link can bind one unique account/item active
 row before the unchanged official preflight. Missing or ambiguous rows fail closed.
+
+## Deployment verification — September 9, 2026
+
+Implementation `bc2d532cba7732d754867057a153e4fc39fd9536` passed the full
+386/386 Seller OS suite, typecheck, lint, build, audit and targeted runtime
+security checks. Dedicated preprod deployment
+`dpl_HzhQMuASuo7oAQ4AfGLgmiRAMk9J` is READY with that exact SHA. The public
+preprod manual returned HTTP 200 and matches the updated PDF byte-for-byte.
+
+Durable evidence is in `mayel-offline-image-handoff-evidence-v1.json`. Real staging
+readback preserved the generated image proposal across reloads and validated its
+source binding without eBay requests. A touch-viewport browser test covered
+review, explicit confirmation and queue reload using a mock backend. Physical
+operator approval and application of this new handoff were not executed. No
+marketplace or Ads writes were made. This does not certify the complete Assistant
+closeout or paid Ads readiness.

@@ -1,0 +1,168 @@
+{
+  "contract": "SELLER_OS_MAYEL_OFFLINE_IMAGE_HANDOFF_EVIDENCE_V1",
+  "implementationSha": "bc2d532cba7732d754867057a153e4fc39fd9536",
+  "environment": "DEDICATED_PREPROD",
+  "validation": {
+    "artifactVersion": "SELLER_OS_VALIDATION_EVIDENCE_V1",
+    "producer": {
+      "id": "SELLER_OS_VALIDATION_RECORDER",
+      "version": "SELLER_OS_VALIDATION_RECORDER_V2"
+    },
+    "source": "LOCAL_VALIDATION",
+    "validatedHeadSha": "bc2d532cba7732d754867057a153e4fc39fd9536",
+    "startedAt": "2026-09-09T20:52:09.301Z",
+    "completedAt": "2026-09-09T20:55:10.504Z",
+    "headChangedDuringValidation": false,
+    "workspaceChangedDuringValidation": false,
+    "validationSubject": {
+      "type": "CLEAN_COMMITTED_HEAD",
+      "validatedWorkingTreeStatus": "CLEAN",
+      "validatedWorkspaceFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "fingerprintVersion": "SELLER_OS_WORKSPACE_FINGERPRINT_V1",
+      "workspaceStableDuringValidation": true
+    },
+    "checks": {
+      "tests": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 68745,
+        "completedAt": "2026-09-09T20:53:18.063Z",
+        "scope": "FULL_SELLER_OS_SUITE",
+        "passed": 386,
+        "failed": 0,
+        "skipped": 0,
+        "failureSummaries": [],
+        "failuresTruncated": false
+      },
+      "typecheck": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 41246,
+        "completedAt": "2026-09-09T20:53:59.310Z"
+      },
+      "lint": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 15022,
+        "completedAt": "2026-09-09T20:54:14.332Z"
+      },
+      "build": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 55674,
+        "completedAt": "2026-09-09T20:55:10.007Z"
+      },
+      "sellerOsAudit": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 472,
+        "completedAt": "2026-09-09T20:55:10.481Z"
+      },
+      "targetedRuntimeSecurity": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 4152,
+        "completedAt": "2026-09-09T20:52:09.298Z"
+      }
+    },
+    "buildArtifact": {
+      "version": "SELLER_OS_PRECOMPILED_ARTIFACT_V1",
+      "sourceCommitSha": "bc2d532cba7732d754867057a153e4fc39fd9536",
+      "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "buildId": "pjXKDLZnMc0X5zuIbPSy-",
+      "buildArtifactDigest": "sha256:4bff8713c530c7cb9d98184a3aec21cd4beefe70986adf980179df6a44eda9c0",
+      "payloadFileCount": 1464,
+      "payloadByteCount": 67633045,
+      "builtAt": "2026-09-09T20:55:10.007Z",
+      "nodeVersion": "v22.23.0",
+      "nextVersion": "16.2.6",
+      "dynamicCompilationAtBoot": false
+    }
+  },
+  "physicalReadOnly": {
+    "observedAt": "2026-09-09T20:42:16.249Z",
+    "itemId": "366582671136",
+    "proposals": [
+      {
+        "assetId": "abbbc8d2-e8fe-4d87-8d28-6c9e419c8bd2",
+        "experimentId": "34078a7e-85cc-4a35-ae26-24e65784e7f3",
+        "status": "DRAFT",
+        "privatePreviewAvailable": true,
+        "taskBound": true,
+        "generatedAt": "2026-09-09T14:30:28.404572+00:00"
+      }
+    ],
+    "reloadPreservesProposals": true,
+    "sourceBindingExact": true,
+    "taskStatus": "PROMPT_READY",
+    "stagingReads": 12,
+    "ebayReads": 0,
+    "marketplaceWrites": 0,
+    "adsWrites": 0,
+    "credentialValuesDisplayed": false,
+    "privateUrlsDisplayed": false
+  },
+  "browserWithMockBackend": {
+    "mockBrowserPass": true,
+    "viewport": "820x1180 touch",
+    "reviewRequired": true,
+    "reloadPreservesQueue": true,
+    "confirmationRequests": 1,
+    "advancedDiagnosticsHidden": true,
+    "pageErrors": [],
+    "realEbayRequests": 0,
+    "realMarketplaceWrites": 0,
+    "physicalOperatorSession": false
+  },
+  "migrations": [
+    "20260909201820",
+    "20260909203958",
+    "20260909204853"
+  ],
+  "existingScheduler": {
+    "lane": "OPERATIONAL_INTEGRITY_AUDITOR",
+    "cron": "7-59/15 * * * *",
+    "dedicatedPreprodTargetVerified": true,
+    "lastObservedDispatchAt": "2026-09-09T20:37:00.021957Z",
+    "lastObservedHttpStatus": 200,
+    "newPollers": 0,
+    "newWorkers": 0
+  },
+  "physicalOperatorConfirmation": "NOT_RUN",
+  "physicalEbayApplicationForNewHandoff": "NOT_RUN",
+  "marketplaceWriteCount": 0,
+  "ebayAdsWriteCount": 0,
+  "ebayAdsWriteEnabled": false,
+  "newRegressionCount": 0,
+  "assistantFullCloseoutClaimed": false,
+  "limits": [
+    "Offline review covers authorized saved image drafts.",
+    "Confirmed image changes use the existing executor and official preflight when quota is available.",
+    "No general title, specifics, description or Ads write certification is asserted.",
+    "Aggregate daily Trading quota consumption is not fully attributed by this change.",
+    "The browser confirmation test uses a mock backend, not a physical operator session."
+  ],
+  "deployment": {
+    "id": "dpl_HzhQMuASuo7oAQ4AfGLgmiRAMk9J",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-j8er77l0u-earch19792-6888s-projects.vercel.app",
+    "sha": "bc2d532cba7732d754867057a153e4fc39fd9536"
+  },
+  "manualReadback": {
+    "url": "https://imnova-seller-os-preprod.vercel.app/manual-mayel-menu-v1.pdf",
+    "httpStatus": 200,
+    "contentType": "application/pdf",
+    "bytes": 41047,
+    "expectedBytes": 41047,
+    "sha256": "712e43523d0655624b948f90f5f31da690b891288c0d1e3d4a07253bb1966c6d",
+    "matchesCertifiedManual": true,
+    "observedAt": "2026-09-09T20:59:02.852Z"
+  }
+}
