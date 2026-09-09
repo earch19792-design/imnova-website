@@ -22,9 +22,11 @@ export async function readMayelListingSelectionV1(input: {
   return {
     listings: page.map(itemId => {
       const matches = (read.data ?? []).filter(row => row.ebay_item_id === itemId)
-      // Ambiguous registry representations cannot supply an arbitrary SKU.
-      const unique = matches.length === 1 ? matches[0] : null
-      return { itemId, title: unique?.title || itemId, sku: unique?.ebay_sku ?? null,
+      // Repeated representations may agree; conflicting values stay unknown.
+      const titles = [...new Set(matches.map(row => row.title?.trim()).filter(Boolean))]
+      const skus = [...new Set(matches.map(row => row.ebay_sku))]
+      return { itemId, title: titles.length === 1 ? titles[0] : itemId,
+        sku: skus.length === 1 ? skus[0] ?? null : null,
         observedAt: authority.lastCertifiedAt }
     }),
     nextCursor: ids.length > page.length ? page.at(-1) ?? null : null,
