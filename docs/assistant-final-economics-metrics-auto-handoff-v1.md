@@ -37,6 +37,47 @@ No new pollers, background workers, global scans, exact counts, select-star quer
 
 ## Validation and operator help
 
-Directed tests cover cold-to-warm transition, exact identity/window isolation, overlapping samples, fee completeness, promotion ceilings, stable envelope identity, stale evidence and official package linkage. Full-suite and deployment results will be appended after verification.
+Directed tests cover cold-to-warm transition, exact identity/window isolation, overlapping samples, fee completeness, promotion ceilings, stable envelope identity, stale evidence and official package linkage. SHA `8b8a2127d94908f4c99a873924b1d31acb53b9a9` passed 377/377 full-suite files, typecheck, lint, build, operational audit and targeted runtime security. Validation completed 2026-09-09T18:09:55.605Z. There are zero new regressions. The local build initially attempted with Node's default memory cap exhausted its heap; the existing certification runner completed successfully with its established memory configuration.
 
 The four primary actions and existing [Ayuda / Manual](https://imnova-seller-os-preprod.vercel.app/manual-mayel-menu-v1.pdf) remain available. Mayel can select a listing and analyze it normally. “Obtener más datos” means there is not yet enough comparable sales evidence; “Requiere atención” identifies a missing or expired authority. Neither status authorizes an eBay change.
+
+## Requested result
+
+Contract/test results are distinguished from physical business certification. A hypothetical cost fixture passing the 3–5% simulation is not a successful economic canary on this real listing. New-publication auto binding is tested through the existing official-readback contract, but no new listing was published to claim a physical publication PASS.
+
+```text
+STATUS=BLOCKED_PRE_SALE_FEE_AUTHORITY
+IMPLEMENTATION_SHA=8b8a2127d94908f4c99a873924b1d31acb53b9a9
+EBAY_FEE_AUTHORITY_CERTIFIED=false
+PRE_SALE_FEE_ESTIMATE_PROVEN=false
+EBAY_FEES=UNPROVEN
+PROFIT_BEFORE_ADS=UNPROVEN
+MARGIN_BEFORE_ADS=UNPROVEN
+MAX_SAFE_AD_RATE_PCT=UNPROVEN
+METRICS_WARM_CANDIDATE_FOUND=false
+METRICS_WARM_CANARY_PASS=NOT_APPLICABLE
+METRICS_COLD_START_PASS=true
+FUNNEL_DIAGNOSIS_STATUS=PENDING_REAL_SAMPLE
+METRICS_AUTO_REEVALUATION_PATH_PASS=true
+COMMERCIAL_ENVELOPE_PASS=PARTIAL_AUTHORITIES_PENDING
+NEW_LISTING_AUTO_BOUND_TO_MAYEL=CONTRACT_PASS_PHYSICAL_NEW_PUBLICATION_NOT_EXECUTED
+SHIPPING_AUTO_BOUND=true
+FEE_AUTHORITY_AUTO_BOUND=false
+KEYWORD_V2_1_AUTO_BOUND=true
+METRICS_AUTO_ATTACHED=true
+QUALITY_AUTO_ATTACHED=true
+PROMOTION_SIMULATION_PASS=false
+CODEX_RUNTIME_DEPENDENCY=false
+OWNER_MANUAL_REPAIR_REQUIRED=false
+FULL_SUITE_RESULT=377/377_PASS_TYPECHECK_LINT_BUILD_AUDIT_PASS
+NEW_REGRESSION_COUNT=0
+ASSISTANT_CLOSEOUT=false
+SAFE_FOR_SELL_ONE_LIKE_THIS=false
+SAFE_FOR_SINGLE_LISTING_PUBLICATION_CANARY=false
+SAFE_FOR_EBAY_ADS_WRITE_CANARY=false
+NEXT_ACTION=COMPLETE_OFFICIAL_ACCOUNT_CATEGORY_FEE_AUTHORITY_AND_PROVEN_PRE_SALE_BASIS_THEN_RUN_ECONOMIC_CANARY
+```
+
+`CODEX_RUNTIME_DEPENDENCY=false` and `OWNER_MANUAL_REPAIR_REQUIRED=false` describe the automatic read/binding paths, not a claim that the missing fee-authority producer is complete. Marketplace writes and Ads writes remain zero. `EBAY_ADS_WRITE_ENABLED=false` remains enforced. Policy controls are configurable, but no maximum safe advertising rate has been certified for the real canary, and the example 3–5% range is not authorization to spend.
+
+Deployment readback: `dpl_qYRMoYnuycj5FGPMj5GkHySxUJeG` is READY in the dedicated preprod project with implementation SHA `8b8a2127d94908f4c99a873924b1d31acb53b9a9`. The deployed product-case envelope returned HTTP 200, trace `c94f3de7-fc81-45ba-9336-2f9cb068d4bb`, for the exact package/item. Its overall state is ESPERANDO_DATOS; it preserves proven package, SKU, product cost, Shipping, category, specifics, images and Keyword references while fee authority and post-sale evidence remain pending. The manual returned HTTP 200 and matches the certified PDF. No physical publication or Ads write was executed.

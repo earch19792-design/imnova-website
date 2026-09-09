@@ -1,5 +1,5 @@
 {
-  "observedAt": "2026-09-09T18:04:34.763Z",
+  "observedAt": "2026-09-09T18:10:50.806Z",
   "itemId": "366650054490",
   "sku": "IMNOVAA59C2C921CDD4975ADD29540657D8A60",
   "binding": {
@@ -260,7 +260,7 @@
     "adFeeBasis": null,
     "reference": null,
     "source": null,
-    "unknownFeeComponentCount": 7,
+    "unknownFeeComponentCount": 8,
     "blockers": [
       "FEE_COMPONENT_UNPROVEN:FINAL_VALUE_PERCENT",
       "FEE_COMPONENT_UNPROVEN:PER_ORDER",
@@ -268,6 +268,7 @@
       "FEE_COMPONENT_UNPROVEN:SERVICE_METRICS",
       "FEE_COMPONENT_UNPROVEN:INTERNATIONAL",
       "FEE_COMPONENT_UNPROVEN:CURRENCY_CONVERSION",
+      "FEE_COMPONENT_UNPROVEN:REGULATORY_OPERATING",
       "FEE_COMPONENT_UNPROVEN:TAX_ON_FEES",
       "CURRENT_PRE_SALE_AUTHORITY_REQUIRED",
       "FEE_ACCOUNT_CATEGORY_CONTEXT_UNPROVEN",
@@ -567,5 +568,108 @@
       }
     ]
   },
-  "validationStatus": "PENDING_FULL_SUITE"
+  "validationStatus": "PASS",
+  "implementationSha": "8b8a2127d94908f4c99a873924b1d31acb53b9a9",
+  "validation": {
+    "tests": "377/377_PASS",
+    "newRegressions": 0,
+    "checks": {
+      "tests": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 64818,
+        "completedAt": "2026-09-09T18:08:04.231Z",
+        "scope": "FULL_SELLER_OS_SUITE",
+        "passed": 377,
+        "failed": 0,
+        "skipped": 0,
+        "failureSummaries": [],
+        "failuresTruncated": false
+      },
+      "typecheck": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 41326,
+        "completedAt": "2026-09-09T18:08:45.557Z"
+      },
+      "lint": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 14874,
+        "completedAt": "2026-09-09T18:09:00.431Z"
+      },
+      "build": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 54689,
+        "completedAt": "2026-09-09T18:09:55.121Z"
+      },
+      "sellerOsAudit": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 482,
+        "completedAt": "2026-09-09T18:09:55.605Z"
+      },
+      "targetedRuntimeSecurity": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 4161,
+        "completedAt": "2026-09-09T18:06:59.393Z"
+      }
+    },
+    "validatedHeadSha": "8b8a2127d94908f4c99a873924b1d31acb53b9a9"
+  },
+  "latestLiveRegistryReview": {
+    "observedAt": "2026-09-09T18:09:32.406Z",
+    "listingCount": 23,
+    "matchesPreviouslyInspectedCohort": true
+  },
+  "deployment": {
+    "id": "dpl_qYRMoYnuycj5FGPMj5GkHySxUJeG",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-5cdnhnz5s-earch19792-6888s-projects.vercel.app",
+    "sha": "8b8a2127d94908f4c99a873924b1d31acb53b9a9"
+  },
+  "deployedEnvelopeReadback": {
+    "httpStatus": 200,
+    "traceId": "c94f3de7-fc81-45ba-9336-2f9cb068d4bb",
+    "envelopeKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12:package:a59c2c92-1cdd-4975-add2-9540657d8a60",
+    "packageId": "a59c2c92-1cdd-4975-add2-9540657d8a60",
+    "itemId": "366650054490",
+    "status": "ESPERANDO_DATOS",
+    "componentStates": {
+      "sku": "PROVEN",
+      "account": "PROVEN",
+      "productCost": "PROVEN",
+      "salePrice": "PROVEN",
+      "shipping": "PROVEN",
+      "feeAuthority": "PENDING",
+      "inventory": "PENDING",
+      "category": "PROVEN",
+      "itemSpecifics": "PROVEN",
+      "keywordV2_1": "PROVEN",
+      "images": "PROVEN",
+      "listingPackage": "PROVEN",
+      "liveIdentity": "PROVEN",
+      "metrics": "PENDING",
+      "quality": "PENDING",
+      "actualFees": "PENDING",
+      "sales": "PENDING"
+    },
+    "marketplaceWrites": 0
+  },
+  "manual": {
+    "url": "https://imnova-seller-os-preprod.vercel.app/manual-mayel-menu-v1.pdf",
+    "httpStatus": 200,
+    "matchesCertifiedManual": true
+  },
+  "finalStatus": "BLOCKED_PRE_SALE_FEE_AUTHORITY",
+  "assistantCloseout": false
 }
