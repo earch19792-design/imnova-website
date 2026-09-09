@@ -43,13 +43,14 @@ export async function resolveExactCurrentLiveIdentityV1(input: Readonly<{
   const { supabase, target } = input
   const [activeRead, linkageRead, variantRead] = await Promise.all([
     supabase.from("ebay_active_listings")
-      .select("id,ebay_item_id,listing_status,title,ebay_price,currency,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking")
+      .select("id,ebay_item_id,ebay_sku,source,last_ebay_sync_at,listing_status,title,ebay_price,currency,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking")
       .eq("account_key", target.accountKey)
       .eq("ebay_item_id", target.ebayItemId)
       .eq("listing_status", "active")
-      .order("updated_at", { ascending: false }).limit(2),
+      .order("last_ebay_sync_at", { ascending: false, nullsFirst: false })
+      .order("updated_at", { ascending: false }).limit(3),
     supabase.from("seller_os_luna_linkage_decisions")
-      .select("decision_id,decision_version,decision,linkage_id,luna_product_id,luna_variant_id,luna_sku")
+      .select("decision_id,decision_version,decision,linkage_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku")
       .eq("account_key", target.accountKey)
       .eq("marketplace_id", target.marketplaceId)
       .eq("ebay_item_id", target.ebayItemId)
@@ -68,9 +69,6 @@ export async function resolveExactCurrentLiveIdentityV1(input: Readonly<{
   const active = activeRead.data ?? []
   const linkages = linkageRead.data ?? []
   const variants = variantRead.data ?? []
-  if (active.length !== 1) {
-    throw new Error("LIVE_LISTING_SHIPPING_EXACT_CURRENT_LIVE_REQUIRED")
-  }
   const linkage = linkages[0]
   if (!linkage || linkage.decision !== "APPROVE_EXACT_LINKAGE" ||
       !/^luna-linkage-v1:sha256:[0-9a-f]{64}$/.test(
@@ -80,7 +78,21 @@ export async function resolveExactCurrentLiveIdentityV1(input: Readonly<{
       String(linkage.luna_sku ?? "") !== target.sourceSku) {
     throw new Error("LIVE_LISTING_SHIPPING_CERTIFIED_LINKAGE_REQUIRED")
   }
-  const listing = active[0]
+  // GetMyEbaySelling owns current LIVE presence. GetItem preserves an earlier
+  // identity read; two representations are not two shipping authorities.
+  // Accept only this demonstrated pair, with exact SKU and ordered observations.
+  // Multiple current-presence rows, ties and all other ambiguity stay blocked.
+  const current = active.filter(row => row.source === "EBAY_TRADING_GET_MY_EBAY_SELLING")
+  const historical = active.filter(row => row.source === "EBAY_TRADING_GET_ITEM_READONLY")
+  const canonicalPair = active.length === 2 && current.length === 1 && historical.length === 1 &&
+    Boolean(linkage.ebay_sku) && active.every(row => row.ebay_item_id === target.ebayItemId &&
+      row.ebay_sku === linkage.ebay_sku) && current[0].id !== historical[0].id &&
+    Date.parse(current[0].last_ebay_sync_at) > Date.parse(historical[0].last_ebay_sync_at) &&
+    Date.parse(current[0].last_ebay_sync_at) <= Date.now()
+  if (active.length !== 1 && !canonicalPair) {
+    throw new Error("LIVE_LISTING_SHIPPING_EXACT_CURRENT_LIVE_REQUIRED")
+  }
+  const listing = canonicalPair ? current[0] : active[0]
   if (variants.length !== 1 ||
       String(variants[0].supplier_product_id ?? "") !== target.lunaProductId ||
       String(variants[0].supplier_variant_id ?? "") !== target.lunaVariantId ||
@@ -88,13 +100,13 @@ export async function resolveExactCurrentLiveIdentityV1(input: Readonly<{
       !text(variants[0].product_url, 2_000)) {
     throw new Error("LIVE_LISTING_SHIPPING_EXACT_LUNA_VARIANT_REQUIRED")
   }
-  if ((listing.market_radar_product_id !== null &&
-        String(listing.market_radar_product_id) !==
+  if (active.some(row => (row.market_radar_product_id !== null &&
+        String(row.market_radar_product_id) !==
           String(variants[0].product_id ?? "")) ||
-      (listing.supplier_variant_id !== null &&
-        String(listing.supplier_variant_id) !== target.lunaVariantId) ||
-      (listing.supplier_sku !== null &&
-        String(listing.supplier_sku) !== target.sourceSku)) {
+      (row.supplier_variant_id !== null &&
+        String(row.supplier_variant_id) !== target.lunaVariantId) ||
+      (row.supplier_sku !== null &&
+        String(row.supplier_sku) !== target.sourceSku))) {
     throw new Error("LIVE_LISTING_SHIPPING_ACTIVE_LINEAGE_MISMATCH")
   }
   return Object.freeze({
@@ -108,6 +120,12 @@ export async function resolveExactCurrentLiveIdentityV1(input: Readonly<{
     currency: text(listing.currency, 8),
     linkageDecisionId: text(linkage.decision_id),
     activeListingRegistryId: text(listing.id),
+    presenceAuthority: { contractVersion: "LIVE_SHIPPING_CANONICAL_PRESENCE_SELECTION_V1",
+      selectedRowId: text(listing.id), source: listing.source ?? null,
+      observedAt: listing.last_ebay_sync_at ?? null,
+      excludedHistoricalPresenceRowIds: canonicalPair ? [text(historical[0].id)] : [],
+      reason: canonicalPair ? "CANONICAL_CURRENT_LIVE_OVER_HISTORICAL_GET_ITEM" : "SINGLE_EXACT_ACTIVE_ROW",
+      historicalRowsPreserved: true },
   })
 }
 
