@@ -226,6 +226,11 @@ export type ReadonlyLiveListingShippingEvidenceRowV1 = {
 
 export type ReadonlySupabaseReader = Pick<SupabaseClient, "from">
 
+export type LunaStockCanonicalReadScopeV1 = Readonly<{
+  itemIds: readonly string[]
+  stockCheckJobIds: readonly string[]
+}>
+
 export type CommercialMonitorReadonlySources = {
   registry: ReadonlySourceResult<ReadonlyRegistryListingRow>
   syncState: ReadonlySourceResult<ReadonlySyncStateRow>
@@ -292,13 +297,18 @@ export async function readCanonicalLunaLinkageDecisions(
 export async function readCanonicalLunaStockJobs(
   supabase: SupabaseClient,
   accountKey: string,
+  scope?: LunaStockCanonicalReadScopeV1,
 ): Promise<ReadonlySourceResult<ReadonlyLunaStockJobRowV1>> {
-  const maximum = 500
-  const { data, error } = await supabase
+  const maximum = scope ? 20 : 500
+  let query = supabase
     .from("seller_os_luna_stock_check_jobs")
     .select("stock_check_job_id,linkage_id,ebay_item_id,observation_window_start,observation_window_end,workflow_state,attempt_count,success_receipt_digest")
     .eq("account_key", accountKey)
     .eq("workflow_state", "SUCCEEDED")
+  if (scope?.itemIds.length) query = query.in("ebay_item_id", [...scope.itemIds])
+  if (scope?.stockCheckJobIds.length) query = query.in(
+    "stock_check_job_id", [...scope.stockCheckJobIds])
+  const { data, error } = await query
     .order("observation_window_end", { ascending: false })
     .limit(maximum + 1)
   if (error) {
@@ -317,12 +327,17 @@ export async function readCanonicalLunaStockJobs(
 export async function readCanonicalLunaStockObservations(
   supabase: SupabaseClient,
   accountKey: string,
+  scope?: LunaStockCanonicalReadScopeV1,
 ): Promise<ReadonlySourceResult<ReadonlyLunaStockObservationRowV1>> {
-  const maximum = 1_500
-  const { data, error } = await supabase
+  const maximum = scope ? 400 : 1_500
+  let query = supabase
     .from("seller_os_luna_stock_observations")
     .select("observation_id,stock_check_job_id,linkage_id,ebay_item_id,component_identity_id,luna_product_id,luna_variant_id,luna_sku,supplier_quantity_required,observation_state,source_status,observed_availability,observed_supplier_quantity,evidence_class,evidence_digest,acquisition_method,attempt_number,observed_at,maximum_age_seconds,limitations")
     .eq("account_key", accountKey)
+  if (scope?.itemIds.length) query = query.in("ebay_item_id", [...scope.itemIds])
+  if (scope?.stockCheckJobIds.length) query = query.in(
+    "stock_check_job_id", [...scope.stockCheckJobIds])
+  const { data, error } = await query
     .order("observed_at", { ascending: false })
     .limit(maximum + 1)
   if (error) {
@@ -731,7 +746,8 @@ async function readExperiments(
 export async function readCommercialMonitorReadonlySources(
   supabase: SupabaseClient,
   accountKey: string,
-  options: { deadlineAt?: number; timings?: ReadTimingV1[] } = {},
+  options: { deadlineAt?: number; timings?: ReadTimingV1[];
+    stockReadScope?: LunaStockCanonicalReadScopeV1 } = {},
 ): Promise<CommercialMonitorReadonlySources> {
   const read = <T>(source: string, loader: () => Promise<ReadonlySourceResult<T>>) =>
     options.deadlineAt === undefined ? loader() : settleReadWithinBudgetV1({
@@ -772,8 +788,11 @@ export async function readCommercialMonitorReadonlySources(
     read("listing_commercial_snapshots", () => readCommercialSnapshots(supabase, accountKey)),
     suppliesRead,
     read("market_radar_sources", () => readSupplySources(supabase)),
-    read("SELLER_OS_LUNA_STOCK_CHECK_JOBS_V1", () => readCanonicalLunaStockJobs(supabase, accountKey)),
-    read("SELLER_OS_LUNA_STOCK_OBSERVATIONS_V1", () => readCanonicalLunaStockObservations(supabase, accountKey)),
+    read("SELLER_OS_LUNA_STOCK_CHECK_JOBS_V1", () => readCanonicalLunaStockJobs(
+      supabase, accountKey, options.stockReadScope)),
+    read("SELLER_OS_LUNA_STOCK_OBSERVATIONS_V1", () =>
+      readCanonicalLunaStockObservations(
+        supabase, accountKey, options.stockReadScope)),
     ordersRead,
     readSalesOrderReadonlyAuditV1(supabase, accountKey, options),
     read("ebay_category_learning_adjustments", () => readLearning(supabase, accountKey)),

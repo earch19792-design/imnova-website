@@ -26,7 +26,7 @@ export const SELLER_OS_STOCK_IDENTITY_AUTO_RECONCILIATION_VERSION =
   "STOCK_IDENTITY_AUTO_RECONCILIATION_V1" as const
 
 const ITEM_ID = /^\d{9,19}$/
-const MAXIMUM_TARGETS = 20
+export const MAXIMUM_TARGETS = 20 as const
 
 type DecisionRow = Readonly<{
   decision_id: string
@@ -238,6 +238,8 @@ export async function reconcileSellerOsStockIdentityV1(
     targetCount: 0, autoResolvedCount: 0, ambiguousCount: 0,
     noMatchCount: 0, inStockCount: 0, certifiedOosCount: 0,
     outcomes: Object.freeze([]), databaseWrites: 0, ebayWrites: 0,
+    readbackScope: Object.freeze({ itemIds: Object.freeze([]),
+      stockCheckJobIds: Object.freeze([]) }),
   })
   const [listingRead, decisionRead] = await Promise.all([
     supabase.from("ebay_active_listings")
@@ -335,7 +337,8 @@ export async function reconcileSellerOsStockIdentityV1(
         workerId, now: new Date().toISOString(),
       })
       if (!claim.claimed || !claim.attemptNumber) {
-        outcomes.push({ itemId: target, status: "ALREADY_CURRENT" })
+        outcomes.push({ itemId: target, status: "ALREADY_CURRENT",
+          stockCheckJobId: job.stockCheckJobId })
         continue
       }
       databaseWrites += 1
@@ -367,6 +370,7 @@ export async function reconcileSellerOsStockIdentityV1(
       const allInStock = persisted.every((entry) =>
         entry.observed.stockState === "IN_STOCK")
       outcomes.push({ itemId: target, status: "AUTO_RESOLVED",
+        stockCheckJobId: job.stockCheckJobId,
         stockState: certifiedOos ? "CERTIFIED_OOS"
           : allInStock ? "IN_STOCK_SIGNAL" : "STOCK_UNKNOWN",
         sourceStatus: persisted.every((entry) =>
@@ -404,6 +408,15 @@ export async function reconcileSellerOsStockIdentityV1(
       row.newObservationPersisted === true).length,
     intervalSeconds,
     outcomes: Object.freeze(outcomes.map(Object.freeze)),
+    readbackScope: Object.freeze({
+      itemIds: Object.freeze(targets),
+      stockCheckJobIds: Object.freeze([...new Set(outcomes.flatMap((row) =>
+        typeof row.stockCheckJobId === "string" ? [row.stockCheckJobId] : []))]
+        .sort()),
+      globalHistoryScanRequired: false as const,
+      maximumJobRows: 20 as const,
+      maximumObservationRows: 400 as const,
+    }),
     databaseWrites,
     ebayWrites: 0 as const,
   })

@@ -1,5 +1,6 @@
 export const SELLER_OS_LUNA_STOCK_FRESHNESS_RENEWAL_VERSION =
   "SELLER_OS_LUNA_STOCK_FRESHNESS_RENEWAL_V1" as const
+export const SELLER_OS_STOCK_RECONCILIATION_MAX_TARGETS_V1 = 20 as const
 
 type RenewalListing = Readonly<{
   itemId: string
@@ -23,6 +24,7 @@ function boundedSeconds(value: unknown, fallback: number) {
 export function selectSellerOsLunaStockFreshnessRenewalsV1(input: Readonly<{
   listings: readonly RenewalListing[]
   schedulerIntervalSeconds: number
+  cycleStartedAt?: string
 }>) {
   const schedulerIntervalSeconds = boundedSeconds(
     input.schedulerIntervalSeconds,
@@ -73,10 +75,40 @@ export function selectSellerOsLunaStockFreshnessRenewalsV1(input: Readonly<{
       renewalLeadSeconds })
   })
   const due = outcomes.filter((outcome) => outcome.due)
+    .map((outcome) => outcome.itemId).sort()
+  const cycleStartedAt = input.cycleStartedAt &&
+      Number.isFinite(Date.parse(input.cycleStartedAt))
+    ? Date.parse(input.cycleStartedAt) : 0
+  const cycleOrdinal = cycleStartedAt > 0
+    ? Math.floor(cycleStartedAt / (schedulerIntervalSeconds * 1_000)) : 0
+  // Rotate one full batch per scheduler slot. A persistently failing low item
+  // ID therefore cannot permanently hide later eligible items.
+  const offset = due.length > SELLER_OS_STOCK_RECONCILIATION_MAX_TARGETS_V1
+    ? (cycleOrdinal * SELLER_OS_STOCK_RECONCILIATION_MAX_TARGETS_V1) % due.length
+    : 0
+  const rotated = due.length ? [...due.slice(offset), ...due.slice(0, offset)] : []
+  const selectedTargetItemIds = rotated.slice(
+    0,
+    SELLER_OS_STOCK_RECONCILIATION_MAX_TARGETS_V1,
+  )
+  const selected = new Set(selectedTargetItemIds)
+  const deferredTargetItemIds = due.filter((itemId) => !selected.has(itemId))
   return Object.freeze({
     contractVersion: SELLER_OS_LUNA_STOCK_FRESHNESS_RENEWAL_VERSION,
     schedulerIntervalSeconds,
-    targetItemIds: Object.freeze(due.map((outcome) => outcome.itemId).sort()),
+    maximumTargetsPerCycle: SELLER_OS_STOCK_RECONCILIATION_MAX_TARGETS_V1,
+    eligibleTargetItemIds: Object.freeze(due),
+    targetItemIds: Object.freeze(selectedTargetItemIds),
+    deferredTargetItemIds: Object.freeze(deferredTargetItemIds),
+    deferred: Object.freeze(deferredTargetItemIds.map((itemId) =>
+      Object.freeze({ itemId, status: "DEFERRED_NOT_PROCESSED" as const }))),
+    operationalEfficiency: Object.freeze({
+      selectorMaximum: SELLER_OS_STOCK_RECONCILIATION_MAX_TARGETS_V1,
+      reconcilerMaximum: SELLER_OS_STOCK_RECONCILIATION_MAX_TARGETS_V1,
+      deferredCountedAsComponentFailure: false as const,
+      additionalPollers: 0 as const,
+    }),
+    selectionOffset: offset,
     outcomes: Object.freeze(outcomes),
   })
 }

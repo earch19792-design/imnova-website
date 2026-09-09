@@ -23,6 +23,8 @@ import { persistAnalyticsLastKnownGoodV1 } from
   "@/lib/ebay/ebay-analytics-last-known-good-persistence-v1"
 import { getCommercialMonitorReadonly } from
   "@/lib/ebay/commercial-monitor-readonly-service"
+import { readCommercialMonitorReadonlySources } from
+  "@/lib/ebay/commercial-monitor-readonly-repository"
 import { autoIngestUnmanagedEbayLiveListingsV1 } from
   "@/lib/ebay/ebay-unmanaged-live-auto-intake-v1"
 import { runAutomaticCertifiedOosProtectionV1 } from
@@ -337,6 +339,7 @@ export async function POST(req: Request) {
       const freshnessRenewal =
         selectSellerOsLunaStockFreshnessRenewalsV1({
           schedulerIntervalSeconds: LUNA_PRODUCTION_POLL_INTERVAL_SECONDS,
+          cycleStartedAt: new Date().toISOString(),
           listings: currentLive.map((listing) => ({
             itemId: listing.identity.itemId,
             liveStatus: listing.discovery.livePresence.status,
@@ -362,11 +365,18 @@ export async function POST(req: Request) {
         accountKey,
         accountAlias: account.accountAlias,
       })
+      const postPollSources = await readCommercialMonitorReadonlySources(
+        supabase,
+        accountKey,
+        { stockReadScope: stockPolling.readbackScope },
+      )
       const postPollMonitor = await getCommercialMonitorReadonly(
         supabase,
         { accountKey, accountAlias: account.accountAlias,
           configurationReason: account.reason },
         postPollLive,
+        undefined,
+        postPollSources,
       )
       const automaticOosProtection = await runAutomaticCertifiedOosProtectionV1({
         monitor: postPollMonitor,
@@ -393,6 +403,7 @@ export async function POST(req: Request) {
         sourceUnavailableCount === 0
       const refreshResults = Object.freeze({
         refreshAttempted: targetItemIds.length,
+        refreshDeferred: freshnessRenewal.deferredTargetItemIds.length,
         refreshSucceeded,
         refreshFailed,
         freshCount: postPollCertified.filter((listing) =>

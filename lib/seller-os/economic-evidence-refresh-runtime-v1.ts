@@ -29,6 +29,11 @@ import {
 } from "./economic-evidence-refresh-v1"
 import { economicShippingExpiredLeaseDecisionV1 } from
   "./economic-shipping-refresh-reclaim-loop-v1"
+import {
+  guardIncidentCohortFromGenericReconciliationV1,
+  SELLER_OS_LEGACY_SHIPPING_INCIDENT_COHORT_ID_V1,
+  type IncidentCohortMemberV1,
+} from "./incident-cohort-reconciler-authority-guard-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -267,8 +272,33 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
   if (evidenceRead.error || jobsRead.error || linkageRead.error) {
     throw new Error("ECONOMIC_REFRESH_DURABLE_AUTHORITY_READ_FAILED")
   }
+  const durableJobs = (jobsRead.data ?? []) as JobRow[]
+  const durableShippingJobIds = durableJobs.filter((job) =>
+    job.evidence_type === "LUNA_CURRENT_SHIPPING").map((job) => job.job_id)
+  const incidentMemberRead = durableShippingJobIds.length
+    ? await input.supabase
+      .from("seller_os_legacy_shipping_incident_members_v1")
+      .select("cohort_id,job_id,incident_classification")
+      .eq("cohort_id", SELLER_OS_LEGACY_SHIPPING_INCIDENT_COHORT_ID_V1)
+      .in("job_id", durableShippingJobIds)
+      .limit(19)
+    : { data: [], error: null }
+  if (incidentMemberRead.error) {
+    throw new Error("ECONOMIC_REFRESH_INCIDENT_COHORT_AUTHORITY_READ_FAILED")
+  }
+  const jobById = new Map(durableJobs.map((job) => [job.job_id, job]))
+  const incidentMembers = (incidentMemberRead.data ?? []).flatMap((row) => {
+    const job = jobById.get(String(row.job_id))
+    const classification = String(row.incident_classification)
+    return job && (classification === "RECOVERABLE_VALID_SCOPE" ||
+        classification === "OUT_OF_SCOPE_NO_ACTIVE_LISTING")
+      ? [{ jobId: job.job_id, idempotencyKey: job.idempotency_key,
+          incidentClassification: classification } satisfies
+          IncidentCohortMemberV1]
+      : []
+  })
   const latestEvidence = latestEvidenceMap((evidenceRead.data ?? []).map(record))
-  const jobs = new Map((jobsRead.data ?? []).map((row) => [
+  const jobs = new Map(durableJobs.map((row) => [
     `${row.ebay_item_id}\n${row.evidence_type}`, row as JobRow,
   ]))
   const linkages = new Map<string, JsonRecord>()
@@ -362,10 +392,16 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
       }
     })
   })
-  const jobWrite = await input.supabase.from(
-    "seller_os_economic_evidence_refresh_jobs_v1")
-    .upsert(detectedRows, { onConflict: "idempotency_key" })
-  if (jobWrite.error) throw new Error("ECONOMIC_REFRESH_JOB_RECONCILE_FAILED")
+  const reconciliationGuard = guardIncidentCohortFromGenericReconciliationV1({
+    detectedRows,
+    incidentMembers,
+  })
+  if (reconciliationGuard.genericRows.length) {
+    const jobWrite = await input.supabase.from(
+      "seller_os_economic_evidence_refresh_jobs_v1")
+      .upsert(reconciliationGuard.genericRows, { onConflict: "idempotency_key" })
+    if (jobWrite.error) throw new Error("ECONOMIC_REFRESH_JOB_RECONCILE_FAILED")
+  }
 
   const sourceResults: JsonRecord[] = []
   const processFailure = async (job: JobRow, error: unknown) => {
@@ -581,6 +617,13 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
     automaticWorkerClaim: true as const,
     automaticRecomputation: true as const,
     selfRecovery: true as const,
+    incidentCohortGuard: Object.freeze({
+      protectedJobCount: reconciliationGuard.protectedJobIds.length,
+      membershipSeparatedFromCurrentEligibility: true as const,
+      genericTerminalizationBlocked: true as const,
+      outOfScopeDispositionAuthority:
+        reconciliationGuard.outOfScopeDispositionAuthority,
+    }),
     processed: Object.freeze(sourceResults),
     evidenceStatus: status.summary,
     provenEconomicsCount: calculations.filter((row) =>
