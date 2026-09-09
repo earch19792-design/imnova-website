@@ -58,3 +58,11 @@ significa que está confirmado pero falta verificarlo y enviarlo.
 **Actualizado y verificado en eBay** aparece sólo tras la confirmación oficial de
 eBay. Si la revisión detecta un conflicto, la propuesta se conserva para revisarla.
 La publicidad sigue siendo una simulación: este botón no paga anuncios.
+
+## Physical source mismatch resolved
+
+The selected real draft uses the same official eBay image as its task, but the
+task stores `s-l140.png` and the generator uses `s-l1600.png`. Import now reuses
+`resolveMaximumOfficialEbayImageV1`; the database guard enforces the equivalent
+exact image/host/format/query identity. Different images remain rejected. No
+source evidence is overwritten or reclassified as fresh.

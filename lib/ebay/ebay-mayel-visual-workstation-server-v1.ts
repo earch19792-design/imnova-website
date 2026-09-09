@@ -3,7 +3,7 @@ import "server-only"
 import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { readMayelGeneratedImageV1, assertMayelGeneratedBytesV1, replaceMayelHeroIntentV1 } from "../seller-os/mayel-generated-image-binding-v1"
+import { readMayelGeneratedImageV1, assertMayelGeneratedBytesV1, replaceMayelHeroIntentV1, isMayelGeneratedSourceBoundV1 } from "../seller-os/mayel-generated-image-binding-v1"
 
 import {
   buildMayelChatGptVisualPromptV1,
@@ -601,7 +601,7 @@ export async function uploadMayelVisualOutputV1(input: {
   if (generated) {
     const refs = Array.isArray(task.source_image_references) ? task.source_image_references.map(record) : []
     const images = Array.isArray(task.current_image_set) ? task.current_image_set : []
-    if (!refs.some(ref => ref.url === generated.sourceImageUrl) && !images.includes(generated.sourceImageUrl))
+    if (![...refs.map(ref => ref.url), ...images].some(url => isMayelGeneratedSourceBoundV1(url, generated.sourceImageUrl)))
       throw Error("MAYEL_GENERATED_IMAGE_SOURCE_CONFLICT")
     assertMayelGeneratedBytesV1(input.file, generated.outputSha256)
     const prior = await input.supabase.from("ebay_listing_image_assets")

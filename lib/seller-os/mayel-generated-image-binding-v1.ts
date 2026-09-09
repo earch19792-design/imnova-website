@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { resolveMaximumOfficialEbayImageV1 } from "../ebay/ebay-seller-os-visual-quality-v1"
 
 export const MAYEL_ASSISTANT_IMAGE_SOURCE_V1 = "SELLER_OS_ASSISTANT_IMAGE_VARIANT" as const
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const uuid = (value: unknown) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+
+export function isMayelGeneratedSourceBoundV1(reference: unknown, generatedSource: string) {
+  if (typeof reference !== "string") return false
+  return reference === generatedSource || resolveMaximumOfficialEbayImageV1(reference).analyzedUrl === generatedSource
+}
 
 // This is a reader of the certified generator's durable result, never a new
 // image producer. Neither a caller's QA assertion nor a supplied URL is trusted.
