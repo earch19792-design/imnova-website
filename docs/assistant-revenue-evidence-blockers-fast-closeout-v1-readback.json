@@ -1,9 +1,9 @@
 {
   "contractVersion": "SELLER_OS_ASSISTANT_REVENUE_EVIDENCE_BLOCKERS_FAST_CLOSEOUT_V1",
-  "recordedAt": "2026-09-09T17:15:07.130905+00:00",
+  "recordedAt": "2026-09-09T17:50:50.884935+00:00",
   "projectId": "vsfthqydfrdzulldbfbe",
   "baseImplementationSha": "29d9ee6f59d9e0fc92dcf5bfa2fe4840c1aa6ae6",
-  "implementationSha": "40d4ea46007b3d04220a1041756c1308ddbd7e49",
+  "implementationSha": "dc89a7978d39ec2e191e7d5f45abba98b3ce8c7e",
   "selectedCandidate": "366650054490",
   "candidateSelectionIsNotCommercialCanaryCertification": true,
   "selectionReason": "Among four exact-linked durable READY decisions, this listing has the highest observed impressions and views; none has sufficient funnel evidence.",
@@ -614,7 +614,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 6.52,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:d4a2db06d232cf488c513f232b764ab4c8d7de3977340207ba78fe6312813257",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -746,7 +749,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 31.15,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:5a63566524fc0e282464b3145c0059a6dc3bc49b0c81bfbeeb55eb02d0a5a4df",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -881,7 +887,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 4.87,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:c6e0a61e6380f22425d6b6af99f62a2f79ac684cb6c5d5eed72ba12cfe307aec",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -1013,7 +1022,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 11.58,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:eeb35cd8ff771706768716f5951980633b7112c2d3c138bfcdc78fcca4a491ec",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -1145,7 +1157,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 5,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:f052188956c908c52b91e98cbc79f12ad1edc837df9767f0f5837c290399c098",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -1277,7 +1292,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 3.8,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:6cbb44b93ed7e2edf149aa681b90fec9f294e734fdd63be8c0bed6fbf8d965f1",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -1413,7 +1431,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 5,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:8de639eedd17a76901bb0f87e6eea69d9a178a543d3ad38fc57b208ee3fc9bbc",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -1668,7 +1689,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 9.45,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:898e5a3e4bb3a4aa98f3cebda0b9fdb77001bec7d33eee723dddde6dc76da3aa",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -1804,7 +1828,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 24.35,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:938969aaa24c1f9d8db0e38bddfc6dc942dccffe00b6d965a4526b0e3a341e1c",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -1942,7 +1969,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 7.85,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:c50c80720b6f3906ae25afb77bd8482dca1b9144aec988958d511bec0f2877eb",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -2077,7 +2107,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 2,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:2213d16941d740f01a1dfa6aac9c2227f1d079d9dd71bc7d6f94231eb4a0bd38",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -2213,7 +2246,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 4.8,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:86b10ae96bdfe75503604441dfcc6f6796cb72cc789f6b4c0d8c31293cbe03c8",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -2345,7 +2381,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 2.41,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:0f1cce4b040000c521e53140460edab2dfa7f7ee4241bf2fb56167378171612f",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -2477,7 +2516,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 1.79,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:df3e81aa66b28ad6c4e36a76a81bd1dd140047c34e9cbd3408445baabfe19315",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -2613,7 +2655,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 1.05,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:3f70e66df4006bdeea62725af262c1783a09d7cb6bdc162f1500eb364cedd69e",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -2749,7 +2794,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 1,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:82ab7202bf39fcc8f25324dcb3add7679c37c8c9ac45344596764a673e028f61",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -2881,7 +2929,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 1.24,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:b6ce41b967406dc63d1483c86c98718e25f84d3a5abab100982217500ae2c27f",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -3017,7 +3068,10 @@
           "evidence_metadata": {
             "supplierSubtotal": 3.68,
             "freshnessGeneration": "economic-shipping-refresh-v1:sha256:bc2450c32a49320a811827d86510da0dd2aff68edb2bce59b608265091d5de8d",
-            "destinationFingerprint": "sha256:e916867c97aa423cc3a7479bfdcb6405bb0d21919e619e7e7dca17f415f08b87",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
             "purchaseBoundaryEnforced": true
           }
         },
@@ -5217,21 +5271,23 @@
     "activationStatus": "RECORDED_CONDITIONAL_POLICY_NO_QUALIFIED_CANARY_YET"
   },
   "blockers": [
-    "LUNA_HTTP_429_WITH_PROTECTED_BROWSER_UNAVAILABLE",
     "EBAY_FEES_UNPROVEN",
     "NO_SUFFICIENT_METRICS_CANARY_AVAILABLE"
   ],
   "canaryExecution": {
     "commercialCanaries": 0,
-    "reason": "Owner session renewal completed and preprod confirms SESSION_READY. Renewed capture reached Luna cart add but received HTTP 429; protected browser fallback unavailable. No fresh quote, no complete fees and no sufficient metrics canary.",
-    "shippingCaptures": 0,
+    "reason": "One exact fresh Shipping quote was captured and projected to the existing economic source. No complete fee evidence or sufficient metrics candidate exists; commercial canary remains uncertified.",
+    "shippingCaptures": 1,
     "imageCalls": 0,
     "qualityUploads": 0,
     "treatmentReceiptsCreated": 0,
     "marketplaceWrites": 0,
     "ebayAdsWrites": 0,
     "productionChanges": 0,
-    "shippingCaptureRequests": 2
+    "shippingCaptureRequests": 2,
+    "operatorChromeSuccessfulCaptures": 1,
+    "shippingEconomicProjectionWrites": 1,
+    "shippingEconomicProjectionLunaRequests": 0
   },
   "queries": {
     "revenue-evidence-migration-applied": "select version,name from supabase_migrations.schema_migrations where name='product_research_keyword_handoff_read_v2' order by version desc limit 1\n",
@@ -5269,7 +5325,7 @@
     }
   ],
   "fastCloseout": {
-    "status": "BLOCKED_LUNA_UPSTREAM_AND_COMMERCIAL_EVIDENCE",
+    "status": "SHIPPING_RESOLVED_BLOCKED_FEES_AND_METRICS",
     "shippingDuplicateRootCause": "READER_SCOPE_ERROR",
     "shippingFixDeployed": true,
     "shippingBefore": {
@@ -5282,8 +5338,8 @@
       "physicalActiveListingRepresentations": 2,
       "resolvedCurrentLivePresenceAuthorities": 1,
       "authorityJobs": 1,
-      "shippingQuoteRows": 2,
-      "freshShippingQuoteRows": 0
+      "shippingQuoteRows": 3,
+      "freshShippingQuoteRows": 1
     },
     "readerSelectionProof": "Deployed capture passed exact identity resolution and then returned LUNA_REAUTH_REQUIRED; directed tests exercise exact canonical pair and reject 13 ambiguous/conflicting variants.",
     "historyPreserved": true,
@@ -5291,7 +5347,7 @@
     "shippingJobUpdated": false,
     "uniqueAuthorityGuard": "Existing UNIQUE (marketplace_account_key, marketplace_id, ebay_item_id, evidence_type), plus fail-closed current LIVE identity resolver.",
     "shippingCaptureHttpRequests": 2,
-    "freshShippingQuotesCaptured": 0,
+    "freshShippingQuotesCaptured": 1,
     "NO_SUFFICIENT_METRICS_CANARY_AVAILABLE": true,
     "OTHER_VARIABLE_COST_POLICY_PROVEN": true,
     "EBAY_FEES_COMPLETE": false,
@@ -5316,7 +5372,15 @@
     "renewedCaptureFailure": "LUNA_PROTECTED_BROWSER_UNAVAILABLE",
     "primaryUpstreamFailure": "CURRENT_HTTP_429_LUNA_CART_ADD",
     "lunaSessionReady": true,
-    "nextShippingAction": "EXISTING_CHROME_EXACT_LIVE_CAPTURE_ONE_LISTING"
+    "nextShippingAction": "EXISTING_CHROME_EXACT_LIVE_CAPTURE_ONE_LISTING",
+    "shippingUiFreshCaptureEvidenceCreated": true,
+    "shippingEconomicHandoffPass": true,
+    "shippingFreshness": "FRESH",
+    "shippingFreshUntil": "2026-09-09T23:40:47.783Z",
+    "shippingCostUsd": 6.99,
+    "operatorChromeSuccessfulCaptures": 1,
+    "jobQueueState": "STALE_UNCHANGED_NO_LEGACY_OPERATION",
+    "qualifiedCommercialCanaryExecuted": false
   },
   "shippingAudit": {
     "rawQuotesBefore": {
@@ -5953,6 +6017,275 @@
           "updated_at": null
         }
       ]
+    },
+    "freshCaptureReadback": {
+      "httpStatus": 201,
+      "observedAt": "2026-09-09T17:40:50.449Z",
+      "data": [
+        {
+          "row_id": "live-listing-luna-shipping-v1:sha256:01b9338f04292681250124286f9a6762be5ed67d3d49c705d85128e8046bd8b4",
+          "account_key": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+          "marketplace_id": "EBAY_US",
+          "ebay_item_id": "366650054490",
+          "linkage_id": "luna-linkage-v1:sha256:dd8b3869347250f18bbcaf11e578e4fb7b4fccbc8aebbf392dc194f4368f040c",
+          "luna_product_id": "9220846354656",
+          "luna_variant_id": "53002142286048",
+          "source_sku": "FL-NHRN1999804-Color-silver-bracelet",
+          "job_id": null,
+          "generation": null,
+          "status": "FRESH",
+          "shipping_cost": "6.99",
+          "captured_at": "2026-09-09 17:40:47.783+00",
+          "fresh_until": "2026-09-09 23:40:47.783+00",
+          "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+          "source_evidence_digest": "sha256:e8fd36d17c414063984ca78556f6f4c3d714a0524c8515467e9389467063a75b",
+          "created_at": "2026-09-09 17:40:50.128218+00",
+          "updated_at": null
+        },
+        {
+          "row_id": "live-listing-luna-shipping-v1:sha256:eee1b5039f9f086ac94ed7113f76a2abd0086ff7c16e95188dee5626758abd72",
+          "account_key": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+          "marketplace_id": "EBAY_US",
+          "ebay_item_id": "366650054490",
+          "linkage_id": "luna-linkage-v1:sha256:dd8b3869347250f18bbcaf11e578e4fb7b4fccbc8aebbf392dc194f4368f040c",
+          "luna_product_id": "9220846354656",
+          "luna_variant_id": "53002142286048",
+          "source_sku": "FL-NHRN1999804-Color-silver-bracelet",
+          "job_id": null,
+          "generation": null,
+          "status": "STALE",
+          "shipping_cost": "6.99",
+          "captured_at": "2026-09-08 23:02:31.173+00",
+          "fresh_until": "2026-09-09 05:02:31.173+00",
+          "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+          "source_evidence_digest": "sha256:b5bfd49bf934f4b485b95a1c47c4edbd95b1747e1b9e796e8d61e771fa36e736",
+          "created_at": "2026-09-08 23:02:31.207884+00",
+          "updated_at": null
+        },
+        {
+          "row_id": "live-listing-luna-shipping-v1:sha256:6cd44c477722aa694e2d635df1d3c9fceb4b355669a03ef4b36adaae67d7a2d5",
+          "account_key": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+          "marketplace_id": "EBAY_US",
+          "ebay_item_id": "366650054490",
+          "linkage_id": "luna-linkage-v1:sha256:dd8b3869347250f18bbcaf11e578e4fb7b4fccbc8aebbf392dc194f4368f040c",
+          "luna_product_id": "9220846354656",
+          "luna_variant_id": "53002142286048",
+          "source_sku": "FL-NHRN1999804-Color-silver-bracelet",
+          "job_id": null,
+          "generation": null,
+          "status": "STALE",
+          "shipping_cost": "6.99",
+          "captured_at": "2026-09-07 08:23:23.328+00",
+          "fresh_until": "2026-09-07 14:23:23.328+00",
+          "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+          "source_evidence_digest": "sha256:92d3c8f078c7ff85c9bea4561b4eb6f01f96db52f60ff5f2bb347a1b1c7b26d8",
+          "created_at": "2026-09-07 08:23:23.600451+00",
+          "updated_at": null
+        }
+      ]
+    },
+    "economicComponentsBeforeHandoff": {
+      "httpStatus": 201,
+      "observedAt": "2026-09-09T17:41:35.221Z",
+      "data": [
+        {
+          "ebay_item_id": "366650054490",
+          "kind": "LUNA_CURRENT_COST",
+          "evidence_id": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+          "value_amount": "1.7900",
+          "captured_at": "2026-09-09 13:37:34.154+00",
+          "fresh_until": "2026-09-09 19:37:34.154+00",
+          "freshness_status": "FRESH",
+          "source_authority": "LUNA_PUBLIC_EXACT_PRODUCT_VARIANT_READ_V1",
+          "limitation_code": null,
+          "evidence_metadata": {
+            "sourceMode": "PUBLIC_READ_ONLY_PRODUCT_PAGE",
+            "canonicalUrl": "https://lunaportex.com/products/bohemian-style-colorful-retro-devil-eyes-necklace-bracelet-anklet-combination-accessories-2",
+            "parserVersion": "SELLER_OS_LUNA_PUBLIC_PRODUCT_PARSER_V1"
+          }
+        },
+        {
+          "ebay_item_id": "366650054490",
+          "kind": "LUNA_CURRENT_SHIPPING",
+          "evidence_id": "economic-evidence-v1:sha256:ea82372a51f0e2d073dfc2892f0f1bbd3d1f0e9f4b6ef96b40cdab492232e0e5",
+          "value_amount": "6.9900",
+          "captured_at": "2026-09-08 23:02:31.394+00",
+          "fresh_until": "2026-09-09 05:02:31.394+00",
+          "freshness_status": "FRESH",
+          "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+          "limitation_code": null,
+          "evidence_metadata": {
+            "supplierSubtotal": 1.79,
+            "freshnessGeneration": "economic-shipping-refresh-v1:sha256:df3e81aa66b28ad6c4e36a76a81bd1dd140047c34e9cbd3408445baabfe19315",
+            "destinationFingerprint": {
+              "present": true,
+              "valueDisplayed": false
+            },
+            "purchaseBoundaryEnforced": true
+          }
+        },
+        {
+          "ebay_item_id": "366650054490",
+          "kind": "EXPECTED_EBAY_FEE",
+          "evidence_id": "economic-evidence-v1:sha256:64e23587d1771229e8af15a0f3a70c76e2495898c6e84e13ac2f5ca545ab4581",
+          "value_amount": null,
+          "captured_at": "2026-09-09 14:07:43.524+00",
+          "fresh_until": null,
+          "freshness_status": "SOURCE_UNAVAILABLE",
+          "source_authority": "EBAY_OFFICIAL_CATEGORY_FEE_POLICY_RESOLVER_V1",
+          "limitation_code": "OFFICIAL_CATEGORY_FEE_POLICY_NOT_CERTIFIED",
+          "evidence_metadata": {
+            "categoryId": "50692",
+            "confidence": "UNPROVEN",
+            "storeSubscriptionLevel": "NO_STORE"
+          }
+        },
+        {
+          "ebay_item_id": "366650054490",
+          "kind": "OTHER_EXPLICIT_COSTS",
+          "evidence_id": "economic-evidence-v1:sha256:2f18db3a1f9239ba7dd0744a8df8a71ccaf17ce464347852833a2275d51deba0",
+          "value_amount": null,
+          "captured_at": "2026-09-09 10:52:26.026+00",
+          "fresh_until": null,
+          "freshness_status": "SOURCE_UNAVAILABLE",
+          "source_authority": "SELLER_OS_EXPLICIT_COST_COMPONENT_REGISTRY",
+          "limitation_code": "EXPLICIT_OTHER_COST_AUTHORITY_NOT_CONFIGURED",
+          "evidence_metadata": {
+            "authoritativeZeroClaimed": false,
+            "hiddenGenericReserveUsed": false
+          }
+        }
+      ]
+    },
+    "economicHandoff": {
+      "startedAt": "2026-09-09T17:47:16.601Z",
+      "completedAt": "2026-09-09T17:47:18.140Z",
+      "implementationSha": "dc89a7978d39ec2e191e7d5f45abba98b3ce8c7e",
+      "result": {
+        "economicEvidenceId": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+        "shippingCost": 6.99,
+        "currency": "USD",
+        "capturedAt": "2026-09-09T17:40:47.783Z",
+        "freshUntil": "2026-09-09T23:40:47.783Z",
+        "shippingEvidenceId": "live-listing-luna-shipping-v1:sha256:01b9338f04292681250124286f9a6762be5ed67d3d49c705d85128e8046bd8b4",
+        "exactBinding": true,
+        "durableReadbackMatch": true,
+        "lunaRequests": 0,
+        "marketplaceWrites": 0
+      }
+    },
+    "economicComponentsAfterHandoff": {
+      "httpStatus": 201,
+      "observedAt": "2026-09-09T17:47:42.015Z",
+      "data": [
+        {
+          "ebay_item_id": "366650054490",
+          "kind": "LUNA_CURRENT_COST",
+          "evidence_id": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+          "value_amount": "1.7900",
+          "captured_at": "2026-09-09 13:37:34.154+00",
+          "fresh_until": "2026-09-09 19:37:34.154+00",
+          "freshness_status": "FRESH",
+          "source_authority": "LUNA_PUBLIC_EXACT_PRODUCT_VARIANT_READ_V1",
+          "limitation_code": null,
+          "evidence_metadata": {
+            "sourceMode": "PUBLIC_READ_ONLY_PRODUCT_PAGE",
+            "canonicalUrl": "https://lunaportex.com/products/bohemian-style-colorful-retro-devil-eyes-necklace-bracelet-anklet-combination-accessories-2",
+            "parserVersion": "SELLER_OS_LUNA_PUBLIC_PRODUCT_PARSER_V1"
+          }
+        },
+        {
+          "ebay_item_id": "366650054490",
+          "kind": "LUNA_CURRENT_SHIPPING",
+          "evidence_id": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+          "value_amount": "6.9900",
+          "captured_at": "2026-09-09 17:40:47.783+00",
+          "fresh_until": "2026-09-09 23:40:47.783+00",
+          "freshness_status": "FRESH",
+          "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+          "limitation_code": null,
+          "evidence_metadata": {
+            "identity": {
+              "linkageId": "luna-linkage-v1:sha256:dd8b3869347250f18bbcaf11e578e4fb7b4fccbc8aebbf392dc194f4368f040c",
+              "sourceSku": "FL-NHRN1999804-Color-silver-bracelet",
+              "accountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+              "ebayItemId": "366650054490",
+              "lunaProductId": "9220846354656",
+              "lunaVariantId": "53002142286048",
+              "marketplaceId": "EBAY_US"
+            },
+            "contractVersion": "LIVE_SHIPPING_ECONOMIC_HANDOFF_V1",
+            "purchaseBoundaryEnforced": true
+          }
+        },
+        {
+          "ebay_item_id": "366650054490",
+          "kind": "EXPECTED_EBAY_FEE",
+          "evidence_id": "economic-evidence-v1:sha256:64e23587d1771229e8af15a0f3a70c76e2495898c6e84e13ac2f5ca545ab4581",
+          "value_amount": null,
+          "captured_at": "2026-09-09 14:07:43.524+00",
+          "fresh_until": null,
+          "freshness_status": "SOURCE_UNAVAILABLE",
+          "source_authority": "EBAY_OFFICIAL_CATEGORY_FEE_POLICY_RESOLVER_V1",
+          "limitation_code": "OFFICIAL_CATEGORY_FEE_POLICY_NOT_CERTIFIED",
+          "evidence_metadata": {
+            "categoryId": "50692",
+            "confidence": "UNPROVEN",
+            "storeSubscriptionLevel": "NO_STORE"
+          }
+        },
+        {
+          "ebay_item_id": "366650054490",
+          "kind": "OTHER_EXPLICIT_COSTS",
+          "evidence_id": "economic-evidence-v1:sha256:2f18db3a1f9239ba7dd0744a8df8a71ccaf17ce464347852833a2275d51deba0",
+          "value_amount": null,
+          "captured_at": "2026-09-09 10:52:26.026+00",
+          "fresh_until": null,
+          "freshness_status": "SOURCE_UNAVAILABLE",
+          "source_authority": "SELLER_OS_EXPLICIT_COST_COMPONENT_REGISTRY",
+          "limitation_code": "EXPLICIT_OTHER_COST_AUTHORITY_NOT_CONFIGURED",
+          "evidence_metadata": {
+            "authoritativeZeroClaimed": false,
+            "hiddenGenericReserveUsed": false
+          }
+        }
+      ]
+    },
+    "jobAfterFreshCapture": {
+      "httpStatus": 201,
+      "observedAt": "2026-09-09T17:41:02.105Z",
+      "data": [
+        {
+          "job_id": "9ff772e6-6731-40fd-a323-2b7b4a6296e0",
+          "marketplace_account_key": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+          "marketplace_id": "EBAY_US",
+          "ebay_item_id": "366650054490",
+          "evidence_type": "LUNA_CURRENT_SHIPPING",
+          "status": "STALE",
+          "last_evidence_id": "economic-evidence-v1:sha256:ea82372a51f0e2d073dfc2892f0f1bbd3d1f0e9f4b6ef96b40cdab492232e0e5",
+          "failure_class": null,
+          "source_identity": {
+            "sku": "IMNOVAA59C2C921CDD4975ADD29540657D8A60",
+            "itemId": "366650054490",
+            "currency": "USD",
+            "linkageId": "luna-linkage-v1:sha256:dd8b3869347250f18bbcaf11e578e4fb7b4fccbc8aebbf392dc194f4368f040c",
+            "livePrice": 18.74,
+            "sourceSku": "FL-NHRN1999804-Color-silver-bracelet",
+            "productUrl": "https://lunaportex.com/products/bohemian-style-colorful-retro-devil-eyes-necklace-bracelet-anklet-combination-accessories-2",
+            "lunaProductId": "9220846354656",
+            "lunaVariantId": "53002142286048",
+            "liveObservedAt": "2026-09-09T07:37:23.081Z",
+            "linkageDecision": "APPROVE_EXACT_LINKAGE"
+          },
+          "shipping_freshness_generation": "economic-shipping-refresh-v1:sha256:df3e81aa66b28ad6c4e36a76a81bd1dd140047c34e9cbd3408445baabfe19315",
+          "shipping_required_evidence_after": "2026-09-08 22:52:25.467+00",
+          "shipping_legacy_recovery_generation": "economic-shipping-legacy-recovery-v1:sha256:789748cfed2a8e7fffbb3d4ef1636391e2d4d0e46096fdc9f9ebbd4080abb348",
+          "attempt_count": 21,
+          "first_detected_at": "2026-09-06 10:30:35.319+00",
+          "last_detected_at": "2026-09-09 07:37:22.187+00",
+          "updated_at": "2026-09-09 07:37:22.187+00"
+        }
+      ]
     }
   },
   "feeAudit": {
@@ -6028,11 +6361,11 @@
     "nextEvidenceRequired": "Account/category applicable fee policy and complete fee basis, or exact realized transaction readback with all material fee components. A published base percentage alone is insufficient."
   },
   "deployment": {
-    "id": "dpl_MHdfK7iCxvDjJy3NpQkbjfEh1e87",
+    "id": "dpl_A7EBXcYiaJmyg6jmieEsmTrMTnP9",
     "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
     "readyState": "READY",
-    "url": "imnova-seller-os-preprod-bi5nc4mkx-earch19792-6888s-projects.vercel.app",
-    "sha": "40d4ea46007b3d04220a1041756c1308ddbd7e49"
+    "url": "imnova-seller-os-preprod-132ylqzx5-earch19792-6888s-projects.vercel.app",
+    "sha": "dc89a7978d39ec2e191e7d5f45abba98b3ce8c7e"
   },
   "manual": {
     "url": "https://imnova-seller-os-preprod.vercel.app/manual-mayel-menu-v1.pdf",
@@ -6042,7 +6375,7 @@
     "expectedBytes": 402923,
     "sha256": "3dcde5988ec3459cc668afc9ab06609378da371db8cb5e9355b35f1091114022",
     "matchesCertifiedManual": true,
-    "observedAt": "2026-09-09T17:01:50.960Z"
+    "observedAt": "2026-09-09T17:49:50.058Z"
   },
   "validation": {
     "artifactVersion": "SELLER_OS_VALIDATION_EVIDENCE_V1",
@@ -6051,9 +6384,9 @@
       "version": "SELLER_OS_VALIDATION_RECORDER_V2"
     },
     "source": "LOCAL_VALIDATION",
-    "validatedHeadSha": "40d4ea46007b3d04220a1041756c1308ddbd7e49",
-    "startedAt": "2026-09-09T17:00:40.824Z",
-    "completedAt": "2026-09-09T17:03:40.372Z",
+    "validatedHeadSha": "dc89a7978d39ec2e191e7d5f45abba98b3ce8c7e",
+    "startedAt": "2026-09-09T17:43:46.410Z",
+    "completedAt": "2026-09-09T17:46:42.671Z",
     "headChangedDuringValidation": false,
     "workspaceChangedDuringValidation": false,
     "validationSubject": {
@@ -6068,8 +6401,8 @@
         "status": "PASS",
         "exitCode": 0,
         "signal": null,
-        "durationMs": 65287,
-        "completedAt": "2026-09-09T17:01:46.127Z",
+        "durationMs": 66449,
+        "completedAt": "2026-09-09T17:44:52.875Z",
         "scope": "FULL_SELLER_OS_SUITE",
         "passed": 376,
         "failed": 0,
@@ -6081,56 +6414,75 @@
         "status": "PASS",
         "exitCode": 0,
         "signal": null,
-        "durationMs": 42543,
-        "completedAt": "2026-09-09T17:02:28.671Z"
+        "durationMs": 40044,
+        "completedAt": "2026-09-09T17:45:32.919Z"
       },
       "lint": {
         "status": "PASS",
         "exitCode": 0,
         "signal": null,
-        "durationMs": 16313,
-        "completedAt": "2026-09-09T17:02:44.985Z"
+        "durationMs": 15034,
+        "completedAt": "2026-09-09T17:45:47.954Z"
       },
       "build": {
         "status": "PASS",
         "exitCode": 0,
         "signal": null,
-        "durationMs": 54884,
-        "completedAt": "2026-09-09T17:03:39.870Z"
+        "durationMs": 54213,
+        "completedAt": "2026-09-09T17:46:42.169Z"
       },
       "sellerOsAudit": {
         "status": "PASS",
         "exitCode": 0,
         "signal": null,
-        "durationMs": 480,
-        "completedAt": "2026-09-09T17:03:40.351Z"
+        "durationMs": 470,
+        "completedAt": "2026-09-09T17:46:42.640Z"
       },
       "targetedRuntimeSecurity": {
         "status": "PASS",
         "exitCode": 0,
         "signal": null,
-        "durationMs": 4146,
-        "completedAt": "2026-09-09T17:00:40.822Z"
+        "durationMs": 4188,
+        "completedAt": "2026-09-09T17:43:46.408Z"
       }
     },
     "buildArtifact": {
       "version": "SELLER_OS_PRECOMPILED_ARTIFACT_V1",
-      "sourceCommitSha": "40d4ea46007b3d04220a1041756c1308ddbd7e49",
+      "sourceCommitSha": "dc89a7978d39ec2e191e7d5f45abba98b3ce8c7e",
       "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
-      "buildId": "1tecQHM5f-i_RtWcSrWTh",
-      "buildArtifactDigest": "sha256:639bf8d10e06ef4babd67feaa051348975d0b2f5f727ada7457c3ee1647779b4",
-      "payloadFileCount": 1461,
-      "payloadByteCount": 67743954,
-      "builtAt": "2026-09-09T17:03:39.870Z",
+      "buildId": "ni86vivmjfoi2puOrVNsK",
+      "buildArtifactDigest": "sha256:30e8def94e845e8999807d97ef2c7b55aebbe43c8e71380dd4cdcde4a0d60385",
+      "payloadFileCount": 1462,
+      "payloadByteCount": 67726833,
+      "builtAt": "2026-09-09T17:46:42.169Z",
       "nodeVersion": "v22.23.0",
       "nextVersion": "16.2.6",
       "dynamicCompilationAtBoot": false
     },
     "directedShippingTests": {
-      "passed": 13,
+      "passed": 16,
       "failed": 0,
-      "ambiguityScenariosRejected": 13,
-      "testFile": "lib/ebay/ebay-live-listing-shipping-evidence-v1.test.mjs"
+      "sourceFile": "lib/ebay/ebay-live-listing-shipping-evidence-v1.test.mjs",
+      "handoffCases": [
+        "fresh_quote_to_economic_source",
+        "idempotent_replay_without_new_freshness",
+        "stale_future_binding_and_currency_rejected",
+        "readback_mismatch_rejected"
+      ]
     }
+  },
+  "previousImplementationDeployment": {
+    "id": "dpl_MHdfK7iCxvDjJy3NpQkbjfEh1e87",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-bi5nc4mkx-earch19792-6888s-projects.vercel.app",
+    "sha": "40d4ea46007b3d04220a1041756c1308ddbd7e49"
+  },
+  "handoffLimitations": {
+    "economicSourceReadbackVerified": true,
+    "ownerBrowserVisualAfterHandoffObserved": false,
+    "fullCommercialCanaryBlocked": true,
+    "legacyJobNotMutated": true,
+    "otherCostsPolicyRecordedButApplicationStillConditionalOnProvenFees": true
   }
 }

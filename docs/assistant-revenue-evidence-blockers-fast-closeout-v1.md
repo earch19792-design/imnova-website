@@ -1,8 +1,21 @@
 # Mayel — cierre rápido de blockers de evidencia
 
-La corrección del lector Shipping está desplegada en preprod y la renovación OWNER quedó **COMPLETED / SESSION_READY**. El cierre comercial permanece **BLOQUEADO**: la captura posterior a la renovación alcanzó Luna, recibió HTTP 429 en el carrito y el navegador protegido de respaldo no está disponible en ese runtime. No se obtuvo una cotización fresca. Siguen sin demostrarse las comisiones completas ni una muestra comercial suficiente. Los intentos y lecturas anteriores se conservan abajo como historia.
+Shipping quedó **FRESH: USD 6.99**, vigente hasta `2026-09-09T23:40:47.783Z`, y su entrega a la fuente económica de Mayel quedó verificada. Se conservan las dos cotizaciones anteriores. La corrección está desplegada en preprod. El cierre comercial sigue **BLOQUEADO POR FEES Y MÉTRICAS**: no hay comisiones completas demostradas ni candidato con muestra suficiente. Los intentos anteriores y sus errores permanecen como historia en este reporte.
 
-Implementación: `40d4ea46007b3d04220a1041756c1308ddbd7e49`. Deployment: `dpl_MHdfK7iCxvDjJy3NpQkbjfEh1e87`, estado `READY`, proyecto `imnova-seller-os-preprod`. No se modificó producción, no se publicaron listings y no se hicieron writes Ads.
+Implementación final: `dc89a7978d39ec2e191e7d5f45abba98b3ce8c7e`. Deployment: `dpl_A7EBXcYiaJmyg6jmieEsmTrMTnP9`, `READY`, proyecto `imnova-seller-os-preprod`. No se modificó producción, no se publicaron listings ni se hicieron writes Ads.
+
+### Resultado final de Shipping
+
+- Una cotización fresca capturada por el flujo exacto de Chrome a las `2026-09-09T17:40:47.783Z`, persistida a las `17:40:50.128218Z`.
+- USD 6.99, cuenta/item/producto/variante/SKU exactos; dos cotizaciones históricas preservadas y una sola fresca.
+- Se demostró un segundo defecto: el endpoint manual persistía la cotización pero no la entregaba a `seller_os_live_economic_evidence_v1`, la fuente que lee el motor de tratamiento de Mayel.
+- La corrección entrega ese comprobante mediante el builder económico existente. Upsert idempotente por identidad, readback exacto y vencimiento original, sin nuevas llamadas a Luna. Las rutas existentes de captura HTTP y de certificación Chrome incorporan la entrega automática.
+- Para la captura ya realizada se ejecutó una única entrega con el mismo helper certificado. El readback de la fuente económica resuelve USD 6.99 con `FRESH`, observado y vencido según la cotización original. No se modificó el job Legacy ni se llamó al recovery de cohortes.
+- El job operativo sigue `STALE` y conserva su puntero histórico; se informa por separado del reader económico, que lee la evidencia más reciente por captura. No se atribuye al job una actualización que no ocurrió.
+- Validación final: 16 pruebas dirigidas Shipping; suite completa 376 PASS, cero fallos/skips; typecheck, lint, build, audit y seguridad PASS. Nuevas regresiones observadas: 0.
+- La fuente económica está verificada. No se afirma observación visual del navegador OWNER después de la entrega ni aprobación de un canary comercial completo.
+
+La sección siguiente documenta la auditoría inicial y sus intentos, no sustituye este resultado final.
 
 ## Shipping: causa y corrección
 
@@ -220,3 +233,11 @@ Se permitió una nueva solicitud sólo después de comprobar esa renovación y q
 Readback: dos cotizaciones históricas idénticas a las previas, cero cotizaciones frescas. Totales de este cierre: dos solicitudes de captura (una rechazada por sesión caducada y otra por el límite upstream), cero cotizaciones obtenidas, cero canaries comerciales certificados y cero writes marketplace.
 
 El siguiente paso Shipping quedó preparado mediante la [pantalla existente de captura exacta en Chrome](https://imnova-seller-os-preprod.vercel.app/admin/ebay/luna-shipping-capture?ebayItemId=366650054490&lunaProductId=9220846354656&lunaVariantId=53002142286048&sourceSku=FL-NHRN1999804-Color-silver-bracelet). El botón **Capturar envío del listing LIVE exacto** resuelve un único job transitorio con el vínculo certificado. No se activa recuperación Legacy ni de cohortes. Se solicitó al OWNER la ejecución por la extensión ya existente; no se declara ejecutada ni aprobada antes de recibir evidencia durable.
+
+## Resultado comercial final
+
+`ASSISTANT_CLOSEOUT=false`. `EBAY_FEES_COMPLETE=false`, `METRIC_SAMPLE_SUFFICIENT=false`, `NO_SUFFICIENT_METRICS_CANARY_AVAILABLE=true`. El candidato sigue `TEST`; beneficio, margen y techo Ads permanecen desconocidos. No se ejecutó un nuevo canary comercial ni un receipt que aparentase economía completa. Se preservan los PASS anteriores de implementación y Preview, sin convertirlos en una certificación física nueva.
+
+La política OWNER de cero otros costes está demostrada documentalmente y sigue condicionada a que producto, shipping y fees estén probados. El siguiente trabajo es obtener autoridad completa de fees aplicables y una muestra de métricas defendible. La falta de certificación Ads no se usa como blocker de este cierre.
+
+El [Manual de Mayel](https://imnova-seller-os-preprod.vercel.app/manual-mayel-menu-v1.pdf) continúa disponible desde **Ayuda / Manual** en la propia UI; readback HTTP 200 tras el despliegue final.
