@@ -3,6 +3,7 @@ import "server-only"
 import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { readMayelGeneratedImageV1, assertMayelGeneratedBytesV1, replaceMayelHeroIntentV1 } from "../seller-os/mayel-generated-image-binding-v1"
 
 import {
   buildMayelChatGptVisualPromptV1,
@@ -242,6 +243,8 @@ export async function ensureMayelVisualTaskV1(input: {
   actorUserId: string
   targetItemId?: string | null
   authoritativeListing?: AuthoritativeLiveVisualListingV1 | null
+  offlineOnly?: boolean
+  generatedSource?: { experimentId: string; assetId: string }
 }) {
   const existing = await existingOpenTask(input)
   if (existing) return { created: false,
@@ -252,6 +255,8 @@ export async function ensureMayelVisualTaskV1(input: {
   if (requestedItemId && !/^\d{9,20}$/.test(requestedItemId)) {
     throw new Error("MAYEL_VISUAL_TARGET_ITEM_INVALID")
   }
+  const savedSource = input.generatedSource && requestedItemId ? await readMayelGeneratedImageV1({
+    ...input, ...input.generatedSource, itemId: requestedItemId }) : null
   let signalRows: JsonRecord[] = []
   if (!requestedItemId) {
     const signalRead = await input.supabase
@@ -281,11 +286,11 @@ export async function ensureMayelVisualTaskV1(input: {
     const [{ data: link, error: linkError }, { data: active, error: activeError },
       { data: experiment, error: experimentError },
       { data: duplicateTask, error: duplicateError }] = await Promise.all([
-      input.supabase.from("ebay_manual_listing_links")
+      savedSource ? Promise.resolve({ data: null, error: null }) : input.supabase.from("ebay_manual_listing_links")
         .select("id,opportunity_id,candidate_key,supplier_variant_id,supplier_sku,connector_listing_id")
         .eq("account_key", input.accountKey).eq("ebay_item_id", itemId)
         .eq("verification_status", "verified").maybeSingle(),
-      input.supabase.from("ebay_active_listings")
+      savedSource ? Promise.resolve({ data: null, error: null }) : input.supabase.from("ebay_active_listings")
         .select("id,title,ebay_sku,supplier_sku,listing_status,raw_payload")
         .eq("account_key", input.accountKey).eq("ebay_item_id", itemId)
         .eq("listing_status", "active")
@@ -316,9 +321,11 @@ export async function ensureMayelVisualTaskV1(input: {
     const linkedPackageAvailable = Boolean(linkedPreparationAvailable &&
       listingPackage && listingPackage.candidate_key === link?.candidate_key)
     if (!linkedPackageAvailable) {
-      const authoritative = input.authoritativeListing?.itemId === itemId
+      const authoritative = savedSource ? { itemId, sku: null, title: null,
+        currentImageUrl: savedSource.sourceImageUrl, observedAt: savedSource.generatedAt, highVisualPriority: false }
+        : input.authoritativeListing?.itemId === itemId
         ? input.authoritativeListing
-        : (await authoritativeLiveVisualListingsV1()).find((listing) =>
+        : input.offlineOnly ? null : (await authoritativeLiveVisualListingsV1()).find((listing) =>
           listing.itemId === itemId) ?? null
       if (!authoritative) continue
       const evidencePack = buildMayelCurrentLiveVisualEvidencePackV1({
@@ -326,6 +333,7 @@ export async function ensureMayelVisualTaskV1(input: {
         title: authoritative.title,
         currentImageUrl: authoritative.currentImageUrl,
         observedAt: authoritative.observedAt,
+        ...(savedSource ? { savedAuthorizedSource: { sha256: savedSource.sourceHash, experimentId: savedSource.experimentId } } : {}),
       })
       const prompt = buildMayelChatGptVisualPromptV1(evidencePack)
       const row = {
@@ -334,8 +342,8 @@ export async function ensureMayelVisualTaskV1(input: {
         manual_listing_link_id: null, opportunity_id: null,
         listing_package_id: null, candidate_key: `mayel-live:${itemId}`,
         assigned_operator_user_id: input.actorUserId,
-        selection_authority: "SELLER_OS_AUTHORITATIVE_LIVE_VISUAL_PORTFOLIO",
-        selection_signal: { signalType: "CURRENT_LIVE_VISUAL_ELIGIBILITY",
+        selection_authority: savedSource ? "SELLER_OS_SAVED_LISTING_VISUAL_DRAFT" : "SELLER_OS_AUTHORITATIVE_LIVE_VISUAL_PORTFOLIO",
+        selection_signal: { signalType: savedSource ? "SAVED_GENERATOR_EVIDENCE_PENDING_OFFICIAL_RECHECK" : "CURRENT_LIVE_VISUAL_ELIGIBILITY",
           priorityClass: authoritative.highVisualPriority ? "HIGH" : "NORMAL",
           observedAt: authoritative.observedAt,
           productTruthSupported: false,
@@ -580,6 +588,7 @@ export async function uploadMayelVisualOutputV1(input: {
   declaredMimeType: string
   file: Buffer
   rightsConfirmed: boolean
+  generatedOrigin?: { experimentId: string; assetId: string }
 }) {
   if (!MAYEL_VISUAL_OUTPUT_ROLES.includes(input.role) ||
       input.rightsConfirmed !== true) {
@@ -587,6 +596,26 @@ export async function uploadMayelVisualOutputV1(input: {
     throw new Error("MAYEL_VISUAL_UPLOAD_CONTRACT_INVALID")
   }
   const task = await taskForActor(input)
+  const generated = input.generatedOrigin ? await readMayelGeneratedImageV1({
+    ...input, ...input.generatedOrigin, itemId: String(task.ebay_item_id) }) : null
+  if (generated) {
+    const refs = Array.isArray(task.source_image_references) ? task.source_image_references.map(record) : []
+    const images = Array.isArray(task.current_image_set) ? task.current_image_set : []
+    if (!refs.some(ref => ref.url === generated.sourceImageUrl) && !images.includes(generated.sourceImageUrl))
+      throw Error("MAYEL_GENERATED_IMAGE_SOURCE_CONFLICT")
+    assertMayelGeneratedBytesV1(input.file, generated.outputSha256)
+    const prior = await input.supabase.from("ebay_listing_image_assets")
+      .select("id,status,mayel_visual_task_id,source_sha256,output_storage_path,source_type,uploaded_by")
+      .eq("id", generated.assetId).eq("account_key", input.accountKey).maybeSingle()
+    if (prior.error) throw Error("MAYEL_GENERATED_IMAGE_REPLAY_READ_FAILED")
+    if (prior.data) {
+      input.file.fill(0)
+      if (prior.data.mayel_visual_task_id !== input.taskId || prior.data.source_sha256 !== generated.outputSha256 ||
+          prior.data.source_type !== generated.sourceType || prior.data.uploaded_by !== input.actorUserId)
+        throw Error("MAYEL_GENERATED_IMAGE_REPLAY_CONFLICT")
+      return prior.data
+    }
+  }
   const slot = buildMayelChatGptVisualPromptV1(
     task.evidence_pack as MayelProductEvidencePackV1,
   ).slots.find((entry) => entry.role === input.role)
@@ -594,22 +623,22 @@ export async function uploadMayelVisualOutputV1(input: {
     input.file.fill(0)
     throw new Error("MAYEL_VISUAL_SLOT_CREATIVE_WORK_NOT_ALLOWED")
   }
-  const { count, error: countError } = await input.supabase
-    .from("ebay_listing_image_assets").select("id", { count: "exact",
-      head: true }).eq("mayel_visual_task_id", input.taskId)
-    .in("status", ["pending_review", "approved"])
+  const { data: existingOutputs, error: countError } = await input.supabase
+    .from("ebay_listing_image_assets").select("id").eq("mayel_visual_task_id", input.taskId)
+    .in("status", ["pending_review", "approved"]).limit(6)
   if (countError) throw new Error("MAYEL_VISUAL_OUTPUT_COUNT_FAILED")
-  if ((count ?? 0) >= 6) {
+  if ((existingOutputs?.length ?? 0) >= 6) {
     input.file.fill(0)
     throw new Error("MAYEL_VISUAL_OUTPUT_LIMIT_REACHED")
   }
   const normalized = await normalizeMayelVisualQuarantineOutputV1({
     source: input.file, declaredMimeType: input.declaredMimeType })
-  const assetId = randomUUID()
+  const assetId = generated?.assetId ?? randomUUID()
   const extension = normalized.source.format === "jpeg" ? "jpg" :
     normalized.source.format
-  const sourcePath = `mayel-visual/${input.taskId}/${assetId}/source-${normalized.sourceSha256}.${extension}`
-  const stagingPath = `mayel-visual/${input.taskId}/${assetId}/normalized-${normalized.outputSha256}.jpg`
+  const uploadNonce = generated ? `${randomUUID()}/` : ""
+  const sourcePath = `mayel-visual/${input.taskId}/${assetId}/${uploadNonce}source-${normalized.sourceSha256}.${extension}`
+  const stagingPath = `mayel-visual/${input.taskId}/${assetId}/${uploadNonce}normalized-${normalized.outputSha256}.jpg`
   const raw = Buffer.from(input.file)
   const sourceUpload = await input.supabase.storage.from(SOURCE_BUCKET)
     .upload(sourcePath, raw, { contentType: normalized.actualMimeType,
@@ -636,7 +665,8 @@ export async function uploadMayelVisualOutputV1(input: {
   }
   const uploadedAt = new Date().toISOString()
   const provenance = {
-    sourceType: "CHATGPT_SUBSCRIPTION_MAYEL", uploadedByRole: "MAYEL",
+    sourceType: generated?.sourceType ?? "CHATGPT_SUBSCRIPTION_MAYEL", uploadedByRole: "MAYEL",
+    ...(generated ? { generatedOrigin: generated, importedFromDurableGenerator: true } : {}),
     uploadedByUserId: input.actorUserId,
     uploadedAt,
     visualTaskId: input.taskId, ebayItemId: task.ebay_item_id,
@@ -665,15 +695,15 @@ export async function uploadMayelVisualOutputV1(input: {
       output_width: 1600, output_height: 1600,
       output_bytes: normalized.outputMetadata.bytes,
       rights_basis: "owned",
-      authorization_reference: `MAYEL_CHATGPT_SUBSCRIPTION:${input.taskId}`,
+      authorization_reference: generated ? `SELLER_OS_ASSISTANT_VARIANT:${generated.experimentId}` : `MAYEL_CHATGPT_SUBSCRIPTION:${input.taskId}`,
       rights_evidence_confirmed: true,
-      transformation_version: "MAYEL_CHATGPT_OUTPUT_NORMALIZATION_V1",
+      transformation_version: generated ? "SELLER_OS_ASSISTANT_OUTPUT_NORMALIZATION_V1" : "MAYEL_CHATGPT_OUTPUT_NORMALIZATION_V1",
       transformation: { method: "PRESERVED_FULL_FRAME",
-        output: "1600_SQUARE_JPEG", generativeAiUsedBySellerOs: false },
+        output: "1600_SQUARE_JPEG", generativeAiUsedBySellerOs: Boolean(generated) },
       qa_result: normalized.qa,
       position: MAYEL_VISUAL_OUTPUT_ROLES.indexOf(input.role),
       mayel_visual_task_id: input.taskId, uploaded_by: input.actorUserId,
-      source_type: "CHATGPT_SUBSCRIPTION_MAYEL",
+      source_type: generated?.sourceType ?? "CHATGPT_SUBSCRIPTION_MAYEL",
       mayel_output_role: input.role,
       declared_mime_type: input.declaredMimeType,
       actual_mime_type: normalized.actualMimeType,
@@ -923,6 +953,7 @@ async function manifestForApproval(input: {
   asset: { id: string; mayel_output_role: MayelVisualOutputRole
     output_sha256: string }
   publicUrl: string
+  replaceMainImage?: boolean
 }) {
   const { data: rows, error } = await input.supabase
     .from("ebay_listing_image_assets")
@@ -948,8 +979,9 @@ async function manifestForApproval(input: {
     visualTaskId: String(input.task.id),
     ebayItemId: String(input.task.ebay_item_id),
     currentImages, assets,
-    finalOrder: orderedIntentForManifest({ task: input.task,
-      currentImages, assets }),
+    finalOrder: input.replaceMainImage
+      ? replaceMayelHeroIntentV1(orderedIntentForManifest({ task: input.task, currentImages, assets }), input.asset.id)
+      : orderedIntentForManifest({ task: input.task, currentImages, assets }),
     productTruthDigest: String(input.task.product_truth_digest),
     sourceImageSetDigest: String(input.task.source_image_set_digest),
   })
@@ -964,6 +996,7 @@ export async function reviewMayelVisualOutputV1(input: {
   decision: "APPROVE" | "REJECT"
   humanQa?: unknown
   rejectionReason?: string | null
+  replaceMainImage?: boolean
 }) {
   const task = await taskForActor(input)
   const { data: asset, error } = await input.supabase
@@ -972,6 +1005,10 @@ export async function reviewMayelVisualOutputV1(input: {
     .eq("uploaded_by", input.actorUserId).maybeSingle()
   if (error || !asset) throw new Error("MAYEL_VISUAL_ASSET_NOT_FOUND")
   if (asset.status === "approved" && input.decision === "APPROVE") {
+    if (asset.source_type === "SELLER_OS_ASSISTANT_IMAGE_VARIANT") {
+      // Approval replay must not rebuild the gallery and restore a removed hero.
+      return { asset, manifest: task.visual_manifest, idempotent: true }
+    }
     return { asset, manifest: await refreshManifest({ supabase: input.supabase,
       task }), idempotent: true }
   }
@@ -1021,24 +1058,28 @@ export async function reviewMayelVisualOutputV1(input: {
   try {
     manifest = await manifestForApproval({ supabase: input.supabase, task,
       asset: { id: String(asset.id), mayel_output_role: role,
-        output_sha256: String(asset.output_sha256) }, publicUrl })
+        output_sha256: String(asset.output_sha256) }, publicUrl, replaceMainImage: input.replaceMainImage })
     await reconcilePublicUpload({ supabase: input.supabase, path: publicPath,
       bytes, outputSha256: asset.output_sha256 })
   } finally {
     bytes.fill(0)
   }
-  const { data: promotion, error: promotionError } = await input.supabase.rpc(
-    "promote_ebay_mayel_visual_asset_v1", {
-      p_account_key: input.accountKey,
-      p_actor_user_id: input.actorUserId,
-      p_task_id: input.taskId,
-      p_asset_id: input.assetId,
-      p_public_path: publicPath,
-      p_public_url: publicUrl,
-      p_qa_result: approvalQa,
-      p_manifest: manifest,
-      p_manifest_digest: manifest.visualManifestDigest,
+  const promotionInput = {
+    p_account_key: input.accountKey,
+    p_actor_user_id: input.actorUserId,
+    p_task_id: input.taskId,
+    p_asset_id: input.assetId,
+    p_public_path: publicPath,
+    p_public_url: publicUrl,
+    p_qa_result: approvalQa,
+    p_manifest: manifest,
+    p_manifest_digest: manifest.visualManifestDigest,
+  }
+  const { data: promotion, error: promotionError } = asset.source_type === "SELLER_OS_ASSISTANT_IMAGE_VARIANT"
+    ? await input.supabase.rpc("seller_os_promote_assistant_image_v1", {
+      ...promotionInput, p_expected_visual_manifest_digest: task.visual_manifest_digest ?? null,
     })
+    : await input.supabase.rpc("promote_ebay_mayel_visual_asset_v1", promotionInput)
   if (promotionError || !promotion) {
     await removeUncommittedPublicUpload({ supabase: input.supabase,
       path: publicPath })

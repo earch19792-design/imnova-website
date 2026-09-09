@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { collectSellerOsEbayTradingRateLimitStatusV1 } from "./ebay-trading-rate-limit-observability-v1"
 
 import {
   readMayelVisualPhaseBPreviewV1,
@@ -42,11 +43,7 @@ export async function runMayelVisualSafeRebaseRecoveryV1(input: Readonly<{
     discoveredCount: 0, claimedCount: 0, rebasedCount: 0, receipts: [],
     marketplaceWrites: 0 as const })
 
-  const tasks = await input.supabase.from("ebay_mayel_visual_tasks_v1")
-    .select("id,visual_manifest_digest")
-    .eq("marketplace_account_key", input.accountKey)
-    .eq("status", "OWNER_PREVIEW_READY")
-    .order("updated_at", { ascending: true }).limit(MAX_TASKS_PER_RUN)
+  const tasks = await input.supabase.rpc("seller_os_pending_mayel_visual_manifests_v1", { p_account_key: input.accountKey })
   if (tasks.error) {
     throw new Error("MAYEL_VISUAL_REBASE_TASK_DISCOVERY_FAILED")
   }
@@ -54,7 +51,15 @@ export async function runMayelVisualSafeRebaseRecoveryV1(input: Readonly<{
   // of an older rebase must never suppress discovery for a newer manifest.
   // The durable ledger's exact (old digest + current official digest)
   // fingerprint is the idempotency authority, not task identity alone.
-  const eligibleTasks = tasks.data ?? []
+  const eligibleTasks = (tasks.data ?? []) as { id: string; visual_manifest_digest: string }[]
+  if (eligibleTasks.length > MAX_TASKS_PER_RUN) throw Error("MAYEL_VISUAL_REBASE_TASK_BOUND_EXCEEDED")
+  if (eligibleTasks.length) {
+    const quota = await collectSellerOsEbayTradingRateLimitStatusV1()
+    if (quota.gateState !== "OPEN") return Object.freeze({ authorityActive: true,
+      discoveredCount: eligibleTasks.length, claimedCount: 0, rebasedCount: 0, receipts: [],
+      marketplaceWrites: 0 as const, status: "WAITING_FOR_EBAY",
+      nextAttemptAt: quota.nextSafeTradingProbeAt })
+  }
   const workerId = `mayel-safe-rebase:${randomUUID()}`
   const receipts: Record<string, unknown>[] = []
   let claimedCount = 0

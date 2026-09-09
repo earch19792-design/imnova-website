@@ -105,7 +105,7 @@ export type MayelSourceImageReferenceV1 = Readonly<{
   storagePath: string | null
   authority: "AUTHORIZED_LUNA_SOURCE_PACK" |
     "APPROVED_CANONICAL_LISTING_ASSET" |
-    "OFFICIAL_EBAY_CURRENT_LISTING_IMAGE"
+    "OFFICIAL_EBAY_CURRENT_LISTING_IMAGE" | "SAVED_AUTHORIZED_GENERATOR_SOURCE"
   position: number
 }>
 
@@ -115,6 +115,7 @@ export function buildMayelCurrentLiveVisualEvidencePackV1(input: {
   title: string | null
   currentImageUrl: string
   observedAt: string | null
+  savedAuthorizedSource?: { sha256: string; experimentId: string }
 }) {
   const itemId = text(input.ebayItemId, 20)
   const currentImageUrl = text(input.currentImageUrl, 3000)
@@ -125,11 +126,12 @@ export function buildMayelCurrentLiveVisualEvidencePackV1(input: {
   const identityMaterial = { ebayItemId: itemId,
     sku: text(input.sku, 100), title: text(input.title, 500),
     currentImageUrl, observedAt: text(input.observedAt, 80),
-    authority: "OFFICIAL_EBAY_CURRENT_LIVE_LISTING" }
+    authority: input.savedAuthorizedSource ? "SAVED_AUTHORIZED_GENERATOR_SOURCE" : "OFFICIAL_EBAY_CURRENT_LIVE_LISTING",
+    ...(input.savedAuthorizedSource ? { experimentId: input.savedAuthorizedSource.experimentId } : {}) }
   const digest = mayelVisualDigestV1(identityMaterial)
   const sourceImageSet = Object.freeze([{ referenceId: `EBAY_ITEM_${itemId}`,
-    sha256: digest.slice(7), url: currentImageUrl, storagePath: null,
-    authority: "OFFICIAL_EBAY_CURRENT_LISTING_IMAGE" as const, position: 0 }])
+    sha256: input.savedAuthorizedSource?.sha256 ?? digest.slice(7), url: currentImageUrl, storagePath: null,
+    authority: input.savedAuthorizedSource ? "SAVED_AUTHORIZED_GENERATOR_SOURCE" as const : "OFFICIAL_EBAY_CURRENT_LISTING_IMAGE" as const, position: 0 }])
   return Object.freeze({
     contractVersion: MAYEL_PRODUCT_EVIDENCE_PACK_VERSION,
     ebayItemId: itemId,
@@ -151,7 +153,7 @@ export function buildMayelCurrentLiveVisualEvidencePackV1(input: {
     sourceImageSetDigest: mayelVisualDigestV1(sourceImageSet.map((image) => ({
       referenceId: image.referenceId, sha256: image.sha256,
       authority: image.authority, position: image.position }))),
-    productTruthVersion: "OFFICIAL_EBAY_CURRENT_LIVE_VISUAL_IDENTITY_V1",
+    productTruthVersion: input.savedAuthorizedSource ? "SAVED_AUTHORIZED_VISUAL_IDENTITY_V1" : "OFFICIAL_EBAY_CURRENT_LIVE_VISUAL_IDENTITY_V1",
     productTruthDigest: digest,
     semantics: Object.freeze({ unknownIsNotNone: true as const,
       unprovenIsNotFalse: true as const,

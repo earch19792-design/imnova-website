@@ -2,8 +2,9 @@ import { createHash } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-import { executeMayelTradingVisualDelegatedManifestV1 } from
+import type { executeMayelTradingVisualDelegatedManifestV1 } from
   "./ebay-mayel-visual-phase-b-server-v1"
+import type { collectSellerOsEbayTradingRateLimitStatusV1 } from "./ebay-trading-rate-limit-observability-v1"
 
 export const MAYEL_VISUAL_DELEGATED_RUNTIME_V1 =
   "MAYEL_VISUAL_DELEGATED_RUNTIME_V1" as const
@@ -25,7 +26,10 @@ function fingerprint(value: unknown) {
 export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
-}>) {
+}>, dependencies?: {
+  quota: typeof collectSellerOsEbayTradingRateLimitStatusV1
+  execute: typeof executeMayelTradingVisualDelegatedManifestV1
+}) {
   const authority = await input.supabase.from(
     "ebay_mayel_visual_delegation_authorities_v1")
     .select("id,authority_digest,main_image_authority,owner_per_image_approval,owner_per_listing_visual_approval")
@@ -44,17 +48,14 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
     mediaWriteCount: 0, outcomes: Object.freeze([]),
     status: "WAITING_FOR_DELEGATION" as const })
 
-  const tasks = await input.supabase.from("ebay_mayel_visual_tasks_v1")
-    .select("id,ebay_item_id,visual_manifest_id,visual_manifest_digest,updated_at")
-    .eq("marketplace_account_key", input.accountKey)
-    .eq("status", "OWNER_PREVIEW_READY")
-    .not("visual_manifest_id", "is", null)
-    .not("visual_manifest_digest", "is", null)
-    .order("updated_at", { ascending: true }).limit(MAX_TASKS_PER_RUN)
+  const tasks = await input.supabase.rpc("seller_os_pending_mayel_visual_manifests_v1", {
+    p_account_key: input.accountKey,
+  })
   if (tasks.error) {
     throw new Error("MAYEL_VISUAL_RUNTIME_TASK_DISCOVERY_FAILED")
   }
-  const taskRows = tasks.data ?? []
+  const taskRows = (tasks.data ?? []) as { id: string; ebay_item_id: string; visual_manifest_id: string; visual_manifest_digest: string; updated_at: string }[]
+  if (taskRows.length > MAX_TASKS_PER_RUN) throw Error("MAYEL_VISUAL_RUNTIME_TASK_BOUND_EXCEEDED")
   const taskIds = taskRows.map((task) => String(task.id))
   const completed = taskIds.length ? await input.supabase.from(
     "ebay_mayel_visual_phase_b_executions_v1")
@@ -70,6 +71,18 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
     `${row.visual_task_id}:${row.visual_manifest_digest}`))
   const pendingTasks = taskRows.filter((task) => !verifiedBindings.has(
     `${task.id}:${task.visual_manifest_digest}`))
+  // Reuse the existing operational cadence, not a new poller. Analytics is a
+  // separate read-only quota authority; no Trading preflight is attempted while
+  // the shared application bucket is blocked (including Trading error 518).
+  if (pendingTasks.length) {
+    const collectQuota = dependencies?.quota ?? (await import("./ebay-trading-rate-limit-observability-v1")).collectSellerOsEbayTradingRateLimitStatusV1
+    const quota = await collectQuota()
+    if (quota.gateState !== "OPEN") return Object.freeze({ authorityActive: true,
+      discoveredCount: pendingTasks.length, claimedCount: 0, listingWriteCount: 0,
+      mediaWriteCount: 0, outcomes: Object.freeze([]),
+      status: "WAITING_FOR_EBAY" as const, nextAttemptAt: quota.nextSafeTradingProbeAt,
+      proposalsPreserved: true, quotaGate: quota.gateState })
+  }
 
   // A terminal execution is the durable authority that a prior runtime
   // blocker was recovered. Close stale OPEN learning receipts generically so
@@ -79,9 +92,23 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
     "seller_os_operational_learning_ledger_v1")
     .select("id,evidence").eq("marketplace_account_key", input.accountKey)
     .eq("mechanism_version", MAYEL_VISUAL_DELEGATED_RUNTIME_V1)
-    .eq("status", "OPEN")
+    .eq("status", "OPEN").limit(100)
   if (openReceipts.error) {
     throw new Error("MAYEL_VISUAL_RUNTIME_OPEN_RECEIPT_READ_FAILED")
+  }
+  const receiptTaskIds = [...new Set((openReceipts.data ?? []).flatMap(receipt => {
+    const evidence = receipt.evidence && typeof receipt.evidence === "object" ? receipt.evidence as Record<string, unknown> : {}
+    return Array.isArray(evidence.outcomes) ? evidence.outcomes.slice(0, MAX_TASKS_PER_RUN).flatMap(outcome =>
+      outcome && typeof outcome.taskId === "string" ? [outcome.taskId as string] : []) : []
+  }))]
+  if (receiptTaskIds.length) {
+    const receiptCompletions = await input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
+      .select("visual_task_id,visual_manifest_digest")
+      .eq("marketplace_account_key", input.accountKey).in("visual_task_id", receiptTaskIds)
+      .eq("phase", "APPLIED_AND_OFFICIALLY_VERIFIED").limit(301)
+    if (receiptCompletions.error || (receiptCompletions.data?.length ?? 0) > 300)
+      throw Error("MAYEL_VISUAL_RUNTIME_RECEIPT_COMPLETION_READ_FAILED")
+    for (const row of receiptCompletions.data ?? []) verifiedBindings.add(`${row.visual_task_id}:${row.visual_manifest_digest}`)
   }
   const resolvedAt = new Date().toISOString()
   for (const receipt of openReceipts.data ?? []) {
@@ -113,7 +140,8 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
     const taskId = String(task.id)
     const itemId = String(task.ebay_item_id)
     try {
-      const execution = await executeMayelTradingVisualDelegatedManifestV1({
+      const execute = dependencies?.execute ?? (await import("./ebay-mayel-visual-phase-b-server-v1")).executeMayelTradingVisualDelegatedManifestV1
+      const execution = await execute({
         supabase: input.supabase, accountKey: input.accountKey, taskId,
       })
       const claimed = execution.status !== "ALREADY_EXECUTED"

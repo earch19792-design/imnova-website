@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase"
 import { FRIENDLY_ACTIONS, METRIC_WINDOWS, scheduledLocalTimeV1, type MetricWindow, type PromotionPolicy } from "@/lib/seller-os/listing-treatment-engine-v1"
 import type { prepareTreatmentPreviewV1 } from "@/lib/seller-os/listing-treatment-runtime-v1"
 import { OwnerListingQualityReportControl } from "@/app/admin/owner-listing-quality-report-control"
+import { MayelImageWorkspace } from "./image-workspace"
 
 type Result = Awaited<ReturnType<typeof prepareTreatmentPreviewV1>>
 type ListingChoice = { itemId: string; title: string; sku?: string | null; observedAt?: string | null }
@@ -91,7 +92,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         <h2 className="text-xl font-semibold">{menu === 0 ? "¿Qué listings quieres mejorar?" : menu === 1 ? "Prepara un impulso que proteja tu beneficio" : "¿Dónde hay una oportunidad ahora?"}</h2>
         <p className="mt-2 text-sm text-slate-600">Mayel revisa primero el rendimiento y explica qué conviene hacer. Hasta 20 listings por selección.</p>
         {loadingListings ? <p role="status" className="mt-3">Cargando tus listings…</p> : !actionsAvailable && <div className="mt-3 space-y-2" role="status">
-          <p>{listings.length ? "eBay no pudo confirmar el estado actual. Puedes consultar la última información guardada; las mejoras y promociones esperan una nueva verificación." : authoritativeZero ? "No hay listings activos en la última lectura confirmada." : "No se pudo obtener la lista actual. Esto no significa que tus listings hayan desaparecido."}</p>
+          <p>{listings.length ? "eBay no pudo confirmar el estado actual. Puedes consultar los datos y revisar las imágenes guardadas. El envío espera una nueva verificación; tus propuestas se conservan." : authoritativeZero ? "No hay listings activos en la última lectura confirmada." : "No se pudo obtener la lista actual. Esto no significa que tus listings hayan desaparecido."}</p>
           <button className={button} disabled={busy} onClick={() => void page(pageCursor ?? undefined)}>Volver a consultar</button>
           <details><summary>Ver detalles</summary><p className="break-all text-xs">{selectionDetails}</p></details>
         </div>}
@@ -187,6 +188,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         {menu === 1 && owner && <button className={button} disabled={busy} onClick={() => void analyze("RECEIPT")}>Guardar simulación</button>}
         <button className={button} disabled={busy} onClick={() => void analyze("MEASURE")}>Medir resultados</button>
       </section>}
+      {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={selected.join(",")} itemIds={selected} />}
       {menu === 0 && owner && <OwnerListingQualityReportControl />}
     </>}
     {message && <p role="status">{message}</p>}
