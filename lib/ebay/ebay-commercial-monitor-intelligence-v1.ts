@@ -52,6 +52,7 @@ export type CommercialMonitorOrderFactsV1 = {
 }
 
 type QualityReportArtifact = {
+  latestUploadAttempt?: CommercialMonitorBackendV1["listingQualityReport"]["latestUploadAttempt"]
   durable?: boolean
   status?: string
   reportExists?: boolean | null
@@ -126,8 +127,10 @@ export function normalizeEbayListingQualityReport(input: {
     }
   }
   const artifact = record(input.artifact) as QualityReportArtifact
+  const uploadReceipt = artifact.durable && artifact.latestUploadAttempt
+    ? { latestUploadAttempt: artifact.latestUploadAttempt } : {}
   if (artifact.durable && (artifact.status === "UNAVAILABLE" || artifact.reportExists === false)) {
-    return { status: artifact.status === "UNAVAILABLE" ? "UNAVAILABLE" : "MISSING",
+    return { ...uploadReceipt, status: artifact.status === "UNAVAILABLE" ? "UNAVAILABLE" : "MISSING",
       source: EBAY_LISTING_QUALITY_REPORT_SOURCE, persistenceStatus: "DURABLE_READ_ONLY",
       reportExists: artifact.status === "UNAVAILABLE" ? null : false,
       importId: null, reportDate: null, importedAt: null, freshness: null, coverage: null,
@@ -194,6 +197,7 @@ export function normalizeEbayListingQualityReport(input: {
   })
   const resolved = recommendations.filter((row) => row.listingKey !== null).length
   return {
+    ...uploadReceipt,
     status: resolved === recommendations.length
         ? "AVAILABLE"
         : "PARTIAL",

@@ -1845,6 +1845,19 @@ export type CommercialMonitorBackendV1 = {
     notVisibleDoesNotMeanNotMonitored: true
   }
   listingQualityReport: {
+    latestUploadAttempt?: {
+      status: "AVAILABLE" | "MISSING" | "UNAVAILABLE"
+      attemptId?: string
+      attemptedAt?: string
+      attemptStatus?: "IMPORTED" | "FAILED_VALIDATION"
+      validImportId?: string | null
+      reportDate?: string | null
+      freshness?: "CURRENT" | "STALE" | null
+      rowsParsed?: number
+      currentLiveRowsMatched?: number
+      signalsImported?: number | null
+      selectedAsLatestValidReport?: boolean
+    }
     reportExists?: boolean | null
     importId?: string | null
     reportDate?: string | null

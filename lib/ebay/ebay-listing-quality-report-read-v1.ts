@@ -106,17 +106,53 @@ async function readSignalsForQualityImportV1(input: {
   })))
 }
 
-// One import identity per read: an upload racing this request cannot mix dates/signals.
+async function readLatestQualityUploadReceiptV1(input: {
+  supabase: SupabaseClient; accountKey: string; now?: string
+}, selected: Awaited<ReturnType<typeof readLatestValidListingQualityImportV1>>) {
+  try {
+    const result = await input.supabase.from("ebay_listing_quality_report_upload_attempts")
+      .select("id,attempted_at,attempt_status,rows_parsed,current_live_rows_matched,valid_import_id")
+      .eq("marketplace_account_key", input.accountKey)
+      .order("attempted_at", { ascending: false }).order("id", { ascending: false })
+      .limit(1).maybeSingle()
+    if (result.error) throw new Error("QUALITY_UPLOAD_RECEIPT_READ_FAILED")
+    const attempt = result.data
+    if (!attempt) return { status: "MISSING" as const }
+    let uploaded = attempt.valid_import_id === selected?.id ? selected : null
+    if (attempt.valid_import_id && !uploaded) {
+      const report = await input.supabase.from("ebay_listing_quality_report_imports")
+        .select("id,report_date,signals_imported")
+        .eq("id", attempt.valid_import_id).eq("marketplace_account_key", input.accountKey)
+        .eq("marketplace", "EBAY_US").maybeSingle()
+      if (report.error || !report.data) throw new Error("QUALITY_UPLOAD_IMPORT_READ_FAILED")
+      uploaded = report.data
+    }
+    const today = (input.now ?? new Date().toISOString()).slice(0, 10)
+    return { status: "AVAILABLE" as const, attemptId: String(attempt.id),
+      attemptedAt: String(attempt.attempted_at),
+      attemptStatus: attempt.attempt_status === "IMPORTED" ? "IMPORTED" as const : "FAILED_VALIDATION" as const,
+      validImportId: uploaded?.id ?? null, reportDate: uploaded?.report_date ?? null,
+      freshness: uploaded ? uploaded.report_date === today ? "CURRENT" as const : "STALE" as const : null,
+      rowsParsed: Number(attempt.rows_parsed), currentLiveRowsMatched: Number(attempt.current_live_rows_matched),
+      signalsImported: uploaded ? Number(uploaded.signals_imported) : null,
+      selectedAsLatestValidReport: Boolean(uploaded && uploaded.id === selected?.id) }
+  } catch { return { status: "UNAVAILABLE" as const } }
+}
+
+// Recommendation dates/signals use one selected import. The last upload receipt
+// independently identifies an older upload without replacing the latest report.
 export async function readDurableListingQualityArtifactV1(input: {
   supabase: SupabaseClient; accountKey: string; now?: string
 }) {
   const latest = await readLatestValidListingQualityImportV1(input)
+  const latestUploadAttempt = await readLatestQualityUploadReceiptV1(input, latest)
   if (!latest) return { source: EBAY_LISTING_QUALITY_REPORT_SOURCE,
-    durable: true, reportExists: false, status: "MISSING", rows: [] }
+    durable: true, reportExists: false, status: "MISSING", rows: [], latestUploadAttempt }
   const signals = await readSignalsForQualityImportV1(input, latest)
   const freshness = latest.report_date === (input.now ?? new Date().toISOString()).slice(0, 10)
     ? "CURRENT" : "STALE"
   return { source: EBAY_LISTING_QUALITY_REPORT_SOURCE, durable: true,
+    latestUploadAttempt,
     sourceVersion: OWNER_LISTING_QUALITY_REPORT_IMPORT_VERSION,
     reportExists: true, importId: latest.id, reportDate: latest.report_date,
     freshness, observedAt: latest.report_observed_at, importedAt: latest.imported_at,
