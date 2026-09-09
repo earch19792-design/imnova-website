@@ -3,6 +3,8 @@
 Task: SELLER_OS_ASSISTANT_FINAL_ECONOMICS_METRICS_AUTO_HANDOFF_CLOSEOUT_V1.
 Base: dc89a7978d39ec2e191e7d5f45abba98b3ce8c7e. Dedicated preprod only.
 
+Latest continuation: [official fee-context readback and remaining blockers](assistant-fee-context-closeout-v1.md), implementation `926f105d68fe5d745a9895a8781a0d9ec904376c`, 378/378 suite PASS. The evidence below is the earlier certified snapshot and retains its original timestamps.
+
 The automatic readers and cold-start behavior are implemented. Commercial closeout remains blocked by incomplete pre-sale fee authority. An unproven fee is not zero, and neither profit nor an allowed advertising rate is certified for the real listing.
 
 ## Verified real evidence
