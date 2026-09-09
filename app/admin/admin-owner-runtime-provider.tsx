@@ -528,7 +528,7 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
     || pathname === "/admin"
   const [adminSessionReady, setAdminSessionReady] = useState(false)
   // Luna Shipping and Product Research own their executors on dedicated
-  // extension control routes. The global owner shell is presentation-only:
+  // extension control routes. The global owner shell must remain presentation-only:
   // navigating or refreshing an admin page may never acquire commercial work.
   const lunaWorker = INITIAL_WORKER
   const [quickPick, setQuickPick] = useState(EMPTY_SUMMARY)
