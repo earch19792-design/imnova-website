@@ -7,6 +7,7 @@ import { FRIENDLY_ACTIONS, METRIC_WINDOWS, scheduledLocalTimeV1, type MetricWind
 import type { prepareTreatmentPreviewV1 } from "@/lib/seller-os/listing-treatment-runtime-v1"
 import { OwnerListingQualityReportControl } from "@/app/admin/owner-listing-quality-report-control"
 import { MayelImageWorkspace } from "./image-workspace"
+import { MayelAdsActivationPreview } from "./ads-activation-preview"
 import { MayelVisualWorkstation } from "@/app/admin/mayel-visual-workstation"
 import { MayelLocalSaveStatus, useMayelLocalFirstV1 } from "./local-first"
 
@@ -176,6 +177,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
           <a className="underline" href={`https://www.ebay.com/itm/${l.itemId}`} target="_blank" rel="noopener noreferrer">Ver listing en eBay</a>
         </article>)}
       </section>}
+      {menu === 1 && owner && <MayelAdsActivationPreview key={selected.join(",")} itemIds={selected} />}
       {result && <section className="space-y-4" aria-label="Recomendación de Mayel">
         {menu !== 0 && <div className="rounded-2xl bg-[#dcebdc] p-5"><p>{result.summary.selected} seleccionados · {result.summary.ready} listos para impulsar · {result.summary.optimizeFirst} mejorar primero</p>
           <p>{result.summary.blockedMargin} bloqueados por margen · {result.summary.blockedEvidence} por evidencia · {result.summary.blockedStock} por stock</p>

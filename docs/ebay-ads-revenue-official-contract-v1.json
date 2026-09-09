@@ -1,0 +1,981 @@
+{
+  "contractVersion": "SELLER_OS_EBAY_ADS_OFFICIAL_CONTRACT_V1",
+  "reviewedAt": "2026-09-09T23:44:16.969298+00:00",
+  "reviewDueAt": "2026-09-16T00:00:00Z",
+  "sources": [
+    {
+      "api": "marketing",
+      "version": "v1.23.2",
+      "sha256": "478dbf08967eb410e4c0f7b827a76f0566a1421d009220c5966a9c30748db81c",
+      "url": "https://www.developer.ebay.com/api-docs/master/sell/marketing/openapi/3/sell_marketing_v1_oas3.json"
+    },
+    {
+      "api": "account",
+      "version": "v1.9.3",
+      "sha256": "3f04cf1fd7c80160312d68be5afd7d0de00eb57fd32d508cbb5eeec526b8bfbb",
+      "url": "https://www.developer.ebay.com/api-docs/master/sell/account/openapi/3/sell_account_v1_oas3.json"
+    },
+    {
+      "api": "account-current",
+      "version": "v1.9.3",
+      "sha256": "2e6651975dc08e8f825aaddabcb4b86740767b134c9463d081c547e9b029ae8c",
+      "url": "https://www.developer.ebay.com/develop/api/spec/account_api_v1.json"
+    },
+    {
+      "api": "developer-analytics",
+      "version": "v1_beta.0.1",
+      "sha256": "419ccc5cb97fdeb947bb7d7647b45e19e526ef1264230dc7283f106dc86dab3c",
+      "url": "https://www.developer.ebay.com/api-docs/master/developer/analytics/openapi/3/developer_analytics_v1_beta_oas3.json"
+    }
+  ],
+  "operations": [
+    {
+      "api": "marketing",
+      "operationId": "getAds",
+      "method": "GET",
+      "path": "/ad_campaign/{campaign_id}/ad",
+      "success": [
+        "200"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35013,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35029,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35030,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35035,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35045,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35083,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 36106,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 36412,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35068,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35077,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "marketing",
+      "operationId": "createAdByListingId",
+      "method": "POST",
+      "path": "/ad_campaign/{campaign_id}/ad",
+      "success": [
+        "201"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35007,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35010,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35013,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35014,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35035,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35036,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35045,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35048,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35080,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 36106,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 36210,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 36219,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 36412,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35052,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35054,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35057,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35058,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35059,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35061,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35063,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35064,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35075,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35077,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35078,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35089,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 36221,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "marketing",
+      "operationId": "getAd",
+      "method": "GET",
+      "path": "/ad_campaign/{campaign_id}/ad/{ad_id}",
+      "success": [
+        "200"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35035,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35044,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35045,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "marketing",
+      "operationId": "deleteAd",
+      "method": "DELETE",
+      "path": "/ad_campaign/{campaign_id}/ad/{ad_id}",
+      "success": [
+        "204"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35035,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35044,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35045,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 36101,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35061,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35063,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35064,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35077,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35078,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35089,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "marketing",
+      "operationId": "updateBid",
+      "method": "POST",
+      "path": "/ad_campaign/{campaign_id}/ad/{ad_id}/update_bid",
+      "success": [
+        "204"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35007,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35035,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35044,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35045,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35048,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 36101,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35052,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35058,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35059,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35061,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35063,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35064,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35075,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35077,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35078,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35089,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35113,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "marketing",
+      "operationId": "getCampaigns",
+      "method": "GET",
+      "path": "/ad_campaign",
+      "success": [
+        "200"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35020,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35023,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35027,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35028,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35029,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35030,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35043,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35079,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35123,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35077,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "marketing",
+      "operationId": "getCampaign",
+      "method": "GET",
+      "path": "/ad_campaign/{campaign_id}",
+      "success": [
+        "200"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35045,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "marketing",
+      "operationId": "findCampaignByAdReference",
+      "method": "GET",
+      "path": "/ad_campaign/find_campaign_by_ad_reference",
+      "success": [
+        "200"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35013,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35014,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35031,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35032,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "marketing",
+      "operationId": "suggestItems",
+      "method": "GET",
+      "path": "/ad_campaign/{campaign_id}/suggest_items",
+      "success": [
+        "200"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.marketing"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 35008,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35029,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35030,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35041,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35045,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 35090,
+          "domain": "API_MARKETING",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "409",
+          "errorId": 35051,
+          "domain": "API_MARKETING",
+          "category": "BUSINESS"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_MARKETING",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "account",
+      "operationId": "getAdvertisingEligibility",
+      "method": "GET",
+      "path": "/advertising_eligibility",
+      "success": [
+        "200"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.account",
+            "https://api.ebay.com/oauth/api_scope/sell.account.readonly"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "400",
+          "errorId": 50114,
+          "domain": "API_ACCOUNT",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 50116,
+          "domain": "API_ACCOUNT",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "400",
+          "errorId": 50117,
+          "domain": "API_ACCOUNT",
+          "category": "REQUEST"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35001,
+          "domain": "API_ACCOUNT",
+          "category": "APPLICATION"
+        },
+        {
+          "httpStatus": "500",
+          "errorId": 35002,
+          "domain": "API_ACCOUNT",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "developer-analytics",
+      "operationId": "getRateLimits",
+      "method": "GET",
+      "path": "/rate_limit/",
+      "success": [
+        "200",
+        "204"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "500",
+          "errorId": 105000,
+          "domain": "API_ANALYTICS",
+          "category": "APPLICATION"
+        }
+      ]
+    },
+    {
+      "api": "developer-analytics",
+      "operationId": "getUserRateLimits",
+      "method": "GET",
+      "path": "/user_rate_limit/",
+      "success": [
+        "200",
+        "204"
+      ],
+      "scopes": [
+        {
+          "api_auth": [
+            "https://api.ebay.com/oauth/api_scope/sell.inventory",
+            "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
+            "https://api.ebay.com/oauth/api_scope/sell.marketplace.insights.readonly",
+            "https://api.ebay.com/oauth/api_scope/commerce.catalog.readonly",
+            "https://api.ebay.com/oauth/api_scope/sell.marketing",
+            "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly"
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "httpStatus": "500",
+          "errorId": 105000,
+          "domain": "API_ANALYTICS",
+          "category": "APPLICATION"
+        }
+      ]
+    }
+  ],
+  "campaignModel": {
+    "fundingModel": "CPS",
+    "adRateStrategy": "FIXED",
+    "marketplace": "EBAY_US",
+    "canaryRequiresExistingRunningCampaign": true
+  },
+  "adRate": {
+    "field": "bidPercentage",
+    "type": "string",
+    "decimalPlaces": 1,
+    "apiMinPct": 2,
+    "apiMaxPct": 100,
+    "economicCeiling": false
+  },
+  "quotas": {
+    "source": "https://developer.ebay.com/develop/get-started/api-call-limits",
+    "marketingAdsDefaultPerDay": 10000,
+    "accountDefaultPerDay": 25000,
+    "recommendationDefaultPerDay": 5000,
+    "actualRemaining": "REQUIRES_OFFICIAL_RUNTIME_QUOTA_READ",
+    "tradingQuotaIsIndependent": true
+  },
+  "eligibility": {
+    "source": "https://developer.ebay.com/api-docs/sell/static/marketing/pl-verify-eligibility.html",
+    "overviewSource": "https://developer.ebay.com/api-docs/sell/marketing/static/overview.html",
+    "account": "getAdvertisingEligibility must return eligible for the exact marketplace and general program; no cold-start override",
+    "listing": "Use exact official listing/category/marketplace/currency plus official campaign suggestions or exact existing ad; absence from suggestions does not prove ineligibility",
+    "canarySaleFormat": "FIXED_PRICE_ONLY",
+    "terms": "Seller acceptance of Promoted Listings terms is required; do not auto-accept",
+    "programType": "PROMOTED_LISTINGS_STANDARD",
+    "eligibleStatus": "ELIGIBLE"
+  },
+  "readback": {
+    "create": "getCampaign plus getAd from the create Location; exact listingId and bidPercentage",
+    "update": "getCampaign plus getAd; exact listingId and requested bidPercentage",
+    "remove": "getAds filtered by listing_ids with complete pagination; explicit absence in the exact campaign",
+    "unknownCommit": "READBACK_BEFORE_RETRY; unresolved readback holds the intent and never dispatches blindly"
+  },
+  "errorPolicy": {
+    "request": "VALIDATION_ATTENTION",
+    "business": "ELIGIBILITY_OR_CAMPAIGN_ATTENTION",
+    "oauth": "REAUTH_REQUIRED",
+    "429": "QUOTA_HOLD_WITH_RETRY_AFTER",
+    "5xxOrTimeoutAfterDispatch": "UNKNOWN_COMMIT_READBACK_REQUIRED"
+  },
+  "marketplaceWrites": 0,
+  "spendingAuthorized": false
+}

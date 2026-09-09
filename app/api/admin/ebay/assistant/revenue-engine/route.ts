@@ -43,6 +43,15 @@ export async function POST(request: Request) {
     const raw = await request.text()
     if (raw.length > 12000) return reply({ error: "REVENUE_INPUT_TOO_LARGE", traceId }, 413)
     const body = JSON.parse(raw)
+    if (body?.mode === "ADS_ACTIVATION") {
+      if (auth.accessRole !== SELLER_OS_ACCESS_ROLES.owner) return reply({ success: false, error: "ADS_OWNER_REQUIRED", traceId }, 403)
+      if (Object.keys(body).some(k => !["mode", "itemIds", "policy"].includes(k))) throw Error("ADS_INPUT_INVALID")
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw Error("REVENUE_ACCOUNT_REQUIRED")
+      const { readAdsRevenueActivationV1 } = await import("@/lib/seller-os/ebay-ads-revenue-runtime-v1")
+      return reply({ success: true, activation: await readAdsRevenueActivationV1({ supabase: getSupabaseAdminClient(),
+        accountKey, actorId: auth.userId!, itemIds: body.itemIds, policy: body.policy }), traceId })
+    }
     if (body?.mode === "IPAD_OUTBOX") {
       const { handleIpadOutboxV1 } = await import("@/lib/seller-os/ipad-outbox-handler-v1")
       return handleIpadOutboxV1({ body, actorUserId: auth.userId!, accessRole: auth.accessRole!, traceId })
