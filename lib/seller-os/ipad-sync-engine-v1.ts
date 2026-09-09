@@ -16,7 +16,7 @@ export async function executeOutboxOperationV1(op: SyncOperation, d: SyncDepende
  let writes = 0, mediaWrites = 0, dispatchedThisRun = false, executionReturned = false
  const result = () => ({ writes, mediaWrites, dispatchAttempts: dispatchedThisRun ? 1 : 0, writeOutcomeUnknown: dispatchedThisRun && !executionReturned })
  try {
-   if (!["IMAGE_DRAFT", "IMAGE_SYNC"].includes(op.kind)) {
+   if (!["IMAGE_DRAFT", "IMAGE_SYNC", "IMAGE_UPLOAD"].includes(op.kind)) {
      await d.finish("ATTENTION", "DRAFT_IS_NOT_WRITE_AUTHORITY"); return result()
    }
    if (!dispatched) {

@@ -1,10 +1,11 @@
 export const IPAD_OUTBOX_VERSION = "SELLER_OS_IPAD_LOCAL_FIRST_EBAY_SYNC_V1" as const
 export const OUTBOX_FRIENDLY_STATES = ["GUARDADO", "PENDIENTE_DE_SINCRONIZAR", "SINCRONIZADO", "REQUIERE_ATENCION"] as const
 export type OutboxFriendlyState = typeof OUTBOX_FRIENDLY_STATES[number]
-export type OutboxKind = "IMAGE_DRAFT" | "IMAGE_SYNC" | "ADS_POLICY" | "LISTING_DRAFT"
+export type OutboxKind = "IMAGE_DRAFT" | "IMAGE_SYNC" | "IMAGE_UPLOAD" | "ADS_POLICY" | "LISTING_DRAFT"
+export type OutboxImageFile = { id: string; sha256: string; mimeType: string; bytes: number; position: number }
 export type OutboxPolicy = { minRate: number; maxRate: number; minProfit: number; minMargin: number; mode: string; window: string; timeZone: string; startsAt: string | null; endsAt: string | null }
 export type OutboxChanges = { title?: string; description?: string; price?: number; quantity?: number;
-  taskId?: string; assetId?: string; experimentId?: string; manifestDigest?: string; prepareReview?: boolean; policy?: OutboxPolicy }
+  taskId?: string; assetId?: string; experimentId?: string; manifestDigest?: string; prepareReview?: boolean; policy?: OutboxPolicy; files?: OutboxImageFile[]; rightsConfirmed?: true }
 export type OutboxIntent = { version: typeof IPAD_OUTBOX_VERSION; kind: OutboxKind; itemId: string;
   listingTitle: string; generationId: string; createdAt: string; baseVersionHash: string | null;
   baseObservedAt: string | null; idempotencyKey: string; requestedChanges: OutboxChanges }
@@ -34,8 +35,26 @@ function digest(v: unknown, nullable = false) {
   return v
 }
 export function parseOutboxChangesV1(value: unknown): OutboxChanges {
-  const r = exact(value, ["title", "description", "price", "quantity", "taskId", "assetId", "experimentId", "manifestDigest", "prepareReview", "policy"])
+  const r = exact(value, ["title", "description", "price", "quantity", "taskId", "assetId", "experimentId", "manifestDigest", "prepareReview", "policy", "files", "rightsConfirmed"])
   const out: OutboxChanges = {}
+  if (r.rightsConfirmed !== undefined) {
+    if (r.rightsConfirmed !== true) throw Error("OUTBOX_IMAGE_RIGHTS_REQUIRED")
+    out.rightsConfirmed = true
+  }
+  if (r.files !== undefined) {
+    if (!Array.isArray(r.files) || r.files.length < 1 || r.files.length > 6) throw Error("OUTBOX_IMAGE_FILES_INVALID")
+    out.files = r.files.map((value, position) => {
+      const f = exact(value, ["id", "sha256", "mimeType", "bytes", "position"])
+      if (typeof f.id !== "string" || !/^[a-f0-9-]{36}$/i.test(f.id) ||
+          typeof f.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(f.sha256) ||
+          !["image/jpeg", "image/png", "image/webp"].includes(String(f.mimeType)) ||
+          !Number.isSafeInteger(f.bytes) || Number(f.bytes) < 1 || Number(f.bytes) > 12 * 1024 * 1024 || f.position !== position)
+        throw Error("OUTBOX_IMAGE_FILES_INVALID")
+      return { id: f.id, sha256: f.sha256, mimeType: String(f.mimeType), bytes: Number(f.bytes), position }
+    })
+    if (new Set(out.files.map(f => f.sha256)).size !== out.files.length || new Set(out.files.map(f => f.id)).size !== out.files.length)
+      throw Error("OUTBOX_DUPLICATE_IMAGE")
+  }
   for (const k of ["title", "description"] as const) if (r[k] !== undefined) out[k] = safeText(r[k], k === "title" ? 500 : 8000)
   for (const k of ["price", "quantity"] as const) if (r[k] !== undefined) {
     if (typeof r[k] !== "number" || !Number.isFinite(r[k]) || r[k] < 0 || (k === "quantity" && !Number.isSafeInteger(r[k]))) throw Error("OUTBOX_NUMBER_INVALID")
@@ -62,11 +81,12 @@ export function parseOutboxChangesV1(value: unknown): OutboxChanges {
 }
 export function parseOutboxIntentV1(value: unknown): OutboxIntent {
   const r = exact(value, ["version", "kind", "itemId", "listingTitle", "generationId", "createdAt", "baseVersionHash", "baseObservedAt", "idempotencyKey", "requestedChanges"])
-  if (r.version !== IPAD_OUTBOX_VERSION || !["IMAGE_DRAFT", "IMAGE_SYNC", "ADS_POLICY", "LISTING_DRAFT"].includes(String(r.kind)) ||
+  if (r.version !== IPAD_OUTBOX_VERSION || !["IMAGE_DRAFT", "IMAGE_SYNC", "IMAGE_UPLOAD", "ADS_POLICY", "LISTING_DRAFT"].includes(String(r.kind)) ||
       typeof r.itemId !== "string" || !/^\d{9,20}$/.test(r.itemId) ||
       typeof r.idempotencyKey !== "string" || !/^ipados:v1:[a-f0-9]{64}$/.test(r.idempotencyKey)) throw Error("OUTBOX_INTENT_INVALID")
   const requestedChanges = parseOutboxChangesV1(r.requestedChanges)
-  if (String(r.kind).startsWith("IMAGE_") && (!requestedChanges.taskId || !requestedChanges.assetId)) throw Error("OUTBOX_IMAGE_REFERENCES_REQUIRED")
+  if (String(r.kind).startsWith("IMAGE_") && (!requestedChanges.taskId || (r.kind !== "IMAGE_UPLOAD" && !requestedChanges.assetId))) throw Error("OUTBOX_IMAGE_REFERENCES_REQUIRED")
+  if (r.kind === "IMAGE_UPLOAD" && (!requestedChanges.files || !requestedChanges.rightsConfirmed || requestedChanges.prepareReview)) throw Error("OUTBOX_IMAGE_UPLOAD_CONTRACT_INVALID")
   if (r.kind === "IMAGE_SYNC" && !requestedChanges.manifestDigest) throw Error("OUTBOX_AUTHORIZED_MANIFEST_REQUIRED")
   if (r.kind === "ADS_POLICY" && !requestedChanges.policy) throw Error("OUTBOX_ADS_POLICY_REQUIRED")
   return { version: IPAD_OUTBOX_VERSION, kind: r.kind as OutboxKind, itemId: r.itemId,

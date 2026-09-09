@@ -1,12 +1,31 @@
 "use client"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { supabase } from "@/lib/supabase"
-import { flushLocalOutboxV1, readLocalOutboxV1, saveLocalOutboxDraftV1, saveLocalOutboxReceiptV1,
+import { flushLocalOutboxV1, readLocalOutboxV1, readLocalImageBlobV1, readLocalImageSelectionsV1, saveLocalOutboxDraftV1, saveLocalOutboxReceiptV1,
   saveMayelLocalWorkspaceV1, readMayelLocalWorkspaceV1, type DraftInput, type LocalOutboxRecord, type MayelLocalWorkspace } from "@/lib/seller-os/ipad-local-outbox-v1"
 import { type OutboxIntent, type DurableOutboxReceipt } from "@/lib/seller-os/ipad-outbox-contract-v1"
 async function transport(action: "PUT" | "READ", value: OutboxIntent | string[]) {
  const { data } = await supabase.auth.getSession()
  if (!data.session) throw Error("OUTBOX_SESSION_REQUIRED")
+ if (action === "PUT" && !Array.isArray(value) && value.kind === "IMAGE_UPLOAD") {
+   for (const file of value.requestedChanges.files!) {
+     const blob = await readLocalImageBlobV1(data.session.user.id, file.id)
+     if (!blob || blob.size !== file.bytes || blob.type !== file.mimeType) throw Error("OUTBOX_LOCAL_IMAGE_MISSING")
+     const chunkBytes = 1024 * 1024
+     for (let n = 0; n <= Math.ceil(blob.size / chunkBytes); n++) {
+       const final = n === Math.ceil(blob.size / chunkBytes)
+       const form = new FormData()
+       form.set("action", final ? "IPAD_VISUAL_FILE" : "IPAD_VISUAL_CHUNK")
+       form.set("intent", JSON.stringify(value)); form.set("fileId", file.id)
+       if (!final) { form.set("chunkIndex", String(n)); form.set("chunk", blob.slice(n * chunkBytes, (n + 1) * chunkBytes), "image.part") }
+       const r = await fetch("/api/admin/ebay/mayel-visual-workstation", { method: "POST", body: form,
+         headers: { Authorization: `Bearer ${data.session.access_token}` }, signal: AbortSignal.timeout(110000) })
+       const response = await r.json()
+       if (!r.ok || !response.success) throw Error(response.error ?? "OUTBOX_IMAGE_UPLOAD_FAILED")
+       if (response.stored) break
+     }
+   }
+ }
  const r = await fetch("/api/admin/ebay/assistant/revenue-engine", { method: "POST", cache: "no-store", signal: AbortSignal.timeout(15000),
    headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
    body: JSON.stringify({ mode: "IPAD_OUTBOX", action, ...(action === "PUT" ? { intent: value } : { keys: value }) }) })
@@ -20,6 +39,7 @@ export function useMayelLocalFirstV1(workspace: Omit<MayelLocalWorkspace, "actor
  const [rows, setRows] = useState<LocalOutboxRecord[]>([])
  const [error, setError] = useState("")
  const [serverError, setServerError] = useState("")
+ const [localImagesPending, setLocalImagesPending] = useState(false)
  const restoring = useRef(restore); restoring.current = restore
  const writeChain = useRef(Promise.resolve())
  const inFlight = useRef<Promise<void> | null>(null)
@@ -78,6 +98,18 @@ export function useMayelLocalFirstV1(workspace: Omit<MayelLocalWorkspace, "actor
    const timer = window.setInterval(resume, 15000)
    return () => { clearInterval(timer); window.removeEventListener("online", resume); window.removeEventListener("focus", resume); document.removeEventListener("visibilitychange", resume) }
  }, [actorId, flush])
+ useEffect(() => {
+   if (!actorId) return
+   let active = true
+   const read = async () => {
+     try {
+       const selections = await readLocalImageSelectionsV1(actorId)
+       if (active) setLocalImagesPending(selections.some(s => !s.queuedKey || !rows.some(r => r.intent.idempotencyKey === s.queuedKey && r.receipt)))
+     } catch { if (active) setError("IPAD_LOCAL_STORAGE_FAILED") }
+   }
+   void read(); window.addEventListener("mayel-local-images-changed", read)
+   return () => { active = false; window.removeEventListener("mayel-local-images-changed", read) }
+ }, [actorId, rows])
  const saveDraft = useCallback(async (input: DraftInput, requireReceipt = false) => {
    if (!actorId) throw Error("IPAD_LOCAL_STORAGE_UNAVAILABLE")
    const row = await saveLocalOutboxDraftV1(actorId, input)
@@ -89,19 +121,19 @@ export function useMayelLocalFirstV1(workspace: Omit<MayelLocalWorkspace, "actor
    } else void flush()
    return row
  }, [actorId, flush])
- return { ready, actorId, rows, error, serverError, saveDraft }
+ return { ready, actorId, rows, error, serverError, saveDraft, localImagesPending }
 }
 export function MayelLocalSaveStatus({ local }: { local: ReturnType<typeof useMayelLocalFirstV1> }) {
  const latest = [...new Map([...local.rows].sort((a,b) => a.intent.createdAt.localeCompare(b.intent.createdAt)).map(r => [`${r.intent.itemId}:${r.intent.kind}`, r])).values()]
  const state = local.error || latest.some(r => r.receipt?.state === "REQUIERE_ATENCION" || (r.lastError && !/FAILED|UNREACHABLE|TIMEOUT|SESSION/.test(r.lastError))) ? "REQUIERE_ATENCION" :
-   latest.some(r => !r.receipt || r.receipt.state === "PENDIENTE_DE_SINCRONIZAR") ? "PENDIENTE_DE_SINCRONIZAR" :
+   local.localImagesPending || latest.some(r => !r.receipt || r.receipt.state === "PENDIENTE_DE_SINCRONIZAR") ? "PENDIENTE_DE_SINCRONIZAR" :
    latest.length && latest.every(r => r.receipt?.state === "SINCRONIZADO") ? "SINCRONIZADO" : "GUARDADO"
  if (!local.ready) return null
  return <aside aria-label="Guardado automático de Mayel" className="rounded-xl border bg-white p-3">
    <p role="status">{state}</p>
    <details><summary>Ver detalles</summary>
      <p className="text-sm">{local.error ? "No se pudo guardar en este navegador. Mantén la página abierta mientras se recupera el almacenamiento." :
-       latest.length && latest.every(r => r.receipt) ? "Seller OS recibió tus borradores. Puedes cerrar el iPad; las operaciones autorizadas continúan en el servidor cuando eBay y las comprobaciones lo permitan." :
+       !local.localImagesPending && latest.length && latest.every(r => r.receipt) ? "Seller OS recibió tus borradores. Puedes cerrar el iPad; las operaciones autorizadas continúan en el servidor cuando eBay y las comprobaciones lo permitan." :
        "El trabajo está guardado en este navegador. Al recuperar conexión con Seller OS, se enviará automáticamente."}</p>
      <pre className="max-h-64 overflow-auto text-xs">{JSON.stringify({ localError: local.error || null, serverError: local.serverError || null,
        receipts: latest.map(r => ({ itemId: r.intent.itemId, kind: r.intent.kind, receipt: r.receipt, handoffError: r.lastError })) }, null, 2)}</pre>

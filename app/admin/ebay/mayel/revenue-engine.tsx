@@ -7,6 +7,7 @@ import { FRIENDLY_ACTIONS, METRIC_WINDOWS, scheduledLocalTimeV1, type MetricWind
 import type { prepareTreatmentPreviewV1 } from "@/lib/seller-os/listing-treatment-runtime-v1"
 import { OwnerListingQualityReportControl } from "@/app/admin/owner-listing-quality-report-control"
 import { MayelImageWorkspace } from "./image-workspace"
+import { MayelVisualWorkstation } from "@/app/admin/mayel-visual-workstation"
 import { MayelLocalSaveStatus, useMayelLocalFirstV1 } from "./local-first"
 
 type Result = Awaited<ReturnType<typeof prepareTreatmentPreviewV1>>
@@ -45,6 +46,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const [message, setMessage] = useState("")
   const [receiptKey, setReceiptKey] = useState("")
   const [dates, setDates] = useState({ startsAt: "", endsAt: "" })
+  const [visualStationItemId, setVisualStationItemId] = useState<string | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [previewItemId, setPreviewItemId] = useState<string | null>(null)
   const initialListingsRequested = useRef(false)
@@ -225,6 +227,13 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         <button className={button} disabled={busy} onClick={() => void analyze("MEASURE")}>Medir resultados</button>
       </section>}
       {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={selected.join(",")} saveDraft={local.saveDraft} itemIds={selected} titles={Object.fromEntries(listings.map(l => [l.itemId, l.title]))} />}
+      {menu === 0 && selected.length > 0 && <div className="space-y-3 rounded-2xl bg-white p-5">
+        <p>Crea hasta seis propuestas en tu ChatGPT y vuelve a cargarlas juntas para revisión.</p>
+        {selected.map(itemId => <button key={itemId} className={button} onClick={() => setVisualStationItemId(itemId)}>
+          Abrir Estación visual · {itemId.slice(-4)}</button>)}
+      </div>}
+      {menu === 0 && visualStationItemId && selected.includes(visualStationItemId) &&
+        <MayelVisualWorkstation key={visualStationItemId} focusedItemId={visualStationItemId} localOutbox={local} canOperate canOwnerAuthorize={owner} />}
       {menu === 0 && owner && <OwnerListingQualityReportControl />}
     </>}
     {message && <p role="status">{message}</p>}

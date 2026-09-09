@@ -1,0 +1,21 @@
+{
+  "itemId": "366582671136",
+  "taskId": "5161b7d3-37cf-4221-a6d8-2dde6940ef57",
+  "assetId": "abbbc8d2-e8fe-4d87-8d28-6c9e419c8bd2",
+  "executionId": "4e2bd2f6-0f26-4799-a3bc-412fbfbc5b86",
+  "completedAt": "2026-09-09T22:02:49.860Z",
+  "latestExecutionPhase": "DRAFT_PREVIEW_READY",
+  "manifestDigest": "sha256:011ac29903098b598621f7cd59375f3b1f319ae2a7ae90aaff129452fe21c988",
+  "SAVED_IMAGE_PHYSICAL_CANARY_PASS": true,
+  "VISUAL_TASK_ASSIGNED": true,
+  "IMAGE_EXECUTION_STARTED": true,
+  "IMAGE_EXECUTION_COMPLETED": true,
+  "IMAGE_QA_PASS": true,
+  "DRAFT_ASSET_CREATED": true,
+  "PREVIEW_UPDATED": true,
+  "MANUAL_IMAGE_REUPLOAD_REQUIRED": false,
+  "newImageGenerationCount": 0,
+  "MARKETPLACE_WRITE_COUNT": 0,
+  "EBAY_ADS_WRITE_COUNT": 0,
+  "scope": "Existing saved proposal; stored execution readback; human publication approval remains pending"
+}

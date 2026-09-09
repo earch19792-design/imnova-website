@@ -751,32 +751,40 @@ export async function uploadMayelVisualOutputBatchV1(input: {
     input.files.forEach((entry) => entry.file.fill(0))
     throw new Error("MAYEL_VISUAL_BATCH_UPLOAD_CONTRACT_INVALID")
   }
-  const current = await input.supabase.from("ebay_listing_image_assets")
-    .select("mayel_output_role").eq("mayel_visual_task_id", input.taskId)
-    .in("status", ["pending_review", "approved"])
-  if (current.error) throw new Error("MAYEL_VISUAL_OUTPUT_COUNT_FAILED")
-  const used = new Set((current.data ?? []).map((row) =>
-    String(row.mayel_output_role)))
-  const available = MAYEL_VISUAL_OUTPUT_ROLES.filter((role) => !used.has(role))
-  if (input.files.length > available.length) {
-    input.files.forEach((entry) => entry.file.fill(0))
-    throw new Error("MAYEL_VISUAL_OUTPUT_LIMIT_REACHED")
-  }
+  await taskForActor(input)
   const results: Record<string, unknown>[] = []
+  const seen = new Set<string>()
   for (let index = 0; index < input.files.length; index += 1) {
     const entry = input.files[index]
+    const sourceHash = createHash("sha256").update(entry.file).digest("hex")
     try {
-      const asset = await uploadMayelVisualOutputV1({ ...input,
-        role: available[index], declaredMimeType: entry.declaredMimeType,
-        file: entry.file })
+      if (seen.has(sourceHash)) throw Error("MAYEL_VISUAL_BATCH_DUPLICATE_IMAGE")
+      seen.add(sourceHash)
+      // Re-read after every file: a partial/lost response can resume the same
+      // batch without reserving another role or creating another asset.
+      const current = await input.supabase.from("ebay_listing_image_assets")
+        .select("id,mayel_output_role,source_sha256,output_sha256,uploaded_by,source_type")
+        .eq("account_key", input.accountKey).eq("mayel_visual_task_id", input.taskId)
+        .in("status", ["pending_review", "approved"])
+      if (current.error) throw Error("MAYEL_VISUAL_OUTPUT_COUNT_FAILED")
+      const duplicate = current.data?.find(row => row.source_sha256 === sourceHash &&
+        row.uploaded_by === input.actorUserId && row.source_type === "CHATGPT_SUBSCRIPTION_MAYEL")
+      if (duplicate) {
+        results.push({ fileIndex: index, status: "QUARANTINED", assetId: duplicate.id,
+          outputSha256: duplicate.output_sha256, idempotent: true })
+        continue
+      }
+      const used = new Set((current.data ?? []).map(row => String(row.mayel_output_role)))
+      const role = MAYEL_VISUAL_OUTPUT_ROLES.find(role => !used.has(role))
+      if (!role || (current.data?.length ?? 0) >= 6) throw Error("MAYEL_VISUAL_OUTPUT_LIMIT_REACHED")
+      const asset = await uploadMayelVisualOutputV1({ ...input, role,
+        declaredMimeType: entry.declaredMimeType, file: entry.file })
       results.push({ fileIndex: index, status: "QUARANTINED",
         assetId: asset.id, outputSha256: asset.output_sha256 })
     } catch (error) {
-      entry.file.fill(0)
       results.push({ fileIndex: index, status: "FAILED",
-        error: error instanceof Error ? error.message :
-          "MAYEL_VISUAL_UPLOAD_FAILED" })
-    }
+        error: error instanceof Error ? error.message : "MAYEL_VISUAL_UPLOAD_FAILED" })
+    } finally { entry.file.fill(0) }
   }
   return Object.freeze({ results: Object.freeze(results),
     acceptedCount: results.filter((entry) => entry.status ===
@@ -1099,11 +1107,14 @@ export async function readMayelVisualWorkstationV1(input: {
   accountKey: string
   actorUserId: string
   ownerView: boolean
+  itemId?: string
 }) {
+  if (input.itemId && !/^\d{9,20}$/.test(input.itemId)) throw Error("MAYEL_WORKSPACE_ITEM_INVALID")
   let query = input.supabase.from("ebay_mayel_visual_tasks_v1")
     .select("*").eq("marketplace_account_key", input.accountKey)
     .in("status", OPEN_TASK_STATES).order("created_at", { ascending: false })
     .limit(input.ownerView ? 50 : 50)
+  if (input.itemId) query = query.eq("ebay_item_id", input.itemId)
   if (!input.ownerView) query = query.eq("assigned_operator_user_id",
     input.actorUserId)
   const { data: taskRows, error } = await query

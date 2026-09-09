@@ -66,6 +66,56 @@ export async function saveLocalImageBlobV1(actorId: string, assetId: string, blo
       !["image/png", "image/jpeg", "image/webp"].includes(blob.type) || blob.size > 12 * 1024 * 1024) throw Error("OUTBOX_IMAGE_BLOB_INVALID")
   return transaction<void>("images", "readwrite", store => { store.put({ localKey: `${actorId}:${assetId}`, blob }) })
 }
+export async function readLocalImageBlobV1(actorId: string, assetId: string): Promise<Blob | null> {
+  return transaction("images", "readonly", (store, result) => {
+    const request = store.get(`${actorId}:${assetId}`)
+    request.onsuccess = () => result(request.result?.blob ?? null)
+  })
+}
+export type LocalImageSelection = { files: NonNullable<ReturnType<typeof parseOutboxChangesV1>["files"]>; names: string[]; queuedKey: string | null }
+export async function saveLocalImageSelectionV1(actorId: string, taskId: string, selection: LocalImageSelection) {
+  if (!/^[a-f0-9-]{36}$/i.test(actorId) || !/^[a-f0-9-]{36}$/i.test(taskId)) throw Error("OUTBOX_REFERENCE_INVALID")
+  if (selection.files.length) parseOutboxChangesV1({ files: selection.files })
+  const names = selection.names.map(name => parseOutboxChangesV1({ title: name }).title!)
+  if (names.length !== selection.files.length || (selection.queuedKey !== null && !/^ipados:v1:[a-f0-9]{64}$/.test(selection.queuedKey))) throw Error("OUTBOX_IMAGE_FILES_INVALID")
+  return transaction<void>("images", "readwrite", store => { store.put({ localKey: `${actorId}:${taskId}:selection`, ...selection, names }) })
+}
+export async function readLocalImageSelectionV1(actorId: string, taskId: string): Promise<LocalImageSelection | null> {
+  return transaction("images", "readonly", (store, result) => {
+    const request = store.get(`${actorId}:${taskId}:selection`)
+    request.onsuccess = () => result(request.result ?? null)
+  })
+}
+export async function readLocalImageSelectionsV1(actorId: string): Promise<LocalImageSelection[]> {
+  return transaction("images", "readonly", (store, result) => {
+    const selections: LocalImageSelection[] = []
+    result(selections)
+    const cursor = store.openKeyCursor()
+    cursor.onsuccess = () => {
+      const row = cursor.result
+      if (!row) return
+      if (String(row.key).startsWith(`${actorId}:`) && String(row.key).endsWith(":selection")) {
+        const read = store.get(row.key)
+        read.onsuccess = () => { if (read.result?.files?.length) selections.push(read.result) }
+      }
+      row.continue()
+    }
+  })
+}
+export async function autosaveLocalImageSelectionV1(actorId: string, taskId: string, files: File[]) {
+  const descriptors = []
+  for (let position = 0; position < files.length; position++) {
+    const file = files[position]
+    const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), n => n.toString(16).padStart(2, "0")).join("")
+    const id = crypto.randomUUID()
+    await saveLocalImageBlobV1(actorId, id, file)
+    descriptors.push({ id, sha256, mimeType: file.type, bytes: file.size, position })
+  }
+  const selection = { files: descriptors, names: files.map(f => f.name), queuedKey: null }
+  await saveLocalImageSelectionV1(actorId, taskId, selection)
+  globalThis.dispatchEvent?.(new Event("mayel-local-images-changed"))
+  return selection
+}
 export type MayelLocalWorkspace = { actorId: string; menu: number; selected: string[]; metricWindow: string;
   pageCursor: string | null; listings: { itemId: string; title: string; observedAt?: string | null }[];
   policy: NonNullable<ReturnType<typeof parseOutboxChangesV1>["policy"]>; dates: { startsAt: string; endsAt: string } }

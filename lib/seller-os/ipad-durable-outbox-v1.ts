@@ -36,11 +36,27 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
      if (assets.error || assets.data?.length) throw Error("OUTBOX_TASK_ASSIGNEE_CONFLICT")
    }
    if (intent.baseVersionHash !== task.data.source_image_set_digest) throw Error("OUTBOX_SAVED_BASE_CHANGED")
-   const { readMayelGeneratedImageV1 } = await import("./mayel-generated-image-binding-v1")
-   const origin = await readMayelGeneratedImageV1({ ...input, itemId: intent.itemId,
-     experimentId: intent.requestedChanges.experimentId!, assetId: intent.requestedChanges.assetId! })
-   binding = { ...binding, taskId: task.data.id, assetId: origin.assetId, sourceSha256: origin.outputSha256,
+   binding = { ...binding, taskId: task.data.id,
      baseImageHash: ebayOfficialImageSetDigestV1(task.data.current_image_set), sourceImageSetDigest: task.data.source_image_set_digest }
+   if (intent.kind === "IMAGE_UPLOAD") {
+     if (task.data.assigned_operator_user_id !== input.actorUserId) throw Error("OUTBOX_TASK_SCOPE_REQUIRED")
+     const assets = await input.supabase.from("ebay_listing_image_assets")
+       .select("id,source_sha256,source_image_set_digest,qa_result").eq("account_key", input.accountKey)
+       .eq("mayel_visual_task_id", task.data.id).eq("uploaded_by", input.actorUserId)
+       .eq("source_type", "CHATGPT_SUBSCRIPTION_MAYEL").in("status", ["pending_review", "approved"])
+     if (assets.error) throw Error("OUTBOX_UPLOAD_ASSETS_READ_FAILED")
+     const sourceImageSetDigest = task.data.source_image_set_digest
+     binding.assets = intent.requestedChanges.files!.map(file => {
+       const asset = assets.data?.find(a => a.source_sha256 === file.sha256 && a.source_image_set_digest === sourceImageSetDigest)
+       if (!asset || record(asset.qa_result).automaticStatus !== "PASSED") throw Error("OUTBOX_UPLOAD_ASSETS_INCOMPLETE")
+       return { assetId: asset.id, sourceSha256: file.sha256 }
+     })
+   } else {
+     const { readMayelGeneratedImageV1 } = await import("./mayel-generated-image-binding-v1")
+     const origin = await readMayelGeneratedImageV1({ ...input, itemId: intent.itemId,
+       experimentId: intent.requestedChanges.experimentId!, assetId: intent.requestedChanges.assetId! })
+     binding = { ...binding, assetId: origin.assetId, sourceSha256: origin.outputSha256 }
+   }
  } else {
    const identity = await input.supabase.from("ebay_active_listings").select("ebay_item_id")
      .eq("account_key", input.accountKey).eq("ebay_item_id", intent.itemId).limit(1)
@@ -73,21 +89,23 @@ export async function readDurableOutboxV1(input: OutboxScope & { keys: string[] 
 // The approval is durable existing Mayel authority, never a boolean in a draft.
 export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClient; row: OutboxRow }) {
  const { row } = input
- const [task, asset] = await Promise.all([
+ const [task, assets] = await Promise.all([
    input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,status,assigned_operator_user_id,visual_manifest,visual_manifest_digest,source_image_set_digest")
      .eq("marketplace_account_key", row.account_key).eq("id", row.intent.requestedChanges.taskId!).maybeSingle(),
    input.supabase.from("ebay_listing_image_assets").select("id,status,approved_by,qa_result,source_sha256")
-     .eq("account_key", row.account_key).eq("id", row.intent.requestedChanges.assetId!).eq("mayel_visual_task_id", row.intent.requestedChanges.taskId!).maybeSingle(),
+     .eq("account_key", row.account_key).eq("mayel_visual_task_id", row.intent.requestedChanges.taskId!).in("status", ["pending_review", "approved"]),
  ])
- if (task.error || asset.error) throw Error("OUTBOX_AUTHORITY_READ_FAILED")
- const t = task.data, a = asset.data, manifest = record(t?.visual_manifest)
+ if (task.error || assets.error) throw Error("OUTBOX_AUTHORITY_READ_FAILED")
+ const t = task.data, manifest = record(t?.visual_manifest)
+ const bound = Array.isArray(row.binding.assets) ? row.binding.assets.map(record) : [{ assetId: row.binding.assetId, sourceSha256: row.binding.sourceSha256 }]
  if (!t || t.ebay_item_id !== row.item_id || t.source_image_set_digest !== row.binding.sourceImageSetDigest ||
-     (a && a.source_sha256 !== row.binding.sourceSha256))
+     !bound.length || bound.some(b => !assets.data?.some(a => a.id === b.assetId && a.source_sha256 === b.sourceSha256)))
    return { approved: false, reason: "OUTBOX_DRAFT_AUTHORITY_CHANGED", manifestDigest: null }
- if (!a || t.assigned_operator_user_id !== row.actor_user_id || t.status !== "OWNER_PREVIEW_READY" || !t.visual_manifest_digest || a.status !== "approved" ||
-     a.approved_by !== row.actor_user_id || record(a.qa_result).automaticStatus !== "PASSED" ||
-     record(record(a.qa_result).humanReview).decision !== "APPROVE" ||
-     !Array.isArray(manifest.proposedOrderedImages) || !manifest.proposedOrderedImages.some(e => record(e).assetId === a.id))
+ const proposed = Array.isArray(manifest.proposedOrderedImages) ? manifest.proposedOrderedImages.map(record) : []
+ if (t.assigned_operator_user_id !== row.actor_user_id || t.status !== "OWNER_PREVIEW_READY" || !t.visual_manifest_digest ||
+     !assets.data?.length || assets.data.some(a => a.status !== "approved" || a.approved_by !== row.actor_user_id ||
+       record(a.qa_result).automaticStatus !== "PASSED" || record(record(a.qa_result).humanReview).decision !== "APPROVE") ||
+     bound.some(b => !proposed.some(e => e.assetId === b.assetId)))
    return { approved: false, reason: "OWNER_VISUAL_REVIEW_REQUIRED", manifestDigest: null }
  if (row.kind === "IMAGE_SYNC" && row.intent.requestedChanges.manifestDigest !== t.visual_manifest_digest)
    return { approved: false, reason: "OUTBOX_APPROVED_MANIFEST_CHANGED", manifestDigest: null }

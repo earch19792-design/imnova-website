@@ -240,10 +240,14 @@ export async function GET(request: Request) {
         error: "MAYEL_VISUAL_WORKSTATION_FORBIDDEN" }, 403)
     }
     const auth = validation
+    const savedOnly = new URL(request.url).searchParams.get("savedOnly") === "1"
+    const itemId = new URL(request.url).searchParams.get("itemId") ?? undefined
+    if (savedOnly && (!itemId || !/^\d{9,20}$/.test(itemId))) throw Error("MAYEL_WORKSPACE_ITEM_INVALID")
     const workstation = await readMayelVisualWorkstationV1({
       supabase: getSupabaseAdminClient(), accountKey: accountKey(),
       actorUserId: auth.userId,
-      ownerView: auth.accessRole === SELLER_OS_ACCESS_ROLES.owner })
+      ownerView: auth.accessRole === SELLER_OS_ACCESS_ROLES.owner, ...(savedOnly ? { itemId } : {}) })
+    if (savedOnly) return json({ success: true, workstation, storedEvidenceOnly: true, marketplaceWrites: 0, tradingCalls: 0, openAiImageApiCalls: 0 })
     const supabase = getSupabaseAdminClient()
     const ownerView = auth.accessRole === SELLER_OS_ACCESS_ROLES.owner
     const [delegation, priceDelegation, commercialDelegation,
@@ -378,11 +382,16 @@ export async function POST(request: Request) {
       SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator
     const ownerRole = auth.accessRole === SELLER_OS_ACCESS_ROLES.owner
     if (contentType.startsWith("multipart/form-data")) {
-      if (!mayelRole) return json({ success: false,
+      if (!mayelRole && !ownerRole) return json({ success: false,
         error: "MAYEL_VISUAL_OPERATOR_AUTHORITY_REQUIRED" }, 403)
       const form = await request.formData()
       const action = form.get("action")
       const taskId = uuid(form.get("visualTaskId"))
+      if (action === "IPAD_VISUAL_CHUNK" || action === "IPAD_VISUAL_FILE") {
+        const { receiveIpadVisualFileV1 } = await import("@/lib/seller-os/ipad-manual-visual-upload-v1")
+        const result = await receiveIpadVisualFileV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(), actorUserId: auth.userId, form })
+        return json({ success: true, ...result })
+      }
       if (action === "UPLOAD_OUTPUT_BATCH") {
         const files = form.getAll("files").filter((entry): entry is File =>
           entry instanceof File && entry.size > 0)
@@ -595,7 +604,7 @@ export async function POST(request: Request) {
         operatorMessage: "La delegación visual reutilizable reemplaza la autorización por listing. Seller OS ejecutará únicamente cuando el listing tenga una ruta segura demostrada.",
         marketplaceWrites: 0 }, 409)
     }
-    if (!mayelRole) return json({ success: false,
+    if (!mayelRole && !ownerRole) return json({ success: false,
       error: "MAYEL_VISUAL_OPERATOR_AUTHORITY_REQUIRED" }, 403)
     if (action === "ENSURE_NEXT_TASK") {
       const result = await ensureMayelVisualTaskV1({

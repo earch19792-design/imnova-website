@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Check, ChevronLeft, ChevronRight, Clipboard, ShieldCheck, Star,
   Trash2, Upload, X } from
   "lucide-react"
@@ -10,6 +10,10 @@ import type { MayelCommercialIntelligenceV1 } from
   "@/lib/ebay/ebay-mayel-commercial-intelligence-v1"
 import type { RemoteLiveOperatorListingV1 } from
   "@/lib/ebay/ebay-remote-live-optimization-operator-v1"
+
+import type { useMayelLocalFirstV1 } from "./ebay/mayel/local-first"
+import { autosaveLocalImageSelectionV1, readLocalImageSelectionV1, readLocalImageBlobV1, saveLocalImageSelectionV1, type LocalImageSelection } from "@/lib/seller-os/ipad-local-outbox-v1"
+type VisualLocalOutbox = Pick<ReturnType<typeof useMayelLocalFirstV1>, "actorId" | "rows" | "saveDraft">
 
 type VisualRole = "DETAIL" | "PACKAGE_CONTENTS" | "DIMENSIONS" |
   "PRIMARY_BENEFIT" | "LIFESTYLE" | "HUMAN_USE"
@@ -555,22 +559,79 @@ function HumanQa({ task, output, busy, onDone }: {
   </article>
 }
 
-function UploadPanel({ task, busy, onDone }: { task: VisualTask;
-  busy: boolean; onDone: () => Promise<void> }) {
+function UploadPanel({ task, busy, onDone, localOutbox }: { task: VisualTask;
+  busy: boolean; onDone: () => Promise<void>; localOutbox?: VisualLocalOutbox }) {
   const [uploads, setUploads] = useState<File[]>([])
   const [rights, setRights] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [message, setMessage] = useState("")
+  const [selection, setSelection] = useState<LocalImageSelection | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [recovered, setRecovered] = useState(!localOutbox)
+  const done = useRef(onDone); done.current = onDone
+  const savedReceipt = localOutbox?.rows.find(r => r.intent.idempotencyKey === selection?.queuedKey)?.receipt
+  useEffect(() => {
+    if (!localOutbox?.actorId) return
+    let active = true
+    void (async () => {
+      try {
+        const saved = await readLocalImageSelectionV1(localOutbox.actorId, task.visualTaskId)
+        if (saved?.files.length) {
+          const files = await Promise.all(saved.files.map(async (f, n) => {
+            const blob = await readLocalImageBlobV1(localOutbox.actorId, f.id)
+            if (!blob) throw Error("OUTBOX_LOCAL_IMAGE_MISSING")
+            return new File([blob], saved.names[n], { type: f.mimeType })
+          }))
+          const queued = localOutbox.rows.find(row => row.intent.kind === "IMAGE_UPLOAD" &&
+            row.intent.requestedChanges.taskId === task.visualTaskId &&
+            JSON.stringify(row.intent.requestedChanges.files) === JSON.stringify(saved.files))
+          const restored = queued ? { ...saved, queuedKey: queued.intent.idempotencyKey } : saved
+          if (active) { setSelection(restored); setUploads(files) }
+        }
+      } catch (e) { if (active) setMessage(e instanceof Error ? e.message : "IPAD_LOCAL_STORAGE_FAILED") }
+      finally { if (active) setRecovered(true) }
+    })()
+    return () => { active = false }
+  }, [localOutbox?.actorId, task.visualTaskId])
+  useEffect(() => {
+    if (!savedReceipt || !selection?.queuedKey || !localOutbox?.actorId) return
+    let active = true
+    void saveLocalImageSelectionV1(localOutbox.actorId, task.visualTaskId, { files: [], names: [], queuedKey: null }).then(async () => {
+      if (!active) return
+      setSelection(null); setUploads([]); setRights(false); setMessage("GUARDADO")
+      await done.current()
+    }).catch(() => { if (active) setMessage("REQUIERE_ATENCION") })
+    return () => { active = false }
+  }, [savedReceipt, selection?.queuedKey, localOutbox?.actorId, task.visualTaskId])
+  async function choose(files: File[]) {
+    setUploads(files); setMessage(""); setRights(false)
+    if (!localOutbox) return
+    setSaving(true)
+    try { setSelection(await autosaveLocalImageSelectionV1(localOutbox.actorId, task.visualTaskId, files)); setMessage("GUARDADO") }
+    catch (e) { setSelection(null); setMessage(e instanceof Error ? e.message : "IPAD_LOCAL_STORAGE_FAILED") }
+    finally { setSaving(false) }
+  }
   const activeCount = task.outputs.filter((output) =>
     output.status !== "rejected").length
   const remaining = Math.max(0, 6 - activeCount)
   const selectionValid = uploads.length > 0 && uploads.length <= remaining
 
   async function upload() {
-    if (uploading || !rights || !selectionValid) return
+    if (uploading || saving || !rights || !selectionValid || selection?.queuedKey) return
     setUploading(true)
     setMessage("")
     try {
+      if (localOutbox) {
+        if (!selection?.files.length) throw Error("IPAD_LOCAL_STORAGE_FAILED")
+        const row = await localOutbox.saveDraft({ kind: "IMAGE_UPLOAD", itemId: task.ebayItemId,
+          listingTitle: task.productTitle, generationId: task.visualTaskId,
+          baseVersionHash: task.sourceImageSetDigest, baseObservedAt: null,
+          requestedChanges: { taskId: task.visualTaskId, files: selection.files, rightsConfirmed: true } })
+        const queued = { ...selection, queuedKey: row.intent.idempotencyKey }
+        await saveLocalImageSelectionV1(localOutbox.actorId, task.visualTaskId, queued)
+        setSelection(queued); setMessage("PENDIENTE_DE_SINCRONIZAR")
+        return
+      }
       const form = new FormData()
       form.set("action", "UPLOAD_OUTPUT_BATCH")
       form.set("visualTaskId", task.visualTaskId)
@@ -602,10 +663,11 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
     </p>
     <label className="mt-4 block rounded-xl border-2 border-dashed border-[#1d5961]/35 bg-white p-4 text-xs font-semibold">Arrastra o elige hasta seis archivos JPG, PNG o WebP
       <input type="file" multiple accept="image/jpeg,image/png,image/webp"
+        disabled={saving || !recovered || Boolean(selection?.queuedKey)}
         onChange={(event) => {
           const chosen = Array.from(event.target.files ?? [])
             .slice(0, Math.min(6, remaining))
-          setUploads(chosen)
+          void choose(chosen)
         }}
         className="mt-2 block min-h-12 w-full rounded-xl border border-[#cfc7ba] bg-white p-2 text-sm" />
     </label>
@@ -620,10 +682,14 @@ function UploadPanel({ task, busy, onDone }: { task: VisualTask;
         onChange={(event) => setRights(event.target.checked)} className="mt-1" />
       Confirmo que este archivo fue creado en mi propia suscripción de ChatGPT para esta tarea y puedo subirlo a Seller OS.
     </label>
-    <button type="button" disabled={busy || uploading || !rights || !selectionValid}
+    <button type="button" disabled={busy || uploading || saving || !recovered || Boolean(selection?.queuedKey) || !rights || !selectionValid}
       onClick={() => void upload()}
       className="mt-4 inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40"><Upload className="h-4 w-4" />{uploading ? "Subiendo…" : "Subir imágenes"}</button>
-    {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
+    {message && <p role="status" className="mt-3 text-sm text-[#8b4937]">{["GUARDADO", "PENDIENTE_DE_SINCRONIZAR"].includes(message) ? message : "REQUIERE_ATENCION"}</p>}
+    {localOutbox && <details className="mt-2 text-xs"><summary>Ver detalles</summary>
+      <p>{selection?.queuedKey ? "Enviando los archivos guardados. Puedes cerrar el iPad cuando Seller OS confirme que los recibió." : "Los archivos elegidos se guardan automáticamente en este navegador. Subir imágenes confirma sus derechos y entrega el trabajo a Seller OS."}</p>
+      {message && !["GUARDADO", "PENDIENTE_DE_SINCRONIZAR"].includes(message) && <p>{message}</p>}
+    </details>}
   </section>
 }
 
@@ -1260,8 +1326,10 @@ function PortfolioOverview({ listings, canOperate, busy, onOpen }: {
 
 export function MayelVisualWorkstation({ canOperate,
   canOwnerAuthorize = false, commercialIntelligenceByItemId = {},
-  livePortfolio = [] }: {
+  livePortfolio = [], focusedItemId = null, localOutbox }: {
   canOperate: boolean
+  focusedItemId?: string | null
+  localOutbox?: VisualLocalOutbox
   canOwnerAuthorize?: boolean
   commercialIntelligenceByItemId?: Readonly<Record<string,
     MayelCommercialIntelligenceV1>>
@@ -1284,10 +1352,11 @@ export function MayelVisualWorkstation({ canOperate,
 
   const load = useCallback(async () => {
     const payload = await visualRequest(
-      "/api/admin/ebay/mayel-visual-workstation")
+      focusedItemId ? `/api/admin/ebay/mayel-visual-workstation?savedOnly=1&itemId=${encodeURIComponent(focusedItemId)}` : "/api/admin/ebay/mayel-visual-workstation")
     const workstation = payload.workstation as { tasks?: VisualTask[] } | undefined
     const nextTasks = workstation?.tasks ?? []
     setTasks(nextTasks)
+    if (focusedItemId) setSelectedVisualTaskId(nextTasks.find(t => t.ebayItemId === focusedItemId)?.visualTaskId ?? null)
     setDelegation((payload.delegation as VisualDelegation | undefined) ?? null)
     setPriceDelegation((payload.priceDelegation as PriceDelegation |
       undefined) ?? null)
@@ -1295,10 +1364,10 @@ export function MayelVisualWorkstation({ canOperate,
       CommercialDelegation | undefined) ?? null)
     setPromotionDelegation((payload.promotionDelegation as
       PromotionDelegation | undefined) ?? null)
-  }, [])
+  }, [focusedItemId])
 
   useEffect(() => {
-    if (!selectedVisualTaskId) return
+    if (focusedItemId || !selectedVisualTaskId) return
     const selectedTask = tasks.find((task) =>
       task.visualTaskId === selectedVisualTaskId)
     if (!selectedTask) return
@@ -1317,7 +1386,7 @@ export function MayelVisualWorkstation({ canOperate,
       // Commercial intelligence is best-effort and never blocks visual work.
     })
     return () => { active = false }
-  }, [selectedVisualTaskId, tasks])
+  }, [selectedVisualTaskId, tasks, focusedItemId])
 
   useEffect(() => {
     if (!selectedVisualTaskId) return
@@ -1385,7 +1454,7 @@ export function MayelVisualWorkstation({ canOperate,
       <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">Cero API de imágenes</span>
       <span className="rounded-full bg-[#f7e9de] px-3 py-2 text-[#704d3c]">eBay sólo con autoridad vigente y readback</span>
     </div>
-    <FullVisualDelegationPanel delegation={delegation}
+    {!focusedItemId && <><FullVisualDelegationPanel delegation={delegation}
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
     <CommercialOptimizationDelegationPanel delegation={commercialDelegation}
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
@@ -1394,7 +1463,7 @@ export function MayelVisualWorkstation({ canOperate,
     <PromotionSpendDelegationPanel delegation={promotionDelegation}
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
     <PortfolioOverview listings={livePortfolio} canOperate={canOperate}
-      busy={busy} onOpen={openVisualListing} />
+      busy={busy} onOpen={openVisualListing} /></>}
     {message && <p className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]">{message}</p>}
     {!busy && !tasks.length && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7">
       <h3 className="font-serif text-2xl font-semibold">No hay una oportunidad visual lista</h3>
@@ -1402,8 +1471,8 @@ export function MayelVisualWorkstation({ canOperate,
     </div>}
     {selectedVisualTaskId && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#e3ebe1] p-4 text-sm text-[#425143]">
       <strong>Trabajando ahora · tarea visual abierta</strong>
-      <button type="button" onClick={() => setSelectedVisualTaskId(null)}
-        className="min-h-10 rounded-xl border border-[#82947d] bg-white px-3 text-xs font-semibold">Ver todas las tareas</button>
+      {!focusedItemId && <button type="button" onClick={() => setSelectedVisualTaskId(null)}
+        className="min-h-10 rounded-xl border border-[#82947d] bg-white px-3 text-xs font-semibold">Ver todas las tareas</button>}
     </div>}
     <div className="mt-6 space-y-7">{tasks.filter((task) =>
       !selectedVisualTaskId || task.visualTaskId === selectedVisualTaskId)
@@ -1447,7 +1516,7 @@ export function MayelVisualWorkstation({ canOperate,
           {slot.factClaimRestricted && <span className="mt-1 block">Evidencia factual pendiente; el trabajo visual continúa.</span>}
         </div>)}</div>
       </section>
-      {canOperate && <div className="mt-6"><UploadPanel task={task} busy={busy}
+      {canOperate && <div className="mt-6"><UploadPanel key={task.visualTaskId} task={task} busy={busy} localOutbox={localOutbox}
         onDone={refresh} /></div>}
       {task.outputs.length > 0 && <section className="mt-7">
         <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-[#1d5961]" />
