@@ -571,7 +571,6 @@ export function LunaShippingCaptureControlPlane({
   const serverClaimLeaderRef = useRef(false)
   const serverLeaderLeaseExpiresAtRef = useRef<number | null>(null)
   const heartbeatV2FreshUntilRef = useRef<number | null>(null)
-  const acquisitionWakeRef = useRef<(() => void) | null>(null)
   const heartbeatNowRef = useRef<(() => void) | null>(null)
   const workerRunningRef = useRef(running)
   const workloadControllerRef = useRef<ReturnType<
@@ -1143,8 +1142,11 @@ export function LunaShippingCaptureControlPlane({
 
     const attemptProductionAcquisition = () => {
       if (!productionRuntimeAuthorized || hasExactLiveTarget || !active ||
-          discoveryInFlight || busy || !browserClaimLeaderRef.current ||
-          !serverClaimLeaderRef.current) {
+          discoveryInFlight || busy) {
+        return
+      }
+      if (!browserClaimLeaderRef.current || !serverClaimLeaderRef.current) {
+        scheduleProductionAcquisition(SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS)
         return
       }
       if (workloadController.metrics().circuitBreakerState !== "CLOSED") {
@@ -1185,7 +1187,7 @@ export function LunaShippingCaptureControlPlane({
         lastProgressState = "PRODUCTION_JOB_CLAIMED"
         return
       }
-      const pollPermit = workloadController.acquirePollPermit()
+      const pollPermit = workloadController.acquireClaimPermit()
       if (!pollPermit.allowed) {
         scheduleProductionAcquisition(pollPermit.retryInMs)
         return
@@ -1211,9 +1213,11 @@ export function LunaShippingCaptureControlPlane({
           latencyMs: requestError.latencyMs,
         })
         scheduleProductionAcquisition()
-      }).finally(() => { discoveryInFlight = false })
+      }).finally(() => {
+        workloadController.releaseClaimPermit()
+        discoveryInFlight = false
+      })
     }
-    acquisitionWakeRef.current = attemptProductionAcquisition
     void holdSellerOsCrossTabBrowserLeaderV1({
       scope: "LUNA_SHIPPING", signal: leadershipAbort.signal,
       onLeaderState: (leaderState) => {
@@ -1475,7 +1479,7 @@ export function LunaShippingCaptureControlPlane({
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationBound(canonicalDestinationBindingPresent)
           setCanonicalDestinationMismatch(false)
-          attemptProductionAcquisition()
+          scheduleProductionAcquisition(0)
           return
         }
         if (message?.type === "LUNA_CANONICAL_DESTINATION_STATUS") {
@@ -1499,7 +1503,7 @@ export function LunaShippingCaptureControlPlane({
             setStatus("CANONICAL_OPERATOR_BIND_REQUIRED")
             setError("")
           }
-          attemptProductionAcquisition()
+          scheduleProductionAcquisition(0)
           return
         }
         if (message?.type === "LUNA_SHIPPING_ACTIVE_JOB_STATUS") {
@@ -1536,7 +1540,7 @@ export function LunaShippingCaptureControlPlane({
             return
           }
           recoveredActiveJob = candidate
-          attemptProductionAcquisition()
+          scheduleProductionAcquisition(0)
           return
         }
         if (message?.type === EXTENSION_DISPATCH_RECEIVED) {
@@ -2335,7 +2339,6 @@ export function LunaShippingCaptureControlPlane({
         window.clearTimeout(discoveryRetryTimer)
       }
       leadershipAbort.abort()
-      acquisitionWakeRef.current = null
       triggerRef.current = null
       liveTriggerRef.current = null
       legacyRecoveryTriggerRef.current = null
@@ -2375,7 +2378,6 @@ export function LunaShippingCaptureControlPlane({
         extensionIdentityMatch: true,
         workerState: workerRunningRef.current ? "WORKING" : "IDLE",
       }).then((payload) => {
-        const previouslyGranted = serverClaimLeaderRef.current
         serverClaimLeaderRef.current =
           payload.result?.claimAuthorityGranted === true
         setServerClaimLeader(serverClaimLeaderRef.current)
@@ -2394,9 +2396,6 @@ export function LunaShippingCaptureControlPlane({
         }
         controller?.recordProbeSuccess(
           Number(payload.backgroundRequestLatencyMs ?? 0))
-        if (!previouslyGranted && serverClaimLeaderRef.current) {
-          acquisitionWakeRef.current?.()
-        }
       }).catch((heartbeatError) => {
         serverClaimLeaderRef.current = false
         setServerClaimLeader(false)

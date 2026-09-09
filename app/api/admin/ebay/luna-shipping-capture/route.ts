@@ -303,6 +303,16 @@ export async function POST(req: Request) {
           runtimeInstanceId: workerInstance,
           sessionSecret: sessionSecret(),
         })
+        console.info("SHIPPING_IDLE_CLAIM_RECEIPT_V1", JSON.stringify({
+          observedAt: new Date().toISOString(),
+          requestId: req.headers.get("x-vercel-id"),
+          action: "resolve_jobs", workerInstanceId: workerInstance,
+          leaderSessionId: body.leaderSessionId,
+          claimedJobCount: acquisition.claimedJobCount,
+          eligiblePendingJobCount: acquisition.eligiblePendingJobCount,
+          leaseConflictCount: acquisition.leaseConflictCount,
+          claimFailureCount: acquisition.claimFailureCount,
+        }))
         return listingAiResponse({ success: true,
           jobs: acquisition.jobs, acquisition,
           safety: { readOnly: false,

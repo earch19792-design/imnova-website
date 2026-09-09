@@ -29,6 +29,7 @@ export type SellerOsBackgroundProducerMetricsV1 = Readonly<{
   claimedJobs: number
   suppressedDuplicatePolls: number
   currentBackoffMs: number
+  emptyBackoffUntilMs: number
   leaderState: SellerOsBackgroundLeaderStateV1
   circuitBreakerState: SellerOsBackgroundCircuitStateV1
   observedAt: string
@@ -36,6 +37,7 @@ export type SellerOsBackgroundProducerMetricsV1 = Readonly<{
 
 type PersistedWorkloadStateV1 = {
   emptyPollOrdinal: number
+  emptyBackoffUntilMs: number
   circuitFailureOrdinal: number
   circuitState: SellerOsBackgroundCircuitStateV1
   circuitOpenUntilMs: number
@@ -98,6 +100,7 @@ export function sellerOsDatabaseDegradedFailureV1(input: Readonly<{
 function initialState(): PersistedWorkloadStateV1 {
   return {
     emptyPollOrdinal: 0,
+    emptyBackoffUntilMs: 0,
     circuitFailureOrdinal: 0,
     circuitState: "CLOSED",
     circuitOpenUntilMs: 0,
@@ -130,6 +133,8 @@ function safeStoredState(value: unknown): PersistedWorkloadStateV1 {
     ? metrics.leaderState as SellerOsBackgroundLeaderStateV1 : "FOLLOWER"
   return {
     emptyPollOrdinal: boundedInteger(candidate.emptyPollOrdinal, 100),
+    emptyBackoffUntilMs: boundedInteger(candidate.emptyBackoffUntilMs,
+      Number.MAX_SAFE_INTEGER),
     circuitFailureOrdinal: boundedInteger(candidate.circuitFailureOrdinal, 100),
     circuitState,
     circuitOpenUntilMs: boundedInteger(candidate.circuitOpenUntilMs,
@@ -161,17 +166,37 @@ export function createSellerOsBackgroundWorkloadControllerV1(input: Readonly<{
   const random = input.random ?? Math.random
   const now = input.now ?? Date.now
   let halfOpenProbeInFlight = false
+  let claimInFlight = false
   let state = (() => {
     try {
       const raw = input.storage?.getItem(storageKey)
       return safeStoredState(raw ? JSON.parse(raw) : null)
     } catch { return initialState() }
   })()
+  // Upgrade the existing Shipping state without reopening an idle window on
+  // reload. Research keeps its certified scheduling behavior.
+  if (input.producer === "LUNA_SHIPPING" && state.emptyPollOrdinal > 0 &&
+      !state.emptyBackoffUntilMs && state.metrics.currentBackoffMs > 0) {
+    state.emptyBackoffUntilMs = now() + state.metrics.currentBackoffMs
+  }
+  const refreshEmptyBackoff = () => {
+    if (input.producer !== "LUNA_SHIPPING") return
+    try {
+      const raw = input.storage?.getItem(storageKey)
+      const stored = raw ? JSON.parse(raw) : null
+      if (typeof stored?.emptyBackoffUntilMs !== "number") return
+      const fresh = safeStoredState(stored)
+      state.emptyBackoffUntilMs = fresh.emptyBackoffUntilMs
+      state.emptyPollOrdinal = fresh.emptyPollOrdinal
+      state.metrics.currentBackoffMs = fresh.metrics.currentBackoffMs
+    } catch { /* Retain this leader's in-memory backoff. */ }
+  }
 
   const snapshot = (): SellerOsBackgroundProducerMetricsV1 => Object.freeze({
     contractVersion: SELLER_OS_BACKGROUND_WORKLOAD_OPTIMIZATION_V1,
     producer: input.producer,
     ...state.metrics,
+    emptyBackoffUntilMs: state.emptyBackoffUntilMs,
     circuitBreakerState: state.circuitState,
     observedAt: new Date(now()).toISOString(),
   })
@@ -218,18 +243,7 @@ export function createSellerOsBackgroundWorkloadControllerV1(input: Readonly<{
     }
     return true
   }
-
-  return Object.freeze({
-    metrics: snapshot,
-    setLeaderState(leaderState: SellerOsBackgroundLeaderStateV1) {
-      state.metrics.leaderState = leaderState
-      persist()
-    },
-    suppressDuplicatePoll() {
-      state.metrics.suppressedDuplicatePolls += 1
-      persist()
-    },
-    acquirePollPermit(atMs = now()) {
+  const acquirePollPermit = (atMs = now()) => {
       if (state.circuitState === "OPEN") {
         if (atMs < state.circuitOpenUntilMs) {
           setBackoff(state.circuitOpenUntilMs - atMs)
@@ -254,21 +268,64 @@ export function createSellerOsBackgroundWorkloadControllerV1(input: Readonly<{
       persist()
       return Object.freeze({ allowed: true as const,
         halfOpenProbe: state.circuitState === "HALF_OPEN" })
+  }
+
+  return Object.freeze({
+    metrics: snapshot,
+    setLeaderState(leaderState: SellerOsBackgroundLeaderStateV1) {
+      refreshEmptyBackoff()
+      state.metrics.leaderState = leaderState
+      persist()
     },
+    suppressDuplicatePoll() {
+      state.metrics.suppressedDuplicatePolls += 1
+      persist()
+    },
+    // Heartbeats remain circuit-gated, independently of idle claim backoff.
+    acquirePollPermit,
+    acquireClaimPermit(atMs = now()) {
+      refreshEmptyBackoff()
+      if (state.metrics.leaderState !== "BROWSER_LEADER" &&
+          state.metrics.leaderState !== "SERVER_LEASE_ONLY") {
+        return Object.freeze({ allowed: false as const,
+          reason: "FOLLOWER" as const,
+          retryInMs: SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS })
+      }
+      if (claimInFlight) {
+        return Object.freeze({ allowed: false as const,
+          reason: "CLAIM_IN_FLIGHT" as const, retryInMs: 1_000 })
+      }
+      if (atMs < state.emptyBackoffUntilMs) {
+        return Object.freeze({ allowed: false as const,
+          reason: "EMPTY_BACKOFF" as const,
+          retryInMs: state.emptyBackoffUntilMs - atMs })
+      }
+      const permit = acquirePollPermit(atMs)
+      if (permit.allowed) claimInFlight = true
+      return permit
+    },
+    releaseClaimPermit() { claimInFlight = false },
     recordEmptyPoll(latencyMs = 0, atMs = now()) {
       halfOpenProbeInFlight = false
       if (!observeLatency(latencyMs, atMs)) return state.metrics.currentBackoffMs
       if (state.circuitState === "HALF_OPEN") closeCircuit()
       state.emptyPollOrdinal += 1
       state.metrics.emptyPolls += 1
-      return setBackoff(sellerOsEmptyPollBackoffMsV1(
-        state.emptyPollOrdinal, random))
+      // The terminal Shipping tier has no negative jitter: at most one empty
+      // acquisition in a half-open 15-minute window. Earlier tiers retain ±10%.
+      const delay = input.producer === "LUNA_SHIPPING" &&
+          state.emptyPollOrdinal >= SELLER_OS_BACKGROUND_EMPTY_BACKOFF_MS.length
+        ? SELLER_OS_BACKGROUND_MAX_CATCHUP_MS
+        : sellerOsEmptyPollBackoffMsV1(state.emptyPollOrdinal, random)
+      state.emptyBackoffUntilMs = atMs + delay
+      return setBackoff(delay)
     },
     recordClaimedJobs(claimedJobs: number, latencyMs = 0, atMs = now()) {
       halfOpenProbeInFlight = false
       if (!observeLatency(latencyMs, atMs)) return state.metrics.currentBackoffMs
       closeCircuit()
       state.emptyPollOrdinal = 0
+      state.emptyBackoffUntilMs = 0
       state.metrics.claimedJobs += boundedInteger(claimedJobs, 1_000)
       return setBackoff(0)
     },
@@ -300,18 +357,25 @@ export function createSellerOsBackgroundWorkloadControllerV1(input: Readonly<{
           SELLER_OS_BACKGROUND_SUSTAINED_LATENCY_COUNT) {
         return openCircuit(atMs)
       }
-      return setBackoff(sellerOsEmptyPollBackoffMsV1(
-        Math.max(1, state.emptyPollOrdinal), random))
+      const delay = sellerOsEmptyPollBackoffMsV1(
+        Math.max(1, state.emptyPollOrdinal), random)
+      state.emptyBackoffUntilMs = Math.max(state.emptyBackoffUntilMs,
+        atMs + delay)
+      return setBackoff(delay)
     },
     confirmDurableWorkSignal() {
       closeCircuit()
       state.emptyPollOrdinal = 0
+      state.emptyBackoffUntilMs = 0
       setBackoff(0)
     },
     nextDelayMs() {
       if (state.circuitState === "OPEN") {
         return Math.min(SELLER_OS_BACKGROUND_MAX_CATCHUP_MS,
           Math.max(1_000, state.circuitOpenUntilMs - now()))
+      }
+      if (input.producer === "LUNA_SHIPPING" && state.emptyBackoffUntilMs > 0) {
+        return Math.max(0, state.emptyBackoffUntilMs - now())
       }
       return state.metrics.currentBackoffMs ||
         sellerOsEmptyPollBackoffMsV1(
