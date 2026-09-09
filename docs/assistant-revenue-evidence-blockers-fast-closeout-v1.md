@@ -204,3 +204,9 @@ Keyword V2.1 continúa `ACCEPTED`, consumidor certificado, sin fallback legacy. 
 En Mayel está disponible **Ayuda / Manual**, junto a la navegación, sin añadir una quinta acción principal. Abre una guía sencilla en otra pestaña para consultarla mientras trabaja. El menú conserva Mejorar listings, Impulsar ventas, Publicar y Oportunidades.
 
 El [Manual de Mayel](https://imnova-seller-os-preprod.vercel.app/manual-mayel-menu-v1.pdf) respondió HTTP 200; sus 402923 bytes coinciden con el PDF certificado. Preparar un Preview o una simulación no publica ni activa publicidad. Si Mayel indica que faltan datos, hay que completar esa evidencia antes de impulsar.
+
+## Readback después de la confirmación OWNER
+
+A las `2026-09-09T17:24:38.945Z`, el runtime preprod todavía informa `SESSION_EXPIRED`. A las `17:24:49.654Z`, la solicitud más reciente `82577167-40cc-4a6c-bb19-e575783c30f3`, creada a las `17:23:54.159Z`, permanece `PENDING`, sin claim ni finalización. Las solicitudes anteriores fueron sustituidas explícitamente; no se detecta una transferencia completada. No se volvió a intentar Shipping.
+
+El contrato de la extensión exige que la pestaña activa sea la pantalla protegida de Seller OS y primero se pulse **Comprobar conexión**. Se corrigieron las instrucciones al OWNER y se solicitó el mensaje exacto de la extensión para localizar el fallo anterior al backend; no se atribuye una causa de UI sin ese dato.

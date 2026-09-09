@@ -5310,7 +5310,9 @@
     "safeForSingleListingPublicationCanary": false,
     "safeForSellOneLikeThis": false,
     "safeForEbayAdsWriteCanary": false,
-    "ownerSessionRenewalStatus": "PENDING_EXTENSION_TRANSFER"
+    "ownerSessionRenewalStatus": "PENDING_EXTENSION_TRANSFER",
+    "renewalObservedAt": "2026-09-09T17:24:49.654Z",
+    "renewalFailureStage": "BEFORE_HANDOFF_CLAIM; EXACT_EXTENSION_ERROR_PENDING_OPERATOR_FEEDBACK"
   },
   "shippingAudit": {
     "rawQuotesBefore": {
@@ -5651,6 +5653,101 @@
     "sessionMetadataAfterOwnerRenewalStarted": {
       "httpStatus": 200,
       "observedAt": "2026-09-09T17:16:03.516Z",
+      "prerequisites": {
+        "contractVersion": "SELLER_OS_LUNA_AUTOMATION_PREREQUISITES_V1",
+        "storageReadiness": "READY",
+        "schemaArtifactStatus": "MIGRATION_ARTIFACT_APPLIED",
+        "schemaAppliedStatus": "APPLIED",
+        "migrationArtifact": "20260821193830_create_seller_os_luna_stock_observation_storage.sql",
+        "migrationsCreated": 1,
+        "migrationsApplied": 1,
+        "dataGateStatus": "TARGETED_P2_DELTA_APPLIED",
+        "dataGateReason": "HISTORICAL_SCHEMA_DRIFT_REMAINS_OUT_OF_SCOPE",
+        "databaseMutationAuthorized": false,
+        "lunaProtectedSessionStatus": "SESSION_EXPIRED",
+        "canonicalServerReadReadiness": "BLOCKED_BY_PROTECTED_SESSION",
+        "humanBootstrapRequired": true,
+        "humanBootstrapPath": "/admin/ebay/luna-protected-session",
+        "sessionOwnership": "SERVER_OWNED",
+        "sessionStorage": "SUPABASE_VAULT",
+        "schedulerStatus": "DISABLED",
+        "productionSchedulerEnabled": false,
+        "productionLunaPolling": 0,
+        "p2I01Dependency": "BLOCKED",
+        "p2I01Blocker": "EXTERNAL_EBAY_QUOTA_BLOCKER",
+        "secretsIncluded": false,
+        "cookiesIncluded": false,
+        "environmentValuesIncluded": false
+      },
+      "error": null,
+      "responseFields": [
+        "success",
+        "prerequisites",
+        "browserRuntime",
+        "ceremony",
+        "operatorAction",
+        "safety"
+      ]
+    },
+    "ownerRenewalLatestReadback": {
+      "httpStatus": 201,
+      "observedAt": "2026-09-09T17:24:49.654Z",
+      "data": [
+        {
+          "id": "82577167-40cc-4a6c-bb19-e575783c30f3",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "PENDING",
+          "result_code": null,
+          "created_at": "2026-09-09 17:23:54.159+00",
+          "expires_at": "2026-09-09 17:31:54.159+00",
+          "claimed_at": null,
+          "completed_at": null
+        },
+        {
+          "id": "f806fe58-2558-4a19-a11c-a9c6ffbc9a30",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "EXPIRED",
+          "result_code": "LUNA_OWNER_HANDOFF_SUPERSEDED",
+          "created_at": "2026-09-09 17:23:11.867+00",
+          "expires_at": "2026-09-09 17:31:11.867+00",
+          "claimed_at": null,
+          "completed_at": "2026-09-09 17:23:54.159+00"
+        },
+        {
+          "id": "58e130ef-52da-4036-95b8-07ace7598a7c",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "EXPIRED",
+          "result_code": "LUNA_OWNER_HANDOFF_SUPERSEDED",
+          "created_at": "2026-09-09 17:22:29.559+00",
+          "expires_at": "2026-09-09 17:30:29.559+00",
+          "claimed_at": null,
+          "completed_at": "2026-09-09 17:23:11.867+00"
+        },
+        {
+          "id": "a778e8d1-8baa-4e19-9962-a69130c4599f",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "EXPIRED",
+          "result_code": "LUNA_OWNER_HANDOFF_SUPERSEDED",
+          "created_at": "2026-09-09 17:15:12.46+00",
+          "expires_at": "2026-09-09 17:23:12.46+00",
+          "claimed_at": null,
+          "completed_at": "2026-09-09 17:22:29.559+00"
+        },
+        {
+          "id": "403993a1-b562-4baf-8e8b-3cc22a6f32d5",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "EXPIRED",
+          "result_code": "LUNA_OWNER_HANDOFF_SUPERSEDED",
+          "created_at": "2026-09-09 17:14:48.029+00",
+          "expires_at": "2026-09-09 17:22:48.029+00",
+          "claimed_at": null,
+          "completed_at": "2026-09-09 17:15:12.46+00"
+        }
+      ]
+    },
+    "sessionMetadataLatestReadback": {
+      "httpStatus": 200,
+      "observedAt": "2026-09-09T17:24:38.945Z",
       "prerequisites": {
         "contractVersion": "SELLER_OS_LUNA_AUTOMATION_PREREQUISITES_V1",
         "storageReadiness": "READY",
