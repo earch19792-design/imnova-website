@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { validateSellerOsSession } from "@/lib/admin-auth"
+import { QualityUploadErrorV1, submitQualityUploadV1, qualityUploadCodeV1,
+  qualityUploadFailureMessageV1,
+  type QualityUploadTrace } from "@/lib/ebay/ebay-listing-quality-upload-transport-v1"
 
 type ReportStatus = Readonly<{
   state: "MISSING" | "STALE" | "CURRENT"
@@ -53,7 +56,8 @@ function localDate(value: string | null) {
 
 async function bearer() {
   const session = await validateSellerOsSession()
-  return session.authorized ? session.session?.access_token ?? null : null
+  return session.authorized && session.role === "OWNER_ADMIN"
+    ? session.session?.access_token ?? null : null
 }
 
 function humanUploadFailure(code: unknown) {
@@ -82,17 +86,28 @@ export function OwnerListingQualityReportControl() {
     useState<UploadAttempt | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [uploadTrace, setUploadTrace] = useState<QualityUploadTrace | null>(null)
 
   const load = useCallback(async () => {
+    try {
     const token = await bearer()
-    if (!token) return
+    if (!token) {
+      setMessage(qualityUploadFailureMessageV1("QUALITY_REPORT_OWNER_AUTH_REQUIRED"))
+      return
+    }
     const response = await fetch("/api/admin/ebay/listing-quality-report", {
       headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
     const payload = await response.json() as { success?: boolean;
-      status?: ReportStatus; latestUploadAttempt?: UploadAttempt | null }
+      status?: ReportStatus; latestUploadAttempt?: UploadAttempt | null; error?: string }
     if (response.ok && payload.success && payload.status) {
       setStatus(payload.status)
       setLatestAttempt(payload.latestUploadAttempt ?? null)
+    } else {
+      const code = qualityUploadCodeV1(payload.error, `QUALITY_REPORT_HTTP_${response.status}`)
+      setMessage(`${qualityUploadFailureMessageV1(code)} · ${code} · HTTP ${response.status}`)
+    }
+    } catch {
+      setMessage("No se pudo consultar el último reporte. QUALITY_REPORT_STATUS_READ_FAILED")
     }
   }, [])
 
@@ -100,42 +115,35 @@ export function OwnerListingQualityReportControl() {
 
   async function upload(selected: File | null) {
     if (!selected) return
-    setBusy(true); setMessage("Validando el reporte contra los listings LIVE…")
+    setBusy(true); setUploadTrace(null)
+    setMessage("Validando el reporte contra los listings LIVE…")
     try {
-      const extension = selected.name.toLowerCase().split(".").pop()
-      const format = extension === "xlsx" ? "XLSX" : extension === "csv"
-        ? "CSV" : extension === "json" ? "JSON" : null
-      if (!format) throw new Error("Formato no compatible. Usa CSV, XLSX o JSON.")
-      const content = format === "XLSX"
+      const result = await submitQualityUploadV1({ file: selected,
+        ownerToken: bearer, request: fetch, read: async (format) => format === "XLSX"
         ? await new Promise<string>((resolve, reject) => {
             const reader = new FileReader()
             reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "")
             reader.onerror = () => reject(new Error("No se pudo leer el archivo."))
             reader.readAsDataURL(selected)
           })
-        : await selected.text()
-      const token = await bearer()
-      if (!token) throw new Error("La sesión owner ya no está disponible.")
-      const response = await fetch("/api/admin/ebay/listing-quality-report", {
-        method: "POST", headers: { Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json" },
-        body: JSON.stringify({ format, fileName: selected.name,
-          mimeType: selected.type, content }) })
-      const payload = await response.json() as { success?: boolean;
+        : await selected.text() })
+      const payload = result.payload as { success?: boolean;
         status?: ReportStatus; latestUploadAttempt?: UploadAttempt | null;
         error?: string }
-      if (!response.ok || !payload.success || !payload.status) {
-        if (payload.status) setStatus(payload.status)
-        if (payload.latestUploadAttempt) {
-          setLatestAttempt(payload.latestUploadAttempt)
-        }
-        throw new Error(humanUploadFailure(
-          payload.latestUploadAttempt?.safeFailureCode ?? payload.error))
-      }
-      setStatus(payload.status)
+      setUploadTrace(result.trace)
+      setStatus(payload.status ?? null)
       setLatestAttempt(payload.latestUploadAttempt ?? null)
-      setMessage("Listing Quality Report actualizado hoy ✓")
+      setMessage(payload.status?.reportFreshness === "CURRENT"
+        ? "Listing Quality Report actualizado hoy ✓"
+        : "Archivo importado ✓. La fecha del último reporte válido sigue desactualizada.")
     } catch (error) {
+      if (error instanceof QualityUploadErrorV1) {
+        setUploadTrace(error.trace)
+        const payload = error.payload as { status?: ReportStatus;
+          latestUploadAttempt?: UploadAttempt | null } | null
+        if (payload?.status) setStatus(payload.status)
+        if (payload?.latestUploadAttempt) setLatestAttempt(payload.latestUploadAttempt)
+      }
       setMessage(error instanceof Error ? error.message
         : "El reporte no pasó la validación.")
     } finally {
@@ -197,7 +205,8 @@ export function OwnerListingQualityReportControl() {
             </dl>
           </details>}
         </div>
-        <input ref={file} type="file" className="sr-only"
+        <input ref={file} type="file" className="sr-only" disabled={busy}
+          aria-label="Archivo Listing Quality Report"
           accept=".csv,.xlsx,.json,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           onChange={(event) => void upload(event.target.files?.[0] ?? null)} />
         <button type="button" disabled={busy} onClick={() => file.current?.click()}
@@ -205,6 +214,12 @@ export function OwnerListingQualityReportControl() {
           {busy ? "VALIDANDO…" : "SUBIR REPORTE"}
         </button>
         {message && <p role="status" className="mt-3 break-words text-sm leading-6 text-[#d8d0c3]">{message}</p>}
+        {uploadTrace && <details className="mt-3 text-xs text-[#d8d0c3]" open={Boolean(uploadTrace.ERROR_CODE)}>
+          <summary>Diagnóstico de esta carga</summary>
+          <p className="break-all">Código: {uploadTrace.ERROR_CODE ?? "NONE"} · Etapa: {uploadTrace.FAILURE_STAGE ?? "COMPLETED"} · HTTP: {uploadTrace.HTTP_STATUS ?? "NOT_SENT"}</p>
+          <p className="break-all">TRACE_ID: {uploadTrace.TRACE_ID}</p>
+          <p>Intento registrado: {uploadTrace.stages.UPLOAD_ATTEMPT_LEDGER.REACHED ? "Sí" : "No confirmado"}</p>
+        </details>}
       </div>
       <div className="min-w-0 rounded-2xl border border-white/10 bg-black/20 p-4">
         <p className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-[#b7c4a8]">
