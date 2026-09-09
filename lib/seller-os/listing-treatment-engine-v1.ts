@@ -97,12 +97,19 @@ export function projectListingMetricsV1(listing: CommercialListingReadModel) {
     conversion: listing.metrics.conversion, salesRevenue: listing.metrics.revenue }
   const metric = (o: Observation<number> | undefined, window: MetricWindow) => {
     const w = o?.reportingWindow
-    const duration = w ? Date.parse(w.end) - Date.parse(w.start) : NaN
+    // The existing traffic reader stores dateFrom/dateTo at midnight, while
+    // buildEbaySellerTrafficReportUrl includes the entire final UTC day.
+    const midnight = /^\d{4}-\d{2}-\d{2}T00:00:00(?:\.000)?Z$/
+    const inclusiveDays = Boolean(w && w.timeZone === "UTC" && midnight.test(w.start) && midnight.test(w.end) &&
+      o?.source.system === "EBAY_SELL_ANALYTICS" && o.source.evidenceReference?.startsWith("LISTING_COMMERCIAL_SNAPSHOT:LIVE_ANALYTICS:"))
+    const duration = w ? Date.parse(w.end) - Date.parse(w.start) + (inclusiveDays ? 86400000 : 0) : NaN
     const hours = { "24H": 24, "7D": 168, "30D": 720 }[window]
     const exact = o?.identity.itemId === listing.identity.itemId && o?.availability === "AVAILABLE" &&
       valid(o.value) && duration === hours * 3600000 && Boolean(o.source.evidenceReference)
     return { value: exact ? o!.value : null, reference: o?.source.evidenceReference ?? null,
-      window: w ?? null, freshness: o?.freshness.status ?? "UNKNOWN",
+      window: w && inclusiveDays && Number.isFinite(Date.parse(w.end)) ? { ...w, end: new Date(Date.parse(w.end) + 86400000).toISOString() } : w ?? null,
+      sourceWindow: w ?? null, windowSemantics: inclusiveDays ? "INCLUSIVE_SOURCE_DATES_TO_EXCLUSIVE_END" : "ELAPSED_INTERVAL",
+      freshness: o?.freshness.status ?? "UNKNOWN",
       reason: exact ? null : "EXACT_ITEM_WINDOW_EVIDENCE_REQUIRED" }
   }
   return { itemId: listing.identity.itemId, windows: Object.fromEntries(METRIC_WINDOWS.map(window => [window,
