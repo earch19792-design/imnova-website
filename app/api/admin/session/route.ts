@@ -11,6 +11,7 @@ import {
 } from "@/lib/admin-session-cookie-contract"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 import { validateSellerOsApiRequest } from "@/lib/supabase-admin"
+import { getEbayProRuntimeBoundary } from "@/lib/ebay/environment-boundaries"
 
 const ADMIN_SESSION_VALIDATION_TIMEOUT_MS = 15_000
 
@@ -86,7 +87,8 @@ export async function POST(request: Request) {
   }
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? ""
   const response = NextResponse.json({ success: true,
-    role: validation.accessRole })
+    role: validation.accessRole,
+    revenueEngineAvailable: getEbayProRuntimeBoundary({ pathname: new URL(request.url).pathname, method: request.method }).runtime === "seller_os_dedicated_preprod" })
   response.cookies.set(
     SELLER_OS_ADMIN_SESSION_COOKIE,
     token,

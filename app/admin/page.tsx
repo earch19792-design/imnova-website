@@ -12,6 +12,7 @@ import { SellerOsMobileNav } from "./ebay/components/seller-os-mobile-nav"
 import { RemoteLiveOptimizationOperator } from
   "./remote-live-optimization-operator"
 import { SellerOsHomeDashboardV1 } from "./seller-os-home-dashboard-v1"
+import { MayelRevenueEngine } from "./ebay/mayel/revenue-engine"
 
 type HomeState = "LOADING" | "READY" | "UNAVAILABLE"
 
@@ -19,6 +20,8 @@ export default function SellerOsAdminHome() {
   const router = useRouter()
   const [state, setState] = useState<HomeState>("LOADING")
   const [role, setRole] = useState<SellerOsAccessRole | null>(null)
+  const [revenueEngineAvailable, setRevenueEngineAvailable] = useState(false)
+  const [legacyDetailsOpen, setLegacyDetailsOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -31,7 +34,12 @@ export default function SellerOsAdminHome() {
       }
       const response = await fetch("/api/admin/session", { method: "POST", headers: { Authorization: `Bearer ${result.session.access_token}` } })
       if (!active) return
-      if (response.ok) setRole(result.role)
+      if (response.ok) {
+        const capabilities = await response.json()
+        if (!active) return
+        setRevenueEngineAvailable(capabilities.revenueEngineAvailable === true)
+        setRole(result.role)
+      }
       setState(response.ok ? "READY" : "UNAVAILABLE")
     }).catch(() => { if (active) setState("UNAVAILABLE") })
     return () => { active = false }
@@ -57,6 +65,17 @@ export default function SellerOsAdminHome() {
 
   if (state === "READY" && role ===
       SELLER_OS_ACCESS_ROLES.remoteLiveOptimizationOperator) {
+    if (revenueEngineAvailable) return <main className="min-h-screen bg-[#f3eee6] px-4 py-5 text-[#26312d] sm:px-6">
+      <div className="mx-auto max-w-6xl space-y-5">
+        <header><h1 className="text-3xl font-semibold">Mayel</h1><p>Revisa tus listings y prepara el siguiente paso para vender mejor.</p></header>
+        <MayelRevenueEngine owner={false} />
+        <details onToggle={event => setLegacyDetailsOpen(event.currentTarget.open)}>
+          <summary>Ver detalles</summary>
+          <p className="my-3 text-sm">Herramientas de operación y autorizaciones existentes.</p>
+          {legacyDetailsOpen && <RemoteLiveOptimizationOperator />}
+        </details>
+      </div>
+    </main>
     return <RemoteLiveOptimizationOperator />
   }
 

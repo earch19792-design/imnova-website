@@ -71,7 +71,8 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         onClick={() => setMenu(index)} aria-pressed={menu === index}>{name}</button>)}
     </nav>
     {menu === 2 ? <article className="rounded-2xl bg-white p-5"><p>Prepara un listing y revisa su borrador antes de publicarlo.</p>
-      <Link className="mt-3 inline-block underline" href="/admin/ebay/opportunity-queue">Abrir borradores</Link></article> : <>
+      {owner ? <Link className="mt-3 inline-block underline" href="/admin/ebay/opportunity-queue">Abrir borradores</Link>
+        : <p className="mt-3">La publicación necesita revisión y autorización del owner.</p>}</article> : <>
       <div className="rounded-2xl bg-white p-5">
         <h2 className="text-xl font-semibold">{menu === 0 ? "¿Qué listings quieres mejorar?" : menu === 1 ? "Prepara un impulso que proteja tu beneficio" : "¿Dónde hay una oportunidad ahora?"}</h2>
         <p className="mt-2 text-sm text-slate-600">Mayel revisa primero el rendimiento y explica qué conviene hacer. Hasta 20 listings por selección.</p>
