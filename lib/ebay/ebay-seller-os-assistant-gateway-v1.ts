@@ -13,6 +13,7 @@ import { buildStrategicReviewQueueV1, buildSystemReviewBundleV1 } from "./ebay-s
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { currentLiveListingsForMonitorV1, resolveCrossModuleLivePortfolioIntegrityV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
+import { projectListingMetricsV1 } from "../seller-os/listing-treatment-engine-v1"
 export const SELLER_OS_ASSISTANT_GATEWAY_VERSION = "SELLER_OS_ASSISTANT_GATEWAY_V1_2026_08_12"
 export const SELLER_OS_ASSISTANT_MAX_ITEMS = 100
 
@@ -171,6 +172,7 @@ function safeListing(
       sku: listing.identity.sku, thumbnail: listing.identity.primaryImageUrl,
       liveStatus: listing.discovery.livePresence.status },
     currentLiveFacts,
+    treatmentMetrics: projectListingMetricsV1(listing),
     analytics: { impressions: listing.metrics.impressions, views: listing.metrics.ebay_views,
       ctr: listing.metrics.ctr_calculated, quantitySold: listing.metrics.transactions,
       scope: "CURRENT_LIVE_LISTING" },

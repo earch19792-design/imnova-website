@@ -86,6 +86,7 @@ export function OwnerListingQualityReportControl() {
     useState<UploadAttempt | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [loadDiagnostic, setLoadDiagnostic] = useState<string | null>(null)
   const [uploadTrace, setUploadTrace] = useState<QualityUploadTrace | null>(null)
 
   const load = useCallback(async () => {
@@ -104,10 +105,12 @@ export function OwnerListingQualityReportControl() {
       setLatestAttempt(payload.latestUploadAttempt ?? null)
     } else {
       const code = qualityUploadCodeV1(payload.error, `QUALITY_REPORT_HTTP_${response.status}`)
-      setMessage(`${qualityUploadFailureMessageV1(code)} · ${code} · HTTP ${response.status}`)
+      setMessage(qualityUploadFailureMessageV1(code))
+      setLoadDiagnostic(`${code} · HTTP ${response.status}`)
     }
     } catch {
-      setMessage("No se pudo consultar el último reporte. QUALITY_REPORT_STATUS_READ_FAILED")
+      setMessage("No se pudo consultar el último reporte.")
+      setLoadDiagnostic("QUALITY_REPORT_STATUS_READ_FAILED")
     }
   }, [])
 
@@ -155,95 +158,23 @@ export function OwnerListingQualityReportControl() {
   const current = status?.state === "CURRENT"
   const latestAttemptFailed = latestAttempt?.status === "FAILED_VALIDATION"
   return <section aria-labelledby="quality-report-owner-heading"
-    data-remote-operator-upload-access="false"
-    data-remote-operator-raw-report-access="false"
-    className="mt-4 overflow-hidden rounded-3xl border border-[#d8cbb8]/25 bg-[#171713] shadow-[0_20px_80px_rgba(0,0,0,0.25)]">
-    <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[1.35fr_1fr]">
-      <div className="min-w-0">
-        <p className="text-xs font-black uppercase tracking-[0.2em] text-[#b7c4a8]">Fuente oficial owner</p>
-        <h2 id="quality-report-owner-heading" className="mt-2 text-xl font-black tracking-tight text-[#f4efe5] sm:text-2xl">
-          IMPORTAR LISTING QUALITY REPORT
-        </h2>
-        <div className={`mt-4 rounded-2xl border p-4 ${latestAttemptFailed
-          ? "border-[#c98268]/40 bg-[#c98268]/10"
-          : current ? "border-[#9db18a]/35 bg-[#9db18a]/10"
-            : "border-[#c98268]/35 bg-[#c98268]/10"}`}>
-          <p className="font-black text-[#f4efe5]">{latestAttemptFailed
-            ? "El último archivo no se pudo importar"
-            : latestAttempt?.status === "IMPORTED"
-              ? "Último archivo importado correctamente ✓"
-              : current ? "Último reporte válido actualizado hoy ✓"
-                : status?.state === "STALE"
-                  ? "Reporte desactualizado · sube uno nuevo."
-                  : "📋 Listing Quality Report pendiente"}</p>
-          {latestAttemptFailed && <p className="mt-2 text-sm leading-6 text-[#d8d0c3]">
-            {humanUploadFailure(latestAttempt.safeFailureCode)}
-          </p>}
-          {!latestAttemptFailed && !current && <p className="mt-2 text-sm leading-6 text-[#d8d0c3]">
-            Sube el reporte de eBay de hoy para que Seller OS pueda convertir sus señales en tareas para Mayel.
-          </p>}
-          {latestAttempt && <p className="mt-2 text-xs leading-5 text-[#aaa294]">
-            Último intento · {localDate(latestAttempt.attemptedAt)} · {latestAttempt.fileType}
-          </p>}
-          {latestAttempt?.status === "IMPORTED" && <p className="mt-2 text-xs leading-5 text-[#aaa294]">
-            {latestAttempt.recognizedSheetCount} hojas reconocidas · {latestAttempt.rowsParsed} filas procesadas · {latestAttempt.currentLiveRowsMatched} filas LIVE vinculadas
-          </p>}
-          {latestAttemptFailed && <details className="mt-3 text-xs text-[#aaa294]">
-            <summary className="cursor-pointer font-bold text-[#d8d0c3]">
-              Detalle técnico
-            </summary>
-            <dl className="mt-2 grid gap-1 break-words">
-              <div><dt className="inline">Código: </dt><dd className="inline font-mono">{latestAttempt.technicalReasonCode ?? "—"}</dd></div>
-              <div><dt className="inline">Hojas detectadas: </dt><dd className="inline">{latestAttempt.workbookSheetNames.join(", ") || "No capturadas en este intento"}</dd></div>
-              <div><dt className="inline">Hoja reconocida: </dt><dd className="inline">{latestAttempt.recognizedSheet ?? "—"}</dd></div>
-              <div><dt className="inline">Hojas reconocidas: </dt><dd className="inline">{latestAttempt.recognizedSheetCount}{latestAttempt.recognizedSheetNames.length
-                ? ` · ${latestAttempt.recognizedSheetNames.join(", ")}` : ""}</dd></div>
-              <div><dt className="inline">Headers: </dt><dd className="inline">{latestAttempt.headerMatchStatus}</dd></div>
-              <div><dt className="inline">Etapa: </dt><dd className="inline">{latestAttempt.failedStage}</dd></div>
-              <div><dt className="inline">Archivo: </dt><dd className="inline">{latestAttempt.fileSizeClass} · {latestAttempt.mimeTypeClass}</dd></div>
-              <div><dt className="inline">Deployment: </dt><dd className="inline font-mono">{latestAttempt.deploymentId}</dd></div>
-            </dl>
-          </details>}
-        </div>
-        <input ref={file} type="file" className="sr-only" disabled={busy}
-          aria-label="Archivo Listing Quality Report"
-          accept=".csv,.xlsx,.json,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          onChange={(event) => void upload(event.target.files?.[0] ?? null)} />
-        <button type="button" disabled={busy} onClick={() => file.current?.click()}
-          className="mt-4 min-h-12 rounded-2xl bg-[#e7dac5] px-5 text-sm font-black tracking-wide text-[#26231f] transition hover:bg-[#f4efe5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b7c4a8] disabled:cursor-wait disabled:opacity-60">
-          {busy ? "VALIDANDO…" : "SUBIR REPORTE"}
-        </button>
-        {message && <p role="status" className="mt-3 break-words text-sm leading-6 text-[#d8d0c3]">{message}</p>}
-        {uploadTrace && <details className="mt-3 text-xs text-[#d8d0c3]" open={Boolean(uploadTrace.ERROR_CODE)}>
-          <summary>Diagnóstico de esta carga</summary>
-          <p className="break-all">Código: {uploadTrace.ERROR_CODE ?? "NONE"} · Etapa: {uploadTrace.FAILURE_STAGE ?? "COMPLETED"} · HTTP: {uploadTrace.HTTP_STATUS ?? "NOT_SENT"}</p>
-          <p className="break-all">TRACE_ID: {uploadTrace.TRACE_ID}</p>
-          <p>Intento registrado: {uploadTrace.UPLOAD_ATTEMPT_ROW_CREATED ? "Sí" : "No confirmado"}</p>
-        </details>}
-      </div>
-      <div className="min-w-0 rounded-2xl border border-white/10 bg-black/20 p-4">
-        <p className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-[#b7c4a8]">
-          Último reporte válido
-        </p>
-        <p className="mb-3 text-sm font-bold text-[#f4efe5]">{current
-          ? "Actualizado hoy ✓"
-          : status?.state === "STALE" ? "Desactualizado" : "Todavía no hay un reporte válido"}</p>
-      <dl className="grid min-w-0 grid-cols-2 gap-3 text-sm">
-        {[
-          ["Última importación", localDate(status?.lastReportImportedAt ?? null)],
-          ["Fecha del reporte", status?.reportDate ?? "—"],
-          ["Vigencia", status?.reportFreshness ?? "—"],
-          ["Listings LIVE cubiertos", status?.liveListingsCovered ?? 0],
-          ["Señales importadas", status?.signalsImported ?? 0],
-          ["Señales accionables", status?.signalsActionable ?? 0],
-          ["Necesitan evidencia", status?.signalsNeedEvidence ?? 0],
-          ["Filas no LIVE excluidas", status?.nonliveRowsExcluded ?? 0],
-        ].map(([label, value]) => <div key={String(label)} className="min-w-0 rounded-xl bg-white/[0.035] p-3">
-          <dt className="text-xs leading-5 text-[#aaa294]">{label}</dt>
-          <dd className="mt-1 break-words font-black text-[#f4efe5]">{value}</dd>
-        </div>)}
-      </dl>
-      </div>
-    </div>
+    data-remote-operator-upload-access="false" data-remote-operator-raw-report-access="false"
+    className="mt-4 rounded-2xl border bg-white p-5 text-slate-800">
+    <h2 id="quality-report-owner-heading" className="text-xl font-semibold">Último reporte</h2>
+    <p className="mt-2">{current ? "CURRENT" : status?.state === "STALE" ? "STALE" : "Pendiente"} · {status?.reportDate ?? "Sin fecha"}</p>
+    <p>{status?.liveListingsCovered ?? "—"} listings analizados · {status?.signalsImported ?? "—"} recomendaciones</p>
+    {latestAttemptFailed && <p role="alert">{humanUploadFailure(latestAttempt.safeFailureCode)}</p>}
+    <input ref={file} type="file" className="sr-only" disabled={busy} aria-label="Archivo Listing Quality Report"
+      accept=".csv,.xlsx,.json,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      onChange={(event) => void upload(event.target.files?.[0] ?? null)} />
+    <button type="button" disabled={busy} onClick={() => file.current?.click()}
+      className="mt-3 min-h-11 rounded-xl border bg-[#dcebdc] px-4 font-semibold disabled:opacity-50">
+      {busy ? "Validando…" : "Actualizar reporte"}
+    </button>
+    {message && <p role="status" className="mt-3 text-sm">{message}</p>}
+    <details className="mt-3 text-xs"><summary>Ver detalles</summary>
+      <p>Última importación: {localDate(status?.lastReportImportedAt ?? null)}</p>
+      <pre className="max-h-80 overflow-auto whitespace-pre-wrap">{JSON.stringify({ status, latestAttempt, uploadTrace, loadDiagnostic }, null, 2)}</pre>
+    </details>
   </section>
 }

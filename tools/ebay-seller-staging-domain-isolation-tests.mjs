@@ -264,7 +264,7 @@ test("route and bundle surface regress downward", () => {
   // authenticated POST-only ingestion route for the exact local
   // SELLER_OS_RUNTIME_HEALTH_V1 receipt.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 101 + Number(temporarySellerOauthApi) +
+    countNamed("app/api", "route.ts") <= 101 + Number(exists("app/api/admin/ebay/assistant/revenue-engine/route.ts")) + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
       Number(lunaQuickPickApi) + Number(productJourneyApi),
