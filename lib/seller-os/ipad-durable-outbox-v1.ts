@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { parseOutboxIntentV1, stableOutboxJsonV1, outboxFriendlyStateV1, type OutboxIntent, type DurableOutboxReceipt } from "./ipad-outbox-contract-v1"
 import { ebayOfficialImageSetDigestV1 } from "../ebay/ebay-mayel-visual-phase-b-v1"
+import { visualAssetOwnerApprovedV1 } from "./visual-asset-sync-state-v1"
 export const IPAD_OUTBOX_TABLE = "seller_os_ipad_outbox_v1"
 export type OutboxRow = { id: string; account_key: string; actor_user_id: string; item_id: string; kind: string;
   intent: OutboxIntent; binding: Record<string, unknown>; idempotency_key: string; payload_hash: string;
@@ -90,9 +91,9 @@ export async function readDurableOutboxV1(input: OutboxScope & { keys: string[] 
 export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClient; row: OutboxRow }) {
  const { row } = input
  const [task, assets] = await Promise.all([
-   input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,status,assigned_operator_user_id,visual_manifest,visual_manifest_digest,source_image_set_digest")
+   input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,status,assigned_operator_user_id,visual_manifest,visual_manifest_digest,source_image_set_digest,product_truth_digest")
      .eq("marketplace_account_key", row.account_key).eq("id", row.intent.requestedChanges.taskId!).maybeSingle(),
-   input.supabase.from("ebay_listing_image_assets").select("id,status,approved_by,qa_result,source_sha256")
+   input.supabase.from("ebay_listing_image_assets").select("id,status,approved_by,qa_result,source_sha256,output_sha256,mayel_approval_status,owner_sync_approval,source_image_set_digest,product_truth_digest")
      .eq("account_key", row.account_key).eq("mayel_visual_task_id", row.intent.requestedChanges.taskId!).in("status", ["pending_review", "approved"]),
  ])
  if (task.error || assets.error) throw Error("OUTBOX_AUTHORITY_READ_FAILED")
@@ -103,9 +104,9 @@ export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClie
    return { approved: false, reason: "OUTBOX_DRAFT_AUTHORITY_CHANGED", manifestDigest: null }
  const proposed = Array.isArray(manifest.proposedOrderedImages) ? manifest.proposedOrderedImages.map(record) : []
  if (t.assigned_operator_user_id !== row.actor_user_id || t.status !== "OWNER_PREVIEW_READY" || !t.visual_manifest_digest ||
-     !assets.data?.length || assets.data.some(a => a.status !== "approved" || a.approved_by !== row.actor_user_id ||
-       record(a.qa_result).automaticStatus !== "PASSED" || record(record(a.qa_result).humanReview).decision !== "APPROVE") ||
-     bound.some(b => !proposed.some(e => e.assetId === b.assetId)))
+     !assets.data?.length || !proposed.some(e => e.assetId) ||
+     proposed.some(e => e.assetId && !assets.data?.some(a => a.id === e.assetId && a.output_sha256 === e.outputSha256 && visualAssetOwnerApprovedV1(a, t))) ||
+     bound.some(b => !proposed.some(e => e.assetId === b.assetId) || !assets.data?.some(a => a.id === b.assetId && visualAssetOwnerApprovedV1(a, t))))
    return { approved: false, reason: "OWNER_VISUAL_REVIEW_REQUIRED", manifestDigest: null }
  if (row.kind === "IMAGE_SYNC" && row.intent.requestedChanges.manifestDigest !== t.visual_manifest_digest)
    return { approved: false, reason: "OUTBOX_APPROVED_MANIFEST_CHANGED", manifestDigest: null }

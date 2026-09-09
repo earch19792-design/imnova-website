@@ -20,6 +20,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
      if (changed.error || !changed.data) throw Error("OUTBOX_LEASE_LOST")
    }
    const deps = {
+     transition: async (state: string) => { await patch({ state }) },
      authority: async () => {
        if (row.intent.requestedChanges.prepareReview === true) {
          const task = await input.supabase.from("ebay_mayel_visual_tasks_v1").select("status,visual_manifest_digest")
@@ -33,6 +34,8 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
          }
        }
        const authority = await readOutboxImageAuthorityV1({ supabase: input.supabase, row })
+       if (manifestDigest && authority.approved && authority.manifestDigest !== manifestDigest)
+         return { approved: false, reason: "OUTBOX_APPROVED_MANIFEST_CHANGED" }
        manifestDigest = authority.manifestDigest
        return authority
      },
@@ -66,7 +69,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
      },
      markDispatch: async () => {
        if (!manifestDigest || row.dispatch_count !== 0) throw Error("OUTBOX_DUPLICATE_DISPATCH_BLOCKED")
-       await patch({ state: "UNKNOWN_COMMIT", dispatch_count: 1, binding: { ...row.binding, executionManifestDigest: manifestDigest } })
+       await patch({ state: "SYNCING", dispatch_count: 1, binding: { ...row.binding, executionManifestDigest: manifestDigest } })
      },
      execute: async () => {
        const { executeMayelTradingVisualDelegatedManifestV1 } = await import("../ebay/ebay-mayel-visual-phase-b-server-v1")

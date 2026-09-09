@@ -226,7 +226,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         {menu === 1 && owner && <button className={button} disabled={busy} onClick={() => void analyze("RECEIPT")}>Guardar simulación</button>}
         <button className={button} disabled={busy} onClick={() => void analyze("MEASURE")}>Medir resultados</button>
       </section>}
-      {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={`saved-images:${selected.join(",")}`} saveDraft={local.saveDraft} itemIds={selected} titles={Object.fromEntries(listings.map(l => [l.itemId, l.title]))} />}
+      {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={`saved-images:${selected.join(",")}`} owner={owner} saveDraft={local.saveDraft} itemIds={selected} titles={Object.fromEntries(listings.map(l => [l.itemId, l.title]))} />}
       {menu === 0 && selected.length > 0 && <div className="space-y-3 rounded-2xl bg-white p-5">
         <p>Crea hasta seis propuestas en tu ChatGPT y vuelve a cargarlas juntas para revisión.</p>
         {selected.map(itemId => <button key={itemId} className={button} onClick={() => setVisualStationItemId(itemId)}>

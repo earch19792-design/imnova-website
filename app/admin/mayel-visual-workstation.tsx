@@ -29,6 +29,7 @@ type VisualOutput = {
   mayel_approval_status: string
   owner_approval_status: string
   previewUrl: string | null
+  sync?: { state: string; approvedForEbaySync: boolean; generation: string; idempotencyKey: string; serverReceiptPresent: boolean }
 }
 
 type VisualTask = {
@@ -470,11 +471,12 @@ function SourceGallery({ task }: { task: VisualTask }) {
   </div>
 }
 
-function HumanQa({ task, output, busy, onDone }: {
+function HumanQa({ task, output, busy, onDone, owner = false }: {
   task: VisualTask
   output: VisualOutput
   busy: boolean
   onDone: () => Promise<void>
+  owner?: boolean
 }) {
   const baseChecks = useMemo(() => [
     ["productIdentityPreserved", "Es el mismo producto"],
@@ -493,6 +495,7 @@ function HumanQa({ task, output, busy, onDone }: {
   const [checks, setChecks] = useState<Record<string, boolean>>({})
   const [reason, setReason] = useState("")
   const [message, setMessage] = useState("")
+  const [approvingSync, setApprovingSync] = useState(false)
   const complete = baseChecks.every(([key]) => checks[key] === true)
 
   async function submit(decision: "APPROVE" | "REJECT") {
@@ -510,6 +513,19 @@ function HumanQa({ task, output, busy, onDone }: {
       setMessage(error instanceof Error ? error.message :
         "No pudimos guardar la revisión.")
     }
+  }
+
+  async function approveSync() {
+    if (!output.sync || approvingSync) return
+    setApprovingSync(true); setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "APPROVE_ASSET_SYNC",
+          visualTaskId: task.visualTaskId, assetId: output.id, generation: output.sync.generation,
+          confirmation: "APPROVE_THIS_ASSET_FOR_EBAY_SYNC_V1" }) })
+      await onDone()
+    } catch { setMessage("No se guardó la autorización. La imagen sigue guardada para revisión.") }
+    finally { setApprovingSync(false) }
   }
 
   return <article className="rounded-2xl border border-[#ddd5ca] bg-white p-4">
@@ -554,7 +570,18 @@ function HumanQa({ task, output, busy, onDone }: {
       </div>
       {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
     </div>}
+    {output.sync && <div className="mt-4 rounded-xl bg-[#f4efe7] p-3 text-sm">
+      <p>{output.sync.state === "OWNER_APPROVAL_REQUIRED" ? "Guardado · pendiente de aprobación OWNER" :
+        output.sync.state === "SYNCED" ? "Sincronizado" : output.sync.state === "REQUIRES_ATTENTION" ? "Requiere atención" :
+        output.sync.approvedForEbaySync ? "Aprobado para enviar cuando eBay esté disponible" : "Guardado"}</p>
+      {output.status === "approved" && output.sync.state === "OWNER_APPROVAL_REQUIRED" && owner &&
+        <button type="button" disabled={busy || approvingSync} onClick={() => void approveSync()}
+          className="mt-3 min-h-11 rounded-xl bg-[#1d5961] px-4 py-2 font-semibold text-white disabled:opacity-40">Aprobar esta imagen para sincronizar con eBay</button>}
+      <p className="mt-2 text-xs">Cada imagen necesita su propia aprobación. Las fuentes originales guardadas siguen disponibles para las otras propuestas.</p>
+      <details className="mt-2"><summary>Ver detalles</summary><pre className="overflow-auto text-xs">{JSON.stringify(output.sync, null, 2)}</pre></details>
+    </div>}
     {output.status === "approved" && <p className="mt-4 rounded-xl bg-[#e3ebe1] p-3 text-sm font-semibold text-[#425143]">Control de calidad aprobado por Mayel · recurso canónico creado ✓</p>}
+    {output.status !== "pending_review" && message && <p role="alert">{message}</p>}
     {output.status === "rejected" && <p className="mt-4 rounded-xl bg-[#f7e9de] p-3 text-sm font-semibold text-[#704d3c]">Resultado rechazado</p>}
   </article>
 }
@@ -859,7 +886,7 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
     <h4 className="mt-2 font-serif text-xl font-semibold">Imágenes actuales y propuesta</h4>
     <p className="mt-2 text-sm text-[#5f645e]">Item {task.ebayItemId} · {task.productTitle}</p>
     <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. Mayel decide la principal y el orden exacto dentro de la delegación visual activa.</p>
-    <p className="mt-2 text-xs text-[#617159]">Control de calidad de Mayel: {task.outputs.filter((output) => output.status === "approved").length} aprobada(s) · {delegationActive ? "cubierta por delegación visual global" : "esperando delegación visual global"}.</p>
+    <p className="mt-2 text-xs text-[#617159]">Calidad revisada: {task.outputs.filter((output) => output.status === "approved").length} · Aprobadas por OWNER para sincronizar: {task.outputs.filter(output => output.sync?.approvedForEbaySync).length}. Cada propuesta requiere aprobación individual.</p>
     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{proposed.map((entry, index) =>
       <figure key={`${entry.assetId ?? "current"}-${index}`}
         className="rounded-xl border border-[#d6dfd1] bg-white p-2">
@@ -1522,7 +1549,7 @@ export function MayelVisualWorkstation({ canOperate,
         <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-[#1d5961]" />
           <h4 className="font-semibold">Control de calidad y revisión de Mayel</h4></div>
         <div className="mt-4 space-y-4">{task.outputs.map((output) =>
-          <HumanQa key={output.id} task={task} output={output} busy={busy}
+          <HumanQa key={output.id} task={task} output={output} busy={busy} owner={canOwnerAuthorize}
             onDone={refresh} />)}</div>
       </section>}
       {canOperate && <OrderedGalleryManager task={task} busy={busy}

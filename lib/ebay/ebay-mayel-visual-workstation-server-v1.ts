@@ -1,6 +1,7 @@
 import "server-only"
 
 import { createHash, randomUUID } from "node:crypto"
+import { VISUAL_OWNER_SYNC_CONFIRMATION, visualAssetSyncViewV1 } from "../seller-os/visual-asset-sync-state-v1"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readMayelGeneratedImageV1, assertMayelGeneratedBytesV1, replaceMayelHeroIntentV1, isMayelGeneratedSourceBoundV1 } from "../seller-os/mayel-generated-image-binding-v1"
@@ -1102,6 +1103,17 @@ export async function reviewMayelVisualOutputV1(input: {
     idempotent: result.idempotent === true }
 }
 
+export async function approveMayelVisualAssetSyncV1(input: { supabase: SupabaseClient; accountKey: string;
+  actorUserId: string; owner: boolean; taskId: string; assetId: string; generation: string; confirmation: string }) {
+  if (!input.owner || input.confirmation !== VISUAL_OWNER_SYNC_CONFIRMATION) throw Error("VISUAL_SYNC_OWNER_REQUIRED")
+  const result = await input.supabase.rpc("seller_os_approve_visual_asset_sync_v1", {
+    p_account_key: input.accountKey, p_actor_user_id: input.actorUserId, p_task_id: input.taskId,
+    p_asset_id: input.assetId, p_generation: input.generation, p_confirmation: input.confirmation,
+  })
+  if (result.error || !result.data) throw Error("VISUAL_SYNC_APPROVAL_NOT_SAVED")
+  return { approval: result.data, marketplaceWrites: 0 }
+}
+
 export async function readMayelVisualWorkstationV1(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -1123,7 +1135,7 @@ export async function readMayelVisualWorkstationV1(input: {
   const taskIds = typedTaskRows.map((task) => String(task.id))
     .filter(Boolean)
   const assetColumns =
-    "id,mayel_visual_task_id,status,mayel_output_role,source_sha256,output_sha256,source_width,source_height,output_width,output_height,output_bytes,qa_result,mayel_approval_status,owner_approval_status,output_storage_path,public_url,created_at,approved_at"
+    "id,mayel_visual_task_id,status,mayel_output_role,source_sha256,output_sha256,source_width,source_height,output_width,output_height,output_bytes,qa_result,mayel_approval_status,owner_approval_status,owner_sync_approval,source_image_references,source_image_set_digest,product_truth_digest,output_storage_path,public_url,created_at,approved_at"
   const assetRead = taskIds.length
     ? await input.supabase.from("ebay_listing_image_assets")
       .select(assetColumns).in("mayel_visual_task_id", taskIds)
@@ -1131,6 +1143,11 @@ export async function readMayelVisualWorkstationV1(input: {
       .order("position", { ascending: true })
     : { data: [], error: null }
   if (assetRead.error) throw new Error("MAYEL_VISUAL_OUTPUT_READ_FAILED")
+  const outboxRead = taskIds.length ? await input.supabase.from("seller_os_ipad_outbox_v1")
+    .select("binding,state,official_readback").eq("account_key", input.accountKey)
+    .in("item_id", typedTaskRows.map(t => String(t.ebay_item_id))).in("kind", ["IMAGE_DRAFT", "IMAGE_UPLOAD", "IMAGE_SYNC"])
+    .neq("state", "SUPERSEDED").limit(500) : { data: [], error: null }
+  if (outboxRead.error || (outboxRead.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
   const outputsByTaskId = new Map<string, JsonRecord[]>()
   for (const output of (assetRead.data ?? []) as JsonRecord[]) {
     const taskId = String(output.mayel_visual_task_id ?? "")
@@ -1153,7 +1170,8 @@ export async function readMayelVisualWorkstationV1(input: {
         previewUrl = signed.error ? null : signed.data.signedUrl
         previewExpiresInSeconds = previewUrl ? 300 : null
       }
-      outputs.push({ ...output, previewUrl, previewExpiresInSeconds })
+      outputs.push({ ...output, previewUrl, previewExpiresInSeconds,
+        sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? []) })
     }
     const { evidence, prompt: promptContract, storedMatchesCanonical } =
       canonicalPromptForTask(task)
@@ -1173,6 +1191,14 @@ export async function readMayelVisualWorkstationV1(input: {
       sku: String(evidence.sku ?? ""),
       productTitle: String(evidence.productTitle ?? ""),
       status: String(task.status), evidencePack: evidence,
+      visualStationState: outputs.some(o => o.sync.state === "REQUIRES_ATTENTION") ? "REQUIRES_ATTENTION" :
+        outputs.some(o => o.sync.state === "OWNER_APPROVAL_REQUIRED") ? "OWNER_APPROVAL_REQUIRED" :
+        outputs.length && outputs.every(o => o.sync.state === "SYNCED") ? "SYNCED" :
+        outputs.find(o => o.sync.approvedForEbaySync)?.sync.state ?? "DRAFT",
+      syncCounts: { approved: outputs.filter(o => o.sync.approvedForEbaySync).length,
+        pendingApproval: outputs.filter(o => o.sync.state === "OWNER_APPROVAL_REQUIRED").length,
+        pendingEbaySync: outputs.filter(o => o.sync.state === "PENDING_EBAY_SYNC").length,
+        availableSlots: Math.max(0, 6 - outputRows.filter(o => ["pending_review", "approved"].includes(String(o.status))).length) },
       prompt: promptContract.text,
       promptSlots: promptContract.slots,
       promptReconciliationRequired: !storedMatchesCanonical,
@@ -1189,7 +1215,7 @@ export async function readMayelVisualWorkstationV1(input: {
   return { contractVersion: "MAYEL_VISUAL_WORKSTATION_READ_MODEL_V2",
     tasks, counts: { visualTasks: tasks.length,
       separatePrompts: tasks.length,
-      databaseReadCount: taskIds.length ? 2 : 1,
+      databaseReadCount: taskIds.length ? 3 : 1,
       outputAssetReadStrategy: "BULK_TASK_SCOPE",
       openAiTextCalls: 0, openAiImageCalls: 0, marketplaceWrites: 0 },
     safety: { chatGptUiAutomation: false, chatGptCredentialStorage: false,

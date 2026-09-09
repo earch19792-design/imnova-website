@@ -8,7 +8,7 @@ type Proposal = Awaited<ReturnType<typeof readMayelImageWorkspaceV1>>["proposals
 const button = "min-h-11 rounded-xl border border-[#c7d0c3] bg-white px-4 py-2 text-sm font-semibold disabled:opacity-50"
 const checks = ["productIdentityPreserved", "colorPreserved", "shapePreserved", "partCountPreserved", "visibleLogosPreserved", "noInventedAccessories", "noUnsupportedClaims", "noUnauthorizedText", "roleMatchesOutput"]
 
-export function MayelImageWorkspace({ itemIds, titles = {}, saveDraft }: { itemIds: string[]; titles?: Record<string, string>; saveDraft: (input: DraftInput, requireReceipt?: boolean) => Promise<LocalOutboxRecord> }) {
+export function MayelImageWorkspace({ itemIds, titles = {}, saveDraft, owner = false }: { itemIds: string[]; titles?: Record<string, string>; owner?: boolean; saveDraft: (input: DraftInput, requireReceipt?: boolean) => Promise<LocalOutboxRecord> }) {
   const [rows, setRows] = useState<Proposal[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -48,19 +48,20 @@ export function MayelImageWorkspace({ itemIds, titles = {}, saveDraft }: { itemI
     {rows?.length === 0 && <p>No hay propuestas de imagen preparadas para esta selección. No se ha solicitado una nueva generación.</p>}
     {rows?.map(row => <article key={row.assetId} className="space-y-3 rounded-xl border p-4">
       <h4 className="font-semibold">{titles[row.itemId] ?? "Propuesta de imagen"}</h4>
-      <p>{row.status === "APPLIED" ? "SINCRONIZADO" : row.status === "QUEUED" ? "PENDIENTE_DE_SINCRONIZAR" : "GUARDADO"}</p>
+      <p>{row.status === "APPLIED" ? "SINCRONIZADO" : row.status === "QUEUED" ? "PENDIENTE_DE_SINCRONIZAR" : row.status === "REQUIRES_ATTENTION" ? "REQUIERE_ATENCION" : "GUARDADO"}</p>
+      {row.sync?.state === "OWNER_APPROVAL_REQUIRED" && <p>Pendiente de aprobación OWNER. Esta imagen todavía no está autorizada para sincronizar.</p>}
       <p className="text-sm">Preparado: {row.generatedAt ? new Date(row.generatedAt).toLocaleString("es") : "Fecha por comprobar"}. Antes de enviarlo se comprobará el estado actual.</p>
       <div className="grid gap-3 sm:grid-cols-2">{[[row.beforeUrl, "Imagen anterior guardada"], [row.previewUrl, "Propuesta de imagen principal"]].map(([url, label]) => typeof url === "string" && <figure key={String(label)}>
         <Image src={url} alt={String(label)} width={360} height={360} unoptimized /><figcaption>{String(label)}</figcaption></figure>)}</div>
       {row.status === "DRAFT" && (row.editable || row.canAssignAndPrepare) && !row.imported && <button className={button} disabled={busy} onClick={() => void act("PREPARE_REVIEW", row)}>{row.canAssignAndPrepare ? "Asignarme y preparar esta imagen" : "Preparar esta imagen para revisión"}</button>}
       {row.diagnostics.imageQaPassed && <p role="status">Borrador preparado y verificado. La propuesta está incluida en el Preview guardado; no se ha solicitado su envío a eBay.</p>}
-      {row.status === "DRAFT" && row.editable && row.imported && <>
+      {row.status === "DRAFT" && row.editable && row.imported && owner && <>
         <label className="flex gap-2"><input type="checkbox" checked={reviewed.includes(row.assetId)} onChange={e => setReviewed(old => e.target.checked ? [...old, row.assetId] : old.filter(id => id !== row.assetId))} />
           <span>He comparado las imágenes: es el mismo producto, con su color, forma, piezas y logos. No añade accesorios, promesas ni texto sin respaldo. Quiero usarla como imagen principal y conservar las demás imágenes.</span></label>
         <button className={button} disabled={busy || !reviewed.includes(row.assetId)} onClick={() => void act("CONFIRM_QUEUE", row)}>Confirmar y enviar cuando eBay esté disponible</button>
       </>}
       {row.status === "DRAFT" && !row.editable && !row.canAssignAndPrepare && <p>La propuesta está guardada. Su revisión necesita la tarea visual asignada al operador de este listing.</p>}
-      <details><summary>Ver detalles</summary><pre className="overflow-auto text-xs">{JSON.stringify({ itemId: row.itemId, ...row.diagnostics }, null, 2)}</pre></details>
+      <details><summary>Ver detalles</summary><pre className="overflow-auto text-xs">{JSON.stringify({ itemId: row.itemId, ...row.diagnostics, sync: row.sync }, null, 2)}</pre></details>
     </article>)}
     {error && <div role="alert"><p>No se completó el paso. La propuesta sigue guardada; no aparece como enviada.</p><details><summary>Ver detalles</summary><p>{error}</p></details></div>}
   </section>

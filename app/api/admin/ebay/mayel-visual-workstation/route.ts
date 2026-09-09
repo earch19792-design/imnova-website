@@ -8,6 +8,7 @@ import { getEbayProRuntimeBoundary } from
   "@/lib/ebay/environment-boundaries"
 import {
   ensureMayelVisualTaskV1,
+  approveMayelVisualAssetSyncV1,
   readMayelVisualWorkstationV1,
   reviewMayelVisualOutputV1,
   saveMayelOrderedGalleryIntentV2,
@@ -668,6 +669,15 @@ export async function POST(request: Request) {
       return json({ success: true,
         outcome: "MAYEL_ORDERED_GALLERY_INTENT_PERSISTED",
         gallery: result, marketplaceWrites: 0 })
+    }
+    if (action === "APPROVE_ASSET_SYNC") {
+      if (!ownerRole) return json({ success: false, error: "VISUAL_SYNC_OWNER_REQUIRED" }, 403)
+      const taskId = uuid(body?.visualTaskId), assetId = uuid(body?.assetId)
+      if (!taskId || !assetId || typeof body?.generation !== "string" || typeof body?.confirmation !== "string")
+        return json({ success: false, error: "VISUAL_SYNC_APPROVAL_INVALID" }, 400)
+      return json({ success: true, ...await approveMayelVisualAssetSyncV1({ supabase: getSupabaseAdminClient(),
+        accountKey: accountKey(), actorUserId: auth.userId, owner: true, taskId, assetId,
+        generation: body.generation, confirmation: body.confirmation }) })
     }
     if (action === "REVIEW_OUTPUT") {
       const taskId = uuid(body?.visualTaskId)

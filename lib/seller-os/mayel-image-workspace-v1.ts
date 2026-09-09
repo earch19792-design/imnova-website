@@ -1,10 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readMayelGeneratedImageV1, validateMayelGeneratedImageV1 } from "./mayel-generated-image-binding-v1"
 import { startMayelSavedImageDraftV1, completeMayelSavedImageDraftV1, savedImageDraftReceiptV1 } from "./mayel-saved-image-draft-v1"
+import { VISUAL_OWNER_SYNC_CONFIRMATION, visualAssetGenerationV1, visualAssetSyncViewV1 } from "./visual-asset-sync-state-v1"
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 type Scope = { supabase: SupabaseClient; accountKey: string; actorUserId: string; owner?: boolean }
-const TASK_COLUMNS = "id,ebay_item_id,status,assigned_operator_user_id,current_image_set,visual_manifest,visual_manifest_digest,source_image_set_digest,selection_signal,updated_at"
+const TASK_COLUMNS = "id,ebay_item_id,status,assigned_operator_user_id,current_image_set,visual_manifest,visual_manifest_digest,source_image_set_digest,product_truth_digest,selection_signal,updated_at"
 
 function itemScope(ids: string[]) {
   if (!ids.length || ids.length > 20 || new Set(ids).size !== ids.length || ids.some(id => typeof id !== "string" || !/^\d{9,20}$/.test(id)))
@@ -31,7 +32,7 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
   const taskIds = (tasks.data ?? []).map(t => String(t.id))
   const [assets, executions] = taskIds.length ? await Promise.all([
     input.supabase.from("ebay_listing_image_assets")
-      .select("id,mayel_visual_task_id,status,source_type,source_sha256,qa_result,output_storage_path,public_url,uploaded_by,provenance")
+      .select("id,mayel_visual_task_id,status,source_type,source_sha256,output_sha256,mayel_output_role,mayel_approval_status,owner_sync_approval,source_image_references,source_image_set_digest,product_truth_digest,qa_result,output_storage_path,public_url,uploaded_by,provenance")
       .eq("account_key", input.accountKey).in("mayel_visual_task_id", taskIds)
       .in("status", ["pending_review", "approved"]).limit(121),
     input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
@@ -42,6 +43,10 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
   if (assets.error || executions.error || (assets.data?.length ?? 0) > 120 || (executions.data?.length ?? 0) > 100)
     throw Error("MAYEL_WORKSPACE_RECEIPT_READ_INCOMPLETE")
   const proposals = []
+  const outbox = await input.supabase.from("seller_os_ipad_outbox_v1").select("binding,state,official_readback")
+    .eq("account_key", input.accountKey).in("item_id", input.itemIds).in("kind", ["IMAGE_DRAFT", "IMAGE_SYNC", "IMAGE_UPLOAD"])
+    .neq("state", "SUPERSEDED").limit(500)
+  if (outbox.error || (outbox.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
   for (const row of experiments.data ?? []) {
     const visual = record(record(row.baseline_evidence_ref).sellerOsVisualVariant)
     for (const candidate of (Array.isArray(visual.variants) ? visual.variants : []).slice(0, 2)) {
@@ -62,11 +67,13 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
       const included = ordered.some(entry => entry.assetId === origin.assetId)
       const exactExecutions = (executions.data ?? []).filter(e => e.visual_task_id === task?.id && e.visual_manifest_digest === task?.visual_manifest_digest)
       const applied = included && exactExecutions.some(e => e.phase === "APPLIED_AND_OFFICIALLY_VERIFIED")
-      const status = applied ? "APPLIED" : asset?.status === "approved" && included ? "QUEUED" : asset?.status === "approved" ? "SUPERSEDED" : "DRAFT"
+      const sync = asset && task ? visualAssetSyncViewV1(asset, task, outbox.data ?? []) : null
+      const status = sync?.state === "REQUIRES_ATTENTION" ? "REQUIRES_ATTENTION" : applied && sync?.approvedForEbaySync ? "APPLIED" :
+        sync?.approvedForEbaySync && included ? "QUEUED" : asset?.status === "approved" && !included ? "SUPERSEDED" : "DRAFT"
       const path = asset?.output_storage_path ?? origin.outputStoragePath
       const signed = await input.supabase.storage.from("ebay-listing-image-staging").createSignedUrl(String(path), 300)
       proposals.push({ itemId: origin.itemId, assetId: origin.assetId, experimentId: origin.experimentId,
-        taskId: task?.id ?? null, status, generatedAt: origin.generatedAt,
+        taskId: task?.id ?? null, status, sync, generatedAt: origin.generatedAt,
         editable: !task || task.assigned_operator_user_id === input.actorUserId,
         canAssignAndPrepare: input.owner === true && task !== undefined && task.assigned_operator_user_id !== input.actorUserId &&
           task.status === "PROMPT_READY" && !task.visual_manifest_digest && !draft.executionId &&
@@ -106,6 +113,7 @@ export async function prepareMayelImageReviewV1(input: Scope & { itemId: string;
 export async function confirmMayelImageQueueV1(input: Scope & {
   itemId: string; taskId: string; assetId: string; humanQa: unknown; replaceMainImage: boolean; expectedSourceDigest: string; authorizeDraftSync?: boolean
 }) {
+  if (!input.owner) throw Error("VISUAL_SYNC_OWNER_REQUIRED")
   if (input.replaceMainImage !== true) throw Error("MAYEL_IMAGE_REPLACEMENT_CONFIRMATION_REQUIRED")
   const task = await input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,source_image_set_digest,selection_signal")
     .eq("marketplace_account_key", input.accountKey).eq("id", input.taskId)
@@ -119,7 +127,9 @@ export async function confirmMayelImageQueueV1(input: Scope & {
   if (source.error || source.data?.source_type !== "SELLER_OS_ASSISTANT_IMAGE_VARIANT") throw Error("MAYEL_ASSISTANT_IMAGE_REQUIRED")
   // Approval writes only the existing atomic asset/manifest queue. Its existing
   // delegated runtime performs the fresh official preflight and exact readback.
-  const { reviewMayelVisualOutputV1 } = await import("../ebay/ebay-mayel-visual-workstation-server-v1")
+  const { reviewMayelVisualOutputV1, approveMayelVisualAssetSyncV1 } = await import("../ebay/ebay-mayel-visual-workstation-server-v1")
   const outcome = await reviewMayelVisualOutputV1({ ...input, decision: "APPROVE" })
+  await approveMayelVisualAssetSyncV1({ ...input, owner: true, generation: visualAssetGenerationV1(outcome.asset),
+    confirmation: VISUAL_OWNER_SYNC_CONFIRMATION })
   return { queued: true, idempotent: outcome.idempotent, marketplaceWrites: 0 }
 }

@@ -102,8 +102,8 @@ export function stableOutboxJsonV1(v: unknown): string {
 }
 export function outboxFriendlyStateV1(state: string): OutboxFriendlyState {
   if (state === "SYNCED") return "SINCRONIZADO"
-  if (state === "ATTENTION") return "REQUIERE_ATENCION"
-  if (["PENDING_EBAY_SYNC", "LEASED", "UNKNOWN_COMMIT"].includes(state)) return "PENDIENTE_DE_SINCRONIZAR"
+  if (["ATTENTION", "REQUIRES_ATTENTION"].includes(state)) return "REQUIERE_ATENCION"
+  if (["APPROVED_FOR_EBAY_SYNC", "PENDING_EBAY_SYNC", "REVALIDATING", "SYNCING", "OFFICIAL_READBACK_REQUIRED", "LEASED", "UNKNOWN_COMMIT"].includes(state)) return "PENDIENTE_DE_SINCRONIZAR"
   return "GUARDADO"
 }
 export function outboxTransientFailureV1(code: string) {
