@@ -122,6 +122,8 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         {menu === 1 && result.summary.ready > 0 && <button className={button} onClick={() => { setSelected(result.rows.filter(r => r.treatment === "SCALE" && r.promotion.status === "SIMULATION_READY").map(r => r.itemId)); setResult(null) }}>Seleccionar todos los listos de esta página</button>}
         {[...result.rows].sort((a, b) => menu === 3 ? ["PROFIT_PROTECT", "RESTOCK", "OPTIMIZE", "SCALE", "TEST", "HOLD"].indexOf(a.treatment) - ["PROFIT_PROTECT", "RESTOCK", "OPTIMIZE", "SCALE", "TEST", "HOLD"].indexOf(b.treatment) : 0).map(row => <article key={row.itemId} className="space-y-3 rounded-2xl bg-white p-5">
           <h3 className="text-lg font-semibold">{row.title}</h3><p className="font-semibold">{row.label}</p><p>{row.why}</p><p>{row.recommendedAction}</p>
+          <p>Datos del listing: <strong>{row.commercialEnvelope.label}</strong></p>
+          {row.treatment === "TEST" && <p className="text-sm">Estamos reuniendo datos para decidir con confianza. Mayel volverá a evaluarlos en el próximo análisis. Mientras tanto, no se preparará una promoción.</p>}
           <dl className="grid gap-3 text-sm sm:grid-cols-3">{([["impressions", "Impresiones"], ["views", "Visitas"], ["ctr", "CTR"], ["unitsSold", "Unidades vendidas"], ["conversion", "Conversión"], ["salesRevenue", "Ventas"]] as const).map(([key, label]) => <div key={key}>
             <dt>{label} · {window}</dt><dd className="font-semibold">{row.metrics.windows[window]?.[key]?.value ?? "Sin datos para este periodo"}</dd></div>)}</dl>
           <section aria-label="Observaciones disponibles" className="rounded-xl bg-slate-50 p-3">

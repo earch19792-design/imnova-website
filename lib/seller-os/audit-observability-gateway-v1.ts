@@ -3,7 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { projectLunaFieldTruthV1, LUNA_FIELD_TRUTH_FIELDS_V1 } from "./luna-field-truth-projection-v1"
 import { createProductCaseReadBudgetV1, ProductCaseCriticalReadFailureV1,
   type ProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
-import { readKeywordDecisionHandoffV1, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
+import { readKeywordDecisionHandoffV1, consumeListingPackageKeywordHandoffV1, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
+import { envelopeFromProductCaseV1 } from "./listing-commercial-envelope-v1"
 
 export const SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1 =
   "SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1" as const
@@ -596,6 +597,9 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
           "PACKAGE_DIGEST"].includes(entry.FIELD)) : fieldTruth,
     ...groups, NEXT_BLOCKING_STAGE: blocker, BUSINESS_IMPACT: impact,
     KEYWORD_INTELLIGENCE: keywordRead,
+    COMMERCIAL_ENVELOPE: envelopeFromProductCaseV1({ accountKey: input.accountKey, packageId, itemId,
+      sku: text(first(active.sku, active.ebay_sku, execution.sku, packageData.sku), 180), fields: fieldTruth,
+      keyword: consumeListingPackageKeywordHandoffV1(keywordRead, keywordBinding), now }),
     TECHNICAL_TRACE: mode === "TRACE" ? { approvalId: approval.id ?? null,
       executionId: execution.id ?? null, publicationId: publication.id ?? null,
       publisherChildReceiptId: batchChild.receipt_id ?? null,

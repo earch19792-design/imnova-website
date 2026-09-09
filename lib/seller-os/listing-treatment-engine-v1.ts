@@ -153,13 +153,18 @@ export function diagnoseListingTreatmentV1(input: { itemId: string; window: Metr
     }
   }
   const actions: Record<Treatment, string> = { SCALE: "Simular promoción", OPTIMIZE: "Revisar la mejora propuesta", TEST: "Reunir evidencia comparable", RESTOCK: "Reponer antes de impulsar", HOLD: "Esperar la revisión", PROFIT_PROTECT: "Revisar costes y precio" }
+  const economicSimulation = promotionProfitGuardV1(input.economics, input.policy)
+  // Keep the unit-economics simulation visible, but never present a cold-start
+  // listing as ready for promotion solely because its costs are complete.
+  const promotion = treatment === "TEST" ? { ...economicSimulation, status: "BLOCKED_EVIDENCE" as const,
+    economicSimulationStatus: economicSimulation.status, blocker: "METRIC_EVIDENCE_REQUIRED" } : economicSimulation
   return { contractVersion: LISTING_TREATMENT_ENGINE_V1, itemId: input.itemId, treatment,
     label: TREATMENT_LABELS[treatment], why, primaryMetricSignal, diagnosticPriorities: priorities,
     supportingEvidence: [...(enough ? [c!.reference, c!.sampleRuleReference] : []), ...(input.stockReference ? [input.stockReference] : []),
       ...Object.values(input.economics).filter(proven).map(v => v.reference!),
       ...(treatment === "OPTIMIZE" ? [...input.qualityReferences, ...input.keywordReferences] : [])],
     recommendedAction: actions[treatment], needsEvidence: treatment === "TEST", economics: e,
-    promotion: promotionProfitGuardV1(input.economics, input.policy), expectedRevenueOpportunity: null,
+    promotion, expectedRevenueOpportunity: null,
     priorityReason: "Prioridad por tratamiento; ingresos adicionales no estimados", safety: SIMULATION_SAFETY }
 }
 

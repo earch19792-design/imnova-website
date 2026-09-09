@@ -74,6 +74,7 @@ export async function prepareRevenueFirstListingPreviewV1(input: {
     original, preview, previewDigest: keywordWireDigestV1({ binding, preview }),
     sourcePackageDigest: keywordWireDigestV1({ binding, packageData: data }),
     keywordIntelligence: handoff, qualityReport, blockers,
+    commercialEnvelope: record(audit).COMMERCIAL_ENVELOPE,
     ...(blockers.length ? revenueFailureV1(null, keywordAccepted ? "PACKAGE_PREVIEW" : "KEYWORD_INTELLIGENCE",
       keywordAccepted ? "PACKAGE_PREVIEW_EVIDENCE_REQUIRED" : "KEYWORD_DECISION_UNPROVEN", traceId) : {}),
     previewUrl: `/admin/ebay/listing-optimization/preview?itemId=${input.itemId}`,

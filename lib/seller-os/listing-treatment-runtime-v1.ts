@@ -5,6 +5,12 @@ import { normalizeEbayListingQualityReport } from "../ebay/ebay-commercial-monit
 import { currentLiveListingsForMonitorV1 } from "../ebay/ebay-seller-os-live-portfolio-integrity-v1"
 import { prepareRevenueFirstListingPreviewV1 } from "./revenue-first-preview-v1"
 import { keywordWireDigestV1 } from "./keyword-intelligence-handoff-v1"
+import { readOwnHistoryMetricsV1 } from "./listing-metrics-cold-start-v1"
+import { consumeListingFeeAuthorityV1 } from "./listing-fee-authority-v1"
+import { buildListingCommercialEnvelopeV1, type CommercialComponentName, type CommercialComponent } from "./listing-commercial-envelope-v1"
+import ownerVariableCostPolicy from "../../docs/owner-variable-cost-policy-v1.json" with { type: "json" }
+import { readCommercialPackageBindingV1 } from "./listing-commercial-binding-v1"
+import { resolveMaximumOfficialEbayImageV1 } from "../ebay/ebay-seller-os-visual-quality-v1"
 import { diagnoseListingTreatmentV1, projectListingMetricsV1, promotionPortfolioPreviewV1,
   validatePromotionPolicyV1, MAX_TREATMENT_LISTINGS, TREATMENT_RECEIPT_V1, SIMULATION_SAFETY,
   compareTreatmentReceiptV1,
@@ -29,30 +35,77 @@ export async function readListingTreatmentsV1(input: { supabase: SupabaseClient;
     readDurableListingQualityArtifactV1({ supabase: input.supabase, accountKey: input.accountKey, now: now.toISOString() }),
   ])
   const quality = normalizeEbayListingQualityReport({ artifact, listings: input.monitor.listings })
-  const rows = listings.map(listing => {
+  const rows = []
+  // Bounded per-item reads preserve independent windows without a global scan.
+  for (const listing of listings) {
     const itemId = listing!.identity.itemId
+    const metrics = projectListingMetricsV1(listing!)
+    const sourceWindow = metrics.windows[input.window]?.impressions.window
+    const windowEnd = sourceWindow ? Date.parse(sourceWindow.end) : NaN
+    const requestedStart = Number.isFinite(windowEnd) ? new Date(windowEnd - ({ "24H": 1, "7D": 7, "30D": 30 }[input.window] * 86400000)).toISOString() : null
+    const requestedEnd = Number.isFinite(windowEnd) ? new Date(windowEnd - 86400000).toISOString() : null
+    const packageBinding = await readCommercialPackageBindingV1({ supabase: input.supabase, accountKey: input.accountKey, itemId, sku: listing!.identity.sku })
+    const metricAssessment = await readOwnHistoryMetricsV1({ supabase: input.supabase,
+      accountKey: input.accountKey, itemId, sku: listing!.identity.sku, window: input.window, now,
+      start: requestedStart, end: requestedEnd })
     const economics = Object.fromEntries(Object.entries(fields).map(([key, type]) => {
       const row = economicsRead.error ? null : economicsRead.data?.find(r => r.ebay_item_id === itemId && r.evidence_type === type)
       return [key, { value: row?.value_amount === null || row?.value_amount === undefined ? null : Number(row.value_amount),
         reference: row?.evidence_id ?? null, fresh: Boolean(row && row.value_currency === "USD" && row.freshness_status === "FRESH" &&
           Date.parse(row.fresh_until) >= now.getTime() && Date.parse(row.captured_at) <= now.getTime()) }]
     })) as Omit<Economics, "adFeeBasis">
-    const complete: Economics = { ...economics, adFeeBasis: { value: null, reference: null, fresh: false } }
+    const feeRow = economicsRead.error ? null : economicsRead.data?.find(r => r.ebay_item_id === itemId && r.evidence_type === "EXPECTED_EBAY_FEE")
+    const feeMetadata = feeRow?.evidence_metadata as Record<string, unknown> | undefined
+    const feeAuthority = consumeListingFeeAuthorityV1({ metadata: feeMetadata, accountKey: input.accountKey, itemId,
+      categoryId: packageBinding.categoryId,
+      salePrice: economics.salePrice.value, now })
+    economics.ebayFees = { value: feeAuthority.amount, reference: feeAuthority.reference,
+      fresh: feeAuthority.status === "PROVEN" && economics.ebayFees.fresh }
+    const ownerPolicyApplicable = input.accountKey === ownerVariableCostPolicy.marketplaceAccountKey &&
+      ownerVariableCostPolicy.observedCurrentItemIds.includes(itemId) &&
+      [economics.productCost, economics.shippingCost, economics.ebayFees].every(c => c.fresh && c.reference && c.value !== null)
+    if (ownerPolicyApplicable) economics.otherCosts = { value: ownerVariableCostPolicy.OTHER_PROVEN_VARIABLE_COSTS,
+      reference: `${ownerVariableCostPolicy.contractVersion}:${ownerVariableCostPolicy.recordedAt}`, fresh: true }
+    const complete: Economics = { ...economics, adFeeBasis: { value: feeAuthority.adFeeBasis,
+      reference: feeAuthority.reference, fresh: economics.ebayFees.fresh && feeAuthority.adFeeBasis !== null } }
     const recommendations = quality.recommendations.filter(r => r.listingKey === listing!.key && r.associationStatus === "ITEM_ID_CERTIFIED")
     const quantity = listing!.stock.quantity
     const stockProven = quantity.availability === "AVAILABLE" && quantity.freshness.status === "FRESH" && quantity.identity.itemId === itemId
     const treatment = diagnoseListingTreatmentV1({ itemId, window: input.window,
-      comparison: null, // The existing feed has no certified baseline/sample assessment. Never reuse legacy universal thresholds.
+      comparison: metricAssessment.comparison,
       economics: complete, policy: input.policy,
       stock: stockProven && quantity.value === 0 ? "LOW" : stockProven && quantity.value! > 0 ? "AVAILABLE" : "UNKNOWN",
       stockReference: stockProven ? quantity.source.evidenceReference : null,
       protected: input.monitor.backend.decisions.some(d => d.listingKey === listing!.key && d.protectionState === "DO_NOT_TOUCH"),
-      qualityReferences: recommendations.map(r => `${r.sourceVersion}:${r.observedAt}:${itemId}`), keywordReferences: [] })
-    return { ...treatment, title: listing!.identity.title, metrics: projectListingMetricsV1(listing!),
+      qualityReferences: recommendations.map(r => `${r.sourceVersion}:${r.observedAt}:${itemId}`),
+      keywordReferences: packageBinding.components.keywordV2_1?.status === "PROVEN" && packageBinding.components.keywordV2_1.reference ? [packageBinding.components.keywordV2_1.reference] : [] })
+    const components: Partial<Record<CommercialComponentName, Partial<CommercialComponent>>> = { ...packageBinding.components }
+    for (const [key, amount] of Object.entries(economics)) {
+      const name = key === "shippingCost" ? "shipping" : key === "ebayFees" ? "feeAuthority" : key
+      if (name === "otherCosts") continue
+      components[name as CommercialComponentName] = { status: amount.fresh ? "PROVEN" : amount.value !== null ? "STALE" : "PENDING",
+        value: amount.value, reference: amount.reference, source: "seller_os_live_economic_evidence_v1" }
+    }
+    components.feeAuthority = { ...components.feeAuthority, status: feeAuthority.status === "PROVEN" ? (economics.ebayFees.fresh ? "PROVEN" : "STALE") : "NEEDS_EVIDENCE" }
+    components.account = { status: "PROVEN", value: input.accountKey, reference: input.accountKey, source: "AUTHENTICATED_ACCOUNT_SCOPE" }
+    components.sku = { status: listing!.identity.sku ? "PROVEN" : "PENDING", value: listing!.identity.sku, reference: itemId, source: "OFFICIAL_LIVE_LISTING" }
+    components.liveIdentity = { status: "PROVEN", value: itemId, reference: itemId, source: "OFFICIAL_LIVE_LISTING" }
+    components.inventory = { status: stockProven ? "PROVEN" : "PENDING", value: quantity.value,
+      reference: quantity.source.evidenceReference, source: quantity.source.system }
+    const image = resolveMaximumOfficialEbayImageV1(listing!.identity.primaryImageUrl)
+    components.images = { status: image.sourceImageFullResolutionCertified ? "PROVEN" : "PENDING", value: image,
+      reference: itemId, source: listing!.identity.primaryImageSource }
+    components.metrics = { status: metricAssessment.metricSampleSufficient ? "PROVEN" : "PENDING", value: metrics,
+      reference: metricAssessment.comparison?.reference ?? null, source: "listing_commercial_snapshots" }
+    components.quality = { status: quality.reportExists === true ? (quality.freshness === "STALE" ? "STALE" : "PROVEN") : "PENDING",
+      value: { ...quality, recommendations }, reference: artifact && "importId" in artifact ? String(artifact.importId) : null,
+      source: "ebay_listing_quality_report_imports" }
+    const commercialEnvelope = buildListingCommercialEnvelopeV1({ accountKey: input.accountKey, packageId: packageBinding.packageId, itemId, components, now })
+    rows.push({ ...treatment, title: listing!.identity.title, metrics, metricAssessment, feeAuthority, commercialEnvelope,
       quality: { ...quality, recommendations }, economicsReadAvailable: !economicsRead.error,
-      limitations: ["FUNNEL_BASELINE_AND_SAMPLE_RULE_UNPROVEN", "TOTAL_AD_FEE_BASIS_UNPROVEN", "BASE_EBAY_FEE_MODEL_NOT_REALIZED_FEES"],
-      previewUrl: `/admin/ebay/listing-optimization/preview?itemId=${itemId}` }
-  })
+      limitations: [...(metricAssessment.reason ? [metricAssessment.reason] : []), ...feeAuthority.blockers],
+      previewUrl: `/admin/ebay/listing-optimization/preview?itemId=${itemId}` })
+  }
   return { rows, summary: promotionPortfolioPreviewV1(rows), policy: input.policy,
     observedAt: now.toISOString(), safety: SIMULATION_SAFETY }
 }
