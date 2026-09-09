@@ -257,9 +257,10 @@ export async function readEbayFeePerformanceReadonlyV1() {
         "Content-Type": "text/xml", "X-EBAY-API-CALL-NAME": "GetAccount",
         "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
         "X-EBAY-API-SITEID": "0", "X-EBAY-API-IAF-TOKEN": token,
-      }, body: '<GetAccountRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
-        '<AccountHistorySelection>LastInvoice</AccountHistorySelection><AccountEntrySortType>AccountEntryCreatedTimeDescending</AccountEntrySortType>' +
-        '<ExcludeSummary>true</ExcludeSummary><ExcludeBalance>true</ExcludeBalance>' +
+      }, body: '<?xml version="1.0" encoding="utf-8"?>' +
+        '<GetAccountRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
+        '<AccountEntrySortType>AccountEntryCreatedTimeDescending</AccountEntrySortType><AccountHistorySelection>LastInvoice</AccountHistorySelection>' +
+        '<ExcludeBalance>true</ExcludeBalance><ExcludeSummary>true</ExcludeSummary>' +
         '<Pagination><EntriesPerPage>20</EntriesPerPage><PageNumber>1</PageNumber></Pagination>' +
         '<OutputSelector>AccountEntries.AccountEntry.AccountDetailsEntryType</OutputSelector>' +
         '<OutputSelector>AccountEntries.AccountEntry.Date</OutputSelector><OutputSelector>AccountEntries.AccountEntry.ItemID</OutputSelector>' +
@@ -281,8 +282,15 @@ export async function readEbayFeePerformanceReadonlyV1() {
           netAmount: number(entry, "NetDetailAmount"), vatPercent: number(entry, "VATPercent") }
       }) : []
       const code = tradingXmlValue(xml, "ErrorCode"), currency = tradingXmlValue(xml, "Currency")
+      const parseMessage = code === "5" ? tradingXmlValue(xml, "LongMessage") : null
+      const expectedUserId = getEbayProductionIdentityBindingConfiguration().expectedUserId
+      const safeParseMessage = parseMessage?.startsWith("XML Error Text:")
+        ? parseMessage.replaceAll(token, "[REDACTED]")
+          .replaceAll(expectedUserId || "\u0000", "[ACCOUNT]")
+          .replace(/[A-Za-z0-9+/=_^-]{40,}/g, "[REDACTED]").slice(0, 400) : null
       return { status: available ? "AVAILABLE" : "UNPROVEN", httpStatus: response.status,
         errorCode: code && /^\d{1,12}$/.test(code) ? `EBAY_TRADING_${code}` : available ? null : "EBAY_FEE_INVOICE_UNAVAILABLE",
+        xmlParseDiagnostic: safeParseMessage,
         source: "https://developer.ebay.com/devzone/xml/docs/Reference/ebay/GetAccount.html",
         observedAt: new Date().toISOString(), evidenceClass: "HISTORICAL_ACCOUNT_FEE_ENTRIES",
         currency: currency && /^[A-Z]{3}$/.test(currency) ? currency : null,
