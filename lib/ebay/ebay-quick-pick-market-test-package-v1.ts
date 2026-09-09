@@ -271,8 +271,13 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     ? minimumReadiness.marketTestReady === true
     : marketTestReview.finalDecision === "MARKET_TEST_READY"
       || input.opportunity.decision === "MARKET_TEST_READY"
+  const handoff = input.keywordDecisionHandoff && input.keywordDecisionBinding
+    ? consumeListingPackageKeywordHandoffV1(input.keywordDecisionHandoff, input.keywordDecisionBinding)
+    : null
   const generatedTitle = optimizedTitle({ exactTitle,
-    primaryPhrase: text(titleStrategy.primarySearchPhrase, 160),
+    primaryPhrase: handoff?.STATUS === "ACCEPTED"
+      ? text(handoff.CLASSIFICATIONS.PRIMARY_KEYWORD[0], 160)
+      : input.requireKeywordDecisionV2_1 ? null : text(titleStrategy.primarySearchPhrase, 160),
     aspects: aspects.values, exactEvidence })
   const ownerReview = record(packageData.quickPickOwnerReviewV1)
   const priorProjection = record(packageData.quickPickMarketTestPackageV1)
@@ -280,7 +285,9 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   const persistedReviewedTitle = Object.keys(ownerReview).length > 0
     ? text(packageData.title, 80) : null
   const title = persistedReviewedTitle ?? text(ownerEdits.title, 80)
-    ?? text(priorProjection.title, 80) ?? generatedTitle.value
+    ?? (input.requireKeywordDecisionV2_1
+      ? input.listingPackage.status === "approved" ? text(packageData.title, 80) : null
+      : text(priorProjection.title, 80)) ?? generatedTitle.value
   const conditionId = text(packageData.conditionId, 30)
     ?? text(readiness.conditionId, 30)
   const conditionLabel = text(packageData.conditionLabel, 80)
@@ -317,9 +324,6 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
   const categoryName = authoritativeCategoryName({ exactTitle, names: [
     taxonomy.categoryName, packageData.categoryName, readiness.categoryName,
   ] })
-  const handoff = input.keywordDecisionHandoff && input.keywordDecisionBinding
-    ? consumeListingPackageKeywordHandoffV1(input.keywordDecisionHandoff, input.keywordDecisionBinding)
-    : null
   const keywords = handoff?.STATUS === "ACCEPTED"
     ? handoff.CLASSIFICATIONS.PRIMARY_KEYWORD.concat(
       handoff.CLASSIFICATIONS.CORE_QUALIFIERS,
@@ -425,8 +429,10 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     listingPackageId: currentListingPackageId,
     finalListingPackageReady: packageReady,
     titleReady: Boolean(title), title,
-    titleSource: text(ownerEdits.title)
-      ? "OWNER_AUTHORIZED_EDIT" : generatedTitle.method,
+    titleSource: persistedReviewedTitle || text(ownerEdits.title)
+      ? "OWNER_AUTHORIZED_EDIT" : input.requireKeywordDecisionV2_1 && input.listingPackage.status === "approved"
+        ? "APPROVED_PACKAGE_PRESERVED" : handoff?.STATUS === "ACCEPTED"
+          ? "DURABLE_KEYWORD_INTELLIGENCE_V2_1" : generatedTitle.method,
     rawSupplierTitleCopiedWithoutOptimization:
       generatedTitle.rawSupplierTitleCopiedWithoutOptimization,
     keywords, keywordEvidenceReconciled: handoff

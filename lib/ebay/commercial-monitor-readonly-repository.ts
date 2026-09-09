@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { readDurableListingQualityArtifactV1 } from "./ebay-listing-quality-report-read-v1"
 import { settleReadWithinBudgetV1, type ReadTimingV1 } from "./ebay-seller-os-read-budget-v1"
 
 import {
@@ -232,6 +233,7 @@ export type LunaStockCanonicalReadScopeV1 = Readonly<{
 }>
 
 export type CommercialMonitorReadonlySources = {
+  listingQualityReport?: ReadonlySourceResult<unknown>
   registry: ReadonlySourceResult<ReadonlyRegistryListingRow>
   syncState: ReadonlySourceResult<ReadonlySyncStateRow>
   identityVerifications: ReadonlySourceResult<ReadonlyIdentityVerificationRow>
@@ -782,6 +784,7 @@ export async function readCommercialMonitorReadonlySources(
     experiments,
     liveListingShippingEvidence,
     orderLines,
+    listingQualityReport,
   ] = await Promise.all([
     registryRead, identityRead, linkageRead,
     read("ebay_active_listing_sync_state", () => readSyncState(supabase, accountKey)),
@@ -799,8 +802,18 @@ export async function readCommercialMonitorReadonlySources(
     read("ebay_listing_experiments_v1", () => readExperiments(supabase, accountKey)),
     read("seller_os_live_listing_shipping_evidence", () => readLiveListingShippingEvidence(supabase, accountKey)),
     linesRead,
+    read("ebay_listing_quality_report_imports", async () => {
+      try {
+        const artifact = await readDurableListingQualityArtifactV1({ supabase, accountKey })
+        return { source: "ebay_listing_quality_report_imports", status: "AVAILABLE" as const,
+          rows: [artifact], limitationCode: null, truncated: false }
+      } catch {
+        return failure<unknown>("ebay_listing_quality_report_imports", "QUALITY_REPORT_READ_UNAVAILABLE")
+      }
+    }),
   ])
   return {
+    listingQualityReport,
     registry,
     syncState,
     identityVerifications,

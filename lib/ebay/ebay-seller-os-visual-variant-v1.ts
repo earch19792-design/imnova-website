@@ -1,3 +1,5 @@
+import { revenueFailureV1, revenueTraceIdV1, RevenueDependencyErrorV1, type RevenueDependencyStageV1 } from "../seller-os/revenue-first-diagnostics-v1"
+import { canGenerateVisualFindingV1 } from "./ebay-visual-generation-capabilities-v1"
 import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -21,10 +23,6 @@ const EBAY_IMAGE_STAGING_BUCKET = "ebay-listing-image-staging"
 const OUTPUT_SIZE = 1_600
 const PRODUCT_FRAME_SIZE = 1_440
 const OPENAI_IMAGE_ENDPOINT = "https://api.openai.com/v1/images/generations"
-const PRODUCT_TRUE_FINDINGS = new Set<SellerOsVisualFindingV1["findingCode"]>([
-  "LOW_FRAME_UTILIZATION", "EXCESS_DEAD_SPACE", "OFF_CENTER_PRODUCT",
-  "EDGE_CROPPING_RISK", "WHITE_BACKGROUND_NOT_PROVEN",
-])
 const VISUAL_EXPERIMENT_MINIMUM_HOURS = 168
 const VISUAL_EXPERIMENT_MINIMUM_IMPRESSIONS = 100
 
@@ -327,9 +325,7 @@ export function assessSellerOsVisualExperimentV1(input: {
 }
 
 function safeCode(error: unknown) {
-  const message = error instanceof Error ? error.message : ""
-  return message.match(/[A-Z][A-Z0-9_:.-]{2,180}/)?.[0]
-    ?? "SELLER_OS_VISUAL_VARIANT_FAILED"
+  return revenueFailureV1(error, "IMAGE_REQUEST_VALIDATION", "SELLER_OS_VISUAL_VARIANT_FAILED").ERROR_CODE
 }
 
 function boundedNumber(value: unknown, fallback: number, minimum: number,
@@ -403,22 +399,24 @@ async function requestEmptyHeroBackground(input: {
   model: "gpt-image-2"
   label: "A" | "B"
   fetchImpl: typeof fetch
+  traceId: string
 }) {
   const prompt = heroBackgroundPrompt(input.label)
   const response = await input.fetchImpl(OPENAI_IMAGE_ENDPOINT, {
     method: "POST", cache: "no-store",
     headers: { Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json" },
+      "Content-Type": "application/json", "X-Client-Request-Id": `${input.traceId}:${input.label}` },
     body: JSON.stringify({ model: input.model, prompt, n: 1,
       size: "1024x1024", quality: "low", output_format: "png",
       background: "opaque", moderation: "auto" }),
     signal: AbortSignal.timeout(180_000),
-  })
+  }).catch(() => { throw new RevenueDependencyErrorV1("IMAGE_PROVIDER_TRANSPORT_FAILED", "IMAGE_PROVIDER", input.traceId) })
   if (!sourceBytesLimit(response, 18 * 1024 * 1024)) {
     throw new Error("SELLER_OS_VISUAL_VARIANT_PROVIDER_RESPONSE_TOO_LARGE")
   }
   const payload = await response.json().catch(() => ({})) as JsonRecord
-  if (!response.ok) throw new Error(`SELLER_OS_VISUAL_VARIANT_PROVIDER_HTTP_${response.status}`)
+  if (!response.ok) throw new RevenueDependencyErrorV1(`SELLER_OS_VISUAL_VARIANT_PROVIDER_HTTP_${response.status}`,
+    "IMAGE_PROVIDER", input.traceId, response.headers.get("x-request-id") ?? undefined)
   const data = Array.isArray(payload.data) ? payload.data : []
   const first = record(data[0])
   const encoded = text(first.b64_json, 24 * 1024 * 1024)
@@ -611,14 +609,16 @@ export async function createSellerOsVisualVariantsV1(input: {
   model?: string
   fetchImpl?: typeof fetch
   now?: Date
+  traceId?: string
 }) {
+  const traceId = revenueTraceIdV1(input.traceId)
   const startedAt = (input.now ?? new Date()).toISOString()
   const variantCount = Number(input.variantCount)
   if (!Number.isInteger(variantCount) || variantCount < 1 ||
       variantCount > MAX_VARIANTS_PER_REQUEST) {
     throw new Error("VISUAL_VARIANT_COUNT_OUT_OF_BOUNDS")
   }
-  if (!PRODUCT_TRUE_FINDINGS.has(input.findingCode)) {
+  if (!canGenerateVisualFindingV1(input.findingCode)) {
     throw new Error("VISUAL_VARIANT_MATERIAL_REASON_REQUIRED")
   }
   const model = text(input.model) || "gpt-image-2"
@@ -661,7 +661,9 @@ export async function createSellerOsVisualVariantsV1(input: {
       budget.spentUsd + projectedCost > budget.hardStopUsd) {
     throw new Error("VISUAL_VARIANT_MONTHLY_BUDGET_BLOCKED")
   }
-  const source = await downloadOfficialSource(listing.heroImageUrl, fetchImpl)
+  const source = await downloadOfficialSource(listing.heroImageUrl, fetchImpl).catch(() => {
+    throw new RevenueDependencyErrorV1("FULL_RESOLUTION_SOURCE_UNAVAILABLE", "IMAGE_SOURCE", traceId)
+  })
   const sourceHash = sha256(source)
   const productTruthFingerprint = sha256Tagged({
     ebayItemId: input.ebayItemId, lunaProductId: linkage.luna_product_id,
@@ -677,11 +679,14 @@ export async function createSellerOsVisualVariantsV1(input: {
   const variants: JsonRecord[] = []
   const uploadedPaths: string[] = []
   let totalCost = 0
+  let dependencyStage: RevenueDependencyStageV1 = "IMAGE_PROVIDER"
   try {
     for (let index = 0; index < variantCount; index += 1) {
       const label = index === 0 ? "A" as const : "B" as const
+      dependencyStage = "IMAGE_PROVIDER"
       const provider = await requestEmptyHeroBackground({
-        apiKey: input.apiKey.trim(), model, label, fetchImpl })
+        apiKey: input.apiKey.trim(), model, label, fetchImpl, traceId })
+      dependencyStage = "IMAGE_QA"
       const backgroundQa = await validateEmptyBackground(provider.output)
       if (!backgroundQa.passed) {
         provider.output.fill(0)
@@ -700,6 +705,7 @@ export async function createSellerOsVisualVariantsV1(input: {
       }
       const outputHash = sha256(composition.output)
       const storagePath = `seller-os-visual-variants/${input.ebayItemId}/${experimentId}/variant-${label.toLowerCase()}.png`
+      dependencyStage = "IMAGE_PERSISTENCE"
       const upload = await input.supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET)
         .upload(storagePath, composition.output, { contentType: "image/png",
           cacheControl: "0", upsert: false })
@@ -712,6 +718,7 @@ export async function createSellerOsVisualVariantsV1(input: {
         cost: provider.estimatedOrAuthoritativeCostUsd, status: "COMPLETED",
         startedAt, completedAt: new Date().toISOString(), usage: provider.usage })
       variants.push({ assetId: randomUUID(), variantLabel: label,
+        traceId,
         outputStoragePath: storagePath, outputSha256: outputHash,
         status: "EXPERIMENT_READY", productTruthPreserved: true,
         variantRejected: false, sourceImageFullResolutionCertified: true,
@@ -769,12 +776,14 @@ export async function createSellerOsVisualVariantsV1(input: {
       requestHash: sha256Tagged({ requestHash, failed: variants.length }),
       experimentId, cost: 0, status: "FAILED", startedAt,
       completedAt: new Date().toISOString() }).catch(() => undefined)
-    throw error
+    const failure = revenueFailureV1(error, dependencyStage, "SELLER_OS_VISUAL_VARIANT_FAILED", traceId)
+    console.error("SELLER_OS_IMAGE_OPTIMIZATION_FAILURE", { ...failure, receiptId: `seller-os-visual:${experimentId}` })
+    throw new RevenueDependencyErrorV1(failure.ERROR_CODE, failure.DEPENDENCY_STAGE, failure.TRACE_ID, failure.PROVIDER_REQUEST_ID)
   } finally {
     source.fill(0)
   }
   return { contractVersion: SELLER_OS_VISUAL_VARIANT_VERSION,
-    experimentId, listingId: input.ebayItemId,
+    TRACE_ID: traceId, experimentId, listingId: input.ebayItemId,
     generationReasonProven: true, observation: finding.observation,
     objective: finding.objective, hypothesis: finding.hypothesis,
     variantCount: variants.length, variants,

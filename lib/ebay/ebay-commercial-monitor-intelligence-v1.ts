@@ -52,6 +52,13 @@ export type CommercialMonitorOrderFactsV1 = {
 }
 
 type QualityReportArtifact = {
+  durable?: boolean
+  status?: string
+  reportExists?: boolean | null
+  importId?: string
+  reportDate?: string
+  freshness?: "CURRENT" | "STALE"
+  coverage?: CommercialMonitorBackendV1["listingQualityReport"]["coverage"]
   source?: unknown
   sourceVersion?: unknown
   observedAt?: unknown
@@ -60,6 +67,8 @@ type QualityReportArtifact = {
 }
 
 type QualityReportRow = {
+  freshness?: "CURRENT" | "STALE"
+  actionState?: "ACTIONABLE" | "WAIT" | "NEEDS_EVIDENCE"
   itemId?: unknown
   sku?: unknown
   recommendationCategory?: unknown
@@ -117,6 +126,14 @@ export function normalizeEbayListingQualityReport(input: {
     }
   }
   const artifact = record(input.artifact) as QualityReportArtifact
+  if (artifact.durable && (artifact.status === "UNAVAILABLE" || artifact.reportExists === false)) {
+    return { status: artifact.status === "UNAVAILABLE" ? "UNAVAILABLE" : "MISSING",
+      source: EBAY_LISTING_QUALITY_REPORT_SOURCE, persistenceStatus: "DURABLE_READ_ONLY",
+      reportExists: artifact.status === "UNAVAILABLE" ? null : false,
+      importId: null, reportDate: null, importedAt: null, freshness: null, coverage: null,
+      limitationCode: artifact.status === "UNAVAILABLE" ? "QUALITY_REPORT_READ_UNAVAILABLE"
+        : "QUALITY_REPORT_VALID_IMPORT_MISSING", recommendations: [] }
+  }
   const sourceVersion = text(artifact.sourceVersion, 80)
   const observedAt = iso(artifact.observedAt)
   const importedAt = iso(artifact.importedAt)
@@ -150,8 +167,10 @@ export function normalizeEbayListingQualityReport(input: {
     const itemMatches = itemId ? byItemId.get(itemId) ?? [] : []
     const skuMatches = !itemId && sku ? bySku.get(sku) ?? [] : []
     const itemCertified = itemMatches.length === 1
-    const skuUnique = !itemId && skuMatches.length === 1
+    const skuUnique = !artifact.durable && !itemId && skuMatches.length === 1
     return {
+      ...(artifact.durable ? { freshness: row.freshness,
+        actionState: row.freshness === "STALE" ? "WAIT" as const : row.actionState } : {}),
       source: EBAY_LISTING_QUALITY_REPORT_SOURCE,
       sourceVersion,
       listingKey: itemCertified
@@ -175,14 +194,16 @@ export function normalizeEbayListingQualityReport(input: {
   })
   const resolved = recommendations.filter((row) => row.listingKey !== null).length
   return {
-    status: recommendations.length === 0
-      ? "MISSING"
-      : resolved === recommendations.length
+    status: resolved === recommendations.length
         ? "AVAILABLE"
         : "PARTIAL",
     source: EBAY_LISTING_QUALITY_REPORT_SOURCE,
-    persistenceStatus: "IN_MEMORY_READ_ONLY",
-    limitationCode: resolved === recommendations.length
+    persistenceStatus: artifact.durable ? "DURABLE_READ_ONLY" : "IN_MEMORY_READ_ONLY",
+    ...(artifact.durable ? { reportExists: true, importId: artifact.importId,
+      reportDate: artifact.reportDate, importedAt, freshness: artifact.freshness,
+      coverage: artifact.coverage } : {}),
+    limitationCode: artifact.freshness === "STALE" ? "QUALITY_REPORT_STALE_WAIT"
+      : resolved === recommendations.length
       ? null
       : "LISTING_QUALITY_REPORT_ASSOCIATION_UNPROVEN",
     recommendations,
@@ -890,6 +911,13 @@ export function compareEbayGuidanceWithSellerOsV1(input: {
     }
   }
   const guidanceClass = categoryClass(input.guidance.recommendationCategory)
+  if (input.guidance.freshness === "STALE" || input.guidance.actionState === "NEEDS_EVIDENCE") {
+    return { listingKey: input.decision.listingKey, ebayGuidanceStatus: "AVAILABLE",
+      freshness: input.guidance.freshness, actionState: input.guidance.actionState,
+      sellerOsDiagnosisStatus: input.decision.evidenceStatus === "UNPROVEN" ? "UNPROVEN" : "AVAILABLE",
+      conclusion: "INSUFFICIENT_EVIDENCE", automaticExecutionAllowed: false,
+      reasonCodes: [input.guidance.freshness === "STALE" ? "QUALITY_REPORT_STALE_WAIT" : "QUALITY_REPORT_NEEDS_EVIDENCE"] }
+  }
   const reasons: EbayGuidanceComparisonReason[] = []
   let conclusion: EbayGuidanceComparisonV1["conclusion"]
   if (input.decision.experimentRunning) {

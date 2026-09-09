@@ -1,3 +1,4 @@
+import { revenueFailureV1 } from "../seller-os/revenue-first-diagnostics-v1"
 import OpenAI from "openai"
 import { Agent, OpenAIProvider, Runner, tool } from "@openai/agents"
 import { z } from "zod"
@@ -140,8 +141,9 @@ function createProvider(environment: NodeJS.ProcessEnv, workload: SellerOsAiWork
 }
 
 function createReadOnlyAgentTools(monitor: CommercialMonitorGetDto) {
-  return SELLER_OS_ASSISTANT_TOOLS_V1.map((descriptor) => {
-    const itemTool = descriptor.name === "seller_os_get_listing_intelligence"
+  const tools = SELLER_OS_ASSISTANT_TOOLS_V1.map((descriptor) => {
+    const itemTool = descriptor.name === "seller_os_get_listing_intelligence" ||
+      descriptor.name === "seller_os_prepare_listing_optimization_preview"
     const caseTool = descriptor.name === "seller_os_get_opportunity_case"
     const parameters = itemTool ? z.object({ itemId: z.string().regex(/^\d{9,19}$/),
       limit: z.number().int().min(1).max(100).optional() })
@@ -150,11 +152,26 @@ function createReadOnlyAgentTools(monitor: CommercialMonitorGetDto) {
         : z.object({ limit: z.number().int().min(1).max(100).optional() })
     return tool({ name: descriptor.name, description: descriptor.description,
       parameters, strict: true, timeoutMs: 10_000, needsApproval: false,
-      errorFunction: () => JSON.stringify({ status: "SELLER_OS_TOOL_FAILED_CLOSED",
+      errorFunction: (_context, error) => JSON.stringify({ ...revenueFailureV1(error, "ASSISTANT_EVIDENCE", "SELLER_OS_TOOL_FAILED_CLOSED"), status: "SELLER_OS_TOOL_FAILED_CLOSED",
         credentialsIncluded: false, buyerPiiIncluded: false, marketplaceWrites: 0 }),
-      execute: async (args) => executeSellerOsAssistantToolV1({ toolName: descriptor.name,
+      execute: async (args) => descriptor.name === "seller_os_prepare_listing_optimization_preview"
+        ? (await import("../seller-os/revenue-first-preview-v1")).loadRevenueFirstListingPreviewV1(String((args as Record<string, unknown>).itemId ?? ""))
+        : executeSellerOsAssistantToolV1({ toolName: descriptor.name,
         arguments: args as Record<string, unknown>, monitor }) })
   })
+  return [...tools, tool({ name: "seller_os_get_product_case",
+    description: "Read the existing exact product case, including Keyword V2.1 and linkage provenance. No research, generation, persistence or publication.",
+    parameters: z.object({ identityType: z.enum(["EBAY_ITEM_ID", "LISTING_PACKAGE_ID"]),
+      identity: z.string().min(1).max(220) }), strict: true, timeoutMs: 15_000, needsApproval: false,
+    errorFunction: (_context, error) => JSON.stringify(revenueFailureV1(error, "EXACT_LISTING_IDENTITY", "SELLER_OS_AUDIT_READ_FAILED_CLOSED")),
+    execute: async args => {
+      const [{ getSupabaseAdminClient }, { getEbaySellerAccountScopeConfiguration }, { readSellerOsProductCaseAuditV1 }] = await Promise.all([
+        import("../supabase-admin"), import("./ebay-seller-account-scope"), import("../seller-os/audit-observability-gateway-v1")])
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("AUDIT_ACCOUNT_SCOPE_REQUIRED")
+      return readSellerOsProductCaseAuditV1({ supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        identityType: args.identityType, identity: args.identity, detailMode: "EVIDENCE" })
+    } })]
 }
 
 function assertSafeAgentOutput(value: unknown, monitor: CommercialMonitorGetDto) {
@@ -273,8 +290,8 @@ async function runAgent(input: {
       fallbackUsed: null, workload: input.workload, observedAt: new Date().toISOString(),
       actualCostUsd: null, costEvidence: "UNPROVEN" }
     return { status: "COMPLETED" as const, plan, output, usage }
-  } catch {
-    return { status: "AI_RUNTIME_FAILED_CLOSED" as const, plan, output: null,
+  } catch (error) {
+    return { ...revenueFailureV1(error, "COPILOT", "COPILOT_EVIDENCE_READ_FAILED_CLOSED"), status: "AI_RUNTIME_FAILED_CLOSED" as const, plan, output: null,
       usage: { requestCount: 0, inputTokens: null, outputTokens: null,
         latencyMs: Date.now() - startedAt, model: plan.model.model, fallbackUsed: null,
         workload: input.workload, observedAt: new Date().toISOString(), actualCostUsd: null,

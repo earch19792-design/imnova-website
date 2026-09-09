@@ -1,3 +1,4 @@
+import { revenueFailureV1, revenueTraceIdV1 } from "./revenue-first-diagnostics-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { projectLunaFieldTruthV1, LUNA_FIELD_TRUTH_FIELDS_V1 } from "./luna-field-truth-projection-v1"
 import { createProductCaseReadBudgetV1, ProductCaseCriticalReadFailureV1,
@@ -134,6 +135,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
   let packageRow: Row = {}
   let activeRow: Row = {}
   let productCaseRow: Row = {}
+  let exactLink: Row | null = null
   if (input.identityType === "PRODUCT_CASE_ID") {
     const read = await budget.read({ dependency: "IDENTITY_PRODUCT_CASE",
       authority: "seller_os_prelinked_launch_candidates", critical: true,
@@ -189,12 +191,38 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
       authority: "ebay_active_listings", critical: true,
       retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
       query: () => input.supabase.from("ebay_active_listings").select("*")
-        .eq("account_key", input.accountKey).eq("ebay_item_id", identity).limit(1)
+        .eq("account_key", input.accountKey).eq("ebay_item_id", identity)
+        .order("last_ebay_sync_at", { ascending: false, nullsFirst: false })
+        .order("updated_at", { ascending: false }).order("id", { ascending: false }).limit(1)
         .maybeSingle() })
     assertRead("ACTIVE_LISTING", read); activeRow = record(read.data)
+    const linkRead = await budget.read({ dependency: "EXACT_LISTING_IDENTITY",
+      authority: "ebay_manual_listing_links", critical: true,
+      retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
+      query: () => input.supabase.from("ebay_manual_listing_links")
+        .select("id,ebay_item_id,opportunity_id,candidate_key,verified_at")
+        .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+        .eq("ebay_item_id", identity).eq("verification_status", "verified")
+        .eq("connector_listing_status", "active").limit(2) })
+    assertRead("EXACT_LINK", linkRead)
+    const links = rows(linkRead.data)
+    if (links.length > 1) return { contradiction: "EXACT_LISTING_LINK_AMBIGUOUS" }
+    exactLink = links[0] ?? null
+    if (exactLink) {
+      if (!text(exactLink.opportunity_id) || !text(exactLink.candidate_key)) {
+        return { contradiction: "EXACT_LISTING_LINK_INCOMPLETE" }
+      }
+      const queueRead = await budget.read({ dependency: "IDENTITY_TRUTH",
+        authority: "ebay_luna_opportunity_queue", critical: true,
+        retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
+        query: () => input.supabase.from("ebay_luna_opportunity_queue").select("*")
+          .eq("id", exactLink!.opportunity_id).eq("candidate_key", exactLink!.candidate_key).limit(2) })
+      assertRead("QUEUE", queueRead); queueRows = rows(queueRead.data)
+      if (queueRows.length !== 1) return { contradiction: "EXACT_LISTING_LINK_TARGET_UNPROVEN" }
+    }
     const variantId = text(activeRow.supplier_variant_id, 100)
     const supplierSku = text(activeRow.supplier_sku, 180)
-    if (variantId || supplierSku) {
+    if (!exactLink && (variantId || supplierSku)) {
       const queueRead = await budget.read({ dependency: "IDENTITY_TRUTH",
         authority: "ebay_luna_opportunity_queue", critical: true,
         retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
@@ -229,20 +257,25 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
   packageRow = record(packageRead.data)
   activeRow = record(activeRead.data)
   return { contradiction: null, queue, packageRow, activeRow, productCaseRow,
+    exactLink,
     candidateId: candidateIds[0] }
 }
 
 type ProductCaseAuditInputV1 = Readonly<{
   supabase: SupabaseClient; accountKey: string;
   identityType: SellerOsProductCaseIdentityTypeV1; identity: string;
-  detailMode?: SellerOsAuditDetailModeV1; now?: Date;
+  detailMode?: SellerOsAuditDetailModeV1; now?: Date; traceId?: string;
   readBudget?: { internalBudgetMs?: number; perReadBudgetMs?: number } }>
 
 export async function readSellerOsProductCaseAuditV1(input: ProductCaseAuditInputV1) {
   const budget = createProductCaseReadBudgetV1(input.readBudget)
   try {
     const result = await readProductCaseWithinBudgetV1(input, budget)
-    return Object.freeze({ ...result, READ_DIAGNOSTICS: budget.snapshot() })
+    const traceId = revenueTraceIdV1(input.traceId)
+    return Object.freeze({ ...result, TRACE_ID: traceId,
+      ...(record(result).STATUS === "CONTRADICTED" ? revenueFailureV1(new Error(String(record(result).CONTRADICTION)),
+        "EXACT_LISTING_IDENTITY", "CANONICAL_PRODUCT_IDENTITY_NOT_FOUND", traceId) : {}),
+      READ_DIAGNOSTICS: budget.snapshot() })
   } catch (error) {
     if (!(error instanceof ProductCaseCriticalReadFailureV1)) {
       console.error("SELLER_OS_PRODUCT_CASE_READ_FAILURE", {
@@ -264,6 +297,7 @@ export async function readSellerOsProductCaseAuditV1(input: ProductCaseAuditInpu
       KNOWN: [], STALE: [], UNPROVEN: [], MISSING: [], CONTRADICTED: [],
       UNAVAILABLE: ["EXACT_PRODUCT_IDENTITY", "PRODUCT_TRUTH"],
       FAILURE_CLASS: error.failureCode, FAILED_DEPENDENCY: error.dependency,
+      ...revenueFailureV1(error, "EXACT_LISTING_IDENTITY", "CANONICAL_PRODUCT_IDENTITY_NOT_FOUND", input.traceId),
       NEXT_BLOCKING_STAGE: "LUNA_SOURCE", BUSINESS_IMPACT: "REVENUE_BLOCKING",
       READ_DIAGNOSTICS: budget.snapshot(),
       safety: { readOnly: true, arbitrarySql: false, arbitraryUrl: false,
@@ -312,7 +346,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     OPPORTUNITY_ID: text(queue.id, 80) ?? "",
   }
   const [approvalRead, executionRead, publicationRead, childRead,
-    economicsRead, researchRead, shippingRead, keywordRead] = await Promise.all([
+    economicsRead, researchRead, keywordRead, shippingRead] = await Promise.all([
       packageId ? budget.read({ dependency: "AUTHORIZATION",
         authority: "ebay_draft_only_approvals", query: () => input.supabase
           .from("ebay_draft_only_approvals").select("*").eq("listing_package_id", packageId)
@@ -536,6 +570,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     OBSERVED_AT: now.toISOString(), DETAIL_MODE: mode,
     INPUT_IDENTITY: { type: input.identityType, value: input.identity },
     RESOLVED_CANONICAL_IDENTITY: { candidateId,
+      opportunityId: text(queue.id, 80),
       productCaseId: text(resolved.productCaseRow?.product_case_id, 180),
       lunaProductId: text(queue.supplier_product_id, 180),
       lunaVariantId: text(queue.supplier_variant_id, 180),
@@ -543,6 +578,11 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
       ebaySku: text(first(active.sku, execution.sku), 180),
       ebayItemId: text(active.ebay_item_id, 30),
       packageId: text(packageRow.id, 80) },
+    IDENTITY_LINKAGE_PROVENANCE: resolved.exactLink ? {
+      authority: "ebay_manual_listing_links", linkId: text(resolved.exactLink.id, 80),
+      verifiedAt: dateValue(resolved.exactLink.verified_at),
+      opportunityId: text(resolved.exactLink.opportunity_id, 80), candidateKey: candidateId,
+    } : null,
     PRODUCT_JOURNEY: orderedJourney,
     PRODUCT_TRUTH_COMPLETENESS: { STATUS: lunaTruth.status,
       FIELD_TRUTH_CONTRACT_VERSION: lunaTruth.contractVersion,

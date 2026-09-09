@@ -1,5 +1,8 @@
+import { revenueFailureV1, revenueTraceIdV1 } from "@/lib/seller-os/revenue-first-diagnostics-v1"
+import { ZodError } from "zod"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 
 import { NextResponse } from "next/server"
 
@@ -13,6 +16,7 @@ function response(payload: unknown, status = 200) {
 }
 
 export async function POST(req: Request) {
+  const traceId = revenueTraceIdV1(req.headers.get("x-seller-os-trace-id"))
   const validation = await validateAdminApiRequest(req)
   if (!validation.ok) return response(
     { success: false, error: validation.error ?? "admin_forbidden" },
@@ -29,6 +33,14 @@ export async function POST(req: Request) {
   )
   try {
     const input = await req.json()
+    if (input?.mode === "PREPARE_PREVIEW") {
+      if (typeof input.itemId !== "string" || !/^\d{9,19}$/.test(input.itemId) ||
+          Object.keys(input).some(key => !["mode", "itemId"].includes(key))) {
+        throw new Error("LISTING_OPTIMIZATION_INPUT_INVALID")
+      }
+      const { loadRevenueFirstListingPreviewV1 } = await import("@/lib/seller-os/revenue-first-preview-v1")
+      return response({ success: true, result: await loadRevenueFirstListingPreviewV1(input.itemId, traceId) })
+    }
     const output = executeEbayListingOptimizationLoop(input)
     return response({
       success: true,
@@ -39,6 +51,10 @@ export async function POST(req: Request) {
     const code = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
       ? error.message
       : "LISTING_OPTIMIZATION_INPUT_INVALID"
-    return response({ success: false, error: code }, 400)
+    return response({ success: false, error: code,
+      ...revenueFailureV1(error, "INPUT_VALIDATION", "LISTING_OPTIMIZATION_INPUT_INVALID", traceId),
+      invalidFields: error instanceof ZodError ? error.issues.slice(0, 30).map(issue =>
+        issue.path.filter(part => typeof part === "string" && /^[a-zA-Z0-9_]{1,60}$/.test(part)).join(".")) : [],
+    }, 400)
   }
 }

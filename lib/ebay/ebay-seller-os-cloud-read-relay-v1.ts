@@ -1,3 +1,4 @@
+import { revenueFailureV1, RevenueDependencyErrorV1 } from "../seller-os/revenue-first-diagnostics-v1"
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto"
 
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
@@ -101,9 +102,9 @@ function byteLength(value: string) {
   return Buffer.byteLength(value, "utf8")
 }
 
-function relayError(status: number, code: string) {
+function relayError(status: number, code: string, error?: unknown, traceId?: string) {
   return Response.json({ status: "SELLER_OS_CLOUD_READ_RELAY_FAILED_CLOSED",
-    code, credentialsIncluded: false, buyerPiiIncluded: false,
+    code, ...revenueFailureV1(error, "ASSISTANT_RELAY", code, traceId), credentialsIncluded: false, buyerPiiIncluded: false,
     marketplaceWrites: 0 }, { status, headers: SAFE_HEADERS })
 }
 
@@ -159,7 +160,7 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
     allowedKeys.add("packageId")
     allowedKeys.add("detailMode")
   }
-  if (toolName === "seller_os_get_listing_intelligence") {
+  if (toolName === "seller_os_get_listing_intelligence" || toolName === "seller_os_prepare_listing_optimization_preview") {
     allowedKeys.add("itemId")
   }
   if (toolName === "seller_os_get_opportunity_case") {
@@ -203,7 +204,7 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
     }
     normalized.limit = Number(args.limit)
   }
-  if (toolName === "seller_os_get_listing_intelligence") {
+  if (toolName === "seller_os_get_listing_intelligence" || toolName === "seller_os_prepare_listing_optimization_preview") {
     if (typeof args.itemId !== "string" || !/^\d{9,19}$/.test(args.itemId)) {
       throw new Error("SELLER_OS_RELAY_ITEM_ID_INVALID")
     }
@@ -435,7 +436,7 @@ export function createSellerOsCloudReadRelayExecutorV1(options: {
       cache: "no-store",
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    }).catch(() => { throw new RevenueDependencyErrorV1("SELLER_OS_CLOUD_READ_RELAY_TRANSPORT_FAILED", "ASSISTANT_RELAY", envelope.requestId) })
     if (response.status === 307) {
       const locationValue = response.headers.get("location")
       const cookieValue = response.headers.get("set-cookie")
@@ -469,8 +470,14 @@ export function createSellerOsCloudReadRelayExecutorV1(options: {
       }
     }
     const responseText = await response.text()
-    if (!response.ok || byteLength(responseText) > MAX_RESPONSE_BYTES) {
-      throw new Error("SELLER_OS_CLOUD_READ_RELAY_READ_FAILED_CLOSED")
+    if (byteLength(responseText) > MAX_RESPONSE_BYTES) {
+      throw new RevenueDependencyErrorV1("SELLER_OS_CLOUD_READ_RELAY_SOURCE_READ_FAILED", "ASSISTANT_RELAY", envelope.requestId)
+    }
+    if (!response.ok) {
+      let failure: unknown = null
+      try { failure = JSON.parse(responseText) } catch { /* no raw response disclosure */ }
+      const details = revenueFailureV1(failure, "ASSISTANT_RELAY", "SELLER_OS_CLOUD_READ_RELAY_SOURCE_READ_FAILED", envelope.requestId)
+      throw new RevenueDependencyErrorV1(details.ERROR_CODE, details.DEPENDENCY_STAGE, details.TRACE_ID)
     }
     const payload = JSON.parse(responseText) as Record<string, unknown>
     if (payload.contractVersion !== SELLER_OS_CLOUD_READ_RELAY_VERSION ||
@@ -482,7 +489,8 @@ export function createSellerOsCloudReadRelayExecutorV1(options: {
       payload.result,
     )
     assertRelayResultSafe(result)
-    return result
+    return result && typeof result === "object" && !Array.isArray(result)
+      ? { ...result, TRACE_ID: envelope.requestId } : result
   }
 }
 
@@ -492,6 +500,7 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     environment?: NodeJS.ProcessEnv
     now?: () => number
     monitorLoader?: () => Promise<CommercialMonitorGetDto>
+    previewCollector?: (itemId: string, traceId: string) => Promise<unknown>
     officialOrdersCollector?: () => Promise<SellerOsOfficialOrdersReadV1>
     whatsappSaleAlertStatusCollector?: () => Promise<
       SellerOsWhatsappSaleAlertStatusV1
@@ -612,6 +621,12 @@ export async function handleSellerOsCloudReadRelayRequestV1(
           return runtime.collectSellerOsDemandFirstBroadNetServerReplayV1()
         })
       result = await collector()
+    } else if (envelope.toolName === "seller_os_prepare_listing_optimization_preview") {
+      const collector = options.previewCollector ?? (async (itemId, traceId) => {
+        const preview = await import("../seller-os/revenue-first-preview-v1")
+        return preview.loadRevenueFirstListingPreviewV1(itemId, traceId)
+      })
+      result = await collector(String(envelope.arguments.itemId ?? ""), envelope.requestId)
     } else if (envelope.toolName === "seller_os_get_product_case" ||
         envelope.toolName === "seller_os_get_publication_execution") {
       const accountModule = await import("./ebay-seller-account-scope")
@@ -625,7 +640,7 @@ export async function handleSellerOsCloudReadRelayRequestV1(
               supabase: supabaseModule.getSupabaseAdminClient(),
               accountKey: account.accountKey as string,
               identityType: args.identityType as never,
-              identity: String(args.identity ?? ""),
+              identity: String(args.identity ?? ""), traceId: envelope.requestId,
               detailMode: args.detailMode as never,
             })
           })
@@ -689,7 +704,7 @@ export async function handleSellerOsCloudReadRelayRequestV1(
         credentialsIncluded: false, buyerPiiIncluded: false,
         marketplaceWrites: 0 },
     }, { status: 200, headers: SAFE_HEADERS })
-  } catch {
+  } catch (error) {
     if (envelope.toolName === "seller_os_get_product_case") {
       // Expected source failures are returned as bounded Product Case
       // limitations by the canonical reader. A thrown exception is unexpected.
@@ -697,8 +712,8 @@ export async function handleSellerOsCloudReadRelayRequestV1(
         classification: "UNEXPECTED_RUNTIME_EXCEPTION", origin: "APPLICATION",
         operation: "seller_os_get_product_case",
       })
-      return relayError(500, "SELLER_OS_PRODUCT_CASE_UNEXPECTED_EXCEPTION")
+      return relayError(500, "SELLER_OS_PRODUCT_CASE_UNEXPECTED_EXCEPTION", error, envelope.requestId)
     }
-    return relayError(502, "SELLER_OS_CLOUD_READ_RELAY_SOURCE_READ_FAILED")
+    return relayError(502, "SELLER_OS_CLOUD_READ_RELAY_SOURCE_READ_FAILED", error, envelope.requestId)
   }
 }

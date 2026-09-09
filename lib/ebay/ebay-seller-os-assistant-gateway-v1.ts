@@ -22,6 +22,8 @@ type SellerOsAssistantMonitorWithOfficialOrdersV1 = CommercialMonitorGetDto & {
 }
 
 export const SELLER_OS_ASSISTANT_TOOLS_V1 = Object.freeze([
+  ["seller_os_prepare_listing_optimization_preview", "Prepare listing optimization preview",
+    "Prepare a draft-only optimization Preview for one exact eBay Item ID using existing verified linkage, durable Quality and Keyword V2.1. Returns NEEDS_EVIDENCE when blocked. No persistence, generation, research, spend or publication."],
   ["seller_os_get_commercial_context", "Get commercial context",
     "Use this when the user asks what needs attention today or wants a compact Seller OS portfolio summary."],
   ["seller_os_get_exception_queue", "Get exception queue",
@@ -178,6 +180,8 @@ function safeListing(
     monitorCoverage,
     recentSales: assistantRecentSalesForItem(monitor, itemId),
     qualityGuidance: guidance,
+    qualityReport: { ...monitor.backend.listingQualityReport,
+      recommendations: monitor.backend.listingQualityReport.recommendations.filter(row => row.listingKey === listing.key) },
     diagnosis: decision ? { classification: decision.classification, evidenceStatus: decision.evidenceStatus,
       reasonCodes: decision.reasonCodes, recommendedOperationalAction: decision.recommendedAction,
       scope: "MONITOR_EVIDENCE_DIAGNOSTIC",
@@ -299,7 +303,7 @@ export function buildAssistantCommercialContextV1(
       row.experimentOperationalState === "READY_TO_EVALUATE"), 20),
     stockSupplierExceptions: cap(queue.filter((row) => row.classification === "CRITICAL_OPERATIONAL" ||
       row.reasonCodes.some((reason) => /STOCK|SUPPLIER/.test(reason))), 20),
-    qualityGuidance: { status: monitor.backend.listingQualityReport.status,
+    qualityGuidance: { ...monitor.backend.listingQualityReport,
       recommendations: cap(monitor.backend.listingQualityReport.recommendations, 20) },
     newOpportunities: { status: "UNPROVEN", resultCount: null, entries: [],
       scopeId: integrity.canonicalCohort.scopeId,
@@ -451,7 +455,7 @@ export function executeSellerOsAssistantToolV1(input: {
   if (input.toolName === "seller_os_get_quality_guidance") {
     const proven = ["AVAILABLE", "PARTIAL"].includes(
       input.monitor.backend.listingQualityReport.status)
-    return { status: input.monitor.backend.listingQualityReport.status,
+    return { ...input.monitor.backend.listingQualityReport,
       resultCount: proven
         ? input.monitor.backend.listingQualityReport.recommendations.length : null,
       recommendations: cap(input.monitor.backend.listingQualityReport.recommendations, maximum),

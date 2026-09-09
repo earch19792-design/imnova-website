@@ -1,3 +1,4 @@
+import { revenueFailureV1 } from "../seller-os/revenue-first-diagnostics-v1"
 import { inspectPrecompiledRuntimeArtifactV1 } from "./ebay-seller-os-precompiled-artifact-v1.mjs"
 import { resolve } from "node:path"
 
@@ -446,7 +447,9 @@ export function createSellerOsMcpServerV1(options: {
   const monitorLoader = options.monitorLoader ?? loadSellerOsAssistantMonitorV1
   const monitor = () => (monitorPromise ??= monitorLoader())
   const localToolExecutor: SellerOsAssistantToolExecutorV1 = async (input) =>
-    input.toolName === "seller_os_get_product_case" ||
+    input.toolName === "seller_os_prepare_listing_optimization_preview"
+      ? (await import("../seller-os/revenue-first-preview-v1")).loadRevenueFirstListingPreviewV1(String(input.arguments.itemId ?? ""))
+      :     input.toolName === "seller_os_get_product_case" ||
       input.toolName === "seller_os_get_publication_execution"
       ? (() => {
           const account = getEbaySellerAccountScopeConfiguration()
@@ -496,7 +499,8 @@ export function createSellerOsMcpServerV1(options: {
         })
       : configuredToolExecutor(input))
   for (const descriptor of SELLER_OS_ASSISTANT_TOOLS_V1) {
-    const needsItem = descriptor.name === "seller_os_get_listing_intelligence"
+    const needsItem = descriptor.name === "seller_os_get_listing_intelligence" ||
+      descriptor.name === "seller_os_prepare_listing_optimization_preview"
     const needsCase = descriptor.name === "seller_os_get_opportunity_case"
     const config = { title: descriptor.title,
       description: descriptor.description,
@@ -514,8 +518,8 @@ export function createSellerOsMcpServerV1(options: {
           arguments: args as Record<string, unknown> })
         return { structuredContent: { result }, content: [{ type: "text" as const,
           text: `Seller OS returned bounded read-only evidence for ${descriptor.title}.` }] }
-      } catch {
-        const result = { status: "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED",
+      } catch (error) {
+        const result = { ...revenueFailureV1(error, "ASSISTANT_EVIDENCE", "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED"), status: "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED",
           credentialsIncluded: false, buyerPiiIncluded: false, marketplaceWrites: 0 }
         return { isError: true, structuredContent: { result }, content: [{ type: "text" as const,
           text: "Seller OS stopped the bounded read safely; no evidence was inferred." }] }
@@ -543,8 +547,8 @@ export function createSellerOsMcpServerV1(options: {
           arguments: args as Record<string, unknown> })
         return { structuredContent: { result }, content: [{ type: "text" as const,
           text: `Seller OS returned bounded read-only audit evidence for ${descriptor.title}.` }] }
-      } catch {
-        const result = { status: "SELLER_OS_AUDIT_READ_FAILED_CLOSED",
+      } catch (error) {
+        const result = { ...revenueFailureV1(error, "ASSISTANT_EVIDENCE", "SELLER_OS_AUDIT_READ_FAILED_CLOSED"), status: "SELLER_OS_AUDIT_READ_FAILED_CLOSED",
           credentialsIncluded: false, buyerPiiIncluded: false,
           databaseBusinessWrites: 0, marketplaceWrites: 0 }
         return { isError: true, structuredContent: { result }, content: [{
@@ -572,8 +576,8 @@ export function createSellerOsMcpServerV1(options: {
         })
         return { structuredContent: { result }, content: [{ type: "text" as const,
           text: "Seller OS completed the bounded read-only demand-first replay." }] }
-      } catch {
-        const result = { status: "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED",
+      } catch (error) {
+        const result = { ...revenueFailureV1(error, "ASSISTANT_EVIDENCE", "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED"), status: "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED",
           credentialsIncluded: false, buyerPiiIncluded: false, marketplaceWrites: 0 }
         return { isError: true, structuredContent: { result }, content: [{
           type: "text" as const,
@@ -1034,8 +1038,8 @@ export function createSellerOsMcpServerV1(options: {
                   ? await whatsappSaleAlertStatusCollector()
               : await toolExecutor({ toolName,
                 arguments: listingMatch ? { itemId: listingMatch[1] } : {} })
-      } catch {
-        result = { status: "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED",
+      } catch (error) {
+        result = { ...revenueFailureV1(error, "ASSISTANT_EVIDENCE", "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED"), status: "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED",
           credentialsIncluded: false, buyerPiiIncluded: false, marketplaceWrites: 0 }
       }
     }

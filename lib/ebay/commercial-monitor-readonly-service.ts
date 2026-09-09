@@ -3804,6 +3804,7 @@ function liveCertificationProjection(
 }
 
 function baseReport(input: {
+  listingQualityReportArtifact?: unknown
   marketplace: MarketplaceContext
   generatedAt: string
   connectionStatus: ObservationAvailability
@@ -3840,6 +3841,7 @@ function baseReport(input: {
     learning: input.learning,
     timeline: input.timeline,
     backend: buildCommercialMonitorBackendV1({
+      listingQualityReportArtifact: input.listingQualityReportArtifact,
       currentLiveAuthority: input.currentLiveAuthority,
       liveCertification: input.liveCertification,
       listings: input.listings,
@@ -4258,5 +4260,8 @@ export async function getCommercialMonitorReadonly(
     currentLiveAuthority,
     liveAnalytics: effectiveLive.analytics,
     historicalSnapshots: sources.commercialSnapshots.rows,
+    listingQualityReportArtifact: sources.listingQualityReport?.status === "ERROR"
+      ? { durable: true, status: "UNAVAILABLE", reportExists: null }
+      : sources.listingQualityReport?.rows[0],
   }))
 }

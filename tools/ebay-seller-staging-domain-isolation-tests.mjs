@@ -137,6 +137,7 @@ test("canonical links exist and navigation remains mobile accessible", () => {
 test("route and bundle surface regress downward", () => {
   assert.equal(exists("app/admin/ebay/monitor/page.tsx"), true, "canonical read-only monitor page is missing")
   assert.equal(exists("app/api/admin/ebay/monitor/route.ts"), true, "canonical read-only monitor API is missing")
+  const listingOptimizationPreviewPage = exists("app/admin/ebay/listing-optimization/preview/page.tsx")
   const temporarySellerOauthPage = exists(
     "app/admin/ebay/monitor/seller-oauth-reauth/page.tsx",
   )
@@ -225,9 +226,10 @@ test("route and bundle surface regress downward", () => {
   // Sales, Postventa and Mayel. Publisher completion adds one canonical
   // control-plane page while keeping Quick Pick as its preparation route.
   // Product Journey adds one canonical read-only product detail page.
+  // Revenue-first optimization adds one authenticated, ephemeral Preview page.
   // Their old routes/runtimes remain intact.
   assert.ok(
-    countNamed("app", "page.tsx") <= 28 + Number(temporarySellerOauthPage) +
+    countNamed("app", "page.tsx") <= 28 + Number(listingOptimizationPreviewPage) + Number(temporarySellerOauthPage) +
       Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
       Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage) +
       Number(lunaQuickPickPage) + Number(productJourneyPage),

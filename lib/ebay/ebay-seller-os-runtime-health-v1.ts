@@ -253,7 +253,7 @@ function unavailableRuntimeCatalogV1(
 
 function normalizedToolNamesV1(names: readonly string[]) {
   if (names.length > 100 || names.some((name) =>
-    !/^seller_os_get_[a-z_]+$|^(?:search|fetch)$/.test(name))) return null
+    !/^(?:seller_os_get_[a-z_]+|seller_os_prepare_listing_optimization_preview|search|fetch)$/.test(name))) return null
   const unique = [...new Set(names)].sort()
   return unique.length === names.length ? unique : null
 }

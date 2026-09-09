@@ -1,3 +1,4 @@
+import { revenueFailureV1 } from "@/lib/seller-os/revenue-first-diagnostics-v1"
 export const runtime = "nodejs"
 export const maxDuration = 300
 
@@ -2278,6 +2279,8 @@ export async function POST(req: Request) {
       : /REQUIRED|INVALID|NOT_ALLOWED|BELOW_500PX|MANUAL_REMOVAL|MISMATCH/.test(code)
       ? 400
       : /NOT_FOUND/.test(code) ? 404 : 502
-    return NextResponse.json({ success: false, error: code }, { status })
+    return NextResponse.json({ success: false, error: code,
+      ...revenueFailureV1(error, "IMAGE_REQUEST_VALIDATION", "EBAY_IMAGE_PIPELINE_FAILED"),
+    }, { status })
   }
 }

@@ -1,3 +1,4 @@
+import { revenueFailureV1 } from "@/lib/seller-os/revenue-first-diagnostics-v1"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 40
@@ -63,8 +64,8 @@ export async function POST(req: Request) {
     const monitor = await loadSellerOsAssistantMonitorV1()
     result = await runSellerOsCopilotV1({ monitor, prompt: body.prompt,
       contextRef: body.contextRef })
-  } catch {
-    return NextResponse.json({ success: false, error: "COPILOT_EVIDENCE_READ_FAILED_CLOSED",
+  } catch (error) {
+    return NextResponse.json({ success: false, ...revenueFailureV1(error, "COPILOT", "COPILOT_EVIDENCE_READ_FAILED_CLOSED"), error: "COPILOT_EVIDENCE_READ_FAILED_CLOSED",
       credentialsIncluded: false, buyerPiiIncluded: false, marketplaceWrites: 0 }, { status: 503 })
   }
   const failed = ["COPILOT_PROMPT_REQUIRED", "COPILOT_SENSITIVE_INPUT_REJECTED"].includes(result.status)

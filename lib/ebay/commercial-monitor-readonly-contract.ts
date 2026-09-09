@@ -1409,6 +1409,8 @@ export type CommercialDecisionReason =
   | "HEALTHY_EVIDENCE_WAIT_FOR_NEXT_REVIEW"
 
 export type EbayGuidanceComparisonReason =
+  | "QUALITY_REPORT_STALE_WAIT"
+  | "QUALITY_REPORT_NEEDS_EVIDENCE"
   | "LIVE_ANALYTICS_CONTRADICTS_GUIDANCE"
   | "GUIDANCE_SUPPORTED_BY_DATA_QUALITY_GAP"
   | "ACTIVE_EXPERIMENT_PROTECTS_VARIABLE"
@@ -1419,6 +1421,8 @@ export type EbayGuidanceComparisonReason =
   | "GUIDANCE_NOT_AVAILABLE"
 
 export type EbayListingQualityRecommendation = {
+  freshness?: "CURRENT" | "STALE"
+  actionState?: "ACTIONABLE" | "WAIT" | "NEEDS_EVIDENCE"
   source: "EBAY_LISTING_QUALITY_REPORT"
   sourceVersion: string
   listingKey: string | null
@@ -1459,6 +1463,8 @@ export type CommercialListingDecisionV1 = {
 }
 
 export type EbayGuidanceComparisonV1 = {
+  freshness?: "CURRENT" | "STALE"
+  actionState?: "ACTIONABLE" | "WAIT" | "NEEDS_EVIDENCE"
   listingKey: string
   ebayGuidanceStatus: "AVAILABLE" | "MISSING" | "UNPROVEN"
   sellerOsDiagnosisStatus: "AVAILABLE" | "UNPROVEN"
@@ -1839,9 +1845,15 @@ export type CommercialMonitorBackendV1 = {
     notVisibleDoesNotMeanNotMonitored: true
   }
   listingQualityReport: {
+    reportExists?: boolean | null
+    importId?: string | null
+    reportDate?: string | null
+    importedAt?: string | null
+    freshness?: "CURRENT" | "STALE" | null
+    coverage?: { liveListingsCovered: number; historicalLiveScopeCount: number; nonliveRowsExcluded: number } | null
     status: CommercialMonitorCapabilityStatus
     source: "EBAY_LISTING_QUALITY_REPORT"
-    persistenceStatus: "IN_MEMORY_READ_ONLY" | "NEW_DDL_REQUIRED"
+    persistenceStatus: "IN_MEMORY_READ_ONLY" | "NEW_DDL_REQUIRED" | "DURABLE_READ_ONLY"
     limitationCode: string | null
     recommendations: EbayListingQualityRecommendation[]
   }

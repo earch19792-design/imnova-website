@@ -1,3 +1,5 @@
+import { revenueFailureV1, revenueTraceIdV1 } from "@/lib/seller-os/revenue-first-diagnostics-v1"
+import { canGenerateVisualFindingV1 } from "@/lib/ebay/ebay-visual-generation-capabilities-v1"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
@@ -156,15 +158,15 @@ export async function POST(req: Request) {
     }
   }
   if (body.mode === "VISUAL_VARIANT_CREATE") {
+    const traceId = revenueTraceIdV1(req.headers.get("x-seller-os-trace-id"))
     const ebayItemId = typeof body.ebayItemId === "string" &&
       /^\d{9,15}$/.test(body.ebayItemId) ? body.ebayItemId : ""
     const findingCode = typeof body.findingCode === "string"
       ? body.findingCode.slice(0, 80) : ""
-    const allowedFinding = ["LOW_FRAME_UTILIZATION", "EXCESS_DEAD_SPACE",
-      "OFF_CENTER_PRODUCT", "EDGE_CROPPING_RISK",
-      "WHITE_BACKGROUND_NOT_PROVEN"].includes(findingCode)
+    const allowedFinding = canGenerateVisualFindingV1(findingCode)
     if (!ebayItemId || !allowedFinding) return NextResponse.json({ success: false,
-      error: "VISUAL_VARIANT_CREATE_INVALID" }, { status: 400 })
+      error: "VISUAL_VARIANT_CREATE_INVALID",
+      ...revenueFailureV1(new Error("VISUAL_VARIANT_CREATE_INVALID"), "IMAGE_REQUEST_VALIDATION", "VISUAL_VARIANT_CREATE_INVALID", traceId) }, { status: 400 })
     try {
       const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
       const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
@@ -177,7 +179,7 @@ export async function POST(req: Request) {
           "EXCESS_DEAD_SPACE" | "OFF_CENTER_PRODUCT" |
           "EDGE_CROPPING_RISK" | "WHITE_BACKGROUND_NOT_PROVEN",
         variantCount: Number(body.variantCount ?? 1),
-        apiKey: process.env.OPENAI_API_KEY?.trim() ?? "",
+        traceId, apiKey: process.env.OPENAI_API_KEY?.trim() ?? "",
         model: process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2",
       })
       return NextResponse.json({ success: true, visualVariantGeneration: result,
@@ -185,6 +187,7 @@ export async function POST(req: Request) {
     } catch (error) {
       return NextResponse.json({ success: false,
         error: sellerOsVisualVariantSafeCodeV1(error), marketplaceWrites: 0,
+        ...revenueFailureV1(error, "IMAGE_REQUEST_VALIDATION", "SELLER_OS_VISUAL_VARIANT_FAILED", traceId),
         automaticRetryOccurred: false }, { status: 409 })
     }
   }

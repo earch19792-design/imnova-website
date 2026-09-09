@@ -1040,7 +1040,7 @@ export function buildSystemReviewBundleV1(input: {
       sourceStatus: dataParity.stock,
     },
     qualityReport: {
-      status: input.monitor.backend.listingQualityReport.status,
+      ...input.monitor.backend.listingQualityReport,
       limitationCode: input.monitor.backend.listingQualityReport.limitationCode,
       recommendationCount: dataParity.qualityReport.zeroIsAuthoritative
         ? input.monitor.backend.listingQualityReport.recommendations.length : null,
