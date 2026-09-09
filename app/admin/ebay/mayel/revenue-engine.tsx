@@ -78,7 +78,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   function changePolicy(p: Partial<PromotionPolicy>) { setPolicy(old => ({ ...old, ...p })); setResult(null); setPreset("Personalizado") }
   return <section className="space-y-5">
     <div className="flex justify-end">
-      <a className={`${button} inline-flex items-center gap-2`} href="/manual-mayel-menu-v1.pdf" target="_blank" rel="noopener noreferrer"
+      <a className={`${button} inline-flex items-center gap-2`} href="/manual-mayel-menu-v1.pdf?v=20260909" target="_blank" rel="noopener noreferrer"
         aria-label="Ayuda / Manual de Mayel (abre en otra pestaña)">Ayuda / Manual</a>
     </div>
     <nav aria-label="Acciones principales de Mayel" className="grid gap-2 sm:grid-cols-4">

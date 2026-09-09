@@ -19,6 +19,21 @@ El sistema revisa primero cómo está funcionando ese producto. Puede recomendar
 
 La primera vez, elige el **Periodo** y el **Horario de la cuenta**. Periodo permite revisar un día, siete días o treinta días. Usa el horario acordado para la cuenta; no elijas uno al azar. Que un periodo diga “Sin datos” no significa que el producto no haya tenido visitas o ventas.
 
+**Revisar imágenes aunque eBay esté esperando**
+
+Puedes seguir con las imágenes que Mayel ya dejó preparadas. No necesitas volver a subirlas a ChatGPT.
+
+1. En **Mejorar listings**, marca el producto y pulsa **Abrir mejoras guardadas**.
+2. Compara las imágenes y pulsa **Preparar esta imagen para revisión**.
+3. Comprueba que es el mismo producto, sin cambiar color, piezas ni logos y sin inventar accesorios o promesas. Marca la confirmación sólo después de revisarlo.
+4. Pulsa **Confirmar y enviar cuando eBay esté disponible**.
+
+**Borrador guardado** todavía no está confirmado. **Pendiente de sincronización** significa que está confirmado y conservado en el sistema. No necesitas dejar el iPad abierto. El proceso existente revisa la cola cada 15 minutos y envía las mejoras cuando eBay permite comprobarlas, por turnos para cuidar la cuota.
+
+**Actualizado y verificado en eBay** aparece sólo después de comprobar el cambio allí. Si el listing cambió y la propuesta ya no encaja, se conserva para revisión; no se sobrescribe a ciegas.
+
+Este flujo cambia la imagen principal y conserva las demás. No activa publicidad ni publica productos nuevos.
+
 **🚀 Impulsar ventas**
 
 Úsalo para preparar una propuesta de publicidad cuidando la ganancia.

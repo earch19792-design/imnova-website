@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
+import { resolveMayelVisualRegistryBindingV1 } from "./ebay-mayel-visual-registry-binding-v1"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -250,6 +251,10 @@ async function loadContext(input: {
   if (taskError || !task || task.status !== "OWNER_PREVIEW_READY") {
     throw new Error("MAYEL_VISUAL_PHASE_B_TASK_NOT_READY")
   }
+  task.active_listing_id = await resolveMayelVisualRegistryBindingV1({
+    supabase: input.supabase, accountKey: input.accountKey, taskId: String(task.id),
+    itemId: String(task.ebay_item_id), currentRegistryId: task.active_listing_id ?? null,
+  })
   const [{ data: active, error: activeError },
     { data: assets, error: assetsError },
     { data: execution, error: executionError },
@@ -258,6 +263,7 @@ async function loadContext(input: {
     input.supabase.from("ebay_active_listings")
       .select("id,ebay_item_id,ebay_sku,title,listing_status,raw_payload")
       .eq("id", task.active_listing_id).eq("ebay_item_id", task.ebay_item_id)
+      .eq("account_key", input.accountKey)
       .maybeSingle(),
     input.supabase.from("ebay_listing_image_assets")
       .select("id,status,mayel_approval_status,owner_approval_status,mayel_output_role,output_sha256,public_url,published_storage_path,product_truth_digest,source_image_set_digest")

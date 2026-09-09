@@ -66,3 +66,13 @@ task stores `s-l140.png` and the generator uses `s-l1600.png`. Import now reuses
 `resolveMaximumOfficialEbayImageV1`; the database guard enforces the equivalent
 exact image/host/format/query identity. Different images remain rejected. No
 source evidence is overwritten or reclassified as fresh.
+
+## Existing listings without publication packages
+
+The selected real task has an exact active-registry linkage but no original
+Seller OS publication package. The image execution ledger previously required
+that package. It now admits its absence only for delegated Trading image
+executions with exact registry, task and manifest bindings. Existing publication
+package evidence remains attached when present; no package is fabricated. A
+saved draft missing its registry link can bind one unique account/item active
+row before the unchanged official preflight. Missing or ambiguous rows fail closed.
