@@ -1,0 +1,959 @@
+{
+  "contract": "SELLER_OS_ASSISTANT_FINAL_ACTIVATION_CLOSEOUT_V1",
+  "recordedAt": "2026-09-09T21:28:18.194492+00:00",
+  "status": {
+    "STATUS": "BLOCKED_CANARIES_NAVIGATION_FIXED_PREPROD",
+    "IMPLEMENTATION_SHA": "f4b5cca12b5717558ec13d897100ea9bce629b91",
+    "SAVED_IMAGE_PHYSICAL_CANARY_PASS": false,
+    "MANUAL_IMAGE_REUPLOAD_REQUIRED": false,
+    "ECONOMICS_PROVEN": false,
+    "PROFIT_BEFORE_ADS": null,
+    "MARGIN_BEFORE_ADS": null,
+    "MAX_SAFE_AD_RATE_PCT": null,
+    "AD_3_PERCENT_SAFE": false,
+    "AD_4_PERCENT_SAFE": false,
+    "AD_5_PERCENT_SAFE": false,
+    "EBAY_ADS_OFFICIAL_CONTRACT_CERTIFIED": false,
+    "EBAY_ADS_WRITE_ENABLED": false,
+    "SINGLE_LISTING_ADS_CANARY_READY": false,
+    "SINGLE_LISTING_ADS_CANARY_PASS": false,
+    "OFFICIAL_AD_READBACK_PASS": false,
+    "MULTI_LISTING_ADS_WRITE_ENABLED": false,
+    "FULL_SUITE_RESULT": "386/386 PASS",
+    "NEW_REGRESSION_COUNT": 0,
+    "ASSISTANT_OPERATIONAL_CLOSEOUT": false,
+    "REVENUE_PROMOTION_ACTIVATION_READY": false,
+    "NEXT_ACTION": "Usar la sesión del operador asignado para un único PREPARE_REVIEW; resolver evidencias económicas y elegibilidad/cuota Ads; presentar Preview completo antes de pedir autorización OWNER de gasto."
+  },
+  "deployment": {
+    "id": "dpl_HcedBxjv4xe6pk5oKzVFkb14xQS1",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-oumz0mva2-earch19792-6888s-projects.vercel.app",
+    "sha": "f4b5cca12b5717558ec13d897100ea9bce629b91",
+    "alias": "https://imnova-seller-os-preprod.vercel.app",
+    "scope": "DEDICATED_PREPROD_PROJECT_ONLY"
+  },
+  "validation": {
+    "artifactVersion": "SELLER_OS_VALIDATION_EVIDENCE_V1",
+    "producer": {
+      "id": "SELLER_OS_VALIDATION_RECORDER",
+      "version": "SELLER_OS_VALIDATION_RECORDER_V2"
+    },
+    "source": "LOCAL_VALIDATION",
+    "validatedHeadSha": "f4b5cca12b5717558ec13d897100ea9bce629b91",
+    "startedAt": "2026-09-09T21:19:50.390Z",
+    "completedAt": "2026-09-09T21:22:53.719Z",
+    "headChangedDuringValidation": false,
+    "workspaceChangedDuringValidation": false,
+    "validationSubject": {
+      "type": "CLEAN_COMMITTED_HEAD",
+      "validatedWorkingTreeStatus": "CLEAN",
+      "validatedWorkspaceFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "fingerprintVersion": "SELLER_OS_WORKSPACE_FINGERPRINT_V1",
+      "workspaceStableDuringValidation": true
+    },
+    "checks": {
+      "tests": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 72884,
+        "completedAt": "2026-09-09T21:21:03.290Z",
+        "scope": "FULL_SELLER_OS_SUITE",
+        "passed": 386,
+        "failed": 0,
+        "skipped": 0,
+        "failureSummaries": [],
+        "failuresTruncated": false
+      },
+      "typecheck": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 41506,
+        "completedAt": "2026-09-09T21:21:44.796Z"
+      },
+      "lint": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 15446,
+        "completedAt": "2026-09-09T21:22:00.242Z"
+      },
+      "build": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 52948,
+        "completedAt": "2026-09-09T21:22:53.191Z"
+      },
+      "sellerOsAudit": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 501,
+        "completedAt": "2026-09-09T21:22:53.694Z"
+      },
+      "targetedRuntimeSecurity": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 4302,
+        "completedAt": "2026-09-09T21:19:50.388Z"
+      }
+    },
+    "buildArtifact": {
+      "version": "SELLER_OS_PRECOMPILED_ARTIFACT_V1",
+      "sourceCommitSha": "f4b5cca12b5717558ec13d897100ea9bce629b91",
+      "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "buildId": "i24ESfkaiyOF3ZCVGDXy7",
+      "buildArtifactDigest": "sha256:f556ca289785086f8a74f1de56b63c828acc64292ee56588e42a47357c9bcf23",
+      "payloadFileCount": 1464,
+      "payloadByteCount": 67628982,
+      "builtAt": "2026-09-09T21:22:53.191Z",
+      "nodeVersion": "v22.23.0",
+      "nextVersion": "16.2.6",
+      "dynamicCompilationAtBoot": false
+    }
+  },
+  "navigationBefore": {
+    "observedAt": "2026-09-09T21:14:49.490Z",
+    "events": [
+      {
+        "kind": "REQUEST",
+        "at": "2026-09-09T21:14:33.005Z",
+        "type": "Document",
+        "path": "/admin",
+        "initiator": "script",
+        "stack": [
+          {
+            "function": "",
+            "url": "/_next/static/chunks/app/admin/ebay/opportunity-queue/research/page-6582be78801a3e20.js",
+            "line": 0
+          }
+        ]
+      },
+      {
+        "kind": "RESPONSE",
+        "path": "/admin",
+        "status": 200
+      },
+      {
+        "kind": "NAVIGATION",
+        "at": "2026-09-09T21:14:33.297Z",
+        "path": "/admin"
+      },
+      {
+        "kind": "REQUEST",
+        "at": "2026-09-09T21:14:33.399Z",
+        "type": "Fetch",
+        "path": "/api/admin/session",
+        "initiator": "script",
+        "stack": [
+          {
+            "function": "",
+            "url": "/_next/static/chunks/app/admin/page-46dbcf70814597cb.js",
+            "line": 0
+          }
+        ]
+      },
+      {
+        "kind": "RESPONSE",
+        "path": "/api/admin/session",
+        "status": 200
+      }
+    ],
+    "samples": [
+      {
+        "at": "2026-09-09T21:14:24.406Z",
+        "path": "/admin/ebay/opportunity-queue/research",
+        "heading": "Revalidando mercado",
+        "readyState": "complete"
+      },
+      {
+        "at": "2026-09-09T21:14:29.417Z",
+        "path": "/admin/ebay/opportunity-queue/research",
+        "heading": "La revalidación quedó pendiente",
+        "readyState": "complete"
+      },
+      {
+        "at": "2026-09-09T21:14:34.458Z",
+        "path": "/admin",
+        "heading": "¿Qué necesita atención ahora?",
+        "readyState": "complete"
+      },
+      {
+        "at": "2026-09-09T21:14:39.464Z",
+        "path": "/admin",
+        "heading": "¿Qué necesita atención ahora?",
+        "readyState": "complete"
+      },
+      {
+        "at": "2026-09-09T21:14:44.476Z",
+        "path": "/admin",
+        "heading": "¿Qué necesita atención ahora?",
+        "readyState": "complete"
+      }
+    ],
+    "observerNavigations": 0
+  },
+  "navigationAfter": {
+    "observedAt": "2026-09-09T21:28:08.284Z",
+    "itemId": "366582671136",
+    "measurementSeconds": 75,
+    "navigationCount": 0,
+    "events": [],
+    "samples": [
+      {
+        "at": "2026-09-09T21:25:54.736Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:25:59.788Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:04.801Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:09.825Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:14.836Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:19.858Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:24.881Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:29.889Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:34.893Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:39.913Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:44.930Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:49.936Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:54.956Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:26:59.983Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      },
+      {
+        "at": "2026-09-09T21:27:04.993Z",
+        "path": "/admin/ebay/mayel",
+        "heading": "Tu próxima decisión comercial",
+        "selectionPreserved": true,
+        "savedPreviewVisible": true,
+        "bodyRequestsReupload": false
+      }
+    ],
+    "stable": true,
+    "draftPreparationRequests": 0,
+    "marketplaceWrites": 0
+  },
+  "savedImageRead": {
+    "observedAt": "2026-09-09T21:14:44.010Z",
+    "httpStatus": 200,
+    "success": true,
+    "error": null,
+    "traceId": "962abd9e-85dc-4e65-afc9-5e0861b2e2e5",
+    "proposals": [
+      {
+        "itemId": "366582671136",
+        "assetId": "abbbc8d2-e8fe-4d87-8d28-6c9e419c8bd2",
+        "experimentId": "34078a7e-85cc-4a35-ae26-24e65784e7f3",
+        "taskId": "5161b7d3-37cf-4221-a6d8-2dde6940ef57",
+        "status": "DRAFT",
+        "editable": false,
+        "imported": false,
+        "previewAvailable": true,
+        "sourceImageSetDigest": "sha256:83c39d4d83434bafe9cebc6958d5d77b64e357ab6788cbae0cdca95d65a41972",
+        "diagnostics": {
+          "latestExecutionPhase": null,
+          "taskStatus": "PROMPT_READY",
+          "manifestDigest": null
+        }
+      }
+    ],
+    "marketplaceWrites": 0,
+    "tradingCalls": 0
+  },
+  "physicalSimulations": {
+    "policyScope": "PREVIOUS_CANARY_PARAMETERS_ONLY_NOT_CONFIRMED_OWNER_SPEND_POLICY",
+    "results": [
+      {
+        "rate": 3,
+        "observedAt": "2026-09-09T21:17:05.676Z",
+        "httpStatus": 400,
+        "success": false,
+        "error": "EXACT_CURRENT_LIVE_LISTING_REQUIRED",
+        "traceId": "e3957318-9203-4d9d-a39b-0d7576e1b36a",
+        "result": null
+      },
+      {
+        "rate": 4,
+        "observedAt": "2026-09-09T21:17:06.027Z",
+        "httpStatus": 400,
+        "success": false,
+        "error": "EXACT_CURRENT_LIVE_LISTING_REQUIRED",
+        "traceId": "e90d8971-3fbb-4615-b299-095213ae1914",
+        "result": null
+      },
+      {
+        "rate": 5,
+        "observedAt": "2026-09-09T21:17:06.650Z",
+        "httpStatus": 400,
+        "success": false,
+        "error": "EXACT_CURRENT_LIVE_LISTING_REQUIRED",
+        "traceId": "4d9d3451-0c4c-4ecb-a5d0-b79b370171ec",
+        "result": null
+      }
+    ]
+  },
+  "economicRows": {
+    "httpStatus": 201,
+    "observedAt": "2026-09-09T21:11:44.648Z",
+    "data": [
+      {
+        "ebay_item_id": "366650054490",
+        "kind": "EBAY_LIVE_PRICE",
+        "evidence_id": "economic-evidence-v1:sha256:14837aec9ed05d0bae4efb17904a74fefe0da2de83689effb5b91501e52752af",
+        "value_amount": "18.7400",
+        "value_currency": "USD",
+        "captured_at": "2026-09-09 18:23:00.493+00",
+        "fresh_until": "2026-09-09 19:23:00.493+00",
+        "freshness_status": "FRESH",
+        "source_authority": "EBAY_TRADING_GET_MY_EBAY_SELLING",
+        "limitation_code": null
+      },
+      {
+        "ebay_item_id": "366650054490",
+        "kind": "LUNA_CURRENT_COST",
+        "evidence_id": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+        "value_amount": "1.7900",
+        "value_currency": "USD",
+        "captured_at": "2026-09-09 13:37:34.154+00",
+        "fresh_until": "2026-09-09 19:37:34.154+00",
+        "freshness_status": "FRESH",
+        "source_authority": "LUNA_PUBLIC_EXACT_PRODUCT_VARIANT_READ_V1",
+        "limitation_code": null
+      },
+      {
+        "ebay_item_id": "366650054490",
+        "kind": "LUNA_CURRENT_SHIPPING",
+        "evidence_id": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+        "value_amount": "6.9900",
+        "value_currency": "USD",
+        "captured_at": "2026-09-09 17:40:47.783+00",
+        "fresh_until": "2026-09-09 23:40:47.783+00",
+        "freshness_status": "FRESH",
+        "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+        "limitation_code": null
+      },
+      {
+        "ebay_item_id": "366650054490",
+        "kind": "EXPECTED_EBAY_FEE",
+        "evidence_id": "economic-evidence-v1:sha256:64e23587d1771229e8af15a0f3a70c76e2495898c6e84e13ac2f5ca545ab4581",
+        "value_amount": null,
+        "value_currency": null,
+        "captured_at": "2026-09-09 14:07:43.524+00",
+        "fresh_until": null,
+        "freshness_status": "SOURCE_UNAVAILABLE",
+        "source_authority": "EBAY_OFFICIAL_CATEGORY_FEE_POLICY_RESOLVER_V1",
+        "limitation_code": "OFFICIAL_CATEGORY_FEE_POLICY_NOT_CERTIFIED"
+      },
+      {
+        "ebay_item_id": "366650054490",
+        "kind": "OTHER_EXPLICIT_COSTS",
+        "evidence_id": "economic-evidence-v1:sha256:2f18db3a1f9239ba7dd0744a8df8a71ccaf17ce464347852833a2275d51deba0",
+        "value_amount": null,
+        "value_currency": null,
+        "captured_at": "2026-09-09 10:52:26.026+00",
+        "fresh_until": null,
+        "freshness_status": "SOURCE_UNAVAILABLE",
+        "source_authority": "SELLER_OS_EXPLICIT_COST_COMPONENT_REGISTRY",
+        "limitation_code": "EXPLICIT_OTHER_COST_AUTHORITY_NOT_CONFIGURED"
+      }
+    ]
+  },
+  "localGuardReplay": {
+    "observedAt": "2026-09-09T21:17:50.853Z",
+    "itemId": "366650054490",
+    "kind": "LOCAL_GUARD_REPLAY_OF_PHYSICAL_STAGING_EVIDENCE",
+    "policyScope": "PRIOR_CANARY_PARAMETERS_NOT_OWNER_SPEND_AUTHORIZATION",
+    "ownerOtherCostsPolicy": "EXPLICIT_ZERO_CONDITIONAL_ON_PROVEN_PRODUCT_SHIPPING_AND_FEES",
+    "results": [
+      {
+        "requestedRate": 3,
+        "contractVersion": "SELLER_OS_PROMOTION_PROFIT_GUARD_V1",
+        "components": {
+          "salePrice": {
+            "value": 18.74,
+            "reference": "economic-evidence-v1:sha256:14837aec9ed05d0bae4efb17904a74fefe0da2de83689effb5b91501e52752af",
+            "fresh": false
+          },
+          "productCost": {
+            "value": 1.79,
+            "reference": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+            "fresh": false
+          },
+          "shippingCost": {
+            "value": 6.99,
+            "reference": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+            "fresh": true
+          },
+          "ebayFees": {
+            "value": null,
+            "reference": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+            "fresh": false
+          },
+          "otherCosts": {
+            "value": null,
+            "reference": "economic-evidence-v1:sha256:2f18db3a1f9239ba7dd0744a8df8a71ccaf17ce464347852833a2275d51deba0",
+            "fresh": false
+          },
+          "adFeeBasis": {
+            "value": null,
+            "reference": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+            "fresh": false
+          }
+        },
+        "economicsUnproven": true,
+        "missing": [
+          "salePrice",
+          "productCost",
+          "ebayFees",
+          "otherCosts"
+        ],
+        "profitBeforeAds": null,
+        "marginBeforeAds": null,
+        "maxSafeAdRate": null,
+        "recommendedAdRate": null,
+        "projectedAdCost": null,
+        "projectedProfitAfterAds": null,
+        "projectedMarginAfterAds": null,
+        "projectionUnit": "ONE_ATTRIBUTED_SALE",
+        "status": "BLOCKED_EVIDENCE"
+      },
+      {
+        "requestedRate": 4,
+        "contractVersion": "SELLER_OS_PROMOTION_PROFIT_GUARD_V1",
+        "components": {
+          "salePrice": {
+            "value": 18.74,
+            "reference": "economic-evidence-v1:sha256:14837aec9ed05d0bae4efb17904a74fefe0da2de83689effb5b91501e52752af",
+            "fresh": false
+          },
+          "productCost": {
+            "value": 1.79,
+            "reference": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+            "fresh": false
+          },
+          "shippingCost": {
+            "value": 6.99,
+            "reference": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+            "fresh": true
+          },
+          "ebayFees": {
+            "value": null,
+            "reference": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+            "fresh": false
+          },
+          "otherCosts": {
+            "value": null,
+            "reference": "economic-evidence-v1:sha256:2f18db3a1f9239ba7dd0744a8df8a71ccaf17ce464347852833a2275d51deba0",
+            "fresh": false
+          },
+          "adFeeBasis": {
+            "value": null,
+            "reference": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+            "fresh": false
+          }
+        },
+        "economicsUnproven": true,
+        "missing": [
+          "salePrice",
+          "productCost",
+          "ebayFees",
+          "otherCosts"
+        ],
+        "profitBeforeAds": null,
+        "marginBeforeAds": null,
+        "maxSafeAdRate": null,
+        "recommendedAdRate": null,
+        "projectedAdCost": null,
+        "projectedProfitAfterAds": null,
+        "projectedMarginAfterAds": null,
+        "projectionUnit": "ONE_ATTRIBUTED_SALE",
+        "status": "BLOCKED_EVIDENCE"
+      },
+      {
+        "requestedRate": 5,
+        "contractVersion": "SELLER_OS_PROMOTION_PROFIT_GUARD_V1",
+        "components": {
+          "salePrice": {
+            "value": 18.74,
+            "reference": "economic-evidence-v1:sha256:14837aec9ed05d0bae4efb17904a74fefe0da2de83689effb5b91501e52752af",
+            "fresh": false
+          },
+          "productCost": {
+            "value": 1.79,
+            "reference": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+            "fresh": false
+          },
+          "shippingCost": {
+            "value": 6.99,
+            "reference": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+            "fresh": true
+          },
+          "ebayFees": {
+            "value": null,
+            "reference": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+            "fresh": false
+          },
+          "otherCosts": {
+            "value": null,
+            "reference": "economic-evidence-v1:sha256:2f18db3a1f9239ba7dd0744a8df8a71ccaf17ce464347852833a2275d51deba0",
+            "fresh": false
+          },
+          "adFeeBasis": {
+            "value": null,
+            "reference": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+            "fresh": false
+          }
+        },
+        "economicsUnproven": true,
+        "missing": [
+          "salePrice",
+          "productCost",
+          "ebayFees",
+          "otherCosts"
+        ],
+        "profitBeforeAds": null,
+        "marginBeforeAds": null,
+        "maxSafeAdRate": null,
+        "recommendedAdRate": null,
+        "projectedAdCost": null,
+        "projectedProfitAfterAds": null,
+        "projectedMarginAfterAds": null,
+        "projectionUnit": "ONE_ATTRIBUTED_SALE",
+        "status": "BLOCKED_EVIDENCE"
+      }
+    ]
+  },
+  "feeAuthority": {
+    "readAt": "2026-09-09T21:10:04.470Z",
+    "rows": [
+      {
+        "authority_id": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+        "ebay_item_id": "366650054490",
+        "state": "PENDING_ORDER_CONTEXT",
+        "observed_at": "2026-09-09 19:43:21.197+00",
+        "fresh_until": "2026-09-10 01:05:36.64+00",
+        "amount": null,
+        "feeEstimateMode": "UNBOUNDED_UNTIL_ORDER",
+        "components": [
+          {
+            "type": "FINAL_VALUE_PERCENT",
+            "basis": "ITEM_PRICE_PLUS_BUYER_SHIPPING_HANDLING_AND_TAX",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": [
+              {
+                "upTo": 5000,
+                "ratePct": 15
+              },
+              {
+                "upTo": null,
+                "ratePct": 9
+              }
+            ],
+            "pendingDependency": "ORDER_BUYER_TAX_AND_TOTAL_BASIS",
+            "preSaleResolvable": true
+          },
+          {
+            "type": "PER_ORDER",
+            "basis": "SINGLE_ORDER",
+            "amount": 0.4,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PROVEN",
+            "rateOrAmount": {
+              "above": 0.4,
+              "atOrBelow": 0.3,
+              "threshold": 10
+            },
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "SELLER_PERFORMANCE",
+            "basis": "CURRENT_US_SELLER_PROFILE",
+            "amount": 0,
+            "source": "https://api.ebay.com/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT",
+            "status": "NOT_APPLICABLE",
+            "rateOrAmount": 0,
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "SERVICE_METRICS",
+            "basis": "CURRENT_EXACT_CATEGORY_SERVICE_PROFILE",
+            "amount": null,
+            "source": "https://api.ebay.com/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US",
+            "status": "PENDING_AUTHORITY",
+            "rateOrAmount": null,
+            "pendingDependency": "CURRENT_EXACT_CATEGORY_SERVICE_AUTHORITY",
+            "preSaleResolvable": true
+          },
+          {
+            "type": "INTERNATIONAL",
+            "basis": "BUYER_REGISTRATION_DELIVERY_AND_SHIPPING_PROGRAM",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": null,
+            "pendingDependency": "ORDER_BUYER_COUNTRY_AND_PROGRAM",
+            "preSaleResolvable": false
+          },
+          {
+            "type": "CURRENCY_CONVERSION",
+            "basis": "ACTUAL_TRANSACTION_AND_PAYOUT_CURRENCIES",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": null,
+            "pendingDependency": "ORDER_CONVERSION",
+            "preSaleResolvable": false
+          },
+          {
+            "type": "REGULATORY_OPERATING",
+            "basis": "LISTING_MARKETPLACE_EBAY_US",
+            "amount": 0,
+            "source": "https://export.ebay.com/en/fees-regulations-policies/seller-fees/international-fees/",
+            "status": "NOT_APPLICABLE",
+            "rateOrAmount": 0,
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "TAX_ON_FEES",
+            "basis": "SELLER_REGISTRATION_JURISDICTION_AND_FEE_TAX_INVOICE",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_AUTHORITY",
+            "rateOrAmount": null,
+            "pendingDependency": "CURRENT_ACCOUNT_FEE_TAX_AUTHORITY",
+            "preSaleResolvable": true
+          }
+        ],
+        "boundCoverage": {
+          "pass": true,
+          "blockers": []
+        }
+      },
+      {
+        "authority_id": "9d84c93a6b8818a41fea1394e54d15b62b7faa648a09a410bb73e5b46a96cb63",
+        "ebay_item_id": "366650054490",
+        "state": "PENDING_ORDER_CONTEXT",
+        "observed_at": "2026-09-09 19:24:56.358+00",
+        "fresh_until": "2026-09-10 01:24:56.358+00",
+        "amount": null,
+        "feeEstimateMode": "UNBOUNDED_UNTIL_ORDER",
+        "components": [
+          {
+            "type": "FINAL_VALUE_PERCENT",
+            "basis": "ITEM_PRICE_PLUS_BUYER_SHIPPING_HANDLING_AND_TAX",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": [
+              {
+                "upTo": 5000,
+                "ratePct": 15
+              },
+              {
+                "upTo": null,
+                "ratePct": 9
+              }
+            ],
+            "pendingDependency": "ORDER_BUYER_TAX_AND_TOTAL_BASIS",
+            "preSaleResolvable": true
+          },
+          {
+            "type": "PER_ORDER",
+            "basis": "SINGLE_ORDER",
+            "amount": 0.4,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PROVEN",
+            "rateOrAmount": {
+              "above": 0.4,
+              "atOrBelow": 0.3,
+              "threshold": 10
+            },
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "SELLER_PERFORMANCE",
+            "basis": "CURRENT_US_SELLER_PROFILE",
+            "amount": 0,
+            "source": "https://api.ebay.com/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT",
+            "status": "NOT_APPLICABLE",
+            "rateOrAmount": 0,
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "SERVICE_METRICS",
+            "basis": "CURRENT_EXACT_CATEGORY_SERVICE_PROFILE",
+            "amount": null,
+            "source": "https://api.ebay.com/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US",
+            "status": "PENDING_AUTHORITY",
+            "rateOrAmount": null,
+            "pendingDependency": "CURRENT_EXACT_CATEGORY_SERVICE_AUTHORITY",
+            "preSaleResolvable": true
+          },
+          {
+            "type": "INTERNATIONAL",
+            "basis": "BUYER_REGISTRATION_DELIVERY_AND_SHIPPING_PROGRAM",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": null,
+            "pendingDependency": "ORDER_BUYER_COUNTRY_AND_PROGRAM",
+            "preSaleResolvable": false
+          },
+          {
+            "type": "CURRENCY_CONVERSION",
+            "basis": "ACTUAL_TRANSACTION_AND_PAYOUT_CURRENCIES",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": null,
+            "pendingDependency": "ORDER_CONVERSION",
+            "preSaleResolvable": false
+          },
+          {
+            "type": "REGULATORY_OPERATING",
+            "basis": "LISTING_MARKETPLACE_EBAY_US",
+            "amount": 0,
+            "source": "https://export.ebay.com/en/fees-regulations-policies/seller-fees/international-fees/",
+            "status": "NOT_APPLICABLE",
+            "rateOrAmount": 0,
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "TAX_ON_FEES",
+            "basis": "SELLER_REGISTRATION_JURISDICTION_AND_FEE_TAX_INVOICE",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_AUTHORITY",
+            "rateOrAmount": null,
+            "pendingDependency": "CURRENT_ACCOUNT_FEE_TAX_AUTHORITY",
+            "preSaleResolvable": true
+          }
+        ],
+        "boundCoverage": {
+          "pass": true,
+          "blockers": []
+        }
+      }
+    ]
+  },
+  "quotaRead": {
+    "httpStatus": 200,
+    "traceId": "7b7bbac7-dc2b-4861-ab02-0e3ff55f8db3",
+    "source": "EBAY_DEVELOPER_ANALYTICS_GET_RATE_LIMITS",
+    "observedAt": "2026-09-09T21:10:55.368Z",
+    "gateState": "BLOCKED",
+    "nextSafeTradingProbeAt": "2026-09-10T07:00:00.000Z",
+    "selectedBlockingRates": [
+      {
+        "apiContext": "tradingapi",
+        "apiName": "tradingapi",
+        "apiVersion": "v1",
+        "resource": "GetUser",
+        "count": 1310,
+        "limit": 5000,
+        "remaining": 0,
+        "resetAt": "2026-09-10T07:00:00.000Z",
+        "timeWindow": 86400,
+        "limitScope": "APPLICATION"
+      },
+      {
+        "apiContext": "tradingapi",
+        "apiName": "tradingapi",
+        "apiVersion": "v1",
+        "resource": "GetItem",
+        "count": 3550,
+        "limit": 5000,
+        "remaining": 0,
+        "resetAt": "2026-09-10T07:00:00.000Z",
+        "timeWindow": 86400,
+        "limitScope": "APPLICATION"
+      },
+      {
+        "apiContext": "tradingapi",
+        "apiName": "tradingapi",
+        "apiVersion": "v1",
+        "resource": "ReviseItem",
+        "count": 0,
+        "limit": 5000,
+        "remaining": 0,
+        "resetAt": "2026-09-10T07:00:00.000Z",
+        "timeWindow": 86400,
+        "limitScope": "APPLICATION"
+      }
+    ]
+  },
+  "executionCounts": {
+    "EBAY_IMAGE_WRITE_COUNT": 0,
+    "ADS_WRITE_COUNT": 0,
+    "DUPLICATE_AD_ACTION_COUNT": 0,
+    "PRODUCTION_MUTATION_COUNT": 0,
+    "PREPARE_REVIEW_REQUEST_COUNT": 0
+  },
+  "interpretation": {
+    "falseSafetyFlags": "NOT_PROVEN; not a numerical conclusion that the rates are unprofitable",
+    "imageCanary": "NOT_EXECUTED; existing proposal READ is not PREPARE_REVIEW, QA or creation of a new draft",
+    "officialContract": "Documentary review complete; account/listing eligibility, application quota and runtime executor/readback not certified",
+    "browserScope": "Observed local preprod OWNER session; remote operator browser has not supplied independent confirmation"
+  },
+  "allSavedImageRead": {
+    "observedAt": "2026-09-09T21:26:20.881Z",
+    "httpStatus": 200,
+    "success": true,
+    "error": null,
+    "traceId": "f6f36cd9-57b9-4a52-9cfb-9fe520b74cbd",
+    "proposals": [
+      {
+        "itemId": "366582671136",
+        "assetId": "abbbc8d2-e8fe-4d87-8d28-6c9e419c8bd2",
+        "experimentId": "34078a7e-85cc-4a35-ae26-24e65784e7f3",
+        "taskId": "5161b7d3-37cf-4221-a6d8-2dde6940ef57",
+        "status": "DRAFT",
+        "editable": false,
+        "imported": false,
+        "previewAvailable": true,
+        "sourceImageSetDigest": "sha256:83c39d4d83434bafe9cebc6958d5d77b64e357ab6788cbae0cdca95d65a41972",
+        "diagnostics": {
+          "latestExecutionPhase": null,
+          "taskStatus": "PROMPT_READY",
+          "manifestDigest": null
+        }
+      },
+      {
+        "itemId": "366582586826",
+        "assetId": "acc20dd2-9760-4e41-9e9f-1cd2b853feff",
+        "experimentId": "48299f52-d0b8-47e3-8e64-23ffed0fc78e",
+        "taskId": "1eb8a152-349a-4b8d-8d8d-e4a8224c8f46",
+        "status": "DRAFT",
+        "editable": false,
+        "imported": false,
+        "previewAvailable": true,
+        "sourceImageSetDigest": "sha256:127a2714366c39b6983ed82b6fb4e5995168b53c85c22cc5f86a590473f701ae",
+        "diagnostics": {
+          "latestExecutionPhase": null,
+          "taskStatus": "PROMPT_READY",
+          "manifestDigest": null
+        }
+      }
+    ],
+    "marketplaceWrites": 0,
+    "tradingCalls": 0
+  },
+  "savedImageCanary": {
+    "status": "NOT_EXECUTED_ASSIGNED_OPERATOR_SESSION_REQUIRED",
+    "SAVED_IMAGE_AUTO_BOUND": null,
+    "SAVED_SOURCE_BINDING_READ_PASS": true,
+    "MANUAL_IMAGE_REUPLOAD_REQUIRED": false,
+    "IMAGE_PHYSICAL_REQUEST_PASS": false,
+    "IMAGE_QA_PASS": false,
+    "DRAFT_ASSET_CREATED": false,
+    "PREVIEW_UPDATED": false,
+    "EXISTING_SAVED_PREVIEW_VISIBLE": true,
+    "PREPARE_REVIEW_REQUEST_COUNT": 0,
+    "EBAY_IMAGE_WRITE_COUNT": 0
+  }
+}
