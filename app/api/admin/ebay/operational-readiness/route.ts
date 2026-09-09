@@ -37,7 +37,7 @@ import {
 } from "@/lib/ebay/ebay-luna-authenticated-http-watcher-v1"
 import { captureLunaAuthenticatedBrowserWorkerV1 } from
   "@/lib/ebay/ebay-luna-canonical-browser-worker-server-v1"
-import { captureLiveListingShippingEvidenceV1,
+import { captureLiveListingShippingEvidenceV1, projectCurrentLiveShippingToEconomicsV1,
   LiveListingShippingEvidenceCaptureErrorV1 } from
   "@/lib/ebay/ebay-live-listing-shipping-evidence-server-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
@@ -170,7 +170,7 @@ export async function POST(req: Request) {
       if (!account.accountKey) {
         throw new Error("CANONICAL_SELLER_ACCOUNT_BINDING_UNAVAILABLE")
       }
-      result = await captureLiveListingShippingEvidenceV1({
+      const captured = await captureLiveListingShippingEvidenceV1({
         supabase: getSupabaseAdminClient(),
         target: {
           accountKey: account.accountKey,
@@ -185,6 +185,11 @@ export async function POST(req: Request) {
             ? input.sourceSku : "",
         },
       })
+      const economicsProjection = await projectCurrentLiveShippingToEconomicsV1({
+        supabase: getSupabaseAdminClient(), target: captured.lineage.identity,
+        expectedEvidenceId: captured.evidenceId,
+      })
+      result = { ...captured, economicsProjection }
     } else if (body.action === "CAPTURE_LUNA") {
       result = captureLunaProductVariantV1(input as never)
     } else if (body.action === "LINK_SUPPLIER_IDENTITY") {

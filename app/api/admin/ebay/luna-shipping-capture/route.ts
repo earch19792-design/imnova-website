@@ -40,6 +40,8 @@ import {
   resolveLunaChromeShippingLiveListingJobV1,
 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-server-v1"
+import { projectCurrentLiveShippingToEconomicsV1 } from
+  "@/lib/ebay/ebay-live-listing-shipping-evidence-server-v1"
 import {
   persistProductFitStrongPromotionV1,
   type SellerOsProductFitStrongRevalidationV1,
@@ -449,7 +451,11 @@ export async function POST(req: Request) {
         capture: listingAiRecord(body.capture) as LunaShippingCapturePostV1,
         sessionSecret: sessionSecret(),
       })
-      return listingAiResponse({ success: true, result,
+      const economicsProjection = await projectCurrentLiveShippingToEconomicsV1({
+        supabase: auth.supabase, target: result.lineage.identity,
+        expectedEvidenceId: result.evidenceId,
+      })
+      return listingAiResponse({ success: true, result: { ...result, economicsProjection },
         safety: { exactCurrentLiveIdentity: true,
           durableStore: "seller_os_live_listing_shipping_evidence",
           serverHttpLunaRequests: 0, lunaPurchases: 0,

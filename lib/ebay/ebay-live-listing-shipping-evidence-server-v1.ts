@@ -15,6 +15,8 @@ import {
   type LiveListingShippingEvidenceRowV1,
 } from "./ebay-live-listing-shipping-evidence-v1"
 
+import { buildEconomicEvidenceV1 } from "../seller-os/economic-evidence-refresh-v1"
+
 type Acquire = typeof acquireCanonicalLunaShippingV1
 export type LiveListingShippingCaptureTargetV1 = Readonly<Omit<
   LiveListingShippingEvidenceIdentityV1, "linkageId">>
@@ -247,4 +249,73 @@ export async function persistLiveListingShippingQuoteV1(input: Readonly<{
     lineage: resolved,
     marketplaceWrites: 0 as const,
   })
+}
+
+// Manual LIVE captures use the same immutable economic evidence consumed by
+// Mayel. Replaying a stored quote neither calls Luna nor extends its lifetime.
+export async function projectCurrentLiveShippingToEconomicsV1(input: Readonly<{
+  supabase: SupabaseClient
+  target: LiveListingShippingCaptureTargetV1
+  expectedEvidenceId: string
+  now?: number
+}>) {
+  const resolved = await resolveExactCurrentLiveIdentityV1(input)
+  const current = await readLatestLiveListingShippingEvidenceV1({
+    supabase: input.supabase, identity: resolved.identity, now: input.now,
+  })
+  const quote = current.evidence
+  const now = input.now ?? Date.now()
+  if (!quote || quote.evidence_id !== input.expectedEvidenceId ||
+      current.freshness !== "FRESH" ||
+      quote.account_key !== resolved.identity.accountKey ||
+      quote.marketplace_id !== resolved.identity.marketplaceId ||
+      quote.ebay_item_id !== resolved.identity.ebayItemId ||
+      quote.linkage_id !== resolved.identity.linkageId ||
+      quote.luna_product_id !== resolved.identity.lunaProductId ||
+      quote.luna_variant_id !== resolved.identity.lunaVariantId ||
+      quote.source_sku !== resolved.identity.sourceSku ||
+      Date.parse(quote.observed_at) > now ||
+      Date.parse(quote.observed_at) + Number(quote.maximum_age_seconds) * 1000 <= now ||
+      quote.shipping_currency !== "USD" || quote.supplier_currency !== "USD" ||
+      quote.purchase_performed !== false || quote.payment_performed !== false ||
+      quote.raw_address_persisted !== false || quote.credentials_persisted !== false ||
+      quote.shipping_cost === null || quote.shipping_cost === undefined ||
+      !Number.isFinite(Number(quote.shipping_cost)) || Number(quote.shipping_cost) < 0) {
+    throw new Error("LIVE_SHIPPING_ECONOMIC_PROJECTION_CURRENT_QUOTE_REQUIRED")
+  }
+  const evidence = buildEconomicEvidenceV1({
+    accountKey: resolved.identity.accountKey, itemId: resolved.identity.ebayItemId,
+    evidenceType: "LUNA_CURRENT_SHIPPING", value: Number(quote.shipping_cost),
+    sourceAuthority: quote.source_authority, sourceEntityId: quote.evidence_id,
+    capturedAt: quote.observed_at, status: "FRESH",
+    metadata: { contractVersion: "LIVE_SHIPPING_ECONOMIC_HANDOFF_V1",
+      identity: resolved.identity, purchaseBoundaryEnforced: true },
+  })
+  const written = await input.supabase.from("seller_os_live_economic_evidence_v1")
+    .upsert(evidence, { onConflict: "evidence_id", ignoreDuplicates: true })
+  if (written.error) throw new Error("LIVE_SHIPPING_ECONOMIC_PROJECTION_WRITE_FAILED")
+  const readback = await input.supabase.from("seller_os_live_economic_evidence_v1")
+    .select("evidence_id,marketplace_account_key,marketplace_id,ebay_item_id,evidence_type,value_amount,value_currency,captured_at,fresh_until,source_entity_id,source_authority,evidence_digest,freshness_status")
+    .eq("marketplace_account_key", resolved.identity.accountKey)
+    .eq("marketplace_id", resolved.identity.marketplaceId)
+    .eq("ebay_item_id", resolved.identity.ebayItemId)
+    .eq("evidence_id", evidence.evidence_id).limit(1).maybeSingle()
+  const row = readback.data
+  if (readback.error || !row || row.evidence_digest !== evidence.evidence_digest ||
+      row.evidence_id !== evidence.evidence_id || row.source_entity_id !== quote.evidence_id ||
+      row.source_authority !== evidence.source_authority ||
+      row.marketplace_account_key !== resolved.identity.accountKey ||
+      row.marketplace_id !== resolved.identity.marketplaceId ||
+      row.ebay_item_id !== resolved.identity.ebayItemId ||
+      row.evidence_type !== "LUNA_CURRENT_SHIPPING" || row.freshness_status !== "FRESH" ||
+      row.value_currency !== "USD" || Number(row.value_amount) !== evidence.value_amount ||
+      Date.parse(row.captured_at) !== Date.parse(evidence.captured_at) ||
+      Date.parse(row.fresh_until) !== Date.parse(evidence.fresh_until!)) {
+    throw new Error("LIVE_SHIPPING_ECONOMIC_PROJECTION_READBACK_MISMATCH")
+  }
+  return Object.freeze({ economicEvidenceId: evidence.evidence_id,
+    shippingCost: evidence.value_amount, currency: "USD" as const,
+    capturedAt: evidence.captured_at, freshUntil: evidence.fresh_until,
+    shippingEvidenceId: quote.evidence_id, exactBinding: true,
+    durableReadbackMatch: true, lunaRequests: 0, marketplaceWrites: 0 })
 }
