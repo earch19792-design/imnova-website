@@ -1,0 +1,1388 @@
+{
+  "STATUS": "PASS",
+  "ROOT_CAUSE": [
+    "PRE_INGESTION_ERRORS_MASKED_AS_FILE_VALIDATION",
+    "RECENT_UPLOAD_RECEIPT_ABSENT_FROM_ASSISTANT_CONTEXT"
+  ],
+  "HISTORICAL_TRIGGER": "UNPROVEN_NO_ORIGINAL_REQUEST_TRACE",
+  "FAILURE_STAGE": "NONE_IN_FINAL_E2E",
+  "IMPLEMENTATION_SHA": "2dad6a8dddc36710d5df8b3da76f75d6fa3f71c3",
+  "UPLOAD_IMPLEMENTATION_SHA": "0f250abbed42a33e7ce8e84e121bde67b5d19426",
+  "UPLOAD_CODE_UNCHANGED_SINCE_CANARY": true,
+  "UPLOAD_UI_PASS": true,
+  "UPLOAD_UI_ACCEPTS_FILE": true,
+  "REQUEST_REACHES_BACKEND": true,
+  "HTTP_STATUS": 200,
+  "UPLOAD_ATTEMPT_ROW_CREATED": true,
+  "UPLOAD_ATTEMPT_ID": "bd302fca-233b-4cda-8ec7-123d99c41205",
+  "ATTEMPT_STATUS": "IMPORTED",
+  "VALID_IMPORT_ID": "edb9403f-7577-4b7a-b8ab-37665b7dbc44",
+  "VALID_IMPORT_ID_PRESENT": true,
+  "ROWS_PARSED": 12,
+  "CURRENT_LIVE_ROWS_MATCHED": 12,
+  "SIGNALS_IMPORTED": 1,
+  "LATEST_VALID_IMPORT_RESOLVED": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+  "LATEST_VALID_REPORT_DATE": "2026-09-04",
+  "UPLOADED_IMPORT_PARSED_DATE": "2026-08-27",
+  "QUALITY_FRESHNESS": "STALE",
+  "QUALITY_FRESHNESS_EXPLICIT": true,
+  "LISTING_QUALITY_VISIBLE_TO_ASSISTANT": true,
+  "IMPORT_VISIBLE_TO_ASSISTANT": true,
+  "MARKETPLACE_WRITE_COUNT": 0,
+  "PHYSICAL_UPLOAD_COUNT": 1,
+  "TESTS_PASS": {
+    "filesPassed": 374,
+    "filesFailed": 0,
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "build": "PASS",
+    "targetedRuntimeSecurity": "PASS",
+    "sellerOsAudit": "PASS"
+  },
+  "NEW_REGRESSION_COUNT": 0,
+  "SAFE_FOR_ASSISTANT_FULL_LISTING_PREVIEW_CANARY": true,
+  "NEXT_ACTION": "DRAFT_ONLY_FULL_LISTING_PREVIEW_CANARY_PRESERVING_STALE_WAIT_AND_KEYWORD_NEEDS_EVIDENCE",
+  "stages": {
+    "UPLOAD_BUTTON": {
+      "REACHED": true,
+      "HTTP_STATUS": null,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "FILE_INPUT": {
+      "REACHED": true,
+      "HTTP_STATUS": null,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "BROWSER_VALIDATION": {
+      "REACHED": true,
+      "HTTP_STATUS": null,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "REQUEST_CONSTRUCTION": {
+      "REACHED": true,
+      "HTTP_STATUS": null,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "AUTH": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "ROUTE": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "FILE_TRANSPORT": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "UPLOAD_ATTEMPT_LEDGER": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "WORKBOOK_PARSER": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "IMPORT_VALIDATION": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "IMPORTS": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "SIGNALS": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "STATUS_READBACK": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+    },
+    "ASSISTANT_QUALITY_CONTEXT": {
+      "REACHED": true,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "TRACE_ID": "04c9de32-ec91-4950-bcab-3d23486bd73f"
+    }
+  },
+  "physical": {
+    "observedAt": "2026-09-09T15:13:36.238Z",
+    "UPLOAD_UI_ACCEPTS_FILE": true,
+    "buttonClickReached": true,
+    "inputClickReached": true,
+    "REQUEST_REACHES_BACKEND": true,
+    "HTTP_STATUS": 200,
+    "request": {
+      "url": "https://imnova-seller-os-preprod.vercel.app/api/admin/ebay/listing-quality-report",
+      "method": "POST",
+      "contentType": "application/json",
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908",
+      "format": "XLSX",
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "decodedBytes": 164730,
+      "contentDigest": "f4c10cd6c102529292bf568dfc32e20a2376b7bdbb2ecc59b03f5b06d9dcff44"
+    },
+    "physicalRequestCount": 1,
+    "uiMessage": "Archivo importado ✓. La fecha del último reporte válido sigue desactualizada.",
+    "payload": {
+      "success": true,
+      "importId": "edb9403f-7577-4b7a-b8ab-37665b7dbc44",
+      "uploadAttemptId": "bd302fca-233b-4cda-8ec7-123d99c41205",
+      "idempotent": false,
+      "status": {
+        "state": "STALE",
+        "reportExists": true,
+        "importId": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+        "lastReportImportedAt": "2026-09-04T21:53:11.343024+00:00",
+        "reportDate": "2026-09-04",
+        "reportFreshness": "STALE",
+        "liveListingsCovered": 12,
+        "signalsImported": 1,
+        "signalsActionable": 0,
+        "signalsNeedEvidence": 0,
+        "nonliveRowsExcluded": 0,
+        "reminderVisible": true
+      },
+      "latestUploadAttempt": {
+        "id": "bd302fca-233b-4cda-8ec7-123d99c41205",
+        "attemptedAt": "2026-09-09T15:13:32.743+00:00",
+        "fileType": "XLSX",
+        "status": "IMPORTED",
+        "safeFailureCode": null,
+        "technicalReasonCode": null,
+        "diagnosticsCaptureStatus": "CAPTURED",
+        "workbookSheetNames": [
+          "Summary",
+          "Guide",
+          "Google Shopping Rejections",
+          "Electronic Dictionaries & Tr",
+          "Kitchen Scales",
+          "Key Chains, Rings & Finders",
+          "Mounts & Holders",
+          "Bags",
+          "Rings",
+          "Peelers & Slicers",
+          "Necklaces & Pendants",
+          "Camcorders",
+          "Vacuum Cleaners"
+        ],
+        "observedHeaderNames": [
+          "Item title",
+          "164",
+          "Daily impressions per listing",
+          "Click-through rate",
+          "Sales conversion rate",
+          "Promoted listings",
+          "Recommended item specifics filled",
+          "Recommended item specifics to add",
+          "Brand",
+          "MPN",
+          "UPC",
+          "Number of photos",
+          "Number of keywords in title",
+          "Free shipping",
+          "Estimated handling time",
+          "14 Days Returns",
+          "30 Days Returns",
+          "60 Days Returns",
+          "Accepts returns",
+          "Seller paid returns",
+          "Promoted listings ad rate",
+          "Order discount",
+          "Multi-buy",
+          "Sale event + markdown",
+          "Best Offer",
+          "ISBN",
+          "Item Id",
+          "Price",
+          "Significantly not as described (90 Days)",
+          "Item not received (90 Days)",
+          "Negative feedback (90 Days)",
+          "Quantity available",
+          "Shipping fee",
+          "Item age in days",
+          "Sales count in last 31 days",
+          "Custom label",
+          "Number of watchers",
+          "Google Shopping rejections",
+          "Actual handling time",
+          "Actual shipping time",
+          "Item condition",
+          "eBay trending price"
+        ],
+        "recognizedSheet": null,
+        "recognizedSheetNames": [
+          "Electronic Dictionaries & Tr",
+          "Bags",
+          "Camcorders",
+          "Key Chains, Rings & Finders",
+          "Kitchen Scales",
+          "Mounts & Holders",
+          "Necklaces & Pendants",
+          "Peelers & Slicers",
+          "Rings",
+          "Vacuum Cleaners"
+        ],
+        "recognizedSheetCount": 10,
+        "headerMatchStatus": "MATCHED",
+        "failedStage": "NONE",
+        "requestTransportClass": "JSON_BASE64",
+        "requestContentTypeClass": "APPLICATION_JSON",
+        "fileSizeClass": "UNDER_256_KIB",
+        "mimeTypeClass": "XLSX_STANDARD",
+        "deploymentId": "dpl_3m6AdeZsCAjukvV6iQva2WfPq1KL",
+        "rowsParsed": 12,
+        "currentLiveRowsMatched": 12,
+        "nonliveRowsExcluded": 0,
+        "validImportId": "edb9403f-7577-4b7a-b8ab-37665b7dbc44"
+      },
+      "guards": {
+        "currentLive": true,
+        "exactItemIdMatch": true,
+        "nonliveRowsExcluded": true,
+        "accountMatchAuthority": "CANONICAL_CURRENT_LIVE_ITEM_ID",
+        "duplicateTaskCount": 0,
+        "factInvented": false,
+        "rawFileStored": false,
+        "remoteRawAccess": false
+      },
+      "safety": {
+        "source": "EBAY_LISTING_QUALITY_REPORT",
+        "deterministicFirst": true,
+        "remoteOperatorUploadAccess": false,
+        "remoteOperatorRawReportAccess": false,
+        "factInvented": false,
+        "marketplaceWrites": 0,
+        "listingMutations": 0,
+        "newListingPublications": 0,
+        "buyerMessages": 0,
+        "postsaleActions": 0
+      },
+      "ERROR_CODE": null,
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908",
+      "FAILURE_STAGE": null,
+      "failureClass": null,
+      "uploadTrace": {
+        "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908",
+        "FAILURE_STAGE": null,
+        "HTTP_STATUS": 200,
+        "ERROR_CODE": null,
+        "UPLOAD_ATTEMPT_ROW_CREATED": true,
+        "stages": {
+          "UPLOAD_BUTTON": {
+            "REACHED": true,
+            "HTTP_STATUS": null,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "FILE_INPUT": {
+            "REACHED": true,
+            "HTTP_STATUS": null,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "BROWSER_VALIDATION": {
+            "REACHED": true,
+            "HTTP_STATUS": null,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "REQUEST_CONSTRUCTION": {
+            "REACHED": true,
+            "HTTP_STATUS": null,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "AUTH": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "ROUTE": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "FILE_TRANSPORT": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "UPLOAD_ATTEMPT_LEDGER": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "WORKBOOK_PARSER": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "IMPORT_VALIDATION": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "IMPORTS": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "SIGNALS": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "STATUS_READBACK": {
+            "REACHED": true,
+            "HTTP_STATUS": 200,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          },
+          "ASSISTANT_QUALITY_CONTEXT": {
+            "REACHED": false,
+            "HTTP_STATUS": null,
+            "ERROR_CODE": null,
+            "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+          }
+        }
+      }
+    },
+    "trace": {
+      "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908",
+      "FAILURE_STAGE": null,
+      "HTTP_STATUS": 200,
+      "ERROR_CODE": null,
+      "UPLOAD_ATTEMPT_ROW_CREATED": true,
+      "stages": {
+        "UPLOAD_BUTTON": {
+          "REACHED": true,
+          "HTTP_STATUS": null,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "FILE_INPUT": {
+          "REACHED": true,
+          "HTTP_STATUS": null,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "BROWSER_VALIDATION": {
+          "REACHED": true,
+          "HTTP_STATUS": null,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "REQUEST_CONSTRUCTION": {
+          "REACHED": true,
+          "HTTP_STATUS": null,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "AUTH": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "ROUTE": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "FILE_TRANSPORT": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "UPLOAD_ATTEMPT_LEDGER": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "WORKBOOK_PARSER": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "IMPORT_VALIDATION": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "IMPORTS": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "SIGNALS": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "STATUS_READBACK": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "4af522c0-59e4-4923-bfc0-acd1bdb1f908"
+        },
+        "ASSISTANT_QUALITY_CONTEXT": {
+          "REACHED": true,
+          "HTTP_STATUS": 200,
+          "ERROR_CODE": null,
+          "TRACE_ID": "04c9de32-ec91-4950-bcab-3d23486bd73f"
+        }
+      }
+    },
+    "marketplaceWriteCount": 0,
+    "rawFileStoredInRepo": false,
+    "credentialsDisplayed": false
+  },
+  "durableReadback": {
+    "UPLOAD_ATTEMPT_ROW_CREATED": true,
+    "attempt": {
+      "id": "bd302fca-233b-4cda-8ec7-123d99c41205",
+      "attempted_at": "2026-09-09T15:13:32.743+00:00",
+      "attempt_status": "IMPORTED",
+      "rows_parsed": 12,
+      "current_live_rows_matched": 12,
+      "valid_import_id": "edb9403f-7577-4b7a-b8ab-37665b7dbc44",
+      "request_correlation_reference": "qlr_attempt_abe7c91f2b8f8b237a21a5e46dcc08c6",
+      "marketplace_writes": 0,
+      "listing_mutations": 0,
+      "buyer_messages": 0,
+      "postsale_actions": 0,
+      "failed_stage": "NONE"
+    },
+    "import": {
+      "id": "edb9403f-7577-4b7a-b8ab-37665b7dbc44",
+      "report_date": "2026-08-27",
+      "imported_at": "2026-09-09T15:13:35.96913+00:00",
+      "live_listings_covered": 12,
+      "signals_imported": 1,
+      "marketplace_writes": 0,
+      "new_listing_publications": 0
+    },
+    "SIGNALS_IMPORTED": 1,
+    "LATEST_VALID_IMPORT_RESOLVED": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+    "traceLedgerCorrelationMatch": true,
+    "latestImportMatchesUpload": false,
+    "MARKETPLACE_WRITE_COUNT": 0,
+    "rawReportRead": false,
+    "credentialsDisplayed": false
+  },
+  "assistantReadback": {
+    "HTTP_STATUS": 200,
+    "tool": "seller_os_get_quality_guidance",
+    "TRACE_ID": "04c9de32-ec91-4950-bcab-3d23486bd73f",
+    "uploadTraceId": "4af522c0-59e4-4923-bfc0-acd1bdb1f908",
+    "validImportId": "edb9403f-7577-4b7a-b8ab-37665b7dbc44",
+    "result": {
+      "latestUploadAttempt": {
+        "status": "AVAILABLE",
+        "attemptId": "bd302fca-233b-4cda-8ec7-123d99c41205",
+        "attemptedAt": "2026-09-09T15:13:32.743+00:00",
+        "attemptStatus": "IMPORTED",
+        "validImportId": "edb9403f-7577-4b7a-b8ab-37665b7dbc44",
+        "reportDate": "2026-08-27",
+        "freshness": "STALE",
+        "rowsParsed": 12,
+        "currentLiveRowsMatched": 12,
+        "signalsImported": 1,
+        "selectedAsLatestValidReport": false
+      },
+      "status": "AVAILABLE",
+      "source": "EBAY_LISTING_QUALITY_REPORT",
+      "persistenceStatus": "DURABLE_READ_ONLY",
+      "reportExists": true,
+      "importId": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+      "reportDate": "2026-09-04",
+      "importedAt": "2026-09-04T21:53:11.343Z",
+      "freshness": "STALE",
+      "coverage": {
+        "liveListingsCovered": 12,
+        "historicalLiveScopeCount": 17,
+        "nonliveRowsExcluded": 0
+      },
+      "limitationCode": "QUALITY_REPORT_STALE_WAIT",
+      "recommendations": [
+        {
+          "freshness": "STALE",
+          "actionState": "WAIT",
+          "source": "EBAY_LISTING_QUALITY_REPORT",
+          "sourceVersion": "REMOTE_OPERATOR_LISTING_QUALITY_REPORT_OWNER_IMPORT_V1_2026_09_02",
+          "listingKey": "[\"366643122092\",\"IMNOVAD28114BA01D9413490E4927035E66255\",null]",
+          "associationStatus": "ITEM_ID_CERTIFIED",
+          "recommendationCategory": "WAIT",
+          "recommendationType": "VISUAL_COVERAGE_REVIEW",
+          "recommendationText": "Revisa si Seller OS tiene una propuesta visual del producto exacto.",
+          "reportedBenchmark": null,
+          "topCategoryBenchmark": null,
+          "observedAt": "2026-09-04T00:00:00.000Z",
+          "importedAt": "2026-09-04T21:53:11.343Z"
+        }
+      ],
+      "resultCount": 1,
+      "comparisons": [
+        {
+          "listingKey": "[\"366574069492\",\"IMN-LST-000015\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366581718546\",\"IMN-LST-000013\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582544476\",\"IMN-LST-000012\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582586826\",\"IMN-LST-000011\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582671136\",\"IMN-LST-000005\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366592485792\",\"IMN-LST-000024\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366592919965\",\"IMN-LST-000026\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366597434810\",\"IMN-LST-000025\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366634810965\",\"IMNOVA3A394C94108B4CA0B3735E589DC4A652\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366635285436\",\"IMNOVA42B4E4B51A124021918289B782A5C6AC\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643122092\",\"IMNOVAD28114BA01D9413490E4927035E66255\",null]",
+          "ebayGuidanceStatus": "AVAILABLE",
+          "freshness": "STALE",
+          "actionState": "WAIT",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "automaticExecutionAllowed": false,
+          "reasonCodes": [
+            "QUALITY_REPORT_STALE_WAIT"
+          ]
+        },
+        {
+          "listingKey": "[\"366643126310\",\"FL-3SISTER-KEYCHAIN\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643190059\",\"IMNOVA6E92062A4F5A4AEEA1C23D46D2614BC4\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643555454\",\"IMNOVA6BEEA08C95B148FF95AC7634DB288048\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366647547173\",\"IMNOVA0AD89689374445EE91EC5992B05326F2\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366649437609\",\"IMNOVADC166ABC7F3F48C1AD1CF04BA24B7486\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366649508886\",\"IMNOVA6A47F280102C45B7897DF2C1DA3F38C0\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650047727\",\"IMNOVA75A7EC0C9B3846CFB4A654B8AD94CE59\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650054490\",\"IMNOVAA59C2C921CDD4975ADD29540657D8A60\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650065203\",\"IMNOVA8A5E9410F92440E6925729ED0BE22A0E\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650071972\",\"IMNOVA521BB2F0AD9849DEAB31D9323ABA3B8E\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650113488\",\"IMNOVA20648F6AB4EE4B6FB46B19456A16FB0A\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650121192\",\"IMNOVA96623B7E05904CB8B54EEA24ECA18FC4\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        }
+      ],
+      "autoExecutionAllowed": false,
+      "TRACE_ID": "04c9de32-ec91-4950-bcab-3d23486bd73f"
+    },
+    "LISTING_QUALITY_VISIBLE_TO_ASSISTANT": true,
+    "QUALITY_FRESHNESS_EXPLICIT": true,
+    "manualDataReloadUsed": false
+  },
+  "dateProvenance": {
+    "rowReportDate": "2026-08-27",
+    "labeledReportDate": null,
+    "workbookCreatedAt": "2026-08-27T14:38:27.000Z",
+    "filenameUsedAsDateAuthority": false,
+    "parserUnchanged": true
+  },
+  "initialEvidence": {
+    "observedAt": "2026-09-09T14:51:21.481Z",
+    "attempts": [
+      {
+        "id": "33e7b196-6aaf-4e9e-9883-afddbcf1bd3e",
+        "attempted_at": "2026-09-05T02:56:05.028+00:00",
+        "attempt_status": "IMPORTED",
+        "safe_failure_code": null,
+        "technical_reason_code": null,
+        "failed_stage": "NONE",
+        "request_transport_class": "JSON_BASE64",
+        "request_content_type_class": "APPLICATION_JSON",
+        "rows_parsed": 12,
+        "current_live_rows_matched": 12,
+        "valid_import_id": "24f1746e-6298-47b5-89f3-0c03348e0fd7",
+        "request_correlation_reference": "qlr_attempt_554617b5f9860db928c94f28e6aaba09"
+      },
+      {
+        "id": "476cd747-47bf-435c-a13d-70c340787a9a",
+        "attempted_at": "2026-09-04T21:53:01.321+00:00",
+        "attempt_status": "IMPORTED",
+        "safe_failure_code": null,
+        "technical_reason_code": null,
+        "failed_stage": "NONE",
+        "request_transport_class": "JSON_BASE64",
+        "request_content_type_class": "APPLICATION_JSON",
+        "rows_parsed": 12,
+        "current_live_rows_matched": 12,
+        "valid_import_id": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+        "request_correlation_reference": "qlr_attempt_a7a00b70283390ac330fd207d537e4d2"
+      },
+      {
+        "id": "23d3d022-46b0-493a-b6af-40af039c230f",
+        "attempted_at": "2026-09-04T05:57:34.653+00:00",
+        "attempt_status": "IMPORTED",
+        "safe_failure_code": null,
+        "technical_reason_code": null,
+        "failed_stage": "NONE",
+        "request_transport_class": "JSON_BASE64",
+        "request_content_type_class": "APPLICATION_JSON",
+        "rows_parsed": 12,
+        "current_live_rows_matched": 12,
+        "valid_import_id": "a0b4dced-73ee-4138-a409-b7a3f763b002",
+        "request_correlation_reference": "qlr_attempt_8d6d1a9883640052861e8d906a8c685e"
+      },
+      {
+        "id": "1b16529d-080d-44b6-9d07-e82aa719e8c5",
+        "attempted_at": "2026-09-03T08:34:17.777+00:00",
+        "attempt_status": "IMPORTED",
+        "safe_failure_code": null,
+        "technical_reason_code": null,
+        "failed_stage": "NONE",
+        "request_transport_class": "JSON_BASE64",
+        "request_content_type_class": "APPLICATION_JSON",
+        "rows_parsed": 10,
+        "current_live_rows_matched": 10,
+        "valid_import_id": "ad47bfe8-da16-4d3a-b9f5-b2e22f980060",
+        "request_correlation_reference": "qlr_attempt_073d1f68db2f248586a97391910bc360"
+      },
+      {
+        "id": "00f04cb0-31a6-4f11-bdec-c2e35fdf5f5a",
+        "attempted_at": "2026-09-02T21:01:34.761+00:00",
+        "attempt_status": "IMPORTED",
+        "safe_failure_code": null,
+        "technical_reason_code": null,
+        "failed_stage": "NONE",
+        "request_transport_class": "JSON_BASE64",
+        "request_content_type_class": "APPLICATION_JSON",
+        "rows_parsed": 10,
+        "current_live_rows_matched": 10,
+        "valid_import_id": "d9ce0489-1e29-4a98-b901-39bb0ebd0d16",
+        "request_correlation_reference": "qlr_attempt_b5050917e602153bfb74dc1607c0424a"
+      }
+    ],
+    "imports": [
+      {
+        "id": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+        "report_date": "2026-09-04",
+        "imported_at": "2026-09-04T21:53:11.343024+00:00",
+        "live_listings_covered": 12,
+        "signals_imported": 1
+      },
+      {
+        "id": "24f1746e-6298-47b5-89f3-0c03348e0fd7",
+        "report_date": "2026-09-03",
+        "imported_at": "2026-09-05T02:56:13.422916+00:00",
+        "live_listings_covered": 12,
+        "signals_imported": 1
+      },
+      {
+        "id": "b6941c8b-c189-4461-8fe2-0b49ccc032cf",
+        "report_date": "2026-09-02",
+        "imported_at": "2026-09-02T08:48:01.355953+00:00",
+        "live_listings_covered": 1,
+        "signals_imported": 1
+      }
+    ],
+    "unauthenticatedGet": {
+      "httpStatus": 403,
+      "body": {
+        "success": false,
+        "error": "QUALITY_REPORT_OWNER_AUTH_REQUIRED"
+      }
+    }
+  },
+  "browserRegressionBefore": {
+    "mode": "BROWSER_CONTRACT_MOCK",
+    "buttonClickReached": true,
+    "fileInputReached": true,
+    "mockHttpStatus": 403,
+    "mockErrorCode": "QUALITY_REPORT_DEDICATED_PREPROD_ONLY",
+    "uiMessage": "Este archivo no pasó la validación. El último reporte válido sigue disponible y no se reemplazó.",
+    "misclassifiedAsFileValidation": true,
+    "interceptedRequests": 1,
+    "physicalUploads": 0,
+    "backendRequests": 0
+  },
+  "browserRegressionAfter": {
+    "mode": "BROWSER_CONTRACT_MOCK",
+    "buttonClickReached": true,
+    "fileInputReached": true,
+    "mockHttpStatus": 403,
+    "mockErrorCode": "QUALITY_REPORT_DEDICATED_PREPROD_ONLY",
+    "uiMessage": "Esta pantalla no pertenece al preprod dedicado habilitado para importar reportes. Abre imnova-seller-os-preprod.vercel.app.",
+    "misclassifiedAsFileValidation": false,
+    "interceptedRequests": 1,
+    "physicalUploads": 0,
+    "backendRequests": 0
+  },
+  "uploadDeployment": {
+    "id": "dpl_3m6AdeZsCAjukvV6iQva2WfPq1KL",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-bpl2nzff9-earch19792-6888s-projects.vercel.app",
+    "sha": "0f250abbed42a33e7ce8e84e121bde67b5d19426",
+    "aliasAssigned": true
+  },
+  "finalDeployment": {
+    "id": "dpl_4gLkbtnGEvdsciscBaY82ZcYexjv",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-pyuv0azi4-earch19792-6888s-projects.vercel.app",
+    "sha": "2dad6a8dddc36710d5df8b3da76f75d6fa3f71c3",
+    "aliasAssigned": true
+  },
+  "localRelayReadback": {
+    "status": "PASS",
+    "HTTP_STATUS": 200,
+    "TRACE_ID": "a54ea9e3-f106-4190-bcf6-dfd23d53ac26",
+    "localCertifiedBuildPreserved": {
+      "status": "MATCHED",
+      "runtimeBuildShaMatch": true,
+      "sourceCommitSha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+      "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "buildId": "d1Urs-jCU4rE_hVGHd7z7",
+      "buildArtifactDigest": "sha256:a339c7cbdf4c66885d39fe939d2343b5254a128909f4aaed03a1b0a84562a473",
+      "operationalServiceBound": true
+    },
+    "relayUrl": "https://imnova-seller-os-preprod-pyuv0azi4-earch19792-6888s-projects.vercel.app/api/seller-os/assistant/cloud-read-relay",
+    "latestUploadAttempt": {
+      "status": "AVAILABLE",
+      "attemptId": "bd302fca-233b-4cda-8ec7-123d99c41205",
+      "attemptedAt": "2026-09-09T15:13:32.743+00:00",
+      "attemptStatus": "IMPORTED",
+      "validImportId": "edb9403f-7577-4b7a-b8ab-37665b7dbc44",
+      "reportDate": "2026-08-27",
+      "freshness": "STALE",
+      "rowsParsed": 12,
+      "currentLiveRowsMatched": 12,
+      "signalsImported": 1,
+      "selectedAsLatestValidReport": false
+    },
+    "selectedImportId": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+    "selectedReportDate": "2026-09-04",
+    "marketplaceWrites": 0,
+    "openAiBindingChanged": false,
+    "physicalUploadsRepeated": 0
+  },
+  "connectorReadback": {
+    "quality": {
+      "latestUploadAttempt": {
+        "status": "AVAILABLE",
+        "attemptId": "bd302fca-233b-4cda-8ec7-123d99c41205",
+        "attemptedAt": "2026-09-09T15:13:32.743+00:00",
+        "attemptStatus": "IMPORTED",
+        "validImportId": "edb9403f-7577-4b7a-b8ab-37665b7dbc44",
+        "reportDate": "2026-08-27",
+        "freshness": "STALE",
+        "rowsParsed": 12,
+        "currentLiveRowsMatched": 12,
+        "signalsImported": 1,
+        "selectedAsLatestValidReport": false
+      },
+      "status": "AVAILABLE",
+      "source": "EBAY_LISTING_QUALITY_REPORT",
+      "persistenceStatus": "DURABLE_READ_ONLY",
+      "reportExists": true,
+      "importId": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+      "reportDate": "2026-09-04",
+      "importedAt": "2026-09-04T21:53:11.343Z",
+      "freshness": "STALE",
+      "coverage": {
+        "liveListingsCovered": 12,
+        "historicalLiveScopeCount": 17,
+        "nonliveRowsExcluded": 0
+      },
+      "limitationCode": "QUALITY_REPORT_STALE_WAIT",
+      "recommendations": [
+        {
+          "freshness": "STALE",
+          "actionState": "WAIT",
+          "source": "EBAY_LISTING_QUALITY_REPORT",
+          "sourceVersion": "REMOTE_OPERATOR_LISTING_QUALITY_REPORT_OWNER_IMPORT_V1_2026_09_02",
+          "listingKey": "[\"366643122092\",\"IMNOVAD28114BA01D9413490E4927035E66255\",null]",
+          "associationStatus": "ITEM_ID_CERTIFIED",
+          "recommendationCategory": "WAIT",
+          "recommendationType": "VISUAL_COVERAGE_REVIEW",
+          "recommendationText": "Revisa si Seller OS tiene una propuesta visual del producto exacto.",
+          "reportedBenchmark": null,
+          "topCategoryBenchmark": null,
+          "observedAt": "2026-09-04T00:00:00.000Z",
+          "importedAt": "2026-09-04T21:53:11.343Z"
+        }
+      ],
+      "resultCount": 1,
+      "comparisons": [
+        {
+          "listingKey": "[\"366574069492\",\"IMN-LST-000015\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366581718546\",\"IMN-LST-000013\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582544476\",\"IMN-LST-000012\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582586826\",\"IMN-LST-000011\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582671136\",\"IMN-LST-000005\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366592485792\",\"IMN-LST-000024\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366592919965\",\"IMN-LST-000026\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366597434810\",\"IMN-LST-000025\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366634810965\",\"IMNOVA3A394C94108B4CA0B3735E589DC4A652\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366635285436\",\"IMNOVA42B4E4B51A124021918289B782A5C6AC\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643122092\",\"IMNOVAD28114BA01D9413490E4927035E66255\",null]",
+          "ebayGuidanceStatus": "AVAILABLE",
+          "freshness": "STALE",
+          "actionState": "WAIT",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "automaticExecutionAllowed": false,
+          "reasonCodes": [
+            "QUALITY_REPORT_STALE_WAIT"
+          ]
+        },
+        {
+          "listingKey": "[\"366643126310\",\"FL-3SISTER-KEYCHAIN\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643190059\",\"IMNOVA6E92062A4F5A4AEEA1C23D46D2614BC4\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643555454\",\"IMNOVA6BEEA08C95B148FF95AC7634DB288048\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366647547173\",\"IMNOVA0AD89689374445EE91EC5992B05326F2\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366649437609\",\"IMNOVADC166ABC7F3F48C1AD1CF04BA24B7486\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366649508886\",\"IMNOVA6A47F280102C45B7897DF2C1DA3F38C0\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650047727\",\"IMNOVA75A7EC0C9B3846CFB4A654B8AD94CE59\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650054490\",\"IMNOVAA59C2C921CDD4975ADD29540657D8A60\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650065203\",\"IMNOVA8A5E9410F92440E6925729ED0BE22A0E\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650071972\",\"IMNOVA521BB2F0AD9849DEAB31D9323ABA3B8E\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650113488\",\"IMNOVA20648F6AB4EE4B6FB46B19456A16FB0A\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650121192\",\"IMNOVA96623B7E05904CB8B54EEA24ECA18FC4\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        }
+      ],
+      "autoExecutionAllowed": false,
+      "TRACE_ID": "90806309-8c10-432d-b0ed-4644feee341b"
+    },
+    "runtimeHealth": {
+      "contractVersion": "SELLER_OS_RUNTIME_HEALTH_V1",
+      "observedAt": "2026-09-09T15:26:27.252Z",
+      "overallStatus": "HEALTHY",
+      "services": {
+        "mcp": {
+          "service": "imnova-seller-os-mcp.service",
+          "status": "HEALTHY",
+          "activeState": "active",
+          "subState": "running",
+          "result": "success",
+          "mainPid": 68665,
+          "restartCount": 0,
+          "activeEnterTimestamp": "2026-09-09T15:24:05.000Z"
+        },
+        "tunnel": {
+          "service": "imnova-seller-os-tunnel.service",
+          "status": "HEALTHY",
+          "activeState": "active",
+          "subState": "running",
+          "result": "success",
+          "mainPid": 68666,
+          "restartCount": 0,
+          "activeEnterTimestamp": "2026-09-09T15:24:05.000Z"
+        },
+        "watchdogTimer": {
+          "service": "imnova-seller-os-watchdog.timer",
+          "status": "HEALTHY",
+          "activeState": "active",
+          "subState": "waiting",
+          "lastTrigger": "2026-09-09T15:26:08.372Z",
+          "nextTrigger": "2026-09-09T15:28:08.379Z"
+        }
+      },
+      "port3000": {
+        "host": "127.0.0.1",
+        "port": 3000,
+        "status": "AVAILABLE",
+        "observedAt": "2026-09-09T15:26:27.252Z"
+      },
+      "watchdog": {
+        "lastRunAt": "2026-09-09T15:26:08.000Z",
+        "lastSuccessAt": "2026-09-09T15:26:08.000Z",
+        "lastResult": "success"
+      },
+      "runtimeCatalog": {
+        "contractVersion": "SELLER_OS_RUNTIME_CATALOG_ATTESTATION_V1",
+        "observedAt": "2026-09-09T15:26:27.252Z",
+        "serviceIdentity": "imnova-seller-os-mcp.service",
+        "runtimeEntrypointIdentity": "NEXT_APP_ROUTE_SELLER_OS_ASSISTANT_MCP",
+        "runtimeWorkingDirectoryIdentity": "SELLER_OS_CANONICAL_REPOSITORY",
+        "runtimeWorkingDirectoryMatch": true,
+        "loadedMcpImplementationVersion": "SELLER_OS_MCP_READONLY_V1_2026_09_06_AUDIT_OBSERVABILITY",
+        "catalogSource": "MCP_SERVER_FACTORY_REGISTRATION_LEDGER",
+        "runtimeCatalogCount": 29,
+        "expectedCatalogCount": 29,
+        "officialOrdersToolPresent": true,
+        "salesOrderEventsToolPresent": true,
+        "recentSalesFeedToolPresent": true,
+        "saleAlertsToolPresent": true,
+        "whatsappSaleAlertStatusToolPresent": true,
+        "buyerThankYouStatusToolPresent": true,
+        "exactCatalogMatch": true,
+        "workspaceRuntimeBindingStatus": "MATCHED",
+        "limitations": [],
+        "safety": {
+          "readOnly": true,
+          "callerControlledPathAllowed": false,
+          "fileContentsIncluded": false,
+          "credentialsIncluded": false,
+          "environmentValuesIncluded": false
+        }
+      },
+      "evidenceCompleteness": "COMPLETE",
+      "limitations": [],
+      "safety": {
+        "readOnly": true,
+        "arbitraryShellAllowed": false,
+        "callerControlledServiceAllowed": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "marketplaceWrites": 0,
+        "inventoryWrites": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "whatsappSends": 0
+      },
+      "runtimeBuild": {
+        "status": "MATCHED",
+        "runtimeBuildShaMatch": true,
+        "sourceCommitSha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+        "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+        "buildId": "d1Urs-jCU4rE_hVGHd7z7",
+        "buildArtifactDigest": "sha256:a339c7cbdf4c66885d39fe939d2343b5254a128909f4aaed03a1b0a84562a473",
+        "operationalServiceBound": true
+      }
+    },
+    "initialConnectorTransportFailure": "HTTP_504_AFTER_SERVICE_RESTART",
+    "boundedReadRetry": "PASS",
+    "physicalUploadRetried": false
+  },
+  "finalValidationArtifact": {
+    "version": "SELLER_OS_PRECOMPILED_ARTIFACT_V1",
+    "sourceCommitSha": "2dad6a8dddc36710d5df8b3da76f75d6fa3f71c3",
+    "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+    "buildId": "797fGzbHUoYiGvnv63-B3",
+    "buildArtifactDigest": "sha256:13be06524aaf100992dbc801b56035e75d4fb1bbb56a3c42df5a8aa51ece70d0",
+    "payloadFileCount": 1454,
+    "payloadByteCount": 67249766,
+    "builtAt": "2026-09-09T15:23:31.553Z",
+    "nodeVersion": "v22.23.0",
+    "nextVersion": "16.2.6",
+    "dynamicCompilationAtBoot": false
+  }
+}
