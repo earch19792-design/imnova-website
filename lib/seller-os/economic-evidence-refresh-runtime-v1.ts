@@ -5,12 +5,9 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getEbayCommercialMonitorLiveReadonly } from
   "../ebay/ebay-commercial-monitor-live-readonly"
-import { readManualListingFromTradingApi } from
-  "../ebay/ebay-manual-listing-trading-readonly"
-import { readEbaySellerStoreSubscriptionReadonly } from
-  "../ebay/ebay-account-policy-readonly-gateway"
-import { resolveOfficialPreSaleFeePolicyV1 } from
-  "../ebay/ebay-live-presale-economics-v1"
+import { readEbayFeeContextReadonlyV1 } from "../ebay/ebay-fee-context-readonly-v1"
+import { persistProducedEbayFeeV1, runPendingPackageFeesV1 } from "./ebay-fee-runtime-v1"
+import { readCommercialPackageBindingV1 } from "./listing-commercial-binding-v1"
 import { fetchPublicLunaProductForActiveListingMonitor } from
   "../ebay/ebay-targeted-active-listing-luna-monitor"
 import { captureLiveListingShippingEvidenceV1,
@@ -509,60 +506,32 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
   const feeJobs = await claim({ supabase: input.supabase,
     accountKey: input.accountKey, workerId, types: ["EXPECTED_EBAY_FEE"],
     limit: 2 })
-  let subscription: Awaited<ReturnType<
-    typeof readEbaySellerStoreSubscriptionReadonly>> | null = null
-  let subscriptionError: unknown = null
-  if (feeJobs.length) {
-    try { subscription = await readEbaySellerStoreSubscriptionReadonly() }
-    catch (error) { subscriptionError = error }
-  }
+  await runPendingPackageFeesV1({ supabase: input.supabase, accountKey: input.accountKey, now })
   for (const job of feeJobs) {
     try {
-      if (!subscription) throw subscriptionError ??
-        new Error("EBAY_STORE_SUBSCRIPTION_UNPROVEN")
-      const listing = await readManualListingFromTradingApi(job.ebay_item_id)
-      const livePrice = money(listing.price)
-      const buyerShipping = money(listing.buyerShippingCharge)
-      const categoryId = text(listing.safeDefaults.categoryId, 20) ?? ""
-      const policy = resolveOfficialPreSaleFeePolicyV1({ categoryId,
-        storeSubscriptionLevel: subscription.storeSubscriptionLevel ?? "",
-        orderSubtotalUsd: livePrice ?? 0 })
-      if (policy.status !== "AVAILABLE" || livePrice === null ||
-          listing.buyerShippingChargeStatus !== "AVAILABLE" ||
-          buyerShipping === null) {
-        const limitation = policy.status === "AVAILABLE"
-          ? "EXPECTED_EBAY_FEE_BASIS_UNPROVEN" : policy.limitationCode
-        await persistOutcome({ supabase: input.supabase,
-          accountKey: input.accountKey, job, workerId, value: null,
-          sourceAuthority: policy.status === "AVAILABLE" ? policy.authority :
-            "EBAY_OFFICIAL_CATEGORY_FEE_POLICY_RESOLVER_V1",
-          sourceEntityId: `${job.ebay_item_id}:${categoryId || "UNKNOWN"}`,
-          status: "SOURCE_UNAVAILABLE", limitationCode: limitation,
-          nextRetryAt: retryAt(now, 24 * 60 * 60_000), now,
-          metadata: { categoryId: categoryId || null,
-            storeSubscriptionLevel: subscription.storeSubscriptionLevel ?? null,
-            confidence: "UNPROVEN" } })
-        sourceResults.push({ itemId: job.ebay_item_id,
-          evidenceType: job.evidence_type, status: "SOURCE_UNAVAILABLE",
-          limitationCode: limitation })
-        continue
-      }
-      const amount = Number(((livePrice + buyerShipping) *
-        policy.finalValueFeeRatePercent / 100 + policy.perOrderFixedFeeUsd)
-        .toFixed(4))
-      await persistOutcome({ supabase: input.supabase,
-        accountKey: input.accountKey, job, workerId, value: amount,
-        sourceAuthority: policy.authority,
-        sourceEntityId: `${job.ebay_item_id}:${categoryId}`,
-        status: "FRESH", now,
-        metadata: { categoryId,
-          effectiveRatePercent: policy.finalValueFeeRatePercent,
-          fixedFeeUsd: policy.perOrderFixedFeeUsd,
-          feeModelVersion: "EBAY_OFFICIAL_EXPECTED_BASE_SELLING_FEE_V1",
-          feeConfidence: "PROVEN_RATE_PRE_SALE_MODEL",
-          realizedFee: false } })
-      sourceResults.push({ itemId: job.ebay_item_id,
-        evidenceType: job.evidence_type, status: "FRESH" })
+      const context = await readEbayFeeContextReadonlyV1(job.ebay_item_id)
+      const binding = await readCommercialPackageBindingV1({ supabase: input.supabase,
+        accountKey: input.accountKey, itemId: job.ebay_item_id, sku: context.identity.sku })
+      const previous = await input.supabase.from("seller_os_live_economic_evidence_v1")
+        .select("evidence_metadata").eq("marketplace_account_key", input.accountKey)
+        .eq("ebay_item_id", job.ebay_item_id).eq("evidence_type", "EXPECTED_EBAY_FEE")
+        .order("captured_at", { ascending: false }).order("created_at", { ascending: false }).limit(1).maybeSingle()
+      if (previous.error) throw Error("FEE_RESOLUTION_INPUT_READ_FAILED")
+      const resolutionInputs = record(previous.data?.evidence_metadata).feeResolutionInputsV1
+      const authority = await persistProducedEbayFeeV1({ supabase: input.supabase,
+        accountKey: input.accountKey, itemId: job.ebay_item_id, sku: context.identity.sku,
+        packageId: binding.packageId, context, resolutionInputs, now })
+      const proven = authority.state === "PROVEN_PRE_SALE"
+      await persistOutcome({ supabase: input.supabase, accountKey: input.accountKey, job, workerId,
+        value: authority.amount, sourceAuthority: authority.contractVersion,
+        sourceEntityId: authority.authorityId, status: proven ? "FRESH" : "SOURCE_UNAVAILABLE",
+        limitationCode: proven ? null : authority.state,
+        nextRetryAt: authority.freshUntil, now,
+        metadata: { feeLifecycleV1: authority, feeAuthorityV1: authority.resolvedAuthority,
+          ...(resolutionInputs ? { feeResolutionInputsV1: resolutionInputs } : {}),
+          categoryId: context.listing.categoryId, confidence: proven ? "PROVEN" : "PENDING" } })
+      sourceResults.push({ itemId: job.ebay_item_id, evidenceType: job.evidence_type,
+        status: proven ? "FRESH" : "SOURCE_UNAVAILABLE" })
     } catch (error) { await processFailure(job, error) }
   }
 

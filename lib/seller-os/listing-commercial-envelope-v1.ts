@@ -37,7 +37,7 @@ export function buildListingCommercialEnvelopeV1(input: { accountKey: string; pa
 // and official Item ID afterwards. Project that durable linkage on every read;
 // no second repair ledger or manually maintained copy of the package is needed.
 export function envelopeFromProductCaseV1(input: { accountKey: string; packageId: string | null;
-  itemId: string | null; sku: string | null; fields: unknown[]; keyword: unknown; now: Date }) {
+  itemId: string | null; sku: string | null; fields: unknown[]; keyword: unknown; feeHandoff?: unknown; now: Date }) {
   const fields = input.fields.map(record)
   const mapped = { productCost: "SUPPLIER_COST", salePrice: "EBAY_LIVE_PRICE", shipping: "SUPPLIER_SHIPPING",
     inventory: "SUPPLIER_STOCK", category: "CATEGORY", itemSpecifics: "REQUIRED_ASPECTS", images: "IMAGES",
@@ -49,6 +49,13 @@ export function envelopeFromProductCaseV1(input: { accountKey: string; packageId
       ["CONTRADICTED", "UNAVAILABLE", "UNPROVEN"].includes(String(f.EVIDENCE_STATUS)) ? "NEEDS_EVIDENCE" : "PENDING"
     components[key as CommercialComponentName] = { status, value: f.VALUE ?? null,
       reference: text(f.EVIDENCE_ID), source: text(f.SOURCE_AUTHORITY), observedAt: text(f.OBSERVED_AT ?? f.CAPTURED_AT), freshUntil: text(f.FRESH_UNTIL) }
+  }
+  const fee = record(input.feeHandoff)
+  if (input.feeHandoff) {
+    components.feeAuthority = { status: fee.status === "PROVEN" ? "PROVEN" : fee.status === "STALE" ? "STALE" : "PENDING",
+      value: fee.authority, reference: text(fee.reference), source: "SELLER_OS_EBAY_FEE_AUTHORITY_V1" }
+    components.actualFees = { status: fee.actualPostSaleFee ? "PROVEN" : "PENDING", value: fee.actualPostSaleFee ?? null,
+      reference: text(record(fee.actualPostSaleFee).receiptId), source: "SELLER_OS_EBAY_POST_SALE_FEE_RECONCILIATION_V1" }
   }
   const keyword = record(input.keyword)
   components.keywordV2_1 = { status: keyword.STATUS === "ACCEPTED" ? "PROVEN" : "PENDING",

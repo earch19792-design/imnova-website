@@ -112,6 +112,13 @@ export type SafeMarketplaceOrder = {
   currency: string | null
   marketplaceId: string
   lineItems: SafeMarketplaceOrderLine[]
+  feeEvidence?: {
+    totalMarketplaceFee: number | null
+    totalFeeBasisAmount: number | null
+    currency: string | null
+    components: { type: string; amount: number; currency: string }[]
+    source: string
+  }
 }
 
 const PII_KEYS = new Set([
@@ -244,6 +251,16 @@ export function normalizeCompletedEbayOrders(payload: unknown): SafeMarketplaceO
       totalAmount: amount(total),
       currency: text(total.currency, 10) || null,
       marketplaceId: "EBAY_US",
+      ...(order.totalMarketplaceFee !== undefined || order.totalFeeBasisAmount !== undefined ? {
+        feeEvidence: {
+          totalMarketplaceFee: amount(record(order.totalMarketplaceFee)),
+          totalFeeBasisAmount: amount(record(order.totalFeeBasisAmount)),
+          currency: record(order.totalMarketplaceFee).currency === record(order.totalFeeBasisAmount).currency
+            ? text(record(order.totalMarketplaceFee).currency, 10) || null : null,
+          components: [], // The aggregate does not prove an itemized breakdown.
+          source: "https://api.ebay.com/sell/fulfillment/v1/order",
+        },
+      } : {}),
       lineItems,
     }]
   })

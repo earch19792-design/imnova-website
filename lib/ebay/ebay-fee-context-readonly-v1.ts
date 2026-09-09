@@ -4,6 +4,7 @@ import { readEbayFeePerformanceReadonlyV1 } from "./ebay-seller-analytics-readon
 import { feeContextSafeErrorV1, resolveEbayFeeStoreContextV1 } from "./ebay-fee-context-domain-v1"
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 import { bindOfficialCategoryFeePolicyV1 } from "./ebay-official-category-fee-binding-v1"
+import { readCurrentOfficialFeePolicyV1 } from "./ebay-fee-policy-readonly-v1"
 
 /** Internal diagnostic: fixed read-only sources for one verified LIVE listing. */
 export async function readEbayFeeContextReadonlyV1(itemId: string) {
@@ -15,7 +16,7 @@ export async function readEbayFeeContextReadonlyV1(itemId: string) {
     throw new Error("EBAY_FEE_EXACT_LIVE_BINDING_REQUIRED")
   }
   const results = await Promise.allSettled([
-    readEbaySellerStoreSubscriptionReadonly(), readEbayFeePerformanceReadonlyV1(),
+    readEbaySellerStoreSubscriptionReadonly(), readEbayFeePerformanceReadonlyV1(), readCurrentOfficialFeePolicyV1(),
   ])
   const component = (index: number) => {
     const result = results[index]
@@ -25,9 +26,10 @@ export async function readEbayFeeContextReadonlyV1(itemId: string) {
   const store = resolveEbayFeeStoreContextV1(component(0), component(1))
   const categoryFeePolicy = bindOfficialCategoryFeePolicyV1({ listing, accountKey: account.accountKey,
     storeLevel: typeof store.storeSubscriptionLevel === "string" ? store.storeSubscriptionLevel : null,
-    storeReference: store.source, now: new Date() })
+    storeReference: store.source, now: new Date(), policySnapshot: results[2].status === "fulfilled" ? results[2].value as Awaited<ReturnType<typeof readCurrentOfficialFeePolicyV1>> : null })
   return {
     contractVersion: "SELLER_OS_EBAY_FEE_CONTEXT_READONLY_V1",
+    marketplaceAccountKey: account.accountKey,
     status: "CONTEXT_ONLY_NOT_FEE_AUTHORITY", observedAt: new Date().toISOString(),
     identity: { itemId, sku: listing.ebaySku, accountBindingExact: true, marketplace: "EBAY_US" },
     listing: { categoryId: listing.safeDefaults.categoryId ?? null,

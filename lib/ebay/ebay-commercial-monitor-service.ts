@@ -1,3 +1,4 @@
+import { reconcileEbayOrderFeesV1 } from "../seller-os/ebay-fee-runtime-v1"
 import { randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -1738,6 +1739,7 @@ export async function persistOrdersAndSales(input: {
         marketplace_account_key: accountKey,
         marketplace: MARKETPLACE,
         marketplace_order_id: order.ebayOrderId,
+        ...(order.feeEvidence ? { fee_evidence: order.feeEvidence } : {}),
         order_created_at: order.creationDate,
         order_modified_at: order.lastModifiedDate,
         payment_status: order.orderPaymentStatus,
@@ -1774,6 +1776,8 @@ export async function persistOrdersAndSales(input: {
       if (lineError) throw new Error("COMMERCIAL_ORDER_LINE_WRITE_FAILED")
 
     }
+
+    await reconcileEbayOrderFeesV1({ supabase, accountKey, order, observedAt })
 
     const effect = effectByOrderId.get(order.ebayOrderId)
     if (!effect) continue

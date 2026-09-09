@@ -73,6 +73,15 @@ export function resolveListingPreSaleFeesV1(input: { accountKey: string; itemId:
       if (policy.tierMethod === "WHOLE_AMOUNT") {
         const tier = tiers.find(t => t.upTo === null || amount <= Number(t.upTo))!
         charge = amount * Number(tier.ratePct) / 100
+        if (basis.method === "PROVEN_UPPER_BOUND") {
+          // Whole-amount rates can fall at a threshold. Evaluating only the
+          // largest order basis would understate the maximum fee in the range.
+          const lowerBasis = Number(basis.itemPrice)
+          for (const candidate of tiers) {
+            if (money(candidate.upTo) && candidate.upTo >= lowerBasis && candidate.upTo <= amount)
+              charge = Math.max(charge, candidate.upTo * Number(candidate.ratePct) / 100)
+          }
+        }
       } else for (const tier of tiers) {
         const upper = tier.upTo === null ? amount : Number(tier.upTo)
         charge += Math.max(0, Math.min(amount, upper) - lower) * Number(tier.ratePct) / 100

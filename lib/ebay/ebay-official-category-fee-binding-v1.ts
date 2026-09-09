@@ -1,4 +1,4 @@
-import snapshot from "../../docs/ebay-official-basic-fee-policy-snapshot-v1.json" with { type: "json" }
+import savedSnapshot from "../../docs/ebay-official-basic-fee-policy-snapshot-v1.json" with { type: "json" }
 import type { TradingManualListingResult } from "./ebay-manual-listing-trading-readonly"
 
 /** GetItem CategoryName is a fully qualified official category path. Never
@@ -6,7 +6,9 @@ import type { TradingManualListingResult } from "./ebay-manual-listing-trading-r
  * This binds base policy only; buyer basis and material adjustments stay separate.
  */
 export function bindOfficialCategoryFeePolicyV1(input: { listing: TradingManualListingResult;
-  accountKey: string; storeLevel: string | null; storeReference: string | null; now: Date }) {
+  accountKey: string; storeLevel: string | null; storeReference: string | null; now: Date; policySnapshot?: typeof savedSnapshot | null }) {
+  const snapshot = input.policySnapshot === undefined ? savedSnapshot : input.policySnapshot
+  if (!snapshot) return { status: "NEEDS_EVIDENCE" as const, limitation: "CURRENT_OFFICIAL_FEE_SOURCE_UNAVAILABLE", policy: null }
   const l = input.listing, path = l.categoryPath?.split(":").map(p => p.trim()) ?? []
   const valid = input.accountKey.length > 0 && l.ownership === "verified" && l.currency === "USD" &&
     Boolean(l.safeDefaults.categoryId) && l.secondaryCategoryId === null && path.length >= 2 && path.every(Boolean) &&

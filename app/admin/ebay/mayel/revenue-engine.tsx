@@ -142,7 +142,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
             ["Envío", row.economics.components.shippingCost.value], ["Comisiones eBay", row.economics.components.ebayFees.value], ["Otros costes", row.economics.components.otherCosts.value],
             ["Beneficio antes de Ads", row.economics.profitBeforeAds]] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="font-semibold">{money(value)}</dd></div>)}</dl>
           <p>Margen antes de Ads: {row.economics.marginBeforeAds === null ? "Por comprobar" : `${row.economics.marginBeforeAds.toFixed(2)}%`}</p>
-          {row.economics.economicsUnproven && <p className="text-sm text-amber-800">Faltan costes vigentes para comprobar el beneficio.</p>}
+          {row.economics.economicsUnproven && <p className="text-sm text-amber-800">{row.feeHandoff && row.feeHandoff.status !== "PROVEN" ? row.feeHandoff.label : "Faltan costes vigentes para comprobar el beneficio."}</p>}
           <p>Quality: {row.quality.freshness ?? "Por comprobar"} · {row.quality.reportDate ?? "Sin fecha"} · {row.quality.recommendations.length} recomendaciones</p>
           {row.quality.recommendations.map((r, i) => <p key={i} className="text-sm">{r.recommendationText} · {r.actionState}</p>)}
           <p className="text-sm">Tasa recomendada: {row.promotion.recommendedAdRate ?? "Por comprobar"}% · Máxima segura: {row.promotion.maxSafeAdRate ?? "Por comprobar"}%</p>

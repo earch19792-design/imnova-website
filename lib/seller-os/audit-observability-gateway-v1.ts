@@ -1,3 +1,4 @@
+import { readEbayFeeHandoffV1 } from "./ebay-fee-runtime-v1"
 import { revenueFailureV1, revenueTraceIdV1 } from "./revenue-first-diagnostics-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { projectLunaFieldTruthV1, LUNA_FIELD_TRUTH_FIELDS_V1 } from "./luna-field-truth-projection-v1"
@@ -567,6 +568,8 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
           ? "OPPORTUNITY_BLINDNESS"
           : blocker === "ECONOMICS" || blocker === "PRICING"
             ? "MARGIN_RISK" : blocker ? "REVENUE_BLOCKING" : "NONE"
+  const feeHandoff = await readEbayFeeHandoffV1({ supabase: input.supabase, accountKey: input.accountKey,
+    itemId, packageId, sku: text(first(active.sku, active.ebay_sku, execution.sku, packageData.sku), 180), now, readBudget: budget })
   return Object.freeze({ AUDIT_CONTRACT_VERSION: SELLER_OS_PRODUCT_CASE_AUDIT_V1,
     OBSERVED_AT: now.toISOString(), DETAIL_MODE: mode,
     INPUT_IDENTITY: { type: input.identityType, value: input.identity },
@@ -597,9 +600,10 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
           "PACKAGE_DIGEST"].includes(entry.FIELD)) : fieldTruth,
     ...groups, NEXT_BLOCKING_STAGE: blocker, BUSINESS_IMPACT: impact,
     KEYWORD_INTELLIGENCE: keywordRead,
+    FEE_AUTHORITY: feeHandoff,
     COMMERCIAL_ENVELOPE: envelopeFromProductCaseV1({ accountKey: input.accountKey, packageId, itemId,
       sku: text(first(active.sku, active.ebay_sku, execution.sku, packageData.sku), 180), fields: fieldTruth,
-      keyword: consumeListingPackageKeywordHandoffV1(keywordRead, keywordBinding), now }),
+      keyword: consumeListingPackageKeywordHandoffV1(keywordRead, keywordBinding), feeHandoff, now }),
     TECHNICAL_TRACE: mode === "TRACE" ? { approvalId: approval.id ?? null,
       executionId: execution.id ?? null, publicationId: publication.id ?? null,
       publisherChildReceiptId: batchChild.receipt_id ?? null,

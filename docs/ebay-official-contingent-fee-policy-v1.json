@@ -1,0 +1,15 @@
+{
+  "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+  "sourceVersion": "SELLER_OS_OFFICIAL_CONTINGENT_FEES_2026_09_09_V1",
+  "observedAt": "2026-09-09T19:22:00Z",
+  "freshUntil": "2026-09-10T19:22:00Z",
+  "registeredCountry": "US",
+  "marketplace": "EBAY_US",
+  "components": {
+    "SELLER_PERFORMANCE": {"maximumRatePct": 7, "basis": "TOTAL_AMOUNT_OF_SALE", "mutuallyExclusiveWith": "SERVICE_METRICS"},
+    "SERVICE_METRICS": {"maximumRatePct": 6, "basis": "TOTAL_AMOUNT_OF_SALE", "mutuallyExclusiveWith": "SELLER_PERFORMANCE"},
+    "INTERNATIONAL": {"maximumRatePct": 1.65, "basis": "TOTAL_AMOUNT_OF_SALE"},
+    "CURRENCY_CONVERSION": {"chargeRatePct": 3, "basis": "AMOUNT_CONVERTED_AT_TRANSACTION_EXCHANGE_RATE", "exchangeRiskBounded": false}
+  },
+  "scope": "Official rate limits, not complete monetary bounds. Buyer tax, total fee basis, currency exposure and tax on fees require separate evidence. No unknown amount is zero."
+}
