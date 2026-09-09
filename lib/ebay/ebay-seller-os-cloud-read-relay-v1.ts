@@ -1,4 +1,5 @@
 import { revenueFailureV1, RevenueDependencyErrorV1 } from "../seller-os/revenue-first-diagnostics-v1"
+import { getEbayProRuntimeBoundary, SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION } from "./environment-boundaries"
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto"
 
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
@@ -523,7 +524,15 @@ export async function handleSellerOsCloudReadRelayRequestV1(
   } = {},
 ) {
   const environment = options.environment ?? process.env
-  if (environment.VERCEL_ENV !== "preview" || req.method !== "POST" ||
+  const boundary = getEbayProRuntimeBoundary({ pathname: SELLER_OS_CLOUD_READ_RELAY_PATH,
+    method: req.method, vercelEnv: environment.VERCEL_ENV ?? "",
+    vercelTargetEnv: environment.VERCEL_TARGET_ENV ?? "", vercelSystem: environment.VERCEL ?? "",
+    vercelProjectId: environment.VERCEL_PROJECT_ID ?? "",
+    vercelProjectProductionUrl: environment.VERCEL_PROJECT_PRODUCTION_URL ?? "",
+    ebayProRuntime: environment.EBAY_PRO_RUNTIME ?? "", nodeEnv: environment.NODE_ENV ?? "",
+    supabaseUrl: environment.NEXT_PUBLIC_SUPABASE_URL ?? "" })
+  const dedicatedPreprod = boundary.boundaryClassification === SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION
+  if ((environment.VERCEL_ENV !== "preview" && !dedicatedPreprod) || boundary.blocked || req.method !== "POST" ||
     new URL(req.url).pathname !== SELLER_OS_CLOUD_READ_RELAY_PATH) {
     return relayError(404, "SELLER_OS_CLOUD_READ_RELAY_PREVIEW_ONLY")
   }

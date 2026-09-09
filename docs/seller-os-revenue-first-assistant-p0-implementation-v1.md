@@ -36,3 +36,15 @@ Referencias técnicas consultadas: [orden por varias columnas de Supabase](https
 La decisión Keyword del listing preservado puede seguir NEEDS_EVIDENCE por insuficiencia comercial. El Preview usa contenido del paquete existente; no certifica una lectura completa de descripción/specifics LIVE. Sell One Like This continúa UNPROVEN cuando no existe handoff verificable. No se inventa verdad de producto, no se regeneran activos válidos para diagnosticar, no se ejecutan marketplace writes.
 
 Estado físico de preprod y SHA de implementación: se registran en el readback de cierre.
+
+## Primera comprobación física
+
+Deployment `dpl_BLJRTwxdDVB2syrhPDnxbXTeor78`, SHA `7b801ca5abfb9ded016feecb6b89214755ee5a71`, proyecto dedicado preprod, READY y alias asignado.
+
+Quality PASS: import `a7ffd59f-b8e4-4a77-8eb3-78c195362311`, report date 2026-09-04, STALE/WAIT, cobertura histórica 12/17. El rechazo LOW_SOURCE_RESOLUTION respondió 400 con el cuarteto de error antes del proveedor.
+
+Image Optimization PASS: Item `366582671136`, finding `EDGE_CROPPING_RISK`, una variante nueva sin variante válida previa. Product Truth preservada; una llamada OpenAI mediante binding preprod; costo registrado USD 0.00638; marketplace writes 0. Trace `6a9b663d-7217-4992-a660-31e0856c848d`, provider request `req_a28ecd621b054bc7a9a69039670fb9d8`, experimento `34078a7e-85cc-4a35-ae26-24e65784e7f3`. No se atribuye este intento al fallo histórico.
+
+El E2E de Preview detectó un guard anterior del relay que sólo admitía VERCEL_ENV=preview. Se corrigió para admitir también la clasificación dedicada existente, que exige simultáneamente proyecto, dominio, runtime y Supabase de staging. Producción compartida permanece bloqueada. Las pruebas positivas y negativas de esa frontera pasan; la segunda lectura física se registra en el readback de cierre.
+
+Verificación durable de imagen PASS: experimento DRAFT, un recibo COMPLETED, hash del archivo descargado igual al hash del activo y de la respuesta, y protectedLayerRoundtripExact=true. La suite ampliada de release pasa 373/373 archivos (incluye todo lib/seller-os), TypeScript, lint y CI audit PASS. El binding HMAC del relay faltaba en preprod; se agregó como sensitive reutilizando el secreto existente del túnel, sin cambiar el binding OpenAI ni escribir secretos locales.
