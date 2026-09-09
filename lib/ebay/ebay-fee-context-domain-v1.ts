@@ -42,3 +42,21 @@ export function feeContextSafeErrorV1(error: unknown) {
   // Only controlled identifiers may leave the gateway; upstream response text may contain PII.
   return /^EBAY_[A-Z0-9_]{1,100}$/.test(message) ? message : "EBAY_FEE_CONTEXT_READ_UNAVAILABLE"
 }
+
+export function resolveEbayFeeStoreContextV1(subscription: unknown, performance: unknown) {
+  const store = record(subscription), account = record(performance)
+  const officialNoStore = account.accountBindingExact === true && account.storeOwner === false
+  if (store.status === "AVAILABLE" || store.status === "NO_STORE") {
+    if ((store.status === "AVAILABLE" && officialNoStore) ||
+      (store.status === "NO_STORE" && account.storeOwner === true)) {
+      return { status: "UNPROVEN", storeSubscriptionLevel: null, source: null, errorCode: "EBAY_STORE_CONTEXT_CONFLICT" }
+    }
+    return { status: "PROVEN", storeSubscriptionLevel: store.storeSubscriptionLevel,
+      source: "https://api.ebay.com/sell/account/v1/subscription", errorCode: null }
+  }
+  if (officialNoStore && store.status !== "AMBIGUOUS") return {
+    status: "PROVEN", storeSubscriptionLevel: "NO_STORE",
+    source: "https://developer.ebay.com/devzone/xml/docs/Reference/ebay/GetUser.html#Response.User.SellerInfo.StoreOwner", errorCode: null,
+  }
+  return { status: "UNPROVEN", storeSubscriptionLevel: null, source: null, errorCode: "EBAY_STORE_TIER_UNPROVEN" }
+}

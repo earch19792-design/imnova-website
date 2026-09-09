@@ -632,7 +632,7 @@ export async function readEbaySellerStoreSubscriptionReadonly(
   }
   const execute = async (forceRefresh: boolean): Promise<ReturnType<
     typeof parseEbaySellerStoreSubscriptionReadonly
-  >> => {
+  > & { responseDiagnostic: Record<string, unknown> }> => {
     const authenticated = await authenticatedToken(config, fetchImpl, forceRefresh)
     const result = await read(
       authenticated.token,
@@ -643,7 +643,18 @@ export async function readEbaySellerStoreSubscriptionReadonly(
     if (!result.ok) {
       throw new Error(failedReadCode("SUBSCRIPTIONS", result))
     }
-    return parseEbaySellerStoreSubscriptionReadonly(result.body)
+    const parsed = parseEbaySellerStoreSubscriptionReadonly(result.body)
+    return { ...parsed, responseDiagnostic: {
+      httpStatus: result.status, subscriptionsPresent: Array.isArray(result.body.subscriptions),
+      returnedTotal: Number.isSafeInteger(result.body.total) ? result.body.total : null,
+      nextPagePresent: typeof result.body.next === "string" && Boolean(result.body.next),
+      entries: Array.isArray(result.body.subscriptions) ? result.body.subscriptions.slice(0, 20).map(raw => {
+        const entry = record(raw)
+        const safe = (value: unknown) => typeof value === "string" && /^[A-Za-z_ -]{1,40}$/.test(value) ? value : null
+        return { marketplaceId: safe(entry.marketplaceId), subscriptionType: safe(entry.subscriptionType),
+          subscriptionLevel: safe(entry.subscriptionLevel) }
+      }) : [],
+    } }
   }
   return execute(false)
 }

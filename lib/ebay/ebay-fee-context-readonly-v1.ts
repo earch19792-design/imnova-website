@@ -1,7 +1,7 @@
 import { readManualListingFromTradingApi } from "./ebay-manual-listing-trading-readonly"
 import { readEbaySellerStoreSubscriptionReadonly } from "./ebay-account-policy-readonly-gateway"
 import { readEbayFeePerformanceReadonlyV1 } from "./ebay-seller-analytics-readonly-gateway"
-import { feeContextSafeErrorV1 } from "./ebay-fee-context-domain-v1"
+import { feeContextSafeErrorV1, resolveEbayFeeStoreContextV1 } from "./ebay-fee-context-domain-v1"
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 
 /** Internal diagnostic: fixed read-only sources for one verified LIVE listing. */
@@ -31,6 +31,7 @@ export async function readEbayFeeContextReadonlyV1(itemId: string) {
       buyerShippingChargeStatus: listing.buyerShippingChargeStatus, buyerShippingChargeBasis: listing.buyerShippingChargeBasis,
       source: "EBAY_TRADING_GET_ITEM" },
     subscription: { source: "https://api.ebay.com/sell/account/v1/subscription", evidence: component(0) },
+    resolvedStoreContext: resolveEbayFeeStoreContextV1(component(0), component(1)),
     accountPerformance: component(1),
     feeAmount: null, preSaleFeeEstimateProven: false,
     safety: { readOnly: true, databaseWrites: 0, marketplaceWrites: 0, ebayAdsWrites: 0,

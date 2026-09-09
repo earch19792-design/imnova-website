@@ -68,7 +68,10 @@ async function assertAnalyticsSellerAccount(accessToken: string, includeCountry 
     body: "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
       "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
       "<OutputSelector>User.UserID</OutputSelector>" +
-      (includeCountry ? "<DetailLevel>ReturnAll</DetailLevel><OutputSelector>User.RegistrationAddress.Country</OutputSelector>" : "") +
+      (includeCountry ? "<DetailLevel>ReturnAll</DetailLevel>" +
+        "<OutputSelector>User.RegistrationAddress.Country</OutputSelector>" +
+        "<OutputSelector>User.RegistrationAddress.StateOrProvince</OutputSelector>" +
+        "<OutputSelector>User.SellerInfo.StoreOwner</OutputSelector><OutputSelector>User.VATStatus</OutputSelector>" : "") +
       "</GetUserRequest>",
     cache: "no-store",
     signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
@@ -95,8 +98,15 @@ async function assertAnalyticsSellerAccount(accessToken: string, includeCountry 
   if (!fingerprintMatches || !userIdMatches) {
     throw new Error("EBAY_ANALYTICS_ACCOUNT_IDENTITY_MISMATCH")
   }
-  const country = includeCountry ? tradingXmlValue(xml, "Country") : null
-  return country && /^[A-Z]{2}$/.test(country) ? country : null
+  const address = xml.match(/<(?:[\w-]+:)?RegistrationAddress(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w-]+:)?RegistrationAddress>/i)?.[1] ?? ""
+  const country = includeCountry ? tradingXmlValue(address, "Country") : null
+  const state = includeCountry ? tradingXmlValue(address, "StateOrProvince") : null
+  const store = includeCountry ? tradingXmlValue(xml, "StoreOwner") : null
+  const vat = includeCountry ? tradingXmlValue(xml, "VATStatus") : null
+  return { registrationCountry: country && /^[A-Z]{2}$/.test(country) ? country : null,
+    registrationState: state && /^[A-Za-z .-]{1,40}$/.test(state) ? state : null,
+    storeOwner: store === "true" ? true : store === "false" ? false : null,
+    vatStatus: vat && ["NoVATTax", "VATExempt", "VATTax"].includes(vat) ? vat : null }
 }
 
 function assertReadonlyAnalyticsUrl(url: URL) {
@@ -230,7 +240,7 @@ export async function readEbayFeePerformanceReadonlyV1() {
   let token = ""
   try {
     token = await getSellerAnalyticsAccessToken()
-    const registrationCountry = await assertAnalyticsSellerAccount(token, true)
+    const accountContext = await assertAnalyticsSellerAccount(token, true)
     const readProfile = async (kind: "STANDARDS" | "SERVICE", path: string) => {
       const source = `https://api.ebay.com${path}`
       const response = await fetch(source, { method: "GET",
@@ -242,17 +252,54 @@ export async function readEbayFeePerformanceReadonlyV1() {
       return { ...projectEbayFeePerformanceV1(kind, await response.json()),
         httpStatus: response.status, errorCode: null, source, observedAt }
     }
+    const readInvoice = async () => {
+      const response = await fetch(TRADING_ENDPOINT, { method: "POST", headers: {
+        "Content-Type": "text/xml", "X-EBAY-API-CALL-NAME": "GetAccount",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
+        "X-EBAY-API-SITEID": "0", "X-EBAY-API-IAF-TOKEN": token,
+      }, body: '<GetAccountRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
+        '<AccountHistorySelection>LastInvoice</AccountHistorySelection><AccountEntrySortType>AccountEntryCreatedTimeDescending</AccountEntrySortType>' +
+        '<ExcludeSummary>true</ExcludeSummary><ExcludeBalance>true</ExcludeBalance>' +
+        '<Pagination><EntriesPerPage>20</EntriesPerPage><PageNumber>1</PageNumber></Pagination>' +
+        '<OutputSelector>AccountEntries.AccountEntry.AccountDetailsEntryType</OutputSelector>' +
+        '<OutputSelector>AccountEntries.AccountEntry.Date</OutputSelector><OutputSelector>AccountEntries.AccountEntry.ItemID</OutputSelector>' +
+        '<OutputSelector>AccountEntries.AccountEntry.GrossDetailAmount</OutputSelector>' +
+        '<OutputSelector>AccountEntries.AccountEntry.NetDetailAmount</OutputSelector><OutputSelector>AccountEntries.AccountEntry.VATPercent</OutputSelector>' +
+        '<OutputSelector>Currency</OutputSelector></GetAccountRequest>', cache: "no-store",
+        signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS) })
+      const xml = await response.text(), ack = tradingXmlValue(xml, "Ack")?.toLowerCase()
+      const available = response.ok && ["success", "warning"].includes(ack ?? "")
+      const number = (entry: string, name: string) => {
+        const value = tradingXmlValue(entry, name)
+        return value !== null && /^-?\d+(\.\d+)?$/.test(value) && Number.isFinite(Number(value)) ? Number(value) : null
+      }
+      const entries = available ? [...xml.matchAll(/<(?:[\w-]+:)?AccountEntry(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w-]+:)?AccountEntry>/gi)].slice(0, 20).map(match => {
+        const entry = match[1], itemId = tradingXmlValue(entry, "ItemID"), type = tradingXmlValue(entry, "AccountDetailsEntryType")
+        return { itemId: itemId && /^\d{9,19}$/.test(itemId) ? itemId : null,
+          feeType: type && /^[A-Za-z0-9]{1,80}$/.test(type) ? type : null,
+          postedAt: tradingXmlValue(entry, "Date"), grossAmount: number(entry, "GrossDetailAmount"),
+          netAmount: number(entry, "NetDetailAmount"), vatPercent: number(entry, "VATPercent") }
+      }) : []
+      const code = tradingXmlValue(xml, "ErrorCode"), currency = tradingXmlValue(xml, "Currency")
+      return { status: available ? "AVAILABLE" : "UNPROVEN", httpStatus: response.status,
+        errorCode: code && /^\d{1,12}$/.test(code) ? `EBAY_TRADING_${code}` : available ? null : "EBAY_FEE_INVOICE_UNAVAILABLE",
+        source: "https://developer.ebay.com/devzone/xml/docs/Reference/ebay/GetAccount.html",
+        observedAt: new Date().toISOString(), evidenceClass: "HISTORICAL_ACCOUNT_FEE_ENTRIES",
+        currency: currency && /^[A-Z]{3}$/.test(currency) ? currency : null,
+        page: 1, pageSize: 20, entries, currentPreSaleAuthority: false }
+    }
     const results = await Promise.allSettled([
       readProfile("STANDARDS", "/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT"),
       readProfile("SERVICE", "/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US"),
+      readInvoice(),
     ])
     const profile = (index: number) => {
       const result = results[index]
       return result.status === "fulfilled" ? result.value :
         { status: "UNPROVEN", httpStatus: null, errorCode: "EBAY_FEE_PROFILE_TRANSPORT_UNAVAILABLE" }
     }
-    return { accountBindingExact: true, registrationCountry,
+    return { accountBindingExact: true, ...accountContext,
       registrationCountrySource: "EBAY_TRADING_GET_USER_REGISTRATION_ADDRESS_COUNTRY",
-      observedAt: new Date().toISOString(), standards: profile(0), serviceMetrics: profile(1) }
+      observedAt: new Date().toISOString(), standards: profile(0), serviceMetrics: profile(1), invoice: profile(2) }
   } finally { token = "" }
 }
