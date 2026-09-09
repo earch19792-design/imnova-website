@@ -3,6 +3,8 @@ import type { CommercialListingReadModel, Observation } from "../ebay/commercial
 export const LISTING_TREATMENT_ENGINE_V1 = "SELLER_OS_ASSISTANT_LISTING_TREATMENT_ENGINE_V1"
 export const PROMOTION_PROFIT_GUARD_V1 = "SELLER_OS_PROMOTION_PROFIT_GUARD_V1"
 export const TREATMENT_RECEIPT_V1 = "SELLER_OS_ASSISTANT_TREATMENT_RECEIPT_V1"
+export const PROMOTION_CONTROL_V1 = "SELLER_OS_ASSISTANT_REVENUE_PROMOTION_CONTROL_V1"
+export const FRIENDLY_MENU_V1 = "ASSISTANT_FRIENDLY_MENU_V1"
 export const MAX_TREATMENT_LISTINGS = 20
 export const METRIC_WINDOWS = ["24H", "7D", "30D"] as const
 export type MetricWindow = typeof METRIC_WINDOWS[number]
@@ -157,7 +159,7 @@ export function diagnoseListingTreatmentV1(input: { itemId: string; window: Metr
 export function promotionPortfolioPreviewV1(rows: ReturnType<typeof diagnoseListingTreatmentV1>[]) {
   if (!rows.length || rows.length > MAX_TREATMENT_LISTINGS || new Set(rows.map(r => r.itemId)).size !== rows.length) throw Error("BOUNDED_UNIQUE_LISTINGS_REQUIRED")
   const ready = rows.filter(r => r.treatment === "SCALE" && r.promotion.status === "SIMULATION_READY")
-  return { selected: rows.length, ready: ready.length, optimizeFirst: rows.filter(r => r.treatment === "OPTIMIZE").length,
+  return { contractVersion: PROMOTION_CONTROL_V1, selected: rows.length, ready: ready.length, optimizeFirst: rows.filter(r => r.treatment === "OPTIMIZE").length,
     blockedMargin: rows.filter(r => r.treatment === "PROFIT_PROTECT" || r.promotion.status === "BLOCKED_MARGIN").length,
     blockedEvidence: rows.filter(r => r.treatment === "TEST" || r.promotion.status === "BLOCKED_EVIDENCE").length,
     blockedStock: rows.filter(r => r.treatment === "RESTOCK").length,

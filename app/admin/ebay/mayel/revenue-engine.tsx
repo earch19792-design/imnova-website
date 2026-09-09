@@ -11,10 +11,10 @@ type Result = Awaited<ReturnType<typeof prepareTreatmentPreviewV1>>
 const money = (n: number | null | undefined) => n === null || n === undefined ? "Por comprobar" : `$${n.toFixed(2)}`
 const button = "min-h-11 rounded-xl border border-[#c7d0c3] bg-white px-4 py-2 text-sm font-semibold disabled:opacity-50"
 const presets = { Conservador: [2, 3, 10, 20], Equilibrado: [3, 5, 8, 15], Acelerar: [3, 7, 8, 15] } as const
-async function request(body?: unknown) {
+async function request(body?: unknown, after?: string) {
   const { data } = await supabase.auth.getSession()
   if (!data.session) throw Error("AUTH_REQUIRED")
-  const response = await fetch("/api/admin/ebay/assistant/revenue-engine", { method: body ? "POST" : "GET", cache: "no-store",
+  const response = await fetch(`/api/admin/ebay/assistant/revenue-engine${after ? `?after=${encodeURIComponent(after)}` : ""}`, { method: body ? "POST" : "GET", cache: "no-store",
     headers: { Authorization: `Bearer ${data.session.access_token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}) })
   const payload = await response.json()
@@ -24,6 +24,8 @@ async function request(body?: unknown) {
 export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const [menu, setMenu] = useState(0)
   const [listings, setListings] = useState<{ itemId: string; title: string }[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [pageCursor, setPageCursor] = useState<string | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [policy, setPolicy] = useState<PromotionPolicy>({ mode: "MANUAL", minRate: 3, maxRate: 5, minProfit: 8, minMargin: 15,
     window: "NOW", timeZone: "", startsAt: null, endsAt: null })
@@ -38,8 +40,14 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [previewItemId, setPreviewItemId] = useState<string | null>(null)
   useEffect(() => { let active = true; void request().then(p => {
-    if (active) { setListings(p.listings); if (p.timeZone) setPolicy(old => ({ ...old, timeZone: p.timeZone })) }
+    if (active) { setListings(p.listings); setNextCursor(p.nextCursor); if (p.timeZone) setPolicy(old => ({ ...old, timeZone: p.timeZone })) }
   }).catch(e => { if (active) setError(String(e.message)) }); return () => { active = false } }, [])
+  async function page(after?: string) {
+    setBusy(true); setError("")
+    try { const p = await request(undefined, after); setListings(p.listings); setNextCursor(p.nextCursor); setPageCursor(after ?? null); setSelected([]); setResult(null) }
+    catch (e) { setError(e instanceof Error ? e.message : "REQUEST_FAILED") }
+    finally { setBusy(false) }
+  }
   async function analyze(mode: "PREVIEW" | "SIMULATE" | "RECEIPT" | "MEASURE" | "IMAGE", itemId?: string) {
     if (busy) return
     setBusy(true); setError(""); setMessage(""); setPreviewItemId(null)
@@ -73,6 +81,8 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
           <input type="checkbox" checked={selected.includes(l.itemId)} disabled={busy} onChange={e => {
             setSelected(old => e.target.checked ? [...old, l.itemId] : old.filter(id => id !== l.itemId)); setResult(null)
           }} />{l.title || l.itemId}</label>)}</div>
+        {nextCursor && <button className={`${button} mt-3`} disabled={busy} onClick={() => void page(nextCursor)}>Siguientes listings</button>}
+        {pageCursor && <button className={`${button} mt-3`} disabled={busy} onClick={() => void page()}>Volver al inicio</button>}
         <div className="mt-4 flex flex-wrap items-end gap-3">
           <label>Periodo<select className="ml-2 rounded border p-2" value={window} onChange={e => { setWindow(e.target.value as MetricWindow); setResult(null) }}>{METRIC_WINDOWS.map(w => <option key={w}>{w}</option>)}</select></label>
           <label>Horario de la cuenta<select className="ml-2 rounded border p-2" value={policy.timeZone} onChange={e => changePolicy({ timeZone: e.target.value })}>
