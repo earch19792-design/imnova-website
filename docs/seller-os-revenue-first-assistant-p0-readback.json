@@ -1,21 +1,11 @@
 {
   "DOCS_PRESERVATION_SHA": "451c91b523a2b3e6a854c332622ebb22f1fe24ec",
-  "IMPLEMENTATION_SHA": "7b801ca5abfb9ded016feecb6b89214755ee5a71",
+  "IMPLEMENTATION_SHA": "147857f9f3c733b0136c80212cfd6e975b623a88",
   "PREPROD_OPENAI_KEY_PRESENT": true,
   "OPENAI_CREDENTIAL_SOURCE": "EXISTING_DEDICATED_PREPROD_SERVER_SIDE_ONLY",
   "OPENAI_SECRET_DOWNLOADED": false,
   "OPENAI_SECRET_WRITTEN": false,
   "OPENAI_SECRET_DISPLAYED": false,
-  "deployment-readback": {
-    "project": "imnova-seller-os-preprod",
-    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
-    "readyState": "READY",
-    "target": "production",
-    "sha": "7b801ca5abfb9ded016feecb6b89214755ee5a71",
-    "url": "imnova-seller-os-preprod-kpnqe1ihv-earch19792-6888s-projects.vercel.app",
-    "aliasAssigned": true,
-    "valuesDisplayed": false
-  },
   "status": {
     "httpStatus": 200,
     "success": true,
@@ -283,23 +273,86 @@
     ]
   },
   "preview": {
-    "httpStatus": 404,
+    "httpStatus": 200,
     "success": null,
-    "ERROR_CODE": "SELLER_OS_CLOUD_READ_RELAY_PREVIEW_ONLY",
-    "DEPENDENCY_STAGE": "ASSISTANT_RELAY",
-    "TRACE_ID": "3b8eed34-3a24-4e16-99f3-9df29891995f",
-    "FAIL_CLOSED_REASON": "No se completó la dependencia ASSISTANT_RELAY; se requiere evidencia válida antes de continuar.",
+    "ERROR_CODE": "KEYWORD_DECISION_UNPROVEN",
+    "DEPENDENCY_STAGE": "KEYWORD_INTELLIGENCE",
+    "TRACE_ID": "dd1884b6-e017-4e73-accd-54f86ef2dc86",
+    "FAIL_CLOSED_REASON": null,
     "PROVIDER_REQUEST_ID": null,
-    "marketplaceWrites": 0,
-    "status": null,
-    "identity": null,
-    "report": null,
-    "keywordStatus": null,
-    "blockers": null,
-    "previewDigest": null,
-    "sourcePackageId": null,
-    "previewPresent": false,
-    "safety": null
+    "marketplaceWrites": null,
+    "status": "NEEDS_EVIDENCE",
+    "identity": {
+      "candidateId": "sha256:640a2832fcb6870ba09dc172553f0620c74b9b9f3b81bbad6fefad6971e80a88",
+      "opportunityId": "b7087b76-3c03-4892-b99b-421a6f0c545c",
+      "productCaseId": null,
+      "lunaProductId": "9220873322720",
+      "lunaVariantId": "48809689415904",
+      "supplierSku": "FL-CUP-PHONE-MOUNT",
+      "ebaySku": "IMNOVAD28114BA01D9413490E4927035E66255",
+      "ebayItemId": "366643122092",
+      "packageId": "d28114ba-01d9-4134-90e4-927035e66255"
+    },
+    "report": {
+      "status": "AVAILABLE",
+      "source": "EBAY_LISTING_QUALITY_REPORT",
+      "persistenceStatus": "DURABLE_READ_ONLY",
+      "reportExists": true,
+      "importId": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+      "reportDate": "2026-09-04",
+      "importedAt": "2026-09-04T21:53:11.343Z",
+      "freshness": "STALE",
+      "coverage": {
+        "liveListingsCovered": 12,
+        "historicalLiveScopeCount": 17,
+        "nonliveRowsExcluded": 0
+      },
+      "limitationCode": "QUALITY_REPORT_STALE_WAIT",
+      "recommendations": [
+        {
+          "freshness": "STALE",
+          "actionState": "WAIT",
+          "source": "EBAY_LISTING_QUALITY_REPORT",
+          "sourceVersion": "REMOTE_OPERATOR_LISTING_QUALITY_REPORT_OWNER_IMPORT_V1_2026_09_02",
+          "listingKey": "[\"366643122092\",\"IMNOVAD28114BA01D9413490E4927035E66255\",null]",
+          "associationStatus": "ITEM_ID_CERTIFIED",
+          "recommendationCategory": "WAIT",
+          "recommendationType": "VISUAL_COVERAGE_REVIEW",
+          "recommendationText": "Revisa si Seller OS tiene una propuesta visual del producto exacto.",
+          "reportedBenchmark": null,
+          "topCategoryBenchmark": null,
+          "observedAt": "2026-09-04T00:00:00.000Z",
+          "importedAt": "2026-09-04T21:53:11.343Z"
+        }
+      ]
+    },
+    "keywordStatus": "BLOCKED",
+    "blockers": [
+      "KEYWORD_DECISION_VERSION_UNSUPPORTED",
+      "KEYWORD_BINDING_MISMATCH",
+      "KEYWORD_DECISION_STALE_OR_UNVALIDATED",
+      "KEYWORD_DECISION_TRANSPORT_DIGEST_INVALID",
+      "KEYWORD_DECISION_FINGERPRINT_INVALID",
+      "KEYWORD_DECISION_SCHEMA_INVALID",
+      "KEYWORD_AUTHORITY_READ_UNAVAILABLE",
+      "KEYWORD_DECISION_UNPROVEN",
+      "PACKAGE_PREVIEW_EVIDENCE_REQUIRED"
+    ],
+    "previewDigest": "sha256:bd046d303a372caf822632ee375e5d6270af8d8fa7501dd6889be7084cf8a0e2",
+    "sourcePackageId": "d28114ba-01d9-4134-90e4-927035e66255",
+    "previewPresent": true,
+    "safety": {
+      "readOnly": true,
+      "draftOnly": true,
+      "persistenceUsed": false,
+      "canPublish": false,
+      "marketplaceWrites": 0,
+      "databaseBusinessWrites": 0,
+      "providerCalls": 0,
+      "researchRecomputations": 0,
+      "credentialsIncluded": false,
+      "buyerPiiIncluded": false
+    }
   },
   "verify-image": {
     "experimentId": "34078a7e-85cc-4a35-ae26-24e65784e7f3",
@@ -330,12 +383,559 @@
     "filesFailed": 0,
     "typecheck": "PASS",
     "lint": "PASS",
-    "sellerOsAudit": "PASS"
+    "sellerOsAudit": "PASS",
+    "build": "PASS",
+    "targetedRuntimeSecurity": "PASS",
+    "certifiedArtifact": {
+      "status": "MATCHED",
+      "runtimeBuildShaMatch": true,
+      "sourceCommitSha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+      "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "buildId": "d1Urs-jCU4rE_hVGHd7z7",
+      "buildArtifactDigest": "sha256:a339c7cbdf4c66885d39fe939d2343b5254a128909f4aaed03a1b0a84562a473",
+      "operationalServiceBound": true
+    }
   },
   "relayBinding": {
     "key": "SELLER_OS_CLOUD_READ_RELAY_SECRET",
     "type": "sensitive",
     "existingTunnelBindingReused": true,
     "openAiBindingChanged": false
+  },
+  "deployment": {
+    "id": "dpl_544fMD81QAJgkKs7jhvJTyx9ufNH",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-3ajd9xkhs-earch19792-6888s-projects.vercel.app",
+    "sha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+    "target": "production",
+    "aliasAssigned": true
+  },
+  "localRuntimeActivation": {
+    "status": "PASS",
+    "sourceCommitSha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+    "previousCommitSha": "5c6a3c21b88daff6e59fcf7aeecfcf099fc40e5a",
+    "artifact": {
+      "status": "MATCHED",
+      "runtimeBuildShaMatch": true,
+      "sourceCommitSha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+      "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "buildId": "d1Urs-jCU4rE_hVGHd7z7",
+      "buildArtifactDigest": "sha256:a339c7cbdf4c66885d39fe939d2343b5254a128909f4aaed03a1b0a84562a473",
+      "operationalServiceBound": true
+    },
+    "toolCount": 29,
+    "previewToolPresent": true,
+    "relayUrl": "https://imnova-seller-os-preprod-3ajd9xkhs-earch19792-6888s-projects.vercel.app/api/seller-os/assistant/cloud-read-relay",
+    "marketplaceWrites": 0,
+    "openAiBindingChanged": false,
+    "rollbackDirectory": "/home/earch/seller-os-isolated-audits/revenue-first-activation-147857f9",
+    "completedAt": "2026-09-09T14:41:26Z"
+  },
+  "localRuntimeHealth": {
+    "contractVersion": "SELLER_OS_RUNTIME_HEALTH_V1",
+    "observedAt": "2026-09-09T14:42:29.571Z",
+    "overallStatus": "HEALTHY",
+    "services": {
+      "mcp": {
+        "service": "imnova-seller-os-mcp.service",
+        "status": "HEALTHY",
+        "activeState": "active",
+        "subState": "running",
+        "result": "success",
+        "mainPid": 32084,
+        "restartCount": 0,
+        "activeEnterTimestamp": "2026-09-09T14:41:23.000Z"
+      },
+      "tunnel": {
+        "service": "imnova-seller-os-tunnel.service",
+        "status": "HEALTHY",
+        "activeState": "active",
+        "subState": "running",
+        "result": "success",
+        "mainPid": 32085,
+        "restartCount": 0,
+        "activeEnterTimestamp": "2026-09-09T14:41:23.000Z"
+      },
+      "watchdogTimer": {
+        "service": "imnova-seller-os-watchdog.timer",
+        "status": "HEALTHY",
+        "activeState": "active",
+        "subState": "waiting",
+        "lastTrigger": "2026-09-09T14:40:38.372Z",
+        "nextTrigger": "2026-09-09T14:42:38.373Z"
+      }
+    },
+    "port3000": {
+      "host": "127.0.0.1",
+      "port": 3000,
+      "status": "AVAILABLE",
+      "observedAt": "2026-09-09T14:42:29.571Z"
+    },
+    "watchdog": {
+      "lastRunAt": "2026-09-09T14:40:38.000Z",
+      "lastSuccessAt": "2026-09-09T14:40:38.000Z",
+      "lastResult": "success"
+    },
+    "runtimeCatalog": {
+      "contractVersion": "SELLER_OS_RUNTIME_CATALOG_ATTESTATION_V1",
+      "observedAt": "2026-09-09T14:42:29.571Z",
+      "serviceIdentity": "imnova-seller-os-mcp.service",
+      "runtimeEntrypointIdentity": "NEXT_APP_ROUTE_SELLER_OS_ASSISTANT_MCP",
+      "runtimeWorkingDirectoryIdentity": "SELLER_OS_CANONICAL_REPOSITORY",
+      "runtimeWorkingDirectoryMatch": true,
+      "loadedMcpImplementationVersion": "SELLER_OS_MCP_READONLY_V1_2026_09_06_AUDIT_OBSERVABILITY",
+      "catalogSource": "MCP_SERVER_FACTORY_REGISTRATION_LEDGER",
+      "runtimeCatalogCount": 29,
+      "expectedCatalogCount": 29,
+      "officialOrdersToolPresent": true,
+      "salesOrderEventsToolPresent": true,
+      "recentSalesFeedToolPresent": true,
+      "saleAlertsToolPresent": true,
+      "whatsappSaleAlertStatusToolPresent": true,
+      "buyerThankYouStatusToolPresent": true,
+      "exactCatalogMatch": true,
+      "workspaceRuntimeBindingStatus": "MATCHED",
+      "limitations": [],
+      "safety": {
+        "readOnly": true,
+        "callerControlledPathAllowed": false,
+        "fileContentsIncluded": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false
+      }
+    },
+    "evidenceCompleteness": "COMPLETE",
+    "limitations": [],
+    "safety": {
+      "readOnly": true,
+      "arbitraryShellAllowed": false,
+      "callerControlledServiceAllowed": false,
+      "credentialsIncluded": false,
+      "environmentValuesIncluded": false,
+      "marketplaceWrites": 0,
+      "inventoryWrites": 0,
+      "productCaseMutations": 0,
+      "lunaLinkMutations": 0,
+      "whatsappSends": 0
+    },
+    "runtimeBuild": {
+      "status": "MATCHED",
+      "runtimeBuildShaMatch": true,
+      "sourceCommitSha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+      "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "buildId": "d1Urs-jCU4rE_hVGHd7z7",
+      "buildArtifactDigest": "sha256:a339c7cbdf4c66885d39fe939d2343b5254a128909f4aaed03a1b0a84562a473",
+      "operationalServiceBound": true
+    }
+  },
+  "localPreview": {
+    "status": "NEEDS_EVIDENCE",
+    "TRACE_ID": "cc801bf6-6bdd-4b88-8e04-b46ab76565f6",
+    "ERROR_CODE": "KEYWORD_DECISION_UNPROVEN",
+    "DEPENDENCY_STAGE": "KEYWORD_INTELLIGENCE",
+    "sourcePackageId": "d28114ba-01d9-4134-90e4-927035e66255",
+    "previewDigest": "sha256:bd046d303a372caf822632ee375e5d6270af8d8fa7501dd6889be7084cf8a0e2",
+    "safety": {
+      "readOnly": true,
+      "draftOnly": true,
+      "persistenceUsed": false,
+      "canPublish": false,
+      "marketplaceWrites": 0,
+      "databaseBusinessWrites": 0,
+      "providerCalls": 0,
+      "researchRecomputations": 0,
+      "credentialsIncluded": false,
+      "buyerPiiIncluded": false
+    }
+  },
+  "previewDigestParity": true,
+  "tunnelDoctor": "PASS_EXISTING_CONTROL_BINDING",
+  "completedAt": "2026-09-09",
+  "initialImageCanaryDeployment": {
+    "project": "imnova-seller-os-preprod",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "target": "production",
+    "sha": "7b801ca5abfb9ded016feecb6b89214755ee5a71",
+    "url": "imnova-seller-os-preprod-kpnqe1ihv-earch19792-6888s-projects.vercel.app",
+    "aliasAssigned": true,
+    "valuesDisplayed": false
+  },
+  "connectorReadback": {
+    "devStatus": {
+      "sha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+      "workingTree": "CLEAN",
+      "evidenceCompleteness": "COMPLETE",
+      "initialTransportFailure": "HTTP_504",
+      "boundedRetry": "PASS"
+    },
+    "runtimeHealth": {
+      "contractVersion": "SELLER_OS_RUNTIME_HEALTH_V1",
+      "observedAt": "2026-09-09T14:43:35.190Z",
+      "overallStatus": "HEALTHY",
+      "services": {
+        "mcp": {
+          "service": "imnova-seller-os-mcp.service",
+          "status": "HEALTHY",
+          "activeState": "active",
+          "subState": "running",
+          "result": "success",
+          "mainPid": 32084,
+          "restartCount": 0,
+          "activeEnterTimestamp": "2026-09-09T14:41:23.000Z"
+        },
+        "tunnel": {
+          "service": "imnova-seller-os-tunnel.service",
+          "status": "HEALTHY",
+          "activeState": "active",
+          "subState": "running",
+          "result": "success",
+          "mainPid": 32085,
+          "restartCount": 0,
+          "activeEnterTimestamp": "2026-09-09T14:41:23.000Z"
+        },
+        "watchdogTimer": {
+          "service": "imnova-seller-os-watchdog.timer",
+          "status": "HEALTHY",
+          "activeState": "active",
+          "subState": "waiting",
+          "lastTrigger": "2026-09-09T14:42:48.374Z",
+          "nextTrigger": "2026-09-09T14:44:48.380Z"
+        }
+      },
+      "port3000": {
+        "host": "127.0.0.1",
+        "port": 3000,
+        "status": "AVAILABLE",
+        "observedAt": "2026-09-09T14:43:35.190Z"
+      },
+      "watchdog": {
+        "lastRunAt": "2026-09-09T14:42:48.000Z",
+        "lastSuccessAt": "2026-09-09T14:42:48.000Z",
+        "lastResult": "success"
+      },
+      "runtimeCatalog": {
+        "contractVersion": "SELLER_OS_RUNTIME_CATALOG_ATTESTATION_V1",
+        "observedAt": "2026-09-09T14:43:35.190Z",
+        "serviceIdentity": "imnova-seller-os-mcp.service",
+        "runtimeEntrypointIdentity": "NEXT_APP_ROUTE_SELLER_OS_ASSISTANT_MCP",
+        "runtimeWorkingDirectoryIdentity": "SELLER_OS_CANONICAL_REPOSITORY",
+        "runtimeWorkingDirectoryMatch": true,
+        "loadedMcpImplementationVersion": "SELLER_OS_MCP_READONLY_V1_2026_09_06_AUDIT_OBSERVABILITY",
+        "catalogSource": "MCP_SERVER_FACTORY_REGISTRATION_LEDGER",
+        "runtimeCatalogCount": 29,
+        "expectedCatalogCount": 29,
+        "officialOrdersToolPresent": true,
+        "salesOrderEventsToolPresent": true,
+        "recentSalesFeedToolPresent": true,
+        "saleAlertsToolPresent": true,
+        "whatsappSaleAlertStatusToolPresent": true,
+        "buyerThankYouStatusToolPresent": true,
+        "exactCatalogMatch": true,
+        "workspaceRuntimeBindingStatus": "MATCHED",
+        "limitations": [],
+        "safety": {
+          "readOnly": true,
+          "callerControlledPathAllowed": false,
+          "fileContentsIncluded": false,
+          "credentialsIncluded": false,
+          "environmentValuesIncluded": false
+        }
+      },
+      "evidenceCompleteness": "COMPLETE",
+      "limitations": [],
+      "safety": {
+        "readOnly": true,
+        "arbitraryShellAllowed": false,
+        "callerControlledServiceAllowed": false,
+        "credentialsIncluded": false,
+        "environmentValuesIncluded": false,
+        "marketplaceWrites": 0,
+        "inventoryWrites": 0,
+        "productCaseMutations": 0,
+        "lunaLinkMutations": 0,
+        "whatsappSends": 0
+      },
+      "runtimeBuild": {
+        "status": "MATCHED",
+        "runtimeBuildShaMatch": true,
+        "sourceCommitSha": "147857f9f3c733b0136c80212cfd6e975b623a88",
+        "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+        "buildId": "d1Urs-jCU4rE_hVGHd7z7",
+        "buildArtifactDigest": "sha256:a339c7cbdf4c66885d39fe939d2343b5254a128909f4aaed03a1b0a84562a473",
+        "operationalServiceBound": true
+      }
+    },
+    "qualityGuidance": {
+      "status": "AVAILABLE",
+      "source": "EBAY_LISTING_QUALITY_REPORT",
+      "persistenceStatus": "DURABLE_READ_ONLY",
+      "reportExists": true,
+      "importId": "a7ffd59f-b8e4-4a77-8eb3-78c195362311",
+      "reportDate": "2026-09-04",
+      "importedAt": "2026-09-04T21:53:11.343Z",
+      "freshness": "STALE",
+      "coverage": {
+        "liveListingsCovered": 12,
+        "historicalLiveScopeCount": 17,
+        "nonliveRowsExcluded": 0
+      },
+      "limitationCode": "QUALITY_REPORT_STALE_WAIT",
+      "recommendations": [
+        {
+          "freshness": "STALE",
+          "actionState": "WAIT",
+          "source": "EBAY_LISTING_QUALITY_REPORT",
+          "sourceVersion": "REMOTE_OPERATOR_LISTING_QUALITY_REPORT_OWNER_IMPORT_V1_2026_09_02",
+          "listingKey": "[\"366643122092\",\"IMNOVAD28114BA01D9413490E4927035E66255\",null]",
+          "associationStatus": "ITEM_ID_CERTIFIED",
+          "recommendationCategory": "WAIT",
+          "recommendationType": "VISUAL_COVERAGE_REVIEW",
+          "recommendationText": "Revisa si Seller OS tiene una propuesta visual del producto exacto.",
+          "reportedBenchmark": null,
+          "topCategoryBenchmark": null,
+          "observedAt": "2026-09-04T00:00:00.000Z",
+          "importedAt": "2026-09-04T21:53:11.343Z"
+        }
+      ],
+      "resultCount": 1,
+      "comparisons": [
+        {
+          "listingKey": "[\"366574069492\",\"IMN-LST-000015\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366581718546\",\"IMN-LST-000013\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582544476\",\"IMN-LST-000012\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582586826\",\"IMN-LST-000011\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366582671136\",\"IMN-LST-000005\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366592485792\",\"IMN-LST-000024\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366592919965\",\"IMN-LST-000026\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366597434810\",\"IMN-LST-000025\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366634810965\",\"IMNOVA3A394C94108B4CA0B3735E589DC4A652\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366635285436\",\"IMNOVA42B4E4B51A124021918289B782A5C6AC\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643122092\",\"IMNOVAD28114BA01D9413490E4927035E66255\",null]",
+          "ebayGuidanceStatus": "AVAILABLE",
+          "freshness": "STALE",
+          "actionState": "WAIT",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "automaticExecutionAllowed": false,
+          "reasonCodes": [
+            "QUALITY_REPORT_STALE_WAIT"
+          ]
+        },
+        {
+          "listingKey": "[\"366643126310\",\"FL-3SISTER-KEYCHAIN\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643190059\",\"IMNOVA6E92062A4F5A4AEEA1C23D46D2614BC4\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366643555454\",\"IMNOVA6BEEA08C95B148FF95AC7634DB288048\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366647547173\",\"IMNOVA0AD89689374445EE91EC5992B05326F2\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366649437609\",\"IMNOVADC166ABC7F3F48C1AD1CF04BA24B7486\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366649508886\",\"IMNOVA6A47F280102C45B7897DF2C1DA3F38C0\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650047727\",\"IMNOVA75A7EC0C9B3846CFB4A654B8AD94CE59\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650054490\",\"IMNOVAA59C2C921CDD4975ADD29540657D8A60\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650065203\",\"IMNOVA8A5E9410F92440E6925729ED0BE22A0E\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650071972\",\"IMNOVA521BB2F0AD9849DEAB31D9323ABA3B8E\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650113488\",\"IMNOVA20648F6AB4EE4B6FB46B19456A16FB0A\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        },
+        {
+          "listingKey": "[\"366650121192\",\"IMNOVA96623B7E05904CB8B54EEA24ECA18FC4\",null]",
+          "ebayGuidanceStatus": "MISSING",
+          "sellerOsDiagnosisStatus": "UNPROVEN",
+          "conclusion": "INSUFFICIENT_EVIDENCE",
+          "reasonCodes": [
+            "GUIDANCE_NOT_AVAILABLE"
+          ],
+          "automaticExecutionAllowed": false
+        }
+      ],
+      "autoExecutionAllowed": false,
+      "TRACE_ID": "bc541fbf-7a8f-4111-a9cd-54e26ab10447"
+    }
   }
 }

@@ -2,7 +2,7 @@
 
 Base preservada: `451c91b523a2b3e6a854c332622ebb22f1fe24ec`. Fecha: 2026-09-09.
 
-La implementación conecta el reporte Quality durable, la identidad por Item ID y Keyword V2.1 con un Preview sin persistencia. El diagnóstico preservado no se repitió.
+Implementación activada en preprod y túnel local con SHA `147857f9f3c733b0136c80212cfd6e975b623a88`. Conecta el reporte Quality durable, la identidad por Item ID y Keyword V2.1 con un Preview sin persistencia. El diagnóstico preservado no se repitió. El listing conservó NEEDS_EVIDENCE; esta entrega no declara que esté comercialmente listo.
 
 ## Credencial
 
@@ -25,7 +25,7 @@ No se solicitó descifrar ni descargar la credencial OpenAI; no se imprimió, co
 
 ## Validación local
 
-Suite completa: 361 archivos PASS, cero fallos. Nueve pruebas nuevas ejecutadas individualmente verificaron selección/aislamiento de Quality, reporte vacío, STALE, UNAVAILABLE, identidad entre Item/Package, conflictos, Keyword bloqueado, digest estable, contenido aprobado, sanitización y ausencia de llamadas para findings incompatibles. El contrato de transporte de Preview prueba Item ID, correlación y rechazo de account override.
+Suite completa final: 373 archivos PASS, cero fallos. Nueve pruebas nuevas ejecutadas individualmente verificaron selección/aislamiento de Quality, reporte vacío, STALE, UNAVAILABLE, identidad entre Item/Package, conflictos, Keyword bloqueado, digest estable, contenido aprobado, sanitización y ausencia de llamadas para findings incompatibles. El contrato de transporte de Preview prueba Item ID, correlación y rechazo de account override.
 
 TypeScript global: PASS después de corregir el cruce Keyword/Shipping y el acceso al discriminante opcional. Build Next webpack: PASS. El control de dependencias del monitor sigue verificando ausencia de insert/upsert/delete/fetch en su grafo de lectura. El control de rutas registra explícitamente la nueva página protegida.
 
@@ -35,7 +35,7 @@ Referencias técnicas consultadas: [orden por varias columnas de Supabase](https
 
 La decisión Keyword del listing preservado puede seguir NEEDS_EVIDENCE por insuficiencia comercial. El Preview usa contenido del paquete existente; no certifica una lectura completa de descripción/specifics LIVE. Sell One Like This continúa UNPROVEN cuando no existe handoff verificable. No se inventa verdad de producto, no se regeneran activos válidos para diagnosticar, no se ejecutan marketplace writes.
 
-Estado físico de preprod y SHA de implementación: se registran en el readback de cierre.
+El [readback de cierre](seller-os-revenue-first-assistant-p0-readback.json) conserva resultados físicos, SHAs, trazas y límites.
 
 ## Primera comprobación física
 
@@ -48,3 +48,13 @@ Image Optimization PASS: Item `366582671136`, finding `EDGE_CROPPING_RISK`, una 
 El E2E de Preview detectó un guard anterior del relay que sólo admitía VERCEL_ENV=preview. Se corrigió para admitir también la clasificación dedicada existente, que exige simultáneamente proyecto, dominio, runtime y Supabase de staging. Producción compartida permanece bloqueada. Las pruebas positivas y negativas de esa frontera pasan; la segunda lectura física se registra en el readback de cierre.
 
 Verificación durable de imagen PASS: experimento DRAFT, un recibo COMPLETED, hash del archivo descargado igual al hash del activo y de la respuesta, y protectedLayerRoundtripExact=true. La suite ampliada de release pasa 373/373 archivos (incluye todo lib/seller-os), TypeScript, lint y CI audit PASS. El binding HMAC del relay faltaba en preprod; se agregó como sensitive reutilizando el secreto existente del túnel, sin cambiar el binding OpenAI ni escribir secretos locales.
+
+## Cierre desplegado
+
+Deployment final `dpl_544fMD81QAJgkKs7jhvJTyx9ufNH`: READY, proyecto `prj_XvOpSg1jhmLLG1yOCFhAbiLEn222`, SHA `147857f9f3c733b0136c80212cfd6e975b623a88`, alias preprod asignado. [Preview protegido](https://imnova-seller-os-preprod.vercel.app/admin/ebay/listing-optimization/preview?itemId=366643122092).
+
+El relay desplegado respondió HTTP 200. Item `366643122092` conserva package `d28114ba-01d9-4134-90e4-927035e66255`, opportunity `b7087b76-3c03-4892-b99b-421a6f0c545c`, producto `9220873322720` y variante `48809689415904`. El Preview existe con `NEEDS_EVIDENCE`, `KEYWORD_DECISION_UNPROVEN`, Quality STALE/WAIT y cero escrituras, llamadas al proveedor o recomputaciones de research. Su digest es `sha256:bd046d303a372caf822632ee375e5d6270af8d8fa7501dd6889be7084cf8a0e2`.
+
+El artefacto local se compiló y certificó en el worktree aislado. Se activó en el checkout canónico conservando rollback del build, receipt, SHA y URL anteriores. MCP y túnel están activos; watchdog restablecido; runtime health HEALTHY, catálogo 29/29 y build SHA MATCHED. El MCP local prepara el mismo Preview con idéntico digest a preprod. El diagnóstico del túnel pasa usando su binding de control existente.
+
+La activación no cambió la credencial OpenAI, no publicó listings ni modificó eBay. El canario físico de imagen se ejecutó una sola vez en el deployment inicial del mismo proyecto dedicado; la corrección posterior del relay no repitió generación. El commit documental de cierre es posterior al SHA certificado y no modifica el runtime activo.
