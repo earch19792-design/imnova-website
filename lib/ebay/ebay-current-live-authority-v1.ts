@@ -113,9 +113,12 @@ export function resolveCurrentLiveAuthorityV1(input: Readonly<{
 }>): CurrentLiveAuthorityProjectionV1 {
   const now = input.now ?? new Date()
   const liveObservedAt = iso(input.live?.discovery.observedAt)
-  const liveFresh = Boolean(input.live && liveObservedAt &&
-    officialCurrentLiveReadCertifiedV1(input.live) &&
-    now.getTime() >= Date.parse(liveObservedAt) &&
+  const certifiedLive = Boolean(input.live && liveObservedAt &&
+    officialCurrentLiveReadCertifiedV1(input.live))
+  const futureClockSkew = Boolean(certifiedLive && liveObservedAt &&
+    now.getTime() < Date.parse(liveObservedAt))
+  const liveFresh = Boolean(certifiedLive && liveObservedAt &&
+    !futureClockSkew &&
     now.getTime() - Date.parse(liveObservedAt) <= CURRENT_MAXIMUM_AGE_MS)
   if (input.live && liveFresh && liveObservedAt) {
     const ids = currentLiveItemIdsV1(input.live)
@@ -175,8 +178,10 @@ export function resolveCurrentLiveAuthorityV1(input: Readonly<{
       marketplaceWrites: 0 as const,
     })
   }
-  const liveFailure = input.live?.discovery.gapCodes.find((code) =>
-    SAFE_CODE.test(code)) ?? input.stored?.current_live_last_error_code
+  const liveFailure = futureClockSkew
+    ? "CURRENT_LIVE_OFFICIAL_CLOCK_SKEW_FUTURE"
+    : input.live?.discovery.gapCodes.find((code) => SAFE_CODE.test(code)) ??
+      input.stored?.current_live_last_error_code
   return Object.freeze({
     contractVersion: SELLER_OS_CURRENT_LIVE_AUTHORITY_RECOVERY_V1,
     currentState: "CURRENT_UNAVAILABLE" as const,

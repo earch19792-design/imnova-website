@@ -59,19 +59,22 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
   accountKey: string
   accountAlias: string | null
   now?: Date
+  clock?: () => Date
   forceOfficialRead?: boolean
   readOfficial?: typeof getEbayCommercialMonitorLiveReadonly
 }>) {
-  const now = input.now ?? new Date()
+  const clock = input.clock ?? (() => new Date())
+  const preReadNow = input.now ?? clock()
   const stored = await readCurrentLiveAuthorityV1({ supabase: input.supabase,
-    accountKey: input.accountKey, now })
+    accountKey: input.accountKey, now: preReadNow })
   if (stored.currentState === "CURRENT_FRESH" &&
       input.forceOfficialRead !== true) return Object.freeze({
     status: "CURRENT_FRESH_REUSED" as const, authority: stored,
     live: null, officialReadAttempted: false, databaseWrites: 0,
     marketplaceWrites: 0 as const,
   })
-  if (stored.nextRetryAt && Date.parse(stored.nextRetryAt) > now.getTime()) {
+  if (stored.nextRetryAt &&
+      Date.parse(stored.nextRetryAt) > preReadNow.getTime()) {
     return Object.freeze({ status: "WAITING_FOR_RETRY" as const,
       authority: stored, officialReadAttempted: false, databaseWrites: 0,
       live: null, marketplaceWrites: 0 as const })
@@ -103,10 +106,21 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     const live = await (input.readOfficial ??
       getEbayCommercialMonitorLiveReadonly)({ accountKey: input.accountKey,
         accountAlias: input.accountAlias })
-    if (!officialCurrentLiveReadCertifiedV1(live)) {
-      const errorCode = safeCode(live.discovery.gapCodes[0],
-        "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE")
-      const nextRetryAt = new Date(now.getTime() + RETRY_DELAY_MS).toISOString()
+    // The official read creates observedAt. Freshness must therefore use a
+    // reference captured after that read, never the pre-read admission clock.
+    const postReadNow = clock()
+    const certifiedOfficialRead = officialCurrentLiveReadCertifiedV1(live)
+    const officialObservedAt = certifiedOfficialRead
+      ? new Date(live.discovery.observedAt!).toISOString() : null
+    const futureClockSkew = officialObservedAt !== null &&
+      Date.parse(officialObservedAt) > postReadNow.getTime()
+    if (!certifiedOfficialRead || futureClockSkew) {
+      const errorCode = futureClockSkew
+        ? "CURRENT_LIVE_OFFICIAL_CLOCK_SKEW_FUTURE"
+        : safeCode(live.discovery.gapCodes[0],
+          "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE")
+      const nextRetryAt = new Date(
+        postReadNow.getTime() + RETRY_DELAY_MS).toISOString()
       const failed = await input.supabase.rpc(
         "record_ebay_current_live_authority_failure_v1", {
           p_account_key: input.accountKey, p_run_id: runId,
@@ -116,8 +130,11 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
         "CURRENT_LIVE_AUTHORITY_FAILURE_RECEIPT_FAILED")
       await finish(false, errorCode)
       const authority = await readCurrentLiveAuthorityV1({
-        supabase: input.supabase, accountKey: input.accountKey, live, now })
-      return Object.freeze({ status: "CURRENT_UNAVAILABLE" as const,
+        supabase: input.supabase, accountKey: input.accountKey, live,
+        now: postReadNow })
+      return Object.freeze({ status: futureClockSkew
+        ? "CURRENT_UNAVAILABLE_CLOCK_SKEW" as const
+        : "CURRENT_UNAVAILABLE" as const,
         authority, live, officialReadAttempted: true, databaseWrites: 1,
         marketplaceWrites: 0 as const })
     }
@@ -125,7 +142,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     const ids = currentLiveItemIdsV1(live)
     if (rows.length !== ids.length) throw new Error(
       "CURRENT_LIVE_AUTHORITY_CERTIFIED_ROWS_INCOMPLETE")
-    const observedAt = new Date(live.discovery.observedAt!).toISOString()
+    const observedAt = officialObservedAt!
     const id = currentLiveScopeIdV1(ids, input.accountKey)
     const persisted = await input.supabase.rpc(
       "record_ebay_current_live_authority_success_v1", {
@@ -139,7 +156,8 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
       "CURRENT_LIVE_AUTHORITY_SUCCESS_RECEIPT_FAILED")
     await finish(true, null)
     const authority = await readCurrentLiveAuthorityV1({
-      supabase: input.supabase, accountKey: input.accountKey, live, now })
+      supabase: input.supabase, accountKey: input.accountKey, live,
+      now: postReadNow })
     return Object.freeze({ status: "RECOVERED_CURRENT_FRESH" as const,
       authority, live, officialReadAttempted: true, databaseWrites: 1,
       marketplaceWrites: 0 as const })
