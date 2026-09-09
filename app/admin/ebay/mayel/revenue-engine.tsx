@@ -188,7 +188,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         {menu === 1 && owner && <button className={button} disabled={busy} onClick={() => void analyze("RECEIPT")}>Guardar simulación</button>}
         <button className={button} disabled={busy} onClick={() => void analyze("MEASURE")}>Medir resultados</button>
       </section>}
-      {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={selected.join(",")} itemIds={selected} />}
+      {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={selected.join(",")} itemIds={selected} titles={Object.fromEntries(listings.map(l => [l.itemId, l.title]))} />}
       {menu === 0 && owner && <OwnerListingQualityReportControl />}
     </>}
     {message && <p role="status">{message}</p>}

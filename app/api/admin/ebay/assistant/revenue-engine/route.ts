@@ -43,6 +43,10 @@ export async function POST(request: Request) {
     const raw = await request.text()
     if (raw.length > 12000) return reply({ error: "REVENUE_INPUT_TOO_LARGE", traceId }, 413)
     const body = JSON.parse(raw)
+    if (body?.mode === "IMAGE_WORKSPACE") {
+      const { handleMayelImageWorkspaceV1 } = await import("@/lib/seller-os/mayel-image-workspace-handler-v1")
+      return handleMayelImageWorkspaceV1({ body, actorUserId: auth.userId!, accessRole: auth.accessRole!, traceId })
+    }
     if (!body || Object.keys(body).some(k => !["mode", "itemIds", "policy", "window", "idempotencyKey"].includes(k)) ||
       !["ANALYZE", "PREVIEW", "SIMULATE", "RECEIPT", "MEASURE", "IMAGE"].includes(body.mode) || !Array.isArray(body.itemIds) ||
       !METRIC_WINDOWS.includes(body.window)) throw Error("REVENUE_INPUT_INVALID")
