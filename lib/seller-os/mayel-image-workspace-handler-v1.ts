@@ -21,7 +21,8 @@ export async function handleMayelImageWorkspaceV1(input: {
       throw Error("MAYEL_WORKSPACE_INPUT_INVALID")
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) throw Error("MAYEL_WORKSPACE_ACCOUNT_REQUIRED")
-    const scope = { supabase: getSupabaseAdminClient(), accountKey, actorUserId: input.actorUserId }
+    const scope = { supabase: getSupabaseAdminClient(), accountKey, actorUserId: input.actorUserId,
+      owner: input.accessRole === SELLER_OS_ACCESS_ROLES.owner }
     if (body.action === "READ") {
       if (!Array.isArray(body.itemIds) || body.itemIds.some(id => typeof id !== "string")) throw Error("MAYEL_WORKSPACE_INPUT_INVALID")
       return reply({ success: true, ...await readMayelImageWorkspaceV1({ ...scope, itemIds: body.itemIds as string[] }), traceId })

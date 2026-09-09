@@ -42,13 +42,14 @@ export function MayelImageWorkspace({ itemIds, titles = {} }: { itemIds: string[
       <p className="text-sm">Preparado: {row.generatedAt ? new Date(row.generatedAt).toLocaleString("es") : "Fecha por comprobar"}. Antes de enviarlo se comprobará el estado actual.</p>
       <div className="grid gap-3 sm:grid-cols-2">{[[row.beforeUrl, "Imagen anterior guardada"], [row.previewUrl, "Propuesta de imagen principal"]].map(([url, label]) => typeof url === "string" && <figure key={String(label)}>
         <Image src={url} alt={String(label)} width={360} height={360} unoptimized /><figcaption>{String(label)}</figcaption></figure>)}</div>
-      {row.status === "DRAFT" && row.editable && !row.imported && <button className={button} disabled={busy} onClick={() => void act("PREPARE_REVIEW", row)}>Preparar esta imagen para revisión</button>}
-      {row.status === "DRAFT" && row.editable && row.imported && <>
+      {row.status === "DRAFT" && (row.editable || row.canAssignAndPrepare) && !row.imported && <button className={button} disabled={busy} onClick={() => void act("PREPARE_REVIEW", row)}>{row.canAssignAndPrepare ? "Asignarme y preparar esta imagen" : "Preparar esta imagen para revisión"}</button>}
+      {row.diagnostics.imageQaPassed && <p role="status">Borrador preparado y verificado. La propuesta está incluida en el Preview guardado; no se ha solicitado su envío a eBay.</p>}
+      {row.status === "DRAFT" && row.editable && row.imported && row.diagnostics.executionScope !== "DRAFT_ONLY" && <>
         <label className="flex gap-2"><input type="checkbox" checked={reviewed.includes(row.assetId)} onChange={e => setReviewed(old => e.target.checked ? [...old, row.assetId] : old.filter(id => id !== row.assetId))} />
           <span>He comparado las imágenes: es el mismo producto, con su color, forma, piezas y logos. No añade accesorios, promesas ni texto sin respaldo. Quiero usarla como imagen principal y conservar las demás imágenes.</span></label>
         <button className={button} disabled={busy || !reviewed.includes(row.assetId)} onClick={() => void act("CONFIRM_QUEUE", row)}>Confirmar y enviar cuando eBay esté disponible</button>
       </>}
-      {row.status === "DRAFT" && !row.editable && <p>La propuesta está guardada. Su revisión necesita la tarea visual asignada al operador de este listing.</p>}
+      {row.status === "DRAFT" && !row.editable && !row.canAssignAndPrepare && <p>La propuesta está guardada. Su revisión necesita la tarea visual asignada al operador de este listing.</p>}
       <details><summary>Ver detalles</summary><pre className="overflow-auto text-xs">{JSON.stringify({ itemId: row.itemId, ...row.diagnostics }, null, 2)}</pre></details>
     </article>)}
     {error && <div role="alert"><p>No se completó el paso. La propuesta sigue guardada; no aparece como enviada.</p><details><summary>Ver detalles</summary><p>{error}</p></details></div>}
