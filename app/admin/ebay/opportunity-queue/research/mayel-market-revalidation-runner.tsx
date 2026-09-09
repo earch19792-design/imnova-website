@@ -126,7 +126,8 @@ export function MayelMarketRevalidationRunner() {
     const planId = planIdFromLocation()
     const autonomous = autonomousModeFromLocation()
     const browserWorkerControl = browserWorkerControlModeFromLocation()
-    if ((!planId && !autonomous) || started.current) return
+    const gateOnly = browserWorkerControl && !planId && !autonomous
+    if ((!planId && !autonomous && !gateOnly) || started.current) return
     started.current = true
     setActive(true)
     const leadershipAbort = new AbortController()
@@ -239,6 +240,14 @@ export function MayelMarketRevalidationRunner() {
           })
         }).finally(() => { heartbeatInFlight = false })
       }, SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS)
+      if (gateOnly) {
+        setState("Worker Research V2 disponible · gate de control activo")
+        await new Promise<void>((resolve) => {
+          leadershipAbort.signal.addEventListener("abort", () => resolve(),
+            { once: true })
+        })
+        return
+      }
       const maximumPlans = autonomous ? 4 : 1
       let completed = 0
       const pollStartedAt = performance.now()

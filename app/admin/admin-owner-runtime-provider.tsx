@@ -518,8 +518,14 @@ export function useAdminOwnerRuntime() {
 
 export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname()
+  const isolatedResearchWorkerControl =
+    pathname.startsWith("/admin/ebay/opportunity-queue/research") &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search)
+      .get("browserWorkerControl") === "1"
   const runtimeRouteEligible = !pathname.startsWith("/admin/login") &&
-    !pathname.startsWith("/admin/ebay/luna-shipping-capture")
+    !pathname.startsWith("/admin/ebay/luna-shipping-capture") &&
+    !isolatedResearchWorkerControl
   const quickPickPageOwnsRead = pathname.startsWith("/admin/ebay/quick-pick")
     || pathname === "/admin"
   const [adminSessionReady, setAdminSessionReady] = useState(false)
