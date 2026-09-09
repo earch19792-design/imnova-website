@@ -119,6 +119,18 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
           <h3 className="text-lg font-semibold">{row.title}</h3><p className="font-semibold">{row.label}</p><p>{row.why}</p><p>{row.recommendedAction}</p>
           <dl className="grid gap-3 text-sm sm:grid-cols-3">{([["impressions", "Impresiones"], ["views", "Visitas"], ["ctr", "CTR"], ["unitsSold", "Unidades vendidas"], ["conversion", "Conversión"], ["salesRevenue", "Ventas"]] as const).map(([key, label]) => <div key={key}>
             <dt>{label} · {window}</dt><dd className="font-semibold">{row.metrics.windows[window]?.[key]?.value ?? "Sin datos para este periodo"}</dd></div>)}</dl>
+          <section aria-label="Observaciones disponibles" className="rounded-xl bg-slate-50 p-3">
+            <h4 className="font-semibold">Datos disponibles de otros periodos</h4>
+            <p className="text-sm">Cada dato conserva el periodo informado por eBay. No se usa como sustituto del periodo seleccionado.</p>
+            {([["impressions", "Impresiones"], ["views", "Visitas"], ["ctr", "CTR informado"], ["unitsSold", "Unidades vendidas"], ["conversion", "Conversión informada"], ["salesRevenue", "Ventas"]] as const).map(([key, label]) => {
+              const observation = row.metrics.sourceObservations[key]
+              if (row.metrics.windows[window]?.[key]?.value !== null || observation?.availability !== "AVAILABLE" ||
+                observation.identity.itemId !== row.itemId || !observation.source.evidenceReference ||
+                observation.value === null || !Number.isFinite(observation.value) || !observation.reportingWindow) return null
+              return <p key={key} className="mt-2 text-sm">{label}: <strong>{observation.value}</strong> · {observation.reportingWindow.start.slice(0, 10)} a {observation.reportingWindow.end.slice(0, 10)} · {observation.reportingWindow.timeZone ?? "Horario por comprobar"}
+                {observation.freshness.status !== "FRESH" && " · Pendiente de actualización"}</p>
+            })}
+          </section>
           <dl className="grid gap-3 text-sm sm:grid-cols-3">{([["Precio", row.economics.components.salePrice.value], ["Coste del producto", row.economics.components.productCost.value],
             ["Envío", row.economics.components.shippingCost.value], ["Comisiones eBay", row.economics.components.ebayFees.value], ["Otros costes", row.economics.components.otherCosts.value],
             ["Beneficio antes de Ads", row.economics.profitBeforeAds]] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="font-semibold">{money(value)}</dd></div>)}</dl>
