@@ -81,6 +81,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     categoryId:str(listing.categoryId),categoryPath:str(listing.categoryPath),saleFormat:str(listing.saleFormat),
     storeContext:store,sellerContext:{standards,serviceMetrics:service},policyVersion:str(policy.sourceVersion),
     policyObservedAt:str(policy.observedAt),sourceEffectiveDate:policy.sourceEffectiveDate??null,
+    sourceObservedAt:str(c.observedAt),
     state,economicsState:state==="PROVEN_PRE_SALE"?"ECONOMICS_PROVEN":"ECONOMICS_PENDING_ORDER_CONTEXT",
     label:state==="CONFLICT"?"Economía: revisar identidad":state==="STALE"?"Economía: actualizando evidencia":
       state==="PROVEN_PRE_SALE"?"Economía: datos completos":"Economía: esperando datos de la orden",
@@ -101,6 +102,8 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     resolvedAuthority:state==="PROVEN_PRE_SALE"?resolved?.authority??null:null,
     promotionBlockedEvidence:state!=="PROVEN_PRE_SALE",ebayAdsWriteEnabled:false,
     observedAt:input.now.toISOString(),freshUntil:new Date(Math.min(input.now.getTime()+6*3600000,
+      ...[c.observedAt,listing.observedAt,performance.observedAt,standards.observedAt,service.observedAt]
+        .filter(v=>typeof v==="string"&&Number.isFinite(Date.parse(v))).map(v=>Date.parse(String(v))+6*3600000),
       ...[resolved?.authority?.freshUntil,policy.freshUntil].filter(v=>typeof v==="string"&&Number.isFinite(Date.parse(v)))
         .map(v=>Date.parse(String(v))))).toISOString()}
   const fingerprint=feeDigestV1({...body,observedAt:undefined,freshUntil:undefined})
