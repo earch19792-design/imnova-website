@@ -79,7 +79,9 @@ export async function submitQualityUploadV1(input: {
   reach("FILE_TRANSPORT")
   let response: Response
   try {
-    response = await input.request(QUALITY_UPLOAD_ENDPOINT, { method: "POST",
+    // Native window.fetch rejects an arbitrary object as its receiver.
+    const request = input.request
+    response = await request(QUALITY_UPLOAD_ENDPOINT, { method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json",
         "x-seller-os-trace-id": trace.TRACE_ID }, body,
       signal: AbortSignal.timeout(75_000) })
