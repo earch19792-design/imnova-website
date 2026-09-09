@@ -10,9 +10,10 @@ function record(value: unknown): JsonRecord {
 
 export function parseEbaySellerStoreSubscriptionReadonly(value: unknown) {
   const body = record(value)
-  if (!Array.isArray(body.subscriptions) || body.subscriptions.some((entry) => {
+  if (!Array.isArray(body.subscriptions) || Boolean(body.next) || body.subscriptions.length > 100 || body.subscriptions.some((entry) => {
     const item = record(entry)
-    return typeof item.marketplaceId !== "string" || typeof item.subscriptionType !== "string"
+    return typeof item.marketplaceId !== "string" || !/^EBAY_[A-Z_]+$/.test(item.marketplaceId) ||
+      item.subscriptionType !== "STORE_PLAN"
   })) {
     return { status: "UNPROVEN" as const, marketplaceId: MARKETPLACE_ID,
       storeSubscriptionLevel: null, matchingSubscriptionCount: null }
@@ -24,7 +25,7 @@ export function parseEbaySellerStoreSubscriptionReadonly(value: unknown) {
     const marketplaceId = String(item.marketplaceId ?? "").trim().toUpperCase()
     const subscriptionType = String(item.subscriptionType ?? "").trim().toUpperCase()
     const subscriptionLevel = String(item.subscriptionLevel ?? "").trim().toUpperCase()
-    if (marketplaceId !== MARKETPLACE_ID || subscriptionType !== "STORE") return []
+    if (marketplaceId !== MARKETPLACE_ID || subscriptionType !== "STORE_PLAN") return []
     if (!/^(STARTER|BASIC|PREMIUM|ANCHOR|ENTERPRISE)$/.test(subscriptionLevel)) {
       return [{ marketplaceId, subscriptionType, subscriptionLevel: "UNPROVEN" as const }]
     }
