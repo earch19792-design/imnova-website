@@ -1,0 +1,1013 @@
+{
+  "contract": "SELLER_OS_EBAY_FEE_AUTOMATION_AND_RECONCILIATION_CLOSEOUT_V1",
+  "status": "IMPLEMENTED_PHYSICAL_CERTIFICATION_PENDING_EXTERNAL_TRADING_QUOTA",
+  "feeImplementationSha": "fec82b17bd1c7a2fff1e8f6c0fb68b8f9b08cd57",
+  "listingSelectionImplementationSha": "3357439834b07e38be8be3f0f6fcd8131d7da27a",
+  "canary": {
+    "itemId": "366650054490",
+    "sku": "IMNOVAA59C2C921CDD4975ADD29540657D8A60",
+    "packageId": "a59c2c92-1cdd-4975-add2-9540657d8a60",
+    "categoryId": "50692"
+  },
+  "physicalProducer": {
+    "observedAt": "2026-09-09T19:43:21.197Z",
+    "sourceTraceId": "d9bb5bac-7609-4829-b905-fe0a744ecc1f",
+    "sourceReusedFromPriorOfficialRead": true,
+    "freshTradingAcquisitionThisRun": false,
+    "idempotentReplay": true,
+    "authority": {
+      "contractVersion": "SELLER_OS_EBAY_FEE_AUTHORITY_V1",
+      "producerVersion": "SELLER_OS_EBAY_FEE_PRODUCER_V1",
+      "marketplaceAccountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+      "marketplace": "EBAY_US",
+      "itemId": "366650054490",
+      "sku": "IMNOVAA59C2C921CDD4975ADD29540657D8A60",
+      "packageId": "a59c2c92-1cdd-4975-add2-9540657d8a60",
+      "categoryId": "50692",
+      "categoryPath": "Jewelry & Watches:Fashion Jewelry:Jewelry Sets",
+      "saleFormat": "FixedPriceItem",
+      "storeContext": {
+        "status": "PROVEN",
+        "storeSubscriptionLevel": "NO_STORE",
+        "source": "https://developer.ebay.com/devzone/xml/docs/Reference/ebay/GetUser.html#Response.User.SellerInfo.StoreOwner",
+        "errorCode": null
+      },
+      "sellerContext": {
+        "standards": {
+          "status": "AVAILABLE",
+          "program": "PROGRAM_US",
+          "standardsLevel": "ABOVE_STANDARD",
+          "evaluation": {
+            "evaluationType": "CURRENT",
+            "evaluationMonth": "2026-08",
+            "evaluationDate": "2026-08-21T00:24:21.000Z",
+            "startDate": null,
+            "endDate": null
+          },
+          "httpStatus": 200,
+          "errorCode": null,
+          "source": "https://api.ebay.com/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT",
+          "observedAt": "2026-09-09T19:05:37.811Z"
+        },
+        "serviceMetrics": {
+          "status": "AVAILABLE",
+          "marketplace": "EBAY_US",
+          "metricType": "ITEM_NOT_AS_DESCRIBED",
+          "evaluation": {
+            "evaluationType": "CURRENT",
+            "evaluationMonth": null,
+            "evaluationDate": "2026-08-21T18:25:19.000Z",
+            "startDate": "2025-08-01T07:00:00.000Z",
+            "endDate": "2026-08-01T06:59:59.000Z"
+          },
+          "categories": [
+            {
+              "categoryId": "26395",
+              "rating": "NOT_APPLICABLE"
+            }
+          ],
+          "listingCategoryApplicability": "UNRESOLVED",
+          "httpStatus": 200,
+          "errorCode": null,
+          "source": "https://api.ebay.com/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US",
+          "observedAt": "2026-09-09T19:05:37.637Z"
+        }
+      },
+      "policyVersion": "SELLER_OS_EBAY_BASIC_FEE_SOURCE_2026_09_09_V1",
+      "policyObservedAt": "2026-09-09T18:59:52Z",
+      "sourceEffectiveDate": null,
+      "sourceObservedAt": "2026-09-09T19:05:38.940Z",
+      "state": "PENDING_ORDER_CONTEXT",
+      "economicsState": "ECONOMICS_PENDING_ORDER_CONTEXT",
+      "label": "Econom\u00eda: esperando datos de la orden",
+      "boundCoverage": {
+        "pass": true,
+        "blockers": []
+      },
+      "officialContingentRateLimits": {
+        "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+        "sourceVersion": "SELLER_OS_OFFICIAL_CONTINGENT_FEES_2026_09_09_V1",
+        "observedAt": "2026-09-09T19:22:00Z",
+        "freshUntil": "2026-09-10T19:22:00Z",
+        "registeredCountry": "US",
+        "marketplace": "EBAY_US",
+        "components": {
+          "SELLER_PERFORMANCE": {
+            "maximumRatePct": 7,
+            "basis": "TOTAL_AMOUNT_OF_SALE",
+            "mutuallyExclusiveWith": "SERVICE_METRICS"
+          },
+          "SERVICE_METRICS": {
+            "maximumRatePct": 6,
+            "basis": "TOTAL_AMOUNT_OF_SALE",
+            "mutuallyExclusiveWith": "SELLER_PERFORMANCE"
+          },
+          "INTERNATIONAL": {
+            "maximumRatePct": 1.65,
+            "basis": "TOTAL_AMOUNT_OF_SALE"
+          },
+          "CURRENCY_CONVERSION": {
+            "chargeRatePct": 3,
+            "basis": "AMOUNT_CONVERTED_AT_TRANSACTION_EXCHANGE_RATE",
+            "exchangeRiskBounded": false
+          }
+        },
+        "scope": "Official rate limits, not complete monetary bounds. Buyer tax, total fee basis, currency exposure and tax on fees require separate evidence. No unknown amount is zero."
+      },
+      "components": [
+        {
+          "type": "FINAL_VALUE_PERCENT",
+          "preSaleResolvable": true,
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "basis": "ITEM_PRICE_PLUS_BUYER_SHIPPING_HANDLING_AND_TAX",
+          "rateOrAmount": [
+            {
+              "upTo": 5000,
+              "ratePct": 15
+            },
+            {
+              "upTo": null,
+              "ratePct": 9
+            }
+          ],
+          "amount": null,
+          "pendingDependency": "ORDER_BUYER_TAX_AND_TOTAL_BASIS",
+          "status": "PENDING_ORDER_CONTEXT"
+        },
+        {
+          "type": "PER_ORDER",
+          "preSaleResolvable": true,
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "basis": "SINGLE_ORDER",
+          "rateOrAmount": {
+            "threshold": 10,
+            "atOrBelow": 0.3,
+            "above": 0.4
+          },
+          "amount": 0.4,
+          "pendingDependency": null,
+          "status": "PROVEN"
+        },
+        {
+          "type": "SELLER_PERFORMANCE",
+          "preSaleResolvable": true,
+          "source": "https://api.ebay.com/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT",
+          "basis": "CURRENT_US_SELLER_PROFILE",
+          "rateOrAmount": 0,
+          "amount": 0,
+          "pendingDependency": null,
+          "status": "NOT_APPLICABLE"
+        },
+        {
+          "type": "SERVICE_METRICS",
+          "preSaleResolvable": true,
+          "source": "https://api.ebay.com/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US",
+          "basis": "CURRENT_EXACT_CATEGORY_SERVICE_PROFILE",
+          "rateOrAmount": null,
+          "amount": null,
+          "pendingDependency": "CURRENT_EXACT_CATEGORY_SERVICE_AUTHORITY",
+          "status": "PENDING_AUTHORITY"
+        },
+        {
+          "type": "INTERNATIONAL",
+          "preSaleResolvable": false,
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "basis": "BUYER_REGISTRATION_DELIVERY_AND_SHIPPING_PROGRAM",
+          "rateOrAmount": null,
+          "amount": null,
+          "pendingDependency": "ORDER_BUYER_COUNTRY_AND_PROGRAM",
+          "status": "PENDING_ORDER_CONTEXT"
+        },
+        {
+          "type": "CURRENCY_CONVERSION",
+          "preSaleResolvable": false,
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "basis": "ACTUAL_TRANSACTION_AND_PAYOUT_CURRENCIES",
+          "rateOrAmount": null,
+          "amount": null,
+          "pendingDependency": "ORDER_CONVERSION",
+          "status": "PENDING_ORDER_CONTEXT"
+        },
+        {
+          "type": "REGULATORY_OPERATING",
+          "preSaleResolvable": true,
+          "source": "https://export.ebay.com/en/fees-regulations-policies/seller-fees/international-fees/",
+          "basis": "LISTING_MARKETPLACE_EBAY_US",
+          "rateOrAmount": 0,
+          "amount": 0,
+          "pendingDependency": null,
+          "status": "NOT_APPLICABLE"
+        },
+        {
+          "type": "TAX_ON_FEES",
+          "preSaleResolvable": true,
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "basis": "SELLER_REGISTRATION_JURISDICTION_AND_FEE_TAX_INVOICE",
+          "rateOrAmount": null,
+          "amount": null,
+          "pendingDependency": "CURRENT_ACCOUNT_FEE_TAX_AUTHORITY",
+          "status": "PENDING_AUTHORITY"
+        }
+      ],
+      "unknownMaterialFeeComponentCount": 5,
+      "buyerDependentComponents": [
+        "BUYER_TAX",
+        "INTERNATIONAL_APPLICABILITY",
+        "CURRENCY_CONVERSION"
+      ],
+      "accountAuthorityDependencies": [
+        "CURRENT_EXACT_CATEGORY_SERVICE_AUTHORITY",
+        "CURRENT_ACCOUNT_FEE_TAX_AUTHORITY"
+      ],
+      "knownPreSaleBasis": {
+        "salePrice": 18.74,
+        "buyerShipping": 0
+      },
+      "basePreSaleFeeProven": true,
+      "contingentOrderComponents": [
+        {
+          "type": "FINAL_VALUE_PERCENT",
+          "preSaleResolvable": true,
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "basis": "ITEM_PRICE_PLUS_BUYER_SHIPPING_HANDLING_AND_TAX",
+          "rateOrAmount": [
+            {
+              "upTo": 5000,
+              "ratePct": 15
+            },
+            {
+              "upTo": null,
+              "ratePct": 9
+            }
+          ],
+          "amount": null,
+          "pendingDependency": "ORDER_BUYER_TAX_AND_TOTAL_BASIS",
+          "status": "PENDING_ORDER_CONTEXT"
+        },
+        {
+          "type": "INTERNATIONAL",
+          "preSaleResolvable": false,
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "basis": "BUYER_REGISTRATION_DELIVERY_AND_SHIPPING_PROGRAM",
+          "rateOrAmount": null,
+          "amount": null,
+          "pendingDependency": "ORDER_BUYER_COUNTRY_AND_PROGRAM",
+          "status": "PENDING_ORDER_CONTEXT"
+        },
+        {
+          "type": "CURRENCY_CONVERSION",
+          "preSaleResolvable": false,
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "basis": "ACTUAL_TRANSACTION_AND_PAYOUT_CURRENCIES",
+          "rateOrAmount": null,
+          "amount": null,
+          "pendingDependency": "ORDER_CONVERSION",
+          "status": "PENDING_ORDER_CONTEXT"
+        }
+      ],
+      "actualPostSaleFee": null,
+      "feeEstimateMode": "UNBOUNDED_UNTIL_ORDER",
+      "amount": null,
+      "resolvedAuthority": null,
+      "promotionBlockedEvidence": true,
+      "ebayAdsWriteEnabled": false,
+      "observedAt": "2026-09-09T19:43:21.197Z",
+      "freshUntil": "2026-09-10T01:05:36.640Z",
+      "inputFingerprint": "45af3deae73596c416a92a0ca7714b3f92a5bd3697fcd8e737400e0391fb90df",
+      "authorityId": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4"
+    }
+  },
+  "deployedFeeHandoff": {
+    "httpStatus": 200,
+    "traceId": "5a247a3f-71bd-4a74-8233-bfdcb6555eb7",
+    "feeAuthority": {
+      "authority": {
+        "sku": "IMNOVAA59C2C921CDD4975ADD29540657D8A60",
+        "label": "Econom\u00eda: esperando datos de la orden",
+        "state": "PENDING_ORDER_CONTEXT",
+        "amount": null,
+        "itemId": "366650054490",
+        "packageId": "a59c2c92-1cdd-4975-add2-9540657d8a60",
+        "categoryId": "50692",
+        "components": [
+          {
+            "type": "FINAL_VALUE_PERCENT",
+            "basis": "ITEM_PRICE_PLUS_BUYER_SHIPPING_HANDLING_AND_TAX",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": [
+              {
+                "upTo": 5000,
+                "ratePct": 15
+              },
+              {
+                "upTo": null,
+                "ratePct": 9
+              }
+            ],
+            "pendingDependency": "ORDER_BUYER_TAX_AND_TOTAL_BASIS",
+            "preSaleResolvable": true
+          },
+          {
+            "type": "PER_ORDER",
+            "basis": "SINGLE_ORDER",
+            "amount": 0.4,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PROVEN",
+            "rateOrAmount": {
+              "above": 0.4,
+              "atOrBelow": 0.3,
+              "threshold": 10
+            },
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "SELLER_PERFORMANCE",
+            "basis": "CURRENT_US_SELLER_PROFILE",
+            "amount": 0,
+            "source": "https://api.ebay.com/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT",
+            "status": "NOT_APPLICABLE",
+            "rateOrAmount": 0,
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "SERVICE_METRICS",
+            "basis": "CURRENT_EXACT_CATEGORY_SERVICE_PROFILE",
+            "amount": null,
+            "source": "https://api.ebay.com/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US",
+            "status": "PENDING_AUTHORITY",
+            "rateOrAmount": null,
+            "pendingDependency": "CURRENT_EXACT_CATEGORY_SERVICE_AUTHORITY",
+            "preSaleResolvable": true
+          },
+          {
+            "type": "INTERNATIONAL",
+            "basis": "BUYER_REGISTRATION_DELIVERY_AND_SHIPPING_PROGRAM",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": null,
+            "pendingDependency": "ORDER_BUYER_COUNTRY_AND_PROGRAM",
+            "preSaleResolvable": false
+          },
+          {
+            "type": "CURRENCY_CONVERSION",
+            "basis": "ACTUAL_TRANSACTION_AND_PAYOUT_CURRENCIES",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": null,
+            "pendingDependency": "ORDER_CONVERSION",
+            "preSaleResolvable": false
+          },
+          {
+            "type": "REGULATORY_OPERATING",
+            "basis": "LISTING_MARKETPLACE_EBAY_US",
+            "amount": 0,
+            "source": "https://export.ebay.com/en/fees-regulations-policies/seller-fees/international-fees/",
+            "status": "NOT_APPLICABLE",
+            "rateOrAmount": 0,
+            "pendingDependency": null,
+            "preSaleResolvable": true
+          },
+          {
+            "type": "TAX_ON_FEES",
+            "basis": "SELLER_REGISTRATION_JURISDICTION_AND_FEE_TAX_INVOICE",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_AUTHORITY",
+            "rateOrAmount": null,
+            "pendingDependency": "CURRENT_ACCOUNT_FEE_TAX_AUTHORITY",
+            "preSaleResolvable": true
+          }
+        ],
+        "freshUntil": "2026-09-10T01:05:36.640Z",
+        "observedAt": "2026-09-09T19:43:21.197Z",
+        "saleFormat": "FixedPriceItem",
+        "authorityId": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+        "marketplace": "EBAY_US",
+        "categoryPath": "Jewelry & Watches:Fashion Jewelry:Jewelry Sets",
+        "storeContext": {
+          "source": "https://developer.ebay.com/devzone/xml/docs/Reference/ebay/GetUser.html#Response.User.SellerInfo.StoreOwner",
+          "status": "PROVEN",
+          "errorCode": null,
+          "storeSubscriptionLevel": "NO_STORE"
+        },
+        "boundCoverage": {
+          "pass": true,
+          "blockers": []
+        },
+        "policyVersion": "SELLER_OS_EBAY_BASIC_FEE_SOURCE_2026_09_09_V1",
+        "sellerContext": {
+          "standards": {
+            "source": "https://api.ebay.com/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT",
+            "status": "AVAILABLE",
+            "program": "PROGRAM_US",
+            "errorCode": null,
+            "evaluation": {
+              "endDate": null,
+              "startDate": null,
+              "evaluationDate": "2026-08-21T00:24:21.000Z",
+              "evaluationType": "CURRENT",
+              "evaluationMonth": "2026-08"
+            },
+            "httpStatus": 200,
+            "observedAt": "2026-09-09T19:05:37.811Z",
+            "standardsLevel": "ABOVE_STANDARD"
+          },
+          "serviceMetrics": {
+            "source": "https://api.ebay.com/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US",
+            "status": "AVAILABLE",
+            "errorCode": null,
+            "categories": [
+              {
+                "rating": "NOT_APPLICABLE",
+                "categoryId": "26395"
+              }
+            ],
+            "evaluation": {
+              "endDate": "2026-08-01T06:59:59.000Z",
+              "startDate": "2025-08-01T07:00:00.000Z",
+              "evaluationDate": "2026-08-21T18:25:19.000Z",
+              "evaluationType": "CURRENT",
+              "evaluationMonth": null
+            },
+            "httpStatus": 200,
+            "metricType": "ITEM_NOT_AS_DESCRIBED",
+            "observedAt": "2026-09-09T19:05:37.637Z",
+            "marketplace": "EBAY_US",
+            "listingCategoryApplicability": "UNRESOLVED"
+          }
+        },
+        "economicsState": "ECONOMICS_PENDING_ORDER_CONTEXT",
+        "contractVersion": "SELLER_OS_EBAY_FEE_AUTHORITY_V1",
+        "feeEstimateMode": "UNBOUNDED_UNTIL_ORDER",
+        "producerVersion": "SELLER_OS_EBAY_FEE_PRODUCER_V1",
+        "inputFingerprint": "45af3deae73596c416a92a0ca7714b3f92a5bd3697fcd8e737400e0391fb90df",
+        "policyObservedAt": "2026-09-09T18:59:52Z",
+        "sourceObservedAt": "2026-09-09T19:05:38.940Z",
+        "actualPostSaleFee": null,
+        "knownPreSaleBasis": {
+          "salePrice": 18.74,
+          "buyerShipping": 0
+        },
+        "resolvedAuthority": null,
+        "ebayAdsWriteEnabled": false,
+        "sourceEffectiveDate": null,
+        "basePreSaleFeeProven": true,
+        "marketplaceAccountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+        "buyerDependentComponents": [
+          "BUYER_TAX",
+          "INTERNATIONAL_APPLICABILITY",
+          "CURRENCY_CONVERSION"
+        ],
+        "promotionBlockedEvidence": true,
+        "contingentOrderComponents": [
+          {
+            "type": "FINAL_VALUE_PERCENT",
+            "basis": "ITEM_PRICE_PLUS_BUYER_SHIPPING_HANDLING_AND_TAX",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": [
+              {
+                "upTo": 5000,
+                "ratePct": 15
+              },
+              {
+                "upTo": null,
+                "ratePct": 9
+              }
+            ],
+            "pendingDependency": "ORDER_BUYER_TAX_AND_TOTAL_BASIS",
+            "preSaleResolvable": true
+          },
+          {
+            "type": "INTERNATIONAL",
+            "basis": "BUYER_REGISTRATION_DELIVERY_AND_SHIPPING_PROGRAM",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": null,
+            "pendingDependency": "ORDER_BUYER_COUNTRY_AND_PROGRAM",
+            "preSaleResolvable": false
+          },
+          {
+            "type": "CURRENCY_CONVERSION",
+            "basis": "ACTUAL_TRANSACTION_AND_PAYOUT_CURRENCIES",
+            "amount": null,
+            "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+            "status": "PENDING_ORDER_CONTEXT",
+            "rateOrAmount": null,
+            "pendingDependency": "ORDER_CONVERSION",
+            "preSaleResolvable": false
+          }
+        ],
+        "accountAuthorityDependencies": [
+          "CURRENT_EXACT_CATEGORY_SERVICE_AUTHORITY",
+          "CURRENT_ACCOUNT_FEE_TAX_AUTHORITY"
+        ],
+        "officialContingentRateLimits": {
+          "scope": "Official rate limits, not complete monetary bounds. Buyer tax, total fee basis, currency exposure and tax on fees require separate evidence. No unknown amount is zero.",
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "components": {
+            "INTERNATIONAL": {
+              "basis": "TOTAL_AMOUNT_OF_SALE",
+              "maximumRatePct": 1.65
+            },
+            "SERVICE_METRICS": {
+              "basis": "TOTAL_AMOUNT_OF_SALE",
+              "maximumRatePct": 6,
+              "mutuallyExclusiveWith": "SELLER_PERFORMANCE"
+            },
+            "SELLER_PERFORMANCE": {
+              "basis": "TOTAL_AMOUNT_OF_SALE",
+              "maximumRatePct": 7,
+              "mutuallyExclusiveWith": "SERVICE_METRICS"
+            },
+            "CURRENCY_CONVERSION": {
+              "basis": "AMOUNT_CONVERTED_AT_TRANSACTION_EXCHANGE_RATE",
+              "chargeRatePct": 3,
+              "exchangeRiskBounded": false
+            }
+          },
+          "freshUntil": "2026-09-10T19:22:00Z",
+          "observedAt": "2026-09-09T19:22:00Z",
+          "marketplace": "EBAY_US",
+          "sourceVersion": "SELLER_OS_OFFICIAL_CONTINGENT_FEES_2026_09_09_V1",
+          "registeredCountry": "US"
+        },
+        "unknownMaterialFeeComponentCount": 5
+      },
+      "label": "Econom\u00eda: esperando datos de la orden",
+      "resolvedAuthority": null,
+      "actualPostSaleFee": null,
+      "reference": "762673c39b568bd1f190b1b64b4354a8eb5c75b5a47eca36f35d23909c7957d4",
+      "status": "PENDING"
+    },
+    "deploymentId": "dpl_CH5z4hXG8zCcKoa6JkPdhruHCnrZ"
+  },
+  "quota": {
+    "HTTP_STATUS": 200,
+    "TRACE_ID": "c5ba38da-1428-487a-9f60-820116a36997",
+    "observedAt": "2026-09-09T19:41:43.585Z",
+    "source": "EBAY_DEVELOPER_ANALYTICS_GET_RATE_LIMITS",
+    "status": "AVAILABLE",
+    "gateState": "BLOCKED",
+    "rates": [
+      {
+        "apiContext": "tradingapi",
+        "apiName": "tradingapi",
+        "apiVersion": "v1",
+        "resource": "GetUser",
+        "count": 1210,
+        "limit": 5000,
+        "remaining": 0,
+        "resetAt": "2026-09-10T07:00:00.000Z",
+        "timeWindow": 86400,
+        "limitScope": "APPLICATION"
+      },
+      {
+        "apiContext": "tradingapi",
+        "apiName": "tradingapi",
+        "apiVersion": "v1",
+        "resource": "GetItem",
+        "count": 3540,
+        "limit": 5000,
+        "remaining": 0,
+        "resetAt": "2026-09-10T07:00:00.000Z",
+        "timeWindow": 86400,
+        "limitScope": "APPLICATION"
+      },
+      {
+        "apiContext": "tradingapi",
+        "apiName": "tradingapi",
+        "apiVersion": "v1",
+        "resource": "GetAccount",
+        "count": 1,
+        "limit": 5000,
+        "remaining": 0,
+        "resetAt": "2026-09-10T07:00:00.000Z",
+        "timeWindow": 86400,
+        "limitScope": "APPLICATION"
+      }
+    ],
+    "nextSafeTradingProbeAt": "2026-09-10T07:00:00.000Z",
+    "retryPolicy": {
+      "tradingProbeWhileBlockedAllowed": false,
+      "certificationProbesAfterProvenResetMaximum": 1,
+      "automaticPolling": false,
+      "p2ActivationAuthorized": false
+    },
+    "safety": {
+      "readOnlySurface": true,
+      "callerProvidedApiContextAllowed": false,
+      "arbitraryUrlAllowed": false,
+      "tradingLiveCallsByThisRead": 0,
+      "getMyeBaySellingCallsByThisRead": 0,
+      "getSellerListCallsByThisRead": 0,
+      "getItemCallsByThisRead": 0,
+      "ebayWritesByThisRead": 0,
+      "listingWritesByThisRead": 0,
+      "inventoryWritesByThisRead": 0,
+      "oauthUserChangesByThisRead": 0,
+      "credentialsIncluded": false,
+      "environmentValuesIncluded": false,
+      "buyerPiiIncluded": false,
+      "lunaPollingByThisRead": 0,
+      "vaultWritesByThisRead": 0,
+      "messageSendsByThisRead": 0,
+      "paymentTransactionsByThisRead": 0
+    }
+  },
+  "freshFeeAcquisition": {
+    "newDeploymentHttpStatus": 502,
+    "previousCertifiedDeploymentHttpStatus": 502,
+    "newTraceIds": [
+      "c3d7cfd4-f453-40ed-8ef5-5f6a1944de07",
+      "27d7a665-0c2e-451c-aa2b-5a58d2bcb74b"
+    ],
+    "previousTraceId": "ce537190-71d2-4748-8d46-8149af4c4dc0",
+    "error": "SELLER_OS_CLOUD_READ_RELAY_SOURCE_READ_FAILED"
+  },
+  "uiIssue": {
+    "rootCause": "CURRENT_LIVE_SOURCE_UNAVAILABLE_WITH_EXPIRED_CERTIFIED_HISTORY_RENDERED_AS_EMPTY_SELECTION",
+    "officialSourceError": "EBAY_MONITOR_SELLER_LIST_TRADING_ERROR_518",
+    "previousGetHttpStatus": 200,
+    "storedCertifiedListings": 23,
+    "physicalReader": {
+      "observedAt": "2026-09-09T19:56:13.410Z",
+      "first": {
+        "listings": [
+          {
+            "itemId": "366574069492",
+            "title": "Digital Kitchen Food Scale Nutrition Calculator Calories Macros Meal Prep LCD",
+            "sku": "IMN-LST-000015",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366581718546",
+            "title": "Chest Crossbody Bag Sling Backpack for Men USB Charge Port Brown PU Leather",
+            "sku": "IMN-LST-000013",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366582544476",
+            "title": "Handheld Car Vacuum Cleaner 9000Pa 2-in-1 Air Duster 120W Cordless Rechargeable",
+            "sku": "IMN-LST-000012",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366582586826",
+            "title": "Z6 AI Translator 138 Languages Two-Way Voice Offline Photo 4.1in Touchscreen",
+            "sku": "IMN-LST-000011",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366582671136",
+            "title": "Women's Butterfly & Heart Layered Necklace Adjustable Chain Pendant Boho Gold",
+            "sku": "IMN-LST-000005",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366592485792",
+            "title": "S80 Language Translator 138 Languages AI Voice Two-Way Portable 14 Offline Black",
+            "sku": "IMN-LST-000024",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366592919965",
+            "title": "Men's 14K Gold Plated White Sapphire Statement Cocktail Ring Adjustable Size",
+            "sku": "IMN-LST-000026",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366597434810",
+            "title": "Mini Body Camera 1080P Portable Pocket Wearable Video Recorder No WiFi",
+            "sku": "IMN-LST-000025",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366634810965",
+            "title": "Window Privacy Film One Way 23.6 in x 9.84 ft Tint for Home",
+            "sku": "IMNOVA3A394C94108B4CA0B3735E589DC4A652",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366635285436",
+            "title": "11 in Revolving Plastic Cake Turntable Non-Slip Base Decorating Stand",
+            "sku": "IMNOVA42B4E4B51A124021918289B782A5C6AC",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366643122092",
+            "title": "Car Windshield Phone Holder ABS PVC Black Adjustable Width",
+            "sku": "IMNOVAD28114BA01D9413490E4927035E66255",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366643126310",
+            "title": "Big Middle Little Sister Heart Key Chain 3 Piece Puzzle Silver Gift Set",
+            "sku": "FL-3SISTER-KEYCHAIN",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366643190059",
+            "title": "Toilet Paper Holder Shelf, Black Anti-Rust Aluminum Tissue Roll Mobile Phone",
+            "sku": "IMNOVA6E92062A4F5A4AEEA1C23D46D2614BC4",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366643555454",
+            "title": "Scan Reader Pen Portable Two-Way Instant Translator",
+            "sku": "IMNOVA6BEEA08C95B148FF95AC7634DB288048",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366647547173",
+            "title": "Professional Compact Vegetable Food Cutter Chopper (9 Inserts) Grey Green",
+            "sku": "IMNOVA0AD89689374445EE91EC5992B05326F2",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366649437609",
+            "title": "Evening Navy, Rust-Oleum American Accents 2X Ultra Cover Matte Spray Paint, 12",
+            "sku": "IMNOVADC166ABC7F3F48C1AD1CF04BA24B7486",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366649508886",
+            "title": "Action Figure Marvel Avengers Titan Hero Series Iron Man",
+            "sku": "IMNOVA6A47F280102C45B7897DF2C1DA3F38C0",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366650047727",
+            "title": "Charm Stainless Steel Elephant Bracelet",
+            "sku": "IMNOVA75A7EC0C9B3846CFB4A654B8AD94CE59",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366650054490",
+            "title": "Boho Evil Eye Jewelry Set",
+            "sku": "IMNOVAA59C2C921CDD4975ADD29540657D8A60",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366650065203",
+            "title": "Bracelet Dreamcatcher Double Pearl \u2013 Silver Boho Charm & Crystal Accents",
+            "sku": "IMNOVA8A5E9410F92440E6925729ED0BE22A0E",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          }
+        ],
+        "nextCursor": "366650065203",
+        "actionsAvailable": false,
+        "selectionState": "LAST_CERTIFIED",
+        "authoritativeZero": false,
+        "observedAt": "2026-09-09T18:50:03.817Z",
+        "sourceFailureCode": "EBAY_MONITOR_SELLER_LIST_TRADING_ERROR_518",
+        "scope": "CURRENT_PAGE_MAXIMUM_20",
+        "marketplaceWrites": 0
+      },
+      "second": {
+        "listings": [
+          {
+            "itemId": "366650071972",
+            "title": "3 Line Diamond Rhinestone Anklet",
+            "sku": "IMNOVA521BB2F0AD9849DEAB31D9323ABA3B8E",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366650113488",
+            "title": "Geometric Copper Drop Tassel Zircon Earrings",
+            "sku": "IMNOVA20648F6AB4EE4B6FB46B19456A16FB0A",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          },
+          {
+            "itemId": "366650121192",
+            "title": "Brush Holder Pink Makeup \u2013 Round Plastic Storage Stand Brushes, Pencils & Desk",
+            "sku": "IMNOVA96623B7E05904CB8B54EEA24ECA18FC4",
+            "observedAt": "2026-09-09T18:50:03.817Z"
+          }
+        ],
+        "nextCursor": null,
+        "actionsAvailable": false,
+        "selectionState": "LAST_CERTIFIED",
+        "authoritativeZero": false,
+        "observedAt": "2026-09-09T18:50:03.817Z",
+        "sourceFailureCode": "EBAY_MONITOR_SELLER_LIST_TRADING_ERROR_518",
+        "scope": "CURRENT_PAGE_MAXIMUM_20",
+        "marketplaceWrites": 0
+      },
+      "dbReads": 4,
+      "ebayReads": 0,
+      "marketplaceWrites": 0
+    },
+    "historicalRowsAreNotCurrentAuthority": true,
+    "postActionCurrentLiveGuardPreserved": true,
+    "browserCheck": {
+      "status": "AUTHENTICATED_OPERATOR_SESSION_UNAVAILABLE_IN_LOCAL_BROWSER",
+      "observedPath": "/admin/login",
+      "httpSelectionResponseObserved": false,
+      "operatorIPadPassAsserted": false
+    }
+  },
+  "safeBounds": {
+    "contractTestsPass": true,
+    "realCanaryBoundProven": false,
+    "mode": "UNBOUNDED_UNTIL_ORDER",
+    "profitBeforeAds": null,
+    "marginBeforeAds": null,
+    "maxSafeAdRatePct": null,
+    "ad3PercentSafe": false,
+    "ad4PercentSafe": false,
+    "ad5PercentSafe": false,
+    "promotionBlockedEvidence": true
+  },
+  "reconciliation": {
+    "automaticExistingOrderIngestionHook": true,
+    "realNewSaleFabricated": false,
+    "directedContractTestsPass": true,
+    "scope": "SINGLE_LINE_SINGLE_UNIT_EXACT_ACCOUNT_ITEM_SKU",
+    "multiItemOrders": "AGGREGATE_RETAINED_ALLOCATION_PENDING",
+    "source": "EBAY_FULFILLMENT_ACCRUED_MARKETPLACE_FEES",
+    "originalPreSaleImmutable": true,
+    "laterOfficialRevisionsAppendReceipts": true
+  },
+  "migrations": [
+    "20260909191023",
+    "20260909192829"
+  ],
+  "operationalCloseout": false,
+  "revenuePromotionActivationReady": false,
+  "ebayAdsWriteEnabled": false,
+  "marketplaceWriteCount": 0,
+  "ebayAdsWriteCount": 0,
+  "newPollers": 0,
+  "newBackgroundWorkers": 0,
+  "nextAction": "Verify quota reopened after 2026-09-10T07:00:00Z, then at most one controlled physical fee acquisition; do not bypass the Trading circuit breaker.",
+  "validation": {
+    "artifactVersion": "SELLER_OS_VALIDATION_EVIDENCE_V1",
+    "producer": {
+      "id": "SELLER_OS_VALIDATION_RECORDER",
+      "version": "SELLER_OS_VALIDATION_RECORDER_V2"
+    },
+    "source": "LOCAL_VALIDATION",
+    "validatedHeadSha": "3357439834b07e38be8be3f0f6fcd8131d7da27a",
+    "startedAt": "2026-09-09T19:56:07.422Z",
+    "completedAt": "2026-09-09T19:59:08.315Z",
+    "headChangedDuringValidation": false,
+    "workspaceChangedDuringValidation": false,
+    "validationSubject": {
+      "type": "CLEAN_COMMITTED_HEAD",
+      "validatedWorkingTreeStatus": "CLEAN",
+      "validatedWorkspaceFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "fingerprintVersion": "SELLER_OS_WORKSPACE_FINGERPRINT_V1",
+      "workspaceStableDuringValidation": true
+    },
+    "checks": {
+      "tests": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 71431,
+        "completedAt": "2026-09-09T19:57:18.871Z",
+        "scope": "FULL_SELLER_OS_SUITE",
+        "passed": 382,
+        "failed": 0,
+        "skipped": 0,
+        "failureSummaries": [],
+        "failuresTruncated": false
+      },
+      "typecheck": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 41616,
+        "completedAt": "2026-09-09T19:58:00.487Z"
+      },
+      "lint": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 14711,
+        "completedAt": "2026-09-09T19:58:15.198Z"
+      },
+      "build": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 52656,
+        "completedAt": "2026-09-09T19:59:07.855Z"
+      },
+      "sellerOsAudit": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 439,
+        "completedAt": "2026-09-09T19:59:08.296Z"
+      },
+      "targetedRuntimeSecurity": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 4228,
+        "completedAt": "2026-09-09T19:56:07.421Z"
+      }
+    },
+    "buildArtifact": {
+      "version": "SELLER_OS_PRECOMPILED_ARTIFACT_V1",
+      "sourceCommitSha": "3357439834b07e38be8be3f0f6fcd8131d7da27a",
+      "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "buildId": "8RfAboqm4WXovk-MVSjyG",
+      "buildArtifactDigest": "sha256:c0407e98d1e94dde43de13549d938fc256dc412c0a07fa3dd31d0a48297ffe5e",
+      "payloadFileCount": 1462,
+      "payloadByteCount": 67915046,
+      "builtAt": "2026-09-09T19:59:07.855Z",
+      "nodeVersion": "v22.23.0",
+      "nextVersion": "16.2.6",
+      "dynamicCompilationAtBoot": false
+    }
+  },
+  "finalDatabaseAcl": [
+    {
+      "relname": "seller_os_ebay_fee_authorities_v1",
+      "rls_enabled": true,
+      "service_update": false,
+      "service_delete": false,
+      "service_truncate": false,
+      "anon_select": false,
+      "authenticated_select": false
+    },
+    {
+      "relname": "seller_os_ebay_fee_bindings_v1",
+      "rls_enabled": true,
+      "service_update": true,
+      "service_delete": false,
+      "service_truncate": false,
+      "anon_select": false,
+      "authenticated_select": false
+    },
+    {
+      "relname": "seller_os_ebay_fee_reconciliation_receipts_v1",
+      "rls_enabled": true,
+      "service_update": false,
+      "service_delete": false,
+      "service_truncate": false,
+      "anon_select": false,
+      "authenticated_select": false
+    }
+  ],
+  "manual": {
+    "url": "https://imnova-seller-os-preprod.vercel.app/manual-mayel-menu-v1.pdf",
+    "httpStatus": 200,
+    "contentType": "application/pdf",
+    "bytes": 402923,
+    "expectedBytes": 402923,
+    "sha256": "3dcde5988ec3459cc668afc9ab06609378da371db8cb5e9355b35f1091114022",
+    "matchesCertifiedManual": true,
+    "observedAt": "2026-09-09T19:57:58.618Z"
+  },
+  "deployment": {
+    "id": "dpl_CH5z4hXG8zCcKoa6JkPdhruHCnrZ",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-in0wrwuej-earch19792-6888s-projects.vercel.app",
+    "sha": "3357439834b07e38be8be3f0f6fcd8131d7da27a"
+  },
+  "implementationSha": "3357439834b07e38be8be3f0f6fcd8131d7da27a",
+  "resultFields": {
+    "STATUS": "IMPLEMENTED_DEPLOYED_PHYSICAL_CLOSEOUT_PENDING",
+    "IMPLEMENTATION_SHA": "3357439834b07e38be8be3f0f6fcd8131d7da27a",
+    "AUTOMATIC_FEE_PRODUCER_PASS": "CONTRACTS_AND_DURABLE_CANARY_PASS_FRESH_ACQUISITION_PENDING",
+    "FEE_COMPONENT_COUNT": 8,
+    "UNNECESSARILY_UNPROVEN_COMPONENT_COUNT": 0,
+    "BUYER_DEPENDENT_COMPONENTS": [
+      "BUYER_TAX",
+      "INTERNATIONAL_APPLICABILITY",
+      "CURRENCY_CONVERSION"
+    ],
+    "ECONOMICS_STATE": "ECONOMICS_PENDING_ORDER_CONTEXT",
+    "NEW_LISTING_FEE_RESOLUTION_AUTOMATIC": true,
+    "FEE_AUTHORITY_AUTO_BOUND_TO_MAYEL": true,
+    "POST_SALE_RECONCILIATION_AUTOMATIC": true,
+    "CODEX_REQUIRED_FOR_FEE_BINDING": false,
+    "CODEX_REQUIRED_FOR_POST_SALE_RECONCILIATION": false,
+    "CODEX_RUNTIME_DEPENDENCY": false,
+    "OWNER_MANUAL_REPAIR_REQUIRED": false,
+    "MAYEL_AUTO_UPDATE_AFTER_SALE": "NORMAL_READ_HANDOFF_CONTRACT_PASS_NO_NEW_REAL_SALE_OBSERVED",
+    "PROFIT_BEFORE_ADS": null,
+    "MARGIN_BEFORE_ADS": null,
+    "MAX_SAFE_AD_RATE_PCT": null,
+    "PROMOTION_BLOCKED_EVIDENCE": true,
+    "ASSISTANT_OPERATIONAL_CLOSEOUT": false,
+    "REVENUE_PROMOTION_ACTIVATION_READY": false,
+    "EBAY_ADS_WRITE_ENABLED": false,
+    "FULL_SUITE_RESULT": "382/382_PASS_TYPECHECK_LINT_BUILD_AUDIT_PASS",
+    "NEW_REGRESSION_COUNT": 0,
+    "NEXT_ACTION": "Verify quota reopened after 2026-09-10T07:00:00Z, then at most one controlled physical fee acquisition; do not bypass the Trading circuit breaker."
+  }
+}

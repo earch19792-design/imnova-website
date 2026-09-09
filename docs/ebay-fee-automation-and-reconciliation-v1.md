@@ -37,3 +37,15 @@ Fulfillment's aggregate is labeled accrued marketplace fees, not an invented ite
 Directed tests cover new-package handoff, category/subscription changes, pending buyer context, no implicit zeros, conservative coverage, tariff discontinuities, immutable/idempotent reconciliation, actual-versus-estimate deltas, Mayel read-through updates, existing runtime hooks, profit guard simulations, database triggers, concurrency and ACLs. Physical staging evidence and the final full-suite/deployment result are recorded separately after validation.
 
 The canary remains Item ID `366650054490`, category `50692`. No new sale is fabricated to certify the automation. A fully covered monetary bound is not yet established for this real listing; advertising remains disabled.
+
+## Physical closeout status, 9 September 2026
+
+Implementation and contract validation passed. Operational closeout remains pending: fresh server-side fee acquisition returned HTTP 502 on both the new deployment and the previous certified deployment. The existing official Developer Analytics quota diagnostic reported Trading BLOCKED, remaining=0, with reset at 2026-09-10T07:00:00Z (01:00 Guatemala). No additional Trading certification probe is permitted while blocked. After a proven reset, allow at most one controlled acquisition for the same canary.
+
+The real staging producer reused official evidence captured at 19:05:36–38 UTC. It persisted an immutable authority, repeated idempotently, and Mayel consumed it through a deployed HTTP 200 Product Case response. This demonstrates durable producer/handoff behavior; it does not substitute for a fresh Trading acquisition. Recalculation is capped to the original source freshness and cannot refresh source evidence by itself.
+
+Eight components are classified. The real canary has five material amount/authority dependencies: total basis including buyer tax, exact category service metrics, international applicability, conversion, and tax on fees. The regulatory operating component is explicitly not applicable for the supported US listing. A complete official monetary bound is not proven. Profit, margin and maximum safe ad rate remain null; 3%, 4% and 5% are not approved for this canary. Complete conservative-bound fixtures do pass those simulations under explicit test policy floors; they are not real canary economics.
+
+The operator additionally reported an empty Mayel selector. Its current-only GET hid all 23 last-certified listings after the official source became unavailable. The isolated selector repair reads stored authority and registry data, keeps historical browsing available and preserves current-LIVE action gates. Physical staging verification returned 20 and 3 listings with their titles, using four bounded database reads and zero eBay reads. It does not certify applying improvements to eBay.
+
+The final evidence file records validation, deployment and trace IDs. No marketplace or Ads write was performed. The four-action menu and existing Ayuda / Manual PDF are preserved. Full end-to-end application of a listing improvement and advertising activation are not declared complete.
