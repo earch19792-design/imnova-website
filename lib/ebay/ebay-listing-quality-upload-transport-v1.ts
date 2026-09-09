@@ -2,10 +2,11 @@ export const QUALITY_UPLOAD_MAX_FILE_BYTES = 3_000_000
 export const QUALITY_UPLOAD_ENDPOINT = "/api/admin/ebay/listing-quality-report"
 export const QUALITY_UPLOAD_STAGES = ["UPLOAD_BUTTON", "FILE_INPUT", "BROWSER_VALIDATION",
   "REQUEST_CONSTRUCTION", "AUTH", "ROUTE", "FILE_TRANSPORT", "UPLOAD_ATTEMPT_LEDGER",
-  "WORKBOOK_PARSER", "IMPORT_VALIDATION", "IMPORTS", "SIGNALS", "ASSISTANT_QUALITY_CONTEXT"] as const
+  "WORKBOOK_PARSER", "IMPORT_VALIDATION", "IMPORTS", "SIGNALS", "STATUS_READBACK", "ASSISTANT_QUALITY_CONTEXT"] as const
 export type QualityUploadStage = typeof QUALITY_UPLOAD_STAGES[number]
 export type QualityUploadTrace = { TRACE_ID: string; FAILURE_STAGE: QualityUploadStage | null;
   HTTP_STATUS: number | null; ERROR_CODE: string | null;
+  UPLOAD_ATTEMPT_ROW_CREATED: boolean;
   stages: Record<QualityUploadStage, { REACHED: boolean; HTTP_STATUS: number | null;
     ERROR_CODE: string | null; TRACE_ID: string }> }
 
@@ -13,6 +14,7 @@ export function createQualityUploadTraceV1(seed?: string | null): QualityUploadT
   const TRACE_ID = seed && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(seed)
     ? seed : crypto.randomUUID()
   return { TRACE_ID, FAILURE_STAGE: null, HTTP_STATUS: null, ERROR_CODE: null,
+    UPLOAD_ATTEMPT_ROW_CREATED: false,
     stages: Object.fromEntries(QUALITY_UPLOAD_STAGES.map(stage => [stage,
       { REACHED: false, HTTP_STATUS: null, ERROR_CODE: null, TRACE_ID }])) as QualityUploadTrace["stages"] }
 }
@@ -91,6 +93,7 @@ export async function submitQualityUploadV1(input: {
   try { payload = await response.json() } catch { return fail(`QUALITY_REPORT_HTTP_${response.status}`) }
   const server = payload.uploadTrace as QualityUploadTrace | undefined
   if (server?.TRACE_ID === trace.TRACE_ID && server.stages) {
+    trace.UPLOAD_ATTEMPT_ROW_CREATED = server.UPLOAD_ATTEMPT_ROW_CREATED === true
     for (const key of QUALITY_UPLOAD_STAGES) {
       const observed = server.stages[key]
       if (observed?.REACHED === true) trace.stages[key] = observed

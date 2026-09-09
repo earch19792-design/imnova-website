@@ -218,7 +218,7 @@ export function OwnerListingQualityReportControl() {
           <summary>Diagnóstico de esta carga</summary>
           <p className="break-all">Código: {uploadTrace.ERROR_CODE ?? "NONE"} · Etapa: {uploadTrace.FAILURE_STAGE ?? "COMPLETED"} · HTTP: {uploadTrace.HTTP_STATUS ?? "NOT_SENT"}</p>
           <p className="break-all">TRACE_ID: {uploadTrace.TRACE_ID}</p>
-          <p>Intento registrado: {uploadTrace.stages.UPLOAD_ATTEMPT_LEDGER.REACHED ? "Sí" : "No confirmado"}</p>
+          <p>Intento registrado: {uploadTrace.UPLOAD_ATTEMPT_ROW_CREATED ? "Sí" : "No confirmado"}</p>
         </details>}
       </div>
       <div className="min-w-0 rounded-2xl border border-white/10 bg-black/20 p-4">

@@ -179,8 +179,9 @@ export async function POST(request: Request) {
           format, content, error, snapshot, mimeType, requestContentType,
           deploymentId: runtimeDeploymentId, failedStage: "IMPORT_VALIDATION",
           attemptedAt, correlationSeed })
-        await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
         trace.stages.UPLOAD_ATTEMPT_LEDGER.REACHED = true
+        await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
+        trace.UPLOAD_ATTEMPT_ROW_CREATED = true
       } catch {
         // Preserve the original fail-closed parser result. Audit failures are
         // intentionally not misreported as successful imports.
@@ -210,8 +211,9 @@ export async function POST(request: Request) {
           format, content, error, snapshot, mimeType, requestContentType,
           deploymentId: runtimeDeploymentId, failedStage: "IMPORT_RPC",
           attemptedAt, correlationSeed })
-        await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
         trace.stages.UPLOAD_ATTEMPT_LEDGER.REACHED = true
+        await persistOwnerQualityReportUploadAttemptV1({ supabase, attempt })
+        trace.UPLOAD_ATTEMPT_ROW_CREATED = true
       } catch { /* The valid-import table remains authoritative. */ }
       return respond({ success: false, error: safeError(error) }, 422)
     }
@@ -221,10 +223,11 @@ export async function POST(request: Request) {
       format, content, snapshot, prepared, validImportId: persisted.importId,
       mimeType, requestContentType, deploymentId: runtimeDeploymentId,
       attemptedAt, correlationSeed })
-    stage = "UPLOAD_ATTEMPT_LEDGER"
+    reach("UPLOAD_ATTEMPT_LEDGER")
     const { attemptId: uploadAttemptId } = await persistOwnerQualityReportUploadAttemptV1({ supabase,
       attempt: successfulAttempt })
-    reach("UPLOAD_ATTEMPT_LEDGER")
+    trace.UPLOAD_ATTEMPT_ROW_CREATED = true
+    reach("STATUS_READBACK")
     const [status, latestUploadAttempt] = await Promise.all([
       readOwnerListingQualityReportStatusV1({ supabase,
         accountKey: account.accountKey }),
