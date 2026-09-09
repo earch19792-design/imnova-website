@@ -1,0 +1,198 @@
+{
+  "workstream": "ASSISTANT_LISTING_OPTIMIZATION_AND_QUALITY_ATTRIBUTION_V1",
+  "mode": "READ_ONLY_LOCAL",
+  "quality": {
+    "status": "UNAVAILABLE_NO_CURRENT_REPORT",
+    "resultCount": null,
+    "recommendations": []
+  },
+  "listing": {
+    "identity": {
+      "itemId": "366643122092",
+      "title": "Car Windshield Phone Holder ABS PVC Black Adjustable Width",
+      "sku": "IMNOVAD28114BA01D9413490E4927035E66255",
+      "thumbnail": "https://i.ebayimg.com/images/g/OT4AAeSwPdNqnVXq/s-l140.jpg",
+      "liveStatus": "LIVE_ACTIVE"
+    },
+    "currentLiveFacts": {
+      "itemId": "366643122092",
+      "sku": "IMNOVAD28114BA01D9413490E4927035E66255",
+      "customLabel": "IMNOVAD28114BA01D9413490E4927035E66255",
+      "title": "Car Windshield Phone Holder ABS PVC Black Adjustable Width",
+      "quantity": 1,
+      "price": 22.98,
+      "currency": "USD",
+      "liveStatus": "LIVE_ACTIVE",
+      "source": "EBAY_TRADING_GET_MY_EBAY_SELLING",
+      "observedAt": "2026-09-09T12:32:09.374Z"
+    },
+    "qualityGuidance": {
+      "listingKey": "[\"366643122092\",\"IMNOVAD28114BA01D9413490E4927035E66255\",null]",
+      "ebayGuidanceStatus": "MISSING",
+      "sellerOsDiagnosisStatus": "UNPROVEN",
+      "conclusion": "INSUFFICIENT_EVIDENCE",
+      "reasonCodes": [
+        "GUIDANCE_NOT_AVAILABLE"
+      ],
+      "automaticExecutionAllowed": false
+    },
+    "marketOpportunity": {
+      "status": "CANONICAL_V2_NOT_AVAILABLE",
+      "authoritative": false,
+      "canonicalResultVersion": null,
+      "canonicalFamily": null,
+      "canonicalFamilyConfidence": null,
+      "attributeSet": [],
+      "commercialRecommendation": null,
+      "keywordRecommendation": null,
+      "keywordOpportunity": null,
+      "priceOpportunity": null,
+      "referenceCandidate": null,
+      "useAsReferenceReadiness": "UNPROVEN",
+      "nextBestEvidence": "NEED_CANONICAL_OPPORTUNITY_ANALYSIS",
+      "decisionTaxonomy": null,
+      "exceptionPriority": "HIGH",
+      "reason": "NO_PERSISTED_LISTING_BOUND_CANONICAL_V2_RESULT",
+      "legacyDiagnostics": {
+        "authoritative": false,
+        "titleOnlyFamilyResolutionSuppressed": true,
+        "mayOverrideCanonicalResult": false
+      }
+    },
+    "safety": {
+      "readOnly": true,
+      "buyerPiiIncluded": false,
+      "rawPayloadIncluded": false,
+      "credentialsIncluded": false,
+      "environmentValuesIncluded": false,
+      "databaseWrites": 0,
+      "marketplaceWrites": 0,
+      "woMutations": 0,
+      "lunaMutations": 0
+    }
+  },
+  "productCaseByItem": {
+    "AUDIT_CONTRACT_VERSION": "SELLER_OS_PRODUCT_CASE_AUDIT_V1",
+    "OBSERVED_AT": "2026-09-09T12:32:27.600Z",
+    "DETAIL_MODE": "TRACE",
+    "INPUT_IDENTITY": {
+      "type": "EBAY_ITEM_ID",
+      "value": "366643122092"
+    },
+    "RESOLVED_CANONICAL_IDENTITY": null,
+    "STATUS": "CONTRADICTED",
+    "CONTRADICTION": "CANONICAL_PRODUCT_IDENTITY_NOT_FOUND",
+    "KNOWN": [],
+    "STALE": [],
+    "UNPROVEN": [
+      "EXACT_PRODUCT_IDENTITY"
+    ],
+    "UNAVAILABLE": [],
+    "MISSING": [],
+    "CONTRADICTED": [
+      "CANONICAL_PRODUCT_IDENTITY_NOT_FOUND"
+    ],
+    "NEXT_BLOCKING_STAGE": "LUNA_SOURCE",
+    "BUSINESS_IMPACT": "REVENUE_BLOCKING",
+    "safety": {
+      "readOnly": true,
+      "arbitrarySql": false,
+      "arbitraryUrl": false,
+      "credentialsIncluded": false,
+      "buyerPiiIncluded": false,
+      "databaseBusinessWrites": 0,
+      "marketplaceWrites": 0
+    }
+  },
+  "productCaseByPackage": {
+    "observedAt": "2026-09-09T12:33:40.003Z",
+    "identity": {
+      "candidateId": "sha256:640a2832fcb6870ba09dc172553f0620c74b9b9f3b81bbad6fefad6971e80a88",
+      "productCaseId": null,
+      "lunaProductId": "9220873322720",
+      "lunaVariantId": "48809689415904",
+      "supplierSku": "FL-CUP-PHONE-MOUNT",
+      "ebaySku": "IMNOVAD28114BA01D9413490E4927035E66255",
+      "ebayItemId": "366643122092",
+      "packageId": "d28114ba-01d9-4134-90e4-927035e66255"
+    },
+    "keywordIntelligenceFieldPresent": false,
+    "readDiagnosticsFieldPresent": false,
+    "nextBlockingStage": "MARKET_RESEARCH",
+    "journey": [
+      {
+        "STAGE": "LUNA_SOURCE",
+        "STATUS": "PROVEN",
+        "TEMPORAL_SCOPE": "CURRENT",
+        "SOURCE_AUTHORITY": "ebay_luna_opportunity_queue",
+        "OBSERVED_AT": "2026-09-09T12:24:00.284Z",
+        "FRESH_UNTIL": null,
+        "FAILURE_CLASS": null,
+        "RECEIPT_REFERENCES": [
+          "b7087b76-3c03-4892-b99b-421a6f0c545c"
+        ]
+      },
+      {
+        "STAGE": "PRODUCT_TRUTH",
+        "STATUS": "PROVEN",
+        "TEMPORAL_SCOPE": "CURRENT",
+        "SOURCE_AUTHORITY": "ebay_luna_opportunity_queue.assessment.productTruth",
+        "OBSERVED_AT": "2026-09-09T12:24:00.284Z",
+        "FRESH_UNTIL": null,
+        "FAILURE_CLASS": null,
+        "RECEIPT_REFERENCES": [
+          "b7087b76-3c03-4892-b99b-421a6f0c545c"
+        ]
+      },
+      {
+        "STAGE": "CATEGORY",
+        "STATUS": "PROVEN",
+        "TEMPORAL_SCOPE": "CURRENT",
+        "SOURCE_AUTHORITY": "ebay_listing_packages.package_data",
+        "OBSERVED_AT": "2026-09-01T23:04:19.583Z",
+        "FRESH_UNTIL": null,
+        "FAILURE_CLASS": null,
+        "RECEIPT_REFERENCES": [
+          "d28114ba-01d9-4134-90e4-927035e66255"
+        ]
+      },
+      {
+        "STAGE": "ASPECTS",
+        "STATUS": "PROVEN",
+        "TEMPORAL_SCOPE": "CURRENT",
+        "SOURCE_AUTHORITY": "ebay_listing_packages.package_data",
+        "OBSERVED_AT": "2026-09-01T23:04:19.583Z",
+        "FRESH_UNTIL": null,
+        "FAILURE_CLASS": null,
+        "RECEIPT_REFERENCES": [
+          "d28114ba-01d9-4134-90e4-927035e66255"
+        ]
+      },
+      {
+        "STAGE": "LISTING_PACKAGE",
+        "STATUS": "PROVEN",
+        "TEMPORAL_SCOPE": "CURRENT",
+        "SOURCE_AUTHORITY": "ebay_listing_packages",
+        "OBSERVED_AT": "2026-09-01T23:04:19.583Z",
+        "FRESH_UNTIL": null,
+        "FAILURE_CLASS": null,
+        "RECEIPT_REFERENCES": [
+          "d28114ba-01d9-4134-90e4-927035e66255"
+        ]
+      },
+      {
+        "STAGE": "CURRENT_LIVE",
+        "STATUS": "UNPROVEN",
+        "TEMPORAL_SCOPE": "CURRENT",
+        "SOURCE_AUTHORITY": "ebay_active_listings",
+        "OBSERVED_AT": "2026-09-02T00:39:26.319Z",
+        "FRESH_UNTIL": null,
+        "FAILURE_CLASS": null,
+        "RECEIPT_REFERENCES": [
+          "366643122092"
+        ]
+      }
+    ]
+  },
+  "note": "Receipts captured from existing read-only Assistant tools. No historical failing request trace is fabricated; no new optimization executed."
+}
