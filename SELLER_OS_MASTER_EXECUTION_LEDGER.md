@@ -2657,6 +2657,7 @@
 - PREPROD_DEPLOYMENT: dpl_5KL6KckwUWmRdSVQTvg6MvaBnhmX
 - OPERATOR_ENTRY: https://imnova-seller-os-preprod.vercel.app/admin
 - OPERATOR_MENU_ENTRY_CORRECTED: true, server-verified dedicated-preprod capability, existing permissions preserved
+- OPERATOR_IPAD_MENU_VISIBLE: true, user confirmed after Safari reload
 - PRIMARY_ACTION_COUNT: 4
 - ADVANCED_DETAILS_CLOSED_BY_DEFAULT: true
 - PHYSICAL_SINGLE_LISTING_CANARY_ITEM_ID: 366643122092

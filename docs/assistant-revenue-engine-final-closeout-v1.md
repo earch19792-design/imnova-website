@@ -58,6 +58,8 @@ La entrada real `/admin` devolvió HTTP 200 y la capacidad revenueEngineAvailabl
 
 [Readback completo](assistant-revenue-engine-final-closeout-v1-readback.json) · [Canary físico](assistant-revenue-engine-physical-canary.png) · [Prueba visual de operadora con datos simulados](assistant-revenue-engine-operator-ipad-mock.png)
 
+El operador confirmó desde esta conversación que, tras recargar la misma dirección, los cuatro botones ya aparecen en el iPad de Mayel: «si ya codex». Esta confirmación acredita la visibilidad del menú en el dispositivo real; no convierte la evidencia económica pendiente en válida.
+
 ## Manual para entregar a Mayel
 
 [Manual en PDF](manual-mayel-menu-v1.pdf) · [Versión de texto](manual-mayel-menu-v1.md). Describe únicamente las acciones y permisos disponibles en su menú actual.
