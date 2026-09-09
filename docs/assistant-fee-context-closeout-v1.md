@@ -32,6 +32,26 @@ The current category fee rule, applicability of category service surcharges, cur
 
 Requested follow-up: availability of a recent real-sale fee breakdown from the same account, to compare fee and tax evidence. Such a record will be kept historical and assessed for comparability; it will not silently substitute for the applicable current authority. If no sale exists, the remaining path is a demonstrated pre-sale scenario or upper bound, not fabricating a sale or a fee.
 
+## Owner-supplied sale summary — follow-up 2026-09-09
+
+The owner supplied a Payment summary showing subtotal $52.99, buyer shipping $0.00, buyer sales tax $4.53, order total $57.52, transaction fees $8.22 and order earnings $44.77. Both arithmetic checks reconcile exactly: 52.99 + 0 + 4.53 = 57.52; 57.52 - 4.53 - 8.22 = 44.77. This is owner-supplied historical evidence, not an independently verified transaction or a current fee authority. Structured evidence is preserved in [assistant-owner-sale-fee-evidence-v1.json](assistant-owner-sale-fee-evidence-v1.json).
+
+Account, Item ID, sale date, category, quantity and ISO currency are not present. The summary cannot be assigned to the current canary, and the aggregate 8.22 does not establish its individual fee components or an applicable future rate. The 44.77 is order earnings before unprovided product and seller shipping costs, not demonstrated contribution profit. Buyer shipping of zero is not seller shipping cost of zero; buyer sales tax is distinct from taxes on seller fees.
+
+Next evidence needed: expanded **View more details** for the 8.22 charge, Item ID, sale date, currency and confirmation of seller account. The [official transaction-report documentation](https://www.ebay.com/help/selling/fees-credits-invoices/reconciling-ebay-sales-transactions?id=4847) identifies separate fee fields, transaction currency, date and listing identifiers for reconciliation. No runtime authority, Ads ceiling or closeout PASS was created from this summary. No runtime code changed; the prior 378/378 certification remains scoped to the previously tested implementation.
+
+## Official schedule supplied by owner — 2026-09-09
+
+Rechecked the owner's supplied table against the [official eBay.com fee schedule](https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822). The basic schedule has a 13.6% first tier for most categories and a 0.40 USD per-order fee above 10 USD. Buyer sales tax is included in the fee basis. Using the reported sale total gives `57.52 * 0.136 + 0.40 = 8.22272`, or 8.22 rounded to cents, exactly matching the reported aggregate charge. This supports a candidate explanation; it does not independently prove which components eBay assessed or the historical listing's category/account/date.
+
+The same schedule assigns jewelry excluding watches a 15% rate at totals up to 5,000 USD. Therefore 13.6% cannot become a universal Seller OS rate or be copied to the jewelry canary. Current category binding, applicable adjustments and a demonstrated pre-sale basis remain required. This is source evidence observed on 2026-09-09; no unprovided effective date or eBay version number was invented. The comparison is preserved in the owner-sale evidence JSON. No runtime code or fee authority was changed, and no marketplace or Ads writes occurred.
+
+## Identified historical order — owner follow-up
+
+The owner subsequently supplied order `09-15056-51468`, dated 2026-08-19 at displayed time 14:56:43 (timezone unknown), status Completed, for a men's brown crossbody bag with a power bank. Its amount 52.99, fees 8.22 and net 44.77 agree with the prior Payment summary. Buyer name and username were excluded from the retained evidence. No category was inferred from the product title.
+
+A read-only lookup of this exact order under the canonical EBAY_US account in staging returned no matching order snapshot or order lines: HTTP 201 from the database query endpoint, observed 2026-09-09T18:55:58.324Z. The lookup bounded orders to 2 rows and lines to 10, selected explicit columns and performed no global scan, database write or eBay request. This only establishes absence in these scoped staging snapshots; it does not contradict the owner's sale or establish which account processed it. Item ID, exact account/currency and the expanded transaction-fee components remain unresolved. The order date is now supplied and should not be requested again. Source and lookup details are retained in `assistant-owner-sale-fee-evidence-v1.json`.
+
 ## Validation and operator result
 
 378/378 full-suite files, directed tests, typecheck, lint, build, operational audit and targeted runtime security PASS. Validation completed 2026-09-09T18:41:18.400Z. Zero new regressions. New pollers, background workers, global scans, exact counts and SELECT-star queries: zero. Official reads are bounded; no database or marketplace mutation is part of the collector. No publication, Ads write or OpenAI credential access occurred. Menu, manual, Quality, Keyword and Shipping workstreams remain unchanged.

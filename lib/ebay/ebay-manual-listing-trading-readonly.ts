@@ -43,6 +43,9 @@ export type TradingManualListingResult = {
   buyerShippingChargeBasis: "CHEAPEST_DOMESTIC_OPTION" | null
   shippingType: string | null
   safeDefaults: SafeListingDefaults
+  categoryPath?: string | null
+  saleFormat?: string | null
+  secondaryCategoryId?: string | null
   observedAt: string
 }
 
@@ -238,6 +241,7 @@ export function parseTradingManualListingResponses(
     ? Math.min(...domesticCharges)
     : null
   const category = tradingXmlContainer(item, "PrimaryCategory")
+  const categoryPath = tradingXmlTagValue(category, "CategoryName")
   const safeDefaults: SafeListingDefaults = {}
   const fulfillmentPolicyId = numericIdentifier(
     tradingXmlTagValue(sellerProfiles, "ShippingProfileID"),
@@ -294,6 +298,10 @@ export function parseTradingManualListingResponses(
       : "CHEAPEST_DOMESTIC_OPTION",
     shippingType,
     safeDefaults,
+    categoryPath: categoryPath && categoryPath.length <= 500 &&
+      !Array.from(categoryPath).some(c => c.charCodeAt(0) < 32 || c === "<" || c === ">") ? categoryPath : null,
+    saleFormat: safeIdentifier(tradingXmlTagValue(item, "ListingType"), 40),
+    secondaryCategoryId: numericIdentifier(tradingXmlTagValue(tradingXmlContainer(item, "SecondaryCategory"), "CategoryID"), 20),
     observedAt: now.toISOString(),
   }
 }
@@ -403,6 +411,9 @@ function requestXml(callName: "GetUser" | "GetItem", ebayItemId?: string) {
       "Item.ShippingDetails.ShippingServiceOptions.ShippingServiceCost",
       "Item.ShippingDetails.ShippingServiceOptions.FreeShipping",
       "Item.PrimaryCategory.CategoryID",
+      "Item.PrimaryCategory.CategoryName",
+      "Item.SecondaryCategory.CategoryID",
+      "Item.ListingType",
       "Item.ConditionID",
       "Item.SellerProfiles.SellerShippingProfile.ShippingProfileID",
       "Item.SellerProfiles.SellerPaymentProfile.PaymentProfileID",

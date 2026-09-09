@@ -7,6 +7,7 @@ import { prepareRevenueFirstListingPreviewV1 } from "./revenue-first-preview-v1"
 import { keywordWireDigestV1 } from "./keyword-intelligence-handoff-v1"
 import { readOwnHistoryMetricsV1 } from "./listing-metrics-cold-start-v1"
 import { consumeListingFeeAuthorityV1 } from "./listing-fee-authority-v1"
+import { resolveDurableListingFeeMetadataV1 } from "./listing-fee-resolver-v1"
 import { buildListingCommercialEnvelopeV1, type CommercialComponentName, type CommercialComponent } from "./listing-commercial-envelope-v1"
 import ownerVariableCostPolicy from "../../docs/owner-variable-cost-policy-v1.json" with { type: "json" }
 import { readCommercialPackageBindingV1 } from "./listing-commercial-binding-v1"
@@ -56,7 +57,9 @@ export async function readListingTreatmentsV1(input: { supabase: SupabaseClient;
     })) as Omit<Economics, "adFeeBasis">
     const feeRow = economicsRead.error ? null : economicsRead.data?.find(r => r.ebay_item_id === itemId && r.evidence_type === "EXPECTED_EBAY_FEE")
     const feeMetadata = feeRow?.evidence_metadata as Record<string, unknown> | undefined
-    const feeAuthority = consumeListingFeeAuthorityV1({ metadata: feeMetadata, accountKey: input.accountKey, itemId,
+    const resolvedFees = resolveDurableListingFeeMetadataV1({ metadata: feeMetadata, accountKey: input.accountKey,
+      itemId, categoryId: packageBinding.categoryId, salePrice: economics.salePrice.value, now })
+    const feeAuthority = consumeListingFeeAuthorityV1({ metadata: resolvedFees.metadata, accountKey: input.accountKey, itemId,
       categoryId: packageBinding.categoryId,
       salePrice: economics.salePrice.value, now })
     economics.ebayFees = { value: feeAuthority.amount, reference: feeAuthority.reference,
@@ -101,9 +104,11 @@ export async function readListingTreatmentsV1(input: { supabase: SupabaseClient;
       value: { ...quality, recommendations }, reference: artifact && "importId" in artifact ? String(artifact.importId) : null,
       source: "ebay_listing_quality_report_imports" }
     const commercialEnvelope = buildListingCommercialEnvelopeV1({ accountKey: input.accountKey, packageId: packageBinding.packageId, itemId, components, now })
-    rows.push({ ...treatment, title: listing!.identity.title, metrics, metricAssessment, feeAuthority, commercialEnvelope,
+    rows.push({ ...treatment, title: listing!.identity.title, metrics, metricAssessment, feeAuthority,
+      feeResolution: resolvedFees.resolution, commercialEnvelope,
       quality: { ...quality, recommendations }, economicsReadAvailable: !economicsRead.error,
-      limitations: [...(metricAssessment.reason ? [metricAssessment.reason] : []), ...feeAuthority.blockers],
+      limitations: [...(metricAssessment.reason ? [metricAssessment.reason] : []), ...feeAuthority.blockers,
+        ...(resolvedFees.resolution?.blockers ?? [])],
       previewUrl: `/admin/ebay/listing-optimization/preview?itemId=${itemId}` })
   }
   return { rows, summary: promotionPortfolioPreviewV1(rows), policy: input.policy,

@@ -1,0 +1,99 @@
+{
+  "evidenceClass": "OWNER_SUPPLIED_POST_SALE_SUMMARY",
+  "receivedDate": "2026-09-09",
+  "source": "Owner pasted eBay Payment summary into conversation",
+  "independentlyVerified": false,
+  "binding": {
+    "account": null,
+    "marketplace": null,
+    "itemId": null,
+    "sku": null,
+    "orderId": "09-15056-51468",
+    "saleDate": "2026-08-19",
+    "displayedTransactionTime": "14:56:43",
+    "displayedTimezone": null,
+    "dateSource": "Owner-supplied completed order transaction row",
+    "category": null,
+    "quantity": null,
+    "currencyCode": null,
+    "displayedCurrencySymbol": "$",
+    "status": "NEEDS_EVIDENCE"
+  },
+  "reportedAmountsMinorUnits": {
+    "subtotal": 5299,
+    "buyerShipping": 0,
+    "buyerSalesTax": 453,
+    "orderTotal": 5752,
+    "taxCollectedByEbayDeduction": 453,
+    "transactionFeesDeduction": 822,
+    "orderEarnings": 4477
+  },
+  "ownerSuppliedOrder": {
+    "productTitle": "Chest Crossbody Bag Sling Backpack for Men USB Charge Port Brown w/ Power Bank",
+    "status": "Completed",
+    "displayedAmountMinorUnits": 5299,
+    "displayedFeesDeductionMinorUnits": 822,
+    "displayedNetMinorUnits": 4477,
+    "buyerPersonalDataRetained": false,
+    "categoryInferredFromTitle": false
+  },
+  "stagingOrderLookup": {
+    "observedAt": "2026-09-09T18:55:58.324Z",
+    "httpStatus": 201,
+    "scope": "Exact supplied order ID, canonical Seller OS account, EBAY_US, staging only",
+    "tables": ["marketplace_order_snapshots", "marketplace_order_line_items"],
+    "orderRowLimit": 2,
+    "lineRowLimit": 10,
+    "orderRowsReturned": 0,
+    "lineRowsReturned": 0,
+    "result": "NOT_FOUND_IN_SCOPED_STAGING_SNAPSHOTS",
+    "officialEbayOrderLookupPerformed": false,
+    "absenceDoesNotDisproveOwnerSale": true
+  },
+  "reconciliation": {
+    "subtotalPlusShippingPlusTaxEqualsOrderTotal": true,
+    "totalMinusCollectedTaxMinusTransactionFeesEqualsEarnings": true,
+    "differenceMinorUnits": 0
+  },
+  "feeComponents": null,
+  "applicableFeeRate": null,
+  "officialScheduleComparison": {
+    "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+    "verifiedDate": "2026-09-09",
+    "sourceEffectiveDate": null,
+    "scope": "Published eBay.com basic schedule; Store subscriptions have separate rules",
+    "comparisonOnly": true,
+    "mostCategoriesRatePctUpTo7500PerItem": 13.6,
+    "perOrderFeeUsdForOrdersOver10": 0.4,
+    "comparisonBasis": "Reported order total including buyer sales tax",
+    "comparisonBasisMinorUnits": 5752,
+    "candidateFormula": "57.52 * 0.136 + 0.40",
+    "unroundedCandidateAmount": "8.22272",
+    "candidateAmountRoundedToCents": 822,
+    "matchesReportedAggregate": true,
+    "interpretation": "Arithmetic consistency only; category, account and actual component breakdown remain unverified; sale date supplied by owner is not independently verified",
+    "jewelryExcludingWatchesRatePctUpTo5000PerItem": 15,
+    "categoryBindingProven": false,
+    "completeFeeAuthorityProven": false
+  },
+  "historicalComparability": "UNPROVEN",
+  "preSaleFeeEstimateProven": false,
+  "runtimeAuthorityCreated": false,
+  "profitBeforeAds": null,
+  "maxSafeAdRatePct": null,
+  "limitations": [
+    "Order-level summary cannot be assigned to one listing without item and quantity evidence.",
+    "Transaction fees are an aggregate; component rates, bases, surcharges and fee taxes are not itemized.",
+    "Buyer sales tax collected by eBay does not establish tax-on-seller-fees applicability.",
+    "Zero shipping charged to buyer does not establish seller shipping cost.",
+    "Order earnings are not contribution profit; product and seller shipping costs are not supplied for this sale.",
+    "No relationship to current canary item 366650054490 is established.",
+    "No current fee rule may be inferred from a single aggregate historical charge."
+  ],
+  "nextEvidence": [
+    "Expanded View more details breakdown of the 8.22 transaction fees",
+    "Item ID, currency and confirmation of seller account"
+  ],
+  "marketplaceWriteCount": 0,
+  "ebayAdsWriteCount": 0
+}

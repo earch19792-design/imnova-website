@@ -1,0 +1,36 @@
+{
+  "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+  "snapshotVersion": "SELLER_OS_EBAY_BASIC_FEE_SOURCE_2026_09_09_V1",
+  "verifiedAt": "2026-09-09T18:59:52Z",
+  "sourceEffectiveDate": null,
+  "sourceEffectiveDateStatus": "NOT_PUBLISHED_IN_RETRIEVED_PAGE",
+  "marketplace": "EBAY_US",
+  "currency": "USD",
+  "storeLevels": ["NO_STORE"],
+  "saleFormats": ["FixedPriceItem", "Chinese"],
+  "perOrder": {"threshold": 10, "atOrBelow": 0.3, "above": 0.4},
+  "rules": [
+    {
+      "id": "JEWELRY_EXCLUDING_WATCHES",
+      "root": "Jewelry & Watches",
+      "excludedBranches": ["Watches, Parts & Accessories"],
+      "tierMethod": "WHOLE_AMOUNT",
+      "tiers": [{"upTo": 5000, "ratePct": 15}, {"upTo": null, "ratePct": 9}]
+    },
+    {
+      "id": "WATCHES",
+      "root": "Jewelry & Watches",
+      "requiredBranch": "Watches, Parts & Accessories",
+      "tierMethod": "MARGINAL",
+      "tiers": [{"upTo": 1000, "ratePct": 15}, {"upTo": 7500, "ratePct": 6.5}, {"upTo": null, "ratePct": 3}]
+    },
+    {
+      "id": "GENERAL_EXPLICIT_ROOTS",
+      "roots": ["Home & Garden", "Health & Beauty", "Pet Supplies", "Computers/Tablets & Networking"],
+      "tierMethod": "MARGINAL",
+      "tiers": [{"upTo": 7500, "ratePct": 13.6}, {"upTo": null, "ratePct": 2.35}]
+    }
+  ],
+  "unsupportedCategoryBehavior": "NEEDS_EVIDENCE_NO_DEFAULT_RATE",
+  "scope": "Base final-value and per-order fees only; no account surcharges or buyer-dependent fee basis certified by this snapshot"
+}
