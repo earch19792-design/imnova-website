@@ -1,0 +1,724 @@
+{
+  "task": "SELLER_OS_EBAY_FEE_PHYSICAL_PRE_SALE_CANARY_V1",
+  "implementationSha": "370829caeb73ee11017697f128776c49db6b6626",
+  "observedAt": "2026-09-09T19:05:46.193Z",
+  "physicalRead": {
+    "HTTP_STATUS": 200,
+    "TRACE_ID": "d9bb5bac-7609-4829-b905-fe0a744ecc1f",
+    "mode": "fees",
+    "result": {
+      "contractVersion": "SELLER_OS_EBAY_FEE_CONTEXT_READONLY_V1",
+      "status": "CONTEXT_ONLY_NOT_FEE_AUTHORITY",
+      "observedAt": "2026-09-09T19:05:38.940Z",
+      "identity": {
+        "itemId": "366650054490",
+        "sku": "IMNOVAA59C2C921CDD4975ADD29540657D8A60",
+        "accountBindingExact": true,
+        "marketplace": "EBAY_US"
+      },
+      "listing": {
+        "categoryId": "50692",
+        "categoryPath": "Jewelry & Watches:Fashion Jewelry:Jewelry Sets",
+        "saleFormat": "FixedPriceItem",
+        "secondaryCategoryId": null,
+        "price": 18.74,
+        "currency": "USD",
+        "observedAt": "2026-09-09T19:05:36.640Z",
+        "buyerShippingCharge": 0,
+        "buyerShippingCurrency": "USD",
+        "buyerShippingChargeStatus": "AVAILABLE",
+        "buyerShippingChargeBasis": "CHEAPEST_DOMESTIC_OPTION",
+        "source": "EBAY_TRADING_GET_ITEM"
+      },
+      "subscription": {
+        "source": "https://api.ebay.com/sell/account/v1/subscription",
+        "evidence": {
+          "status": "UNPROVEN",
+          "marketplaceId": "EBAY_US",
+          "storeSubscriptionLevel": null,
+          "matchingSubscriptionCount": null,
+          "responseDiagnostic": {
+            "httpStatus": 200,
+            "subscriptionsPresent": false,
+            "returnedTotal": 0,
+            "nextPagePresent": false,
+            "entries": []
+          }
+        }
+      },
+      "resolvedStoreContext": {
+        "status": "PROVEN",
+        "storeSubscriptionLevel": "NO_STORE",
+        "source": "https://developer.ebay.com/devzone/xml/docs/Reference/ebay/GetUser.html#Response.User.SellerInfo.StoreOwner",
+        "errorCode": null
+      },
+      "categoryFeePolicy": {
+        "status": "PROVEN_BASE_POLICY_ONLY",
+        "limitation": null,
+        "policy": {
+          "status": "PROVEN",
+          "marketplace": "EBAY_US",
+          "currency": "USD",
+          "categoryIds": [
+            "50692"
+          ],
+          "categoryPath": "Jewelry & Watches:Fashion Jewelry:Jewelry Sets",
+          "marketplaceAccountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+          "itemId": "366650054490",
+          "categoryReference": "EBAY_TRADING_GET_ITEM:366650054490:2026-09-09T19:05:36.640Z",
+          "storeReference": "https://developer.ebay.com/devzone/xml/docs/Reference/ebay/GetUser.html#Response.User.SellerInfo.StoreOwner",
+          "storeLevels": [
+            "NO_STORE"
+          ],
+          "saleFormats": [
+            "FixedPriceItem"
+          ],
+          "source": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+          "sourceVersion": "SELLER_OS_EBAY_BASIC_FEE_SOURCE_2026_09_09_V1",
+          "reference": "SELLER_OS_EBAY_BASIC_FEE_SOURCE_2026_09_09_V1:JEWELRY_EXCLUDING_WATCHES:50692",
+          "observedAt": "2026-09-09T18:59:52Z",
+          "freshUntil": "2026-09-10T18:59:52.000Z",
+          "effectiveFrom": "2026-09-09T18:59:52Z",
+          "effectiveUntil": "2026-09-10T18:59:52.000Z",
+          "effectiveDateBasis": "VERIFIED_SNAPSHOT_OBSERVATION_COVERAGE",
+          "sourceEffectiveDate": null,
+          "tierMethod": "WHOLE_AMOUNT",
+          "tiers": [
+            {
+              "upTo": 5000,
+              "ratePct": 15
+            },
+            {
+              "upTo": null,
+              "ratePct": 9
+            }
+          ],
+          "perOrder": {
+            "threshold": 10,
+            "atOrBelow": 0.3,
+            "above": 0.4
+          }
+        }
+      },
+      "accountPerformance": {
+        "accountBindingExact": true,
+        "registrationCountry": "US",
+        "registrationState": "FL",
+        "storeOwner": false,
+        "vatStatus": "NoVATTax",
+        "registrationCountrySource": "EBAY_TRADING_GET_USER_REGISTRATION_ADDRESS_COUNTRY",
+        "observedAt": "2026-09-09T19:05:38.939Z",
+        "standards": {
+          "status": "AVAILABLE",
+          "program": "PROGRAM_US",
+          "standardsLevel": "ABOVE_STANDARD",
+          "evaluation": {
+            "evaluationType": "CURRENT",
+            "evaluationMonth": "2026-08",
+            "evaluationDate": "2026-08-21T00:24:21.000Z",
+            "startDate": null,
+            "endDate": null
+          },
+          "httpStatus": 200,
+          "errorCode": null,
+          "source": "https://api.ebay.com/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT",
+          "observedAt": "2026-09-09T19:05:37.811Z"
+        },
+        "serviceMetrics": {
+          "status": "AVAILABLE",
+          "marketplace": "EBAY_US",
+          "metricType": "ITEM_NOT_AS_DESCRIBED",
+          "evaluation": {
+            "evaluationType": "CURRENT",
+            "evaluationMonth": null,
+            "evaluationDate": "2026-08-21T18:25:19.000Z",
+            "startDate": "2025-08-01T07:00:00.000Z",
+            "endDate": "2026-08-01T06:59:59.000Z"
+          },
+          "categories": [
+            {
+              "categoryId": "26395",
+              "rating": "NOT_APPLICABLE"
+            }
+          ],
+          "listingCategoryApplicability": "UNRESOLVED",
+          "httpStatus": 200,
+          "errorCode": null,
+          "source": "https://api.ebay.com/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US",
+          "observedAt": "2026-09-09T19:05:37.637Z"
+        },
+        "invoice": {
+          "status": "AVAILABLE",
+          "httpStatus": 200,
+          "errorCode": null,
+          "xmlParseDiagnostic": null,
+          "source": "https://developer.ebay.com/devzone/xml/docs/Reference/ebay/GetAccount.html",
+          "observedAt": "2026-09-09T19:05:38.939Z",
+          "evidenceClass": "HISTORICAL_ACCOUNT_FEE_ENTRIES",
+          "currency": "USD",
+          "page": 1,
+          "pageSize": 20,
+          "entries": [
+            {
+              "itemId": "366592919965",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-07T23:55:31.928Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366592485792",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-07T16:23:16.680Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366650121192",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-05T04:07:05.395Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366650113488",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-05T04:00:20.744Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366650071972",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-05T03:21:16.521Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366650065203",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-05T03:15:44.837Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366650054490",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-05T03:08:10.626Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366650047727",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-05T03:01:43.593Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366649508886",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-04T21:10:49.648Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366649437609",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-04T20:27:39.001Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366647547173",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-03T23:32:02.328Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366582671136",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-03T07:23:53.927Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366582586826",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-03T06:22:08.572Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366582544476",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-03T05:54:55.697Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366581718546",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-02T19:35:16.628Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366643555454",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-02T05:34:44.572Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366643190059",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-02T01:22:56.997Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366643126310",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-02T00:33:43.854Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366643122092",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-02T00:31:51.691Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            },
+            {
+              "itemId": "366643073434",
+              "feeType": "FeeInsertion",
+              "postedAt": "2026-09-01T23:59:23.148Z",
+              "grossAmount": 0,
+              "netAmount": 0,
+              "vatPercent": 0
+            }
+          ],
+          "currentPreSaleAuthority": false
+        }
+      },
+      "feeAmount": null,
+      "preSaleFeeEstimateProven": false,
+      "safety": {
+        "readOnly": true,
+        "databaseWrites": 0,
+        "marketplaceWrites": 0,
+        "ebayAdsWrites": 0,
+        "credentialsIncluded": false,
+        "buyerPiiIncluded": false,
+        "rawPayloadIncluded": false
+      }
+    },
+    "error": null
+  },
+  "stagingEconomicRead": {
+    "httpStatus": 201,
+    "observedAt": "2026-09-09T19:03:54.144Z",
+    "data": [
+      {
+        "kind": "LUNA_CURRENT_COST",
+        "evidence_id": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+        "ebay_item_id": "366650054490",
+        "value_amount": "1.7900",
+        "value_currency": "USD",
+        "captured_at": "2026-09-09 13:37:34.154+00",
+        "fresh_until": "2026-09-09 19:37:34.154+00",
+        "freshness_status": "FRESH",
+        "source_authority": "LUNA_PUBLIC_EXACT_PRODUCT_VARIANT_READ_V1",
+        "limitation_code": null,
+        "shipping_bound_item_id": null,
+        "supplier_sku": null,
+        "fee_resolution_inputs_present": false
+      },
+      {
+        "kind": "LUNA_CURRENT_SHIPPING",
+        "evidence_id": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+        "ebay_item_id": "366650054490",
+        "value_amount": "6.9900",
+        "value_currency": "USD",
+        "captured_at": "2026-09-09 17:40:47.783+00",
+        "fresh_until": "2026-09-09 23:40:47.783+00",
+        "freshness_status": "FRESH",
+        "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+        "limitation_code": null,
+        "shipping_bound_item_id": "366650054490",
+        "supplier_sku": "FL-NHRN1999804-Color-silver-bracelet",
+        "fee_resolution_inputs_present": false
+      },
+      {
+        "kind": "EXPECTED_EBAY_FEE",
+        "evidence_id": "economic-evidence-v1:sha256:64e23587d1771229e8af15a0f3a70c76e2495898c6e84e13ac2f5ca545ab4581",
+        "ebay_item_id": "366650054490",
+        "value_amount": null,
+        "value_currency": null,
+        "captured_at": "2026-09-09 14:07:43.524+00",
+        "fresh_until": null,
+        "freshness_status": "SOURCE_UNAVAILABLE",
+        "source_authority": "EBAY_OFFICIAL_CATEGORY_FEE_POLICY_RESOLVER_V1",
+        "limitation_code": "OFFICIAL_CATEGORY_FEE_POLICY_NOT_CERTIFIED",
+        "shipping_bound_item_id": null,
+        "supplier_sku": null,
+        "fee_resolution_inputs_present": false
+      }
+    ]
+  },
+  "feeEstimateMode": "UNBOUNDED_UNTIL_ORDER",
+  "promotionAllowed": false,
+  "reason": "FEE_BASIS_BUYER_DEPENDENT_UNBOUNDED",
+  "knownPreSaleBasis": {
+    "currency": "USD",
+    "itemPrice": 18.74,
+    "buyerShipping": 0,
+    "subtotal": 18.74,
+    "complete": false,
+    "handling": "NOT_RESOLVED_BY_THIS_READ"
+  },
+  "buyerDependentComponents": [
+    "BUYER_SALES_TAX_AMOUNT",
+    "BUYER_REGISTRATION_AND_DELIVERY_COUNTRY",
+    "PAYOUT_CONVERSION_APPLICABILITY"
+  ],
+  "buyerDependentBasisBounded": false,
+  "officialUpperBoundProven": false,
+  "components": [
+    {
+      "type": "FINAL_VALUE_PERCENT",
+      "status": "RATE_POLICY_PROVEN_AMOUNT_UNBOUNDED",
+      "amount": null,
+      "tiers": [
+        {
+          "upTo": 5000,
+          "ratePct": 15
+        },
+        {
+          "upTo": null,
+          "ratePct": 9
+        }
+      ]
+    },
+    {
+      "type": "PER_ORDER",
+      "status": "PROVEN_SINGLE_ORDER_COMPONENT",
+      "amount": 0.4
+    },
+    {
+      "type": "SELLER_PERFORMANCE",
+      "status": "NOT_APPLICABLE_CURRENT_PROFILE",
+      "amount": 0
+    },
+    {
+      "type": "SERVICE_METRICS",
+      "status": "NEEDS_EVIDENCE",
+      "amount": null
+    },
+    {
+      "type": "INTERNATIONAL",
+      "status": "NEEDS_EVIDENCE",
+      "amount": null
+    },
+    {
+      "type": "CURRENCY_CONVERSION",
+      "status": "NEEDS_EVIDENCE",
+      "amount": null
+    },
+    {
+      "type": "REGULATORY_OPERATING",
+      "status": "NEEDS_EVIDENCE",
+      "amount": null
+    },
+    {
+      "type": "TAX_ON_FEES",
+      "status": "NEEDS_EVIDENCE",
+      "amount": null
+    }
+  ],
+  "unknownMaterialFeeComponentCount": 6,
+  "feeEstimate": null,
+  "profitBeforeAds": null,
+  "marginBeforeAds": null,
+  "maxSafeAdRatePct": null,
+  "simulationExecution": "EXISTING_PRODUCTION_GUARD_REPLAYED_LOCALLY_WITH_PHYSICAL_PREPROD_EVIDENCE",
+  "simulationPolicy": {
+    "mode": "MANUAL",
+    "window": "NOW",
+    "timeZone": "America/Guatemala",
+    "startsAt": null,
+    "endsAt": null,
+    "minProfit": 8,
+    "minMargin": 15
+  },
+  "simulations": [
+    {
+      "requestedRatePct": 3,
+      "contractVersion": "SELLER_OS_PROMOTION_PROFIT_GUARD_V1",
+      "components": {
+        "salePrice": {
+          "value": 18.74,
+          "reference": "EBAY_GET_ITEM:366650054490:2026-09-09T19:05:36.640Z",
+          "fresh": true
+        },
+        "productCost": {
+          "value": 1.79,
+          "reference": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+          "fresh": true
+        },
+        "shippingCost": {
+          "value": 6.99,
+          "reference": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+          "fresh": true
+        },
+        "ebayFees": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        },
+        "otherCosts": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        },
+        "adFeeBasis": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        }
+      },
+      "economicsUnproven": true,
+      "missing": [
+        "ebayFees",
+        "otherCosts"
+      ],
+      "profitBeforeAds": null,
+      "marginBeforeAds": null,
+      "maxSafeAdRate": null,
+      "recommendedAdRate": null,
+      "projectedAdCost": null,
+      "projectedProfitAfterAds": null,
+      "projectedMarginAfterAds": null,
+      "projectionUnit": "ONE_ATTRIBUTED_SALE",
+      "status": "BLOCKED_EVIDENCE"
+    },
+    {
+      "requestedRatePct": 4,
+      "contractVersion": "SELLER_OS_PROMOTION_PROFIT_GUARD_V1",
+      "components": {
+        "salePrice": {
+          "value": 18.74,
+          "reference": "EBAY_GET_ITEM:366650054490:2026-09-09T19:05:36.640Z",
+          "fresh": true
+        },
+        "productCost": {
+          "value": 1.79,
+          "reference": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+          "fresh": true
+        },
+        "shippingCost": {
+          "value": 6.99,
+          "reference": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+          "fresh": true
+        },
+        "ebayFees": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        },
+        "otherCosts": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        },
+        "adFeeBasis": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        }
+      },
+      "economicsUnproven": true,
+      "missing": [
+        "ebayFees",
+        "otherCosts"
+      ],
+      "profitBeforeAds": null,
+      "marginBeforeAds": null,
+      "maxSafeAdRate": null,
+      "recommendedAdRate": null,
+      "projectedAdCost": null,
+      "projectedProfitAfterAds": null,
+      "projectedMarginAfterAds": null,
+      "projectionUnit": "ONE_ATTRIBUTED_SALE",
+      "status": "BLOCKED_EVIDENCE"
+    },
+    {
+      "requestedRatePct": 5,
+      "contractVersion": "SELLER_OS_PROMOTION_PROFIT_GUARD_V1",
+      "components": {
+        "salePrice": {
+          "value": 18.74,
+          "reference": "EBAY_GET_ITEM:366650054490:2026-09-09T19:05:36.640Z",
+          "fresh": true
+        },
+        "productCost": {
+          "value": 1.79,
+          "reference": "economic-evidence-v1:sha256:b6937bc7801f63ff5dfc7cf166b3a2360e11b8af61a856a0b955ac11798b2fc5",
+          "fresh": true
+        },
+        "shippingCost": {
+          "value": 6.99,
+          "reference": "economic-evidence-v1:sha256:4c136402931e615504469ea9ff26c13daac9d692dbe2176261f640831ce50d3f",
+          "fresh": true
+        },
+        "ebayFees": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        },
+        "otherCosts": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        },
+        "adFeeBasis": {
+          "value": null,
+          "reference": null,
+          "fresh": false
+        }
+      },
+      "economicsUnproven": true,
+      "missing": [
+        "ebayFees",
+        "otherCosts"
+      ],
+      "profitBeforeAds": null,
+      "marginBeforeAds": null,
+      "maxSafeAdRate": null,
+      "recommendedAdRate": null,
+      "projectedAdCost": null,
+      "projectedProfitAfterAds": null,
+      "projectedMarginAfterAds": null,
+      "projectionUnit": "ONE_ATTRIBUTED_SALE",
+      "status": "BLOCKED_EVIDENCE"
+    }
+  ],
+  "ownerVariableCostPolicyConfirmed": true,
+  "ownerZeroPolicyConditionalApplicability": "PENDING_FEE_AUTHORITY",
+  "automation": {
+    "newListingFeeResolutionAutomatic": false,
+    "feeReevaluationAutomatic": "CONSUMER_PATH_ONLY",
+    "postSaleReconciliationAutomatic": false,
+    "codexRuntimeDependency": "NOT_CERTIFIED",
+    "evidenceInputProducerConnected": false,
+    "findings": [
+      "Existing refresh writer still uses the earlier one-category base model",
+      "No feeResolutionInputsV1 bundle exists on the canary economic row",
+      "Existing realizedFeeReconciliation explicitly reports NOT_IMPLEMENTED"
+    ]
+  },
+  "assistantCloseout": false,
+  "marketplaceWriteCount": 0,
+  "ebayAdsWriteCount": 0,
+  "databaseWriteCount": 0,
+  "limitations": [
+    "This is a blocked canary, not a complete fee estimate or UI simulation certification",
+    "No official upper bound was demonstrated; this is not proof that no bound could ever exist",
+    "Source snapshot coverage expires; no automatic official tariff refresh has been certified",
+    "The historical August bag order is not bound to this jewelry listing"
+  ],
+  "deployment": {
+    "id": "dpl_9msTFK21KBicQL7vvmDBwUpLNvxi",
+    "projectId": "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+    "readyState": "READY",
+    "url": "imnova-seller-os-preprod-mh7rylwjz-earch19792-6888s-projects.vercel.app",
+    "sha": "370829caeb73ee11017697f128776c49db6b6626"
+  },
+  "validation": {
+    "checks": {
+      "tests": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 69306,
+        "completedAt": "2026-09-09T19:03:06.493Z",
+        "scope": "FULL_SELLER_OS_SUITE",
+        "passed": 379,
+        "failed": 0,
+        "skipped": 0,
+        "failureSummaries": [],
+        "failuresTruncated": false
+      },
+      "typecheck": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 41186,
+        "completedAt": "2026-09-09T19:03:47.679Z"
+      },
+      "lint": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 16829,
+        "completedAt": "2026-09-09T19:04:04.508Z"
+      },
+      "build": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 58883,
+        "completedAt": "2026-09-09T19:05:03.392Z"
+      },
+      "sellerOsAudit": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 479,
+        "completedAt": "2026-09-09T19:05:03.875Z"
+      },
+      "targetedRuntimeSecurity": {
+        "status": "PASS",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 4292,
+        "completedAt": "2026-09-09T19:01:57.169Z"
+      }
+    },
+    "buildArtifact": {
+      "version": "SELLER_OS_PRECOMPILED_ARTIFACT_V1",
+      "sourceCommitSha": "370829caeb73ee11017697f128776c49db6b6626",
+      "worktreeFingerprint": "sha256:9892601b46ff4603393075f12503a5fa5d5ae5d9def3d97b99ac571e88d673ec",
+      "buildId": "1GdNTCWLkfbAwGoKpFnsC",
+      "buildArtifactDigest": "sha256:b1c9123a0347ac52371ff21c017276ba2f71a0a49897ebcc7150ccc93217e1b1",
+      "payloadFileCount": 1462,
+      "payloadByteCount": 67822567,
+      "builtAt": "2026-09-09T19:05:03.392Z",
+      "nodeVersion": "v22.23.0",
+      "nextVersion": "16.2.6",
+      "dynamicCompilationAtBoot": false
+    }
+  }
+}

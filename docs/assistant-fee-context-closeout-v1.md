@@ -1,5 +1,7 @@
 # Official fee context readback — 2026-09-09
 
+Latest continuation: [physical pre-sale canary and automation audit](ebay-fee-physical-presale-canary-v1.md), implementation `370829caeb73ee11017697f128776c49db6b6626`. The historical results below retain their original scope and SHA.
+
 Continuation of SELLER_OS_ASSISTANT_FINAL_ECONOMICS_METRICS_AUTO_HANDOFF_CLOSEOUT_V1. Dedicated preprod only. Fee components remain unknown until applicable official evidence is complete; this collector does not create an estimate or enable Ads.
 
 The internal relay accepts one exact Item ID, validates the existing HMAC and environment boundary, and verifies official LIVE ownership before reading account context. It has no arbitrary endpoint, account override, database mutation or marketplace-write option. It uses the deployment’s existing secret bindings only. The public Mayel menu and MCP catalog are unchanged.
