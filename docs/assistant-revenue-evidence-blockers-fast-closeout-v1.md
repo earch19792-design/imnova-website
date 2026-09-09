@@ -1,6 +1,6 @@
 # Mayel — cierre rápido de blockers de evidencia
 
-La corrección del lector Shipping está desplegada en el proyecto dedicado de preprod. El cierre comercial permanece **BLOQUEADO**: la única solicitud de captura pasó el vínculo exacto y devolvió `LUNA_REAUTH_REQUIRED`; el estado sanitizado confirma `SESSION_EXPIRED`. Además, no están demostradas las comisiones completas ni existe un candidato con muestra comercial suficiente en el conjunto LIVE inspeccionado.
+La corrección del lector Shipping está desplegada en preprod y la renovación OWNER quedó **COMPLETED / SESSION_READY**. El cierre comercial permanece **BLOQUEADO**: la captura posterior a la renovación alcanzó Luna, recibió HTTP 429 en el carrito y el navegador protegido de respaldo no está disponible en ese runtime. No se obtuvo una cotización fresca. Siguen sin demostrarse las comisiones completas ni una muestra comercial suficiente. Los intentos y lecturas anteriores se conservan abajo como historia.
 
 Implementación: `40d4ea46007b3d04220a1041756c1308ddbd7e49`. Deployment: `dpl_MHdfK7iCxvDjJy3NpQkbjfEh1e87`, estado `READY`, proyecto `imnova-seller-os-preprod`. No se modificó producción, no se publicaron listings y no se hicieron writes Ads.
 
@@ -210,3 +210,13 @@ El [Manual de Mayel](https://imnova-seller-os-preprod.vercel.app/manual-mayel-me
 A las `2026-09-09T17:24:38.945Z`, el runtime preprod todavía informa `SESSION_EXPIRED`. A las `17:24:49.654Z`, la solicitud más reciente `82577167-40cc-4a6c-bb19-e575783c30f3`, creada a las `17:23:54.159Z`, permanece `PENDING`, sin claim ni finalización. Las solicitudes anteriores fueron sustituidas explícitamente; no se detecta una transferencia completada. No se volvió a intentar Shipping.
 
 El contrato de la extensión exige que la pestaña activa sea la pantalla protegida de Seller OS y primero se pulse **Comprobar conexión**. Se corrigieron las instrucciones al OWNER y se solicitó el mensaje exacto de la extensión para localizar el fallo anterior al backend; no se atribuye una causa de UI sin ese dato.
+
+## Estado actual: sesión renovada, captura limitada por Luna
+
+La transferencia `89cbd6b9-1981-464a-8614-9292a1f78bb4` se completó a las `2026-09-09T17:27:33.540Z`, con `LUNA_OWNER_HANDOFF_SESSION_READY`, vinculada al proyecto y base de preprod. El runtime confirmó `SESSION_READY` a las `17:28:00.914Z`.
+
+Se permitió una nueva solicitud sólo después de comprobar esa renovación y que el intento anterior había terminado en `LUNA_REAUTH_REQUIRED` antes de obtener cotización. La solicitud `7b2c4157-1757-4bcd-8423-6c9518dd5ef3`, a las `17:30:54.344Z`, devolvió HTTP 400 con `LUNA_PROTECTED_BROWSER_UNAVAILABLE`. Su diagnóstico conserva la causa primaria: `CURRENT_HTTP_429`, `LUNA_WWW`, `LUNA_CART_ADD`, sin Retry-After. No se repitieron llamadas contra ese límite.
+
+Readback: dos cotizaciones históricas idénticas a las previas, cero cotizaciones frescas. Totales de este cierre: dos solicitudes de captura (una rechazada por sesión caducada y otra por el límite upstream), cero cotizaciones obtenidas, cero canaries comerciales certificados y cero writes marketplace.
+
+El siguiente paso Shipping quedó preparado mediante la [pantalla existente de captura exacta en Chrome](https://imnova-seller-os-preprod.vercel.app/admin/ebay/luna-shipping-capture?ebayItemId=366650054490&lunaProductId=9220846354656&lunaVariantId=53002142286048&sourceSku=FL-NHRN1999804-Color-silver-bracelet). El botón **Capturar envío del listing LIVE exacto** resuelve un único job transitorio con el vínculo certificado. No se activa recuperación Legacy ni de cohortes. Se solicitó al OWNER la ejecución por la extensión ya existente; no se declara ejecutada ni aprobada antes de recibir evidencia durable.

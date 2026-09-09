@@ -5217,13 +5217,13 @@
     "activationStatus": "RECORDED_CONDITIONAL_POLICY_NO_QUALIFIED_CANARY_YET"
   },
   "blockers": [
-    "LUNA_SESSION_EXPIRED",
+    "LUNA_HTTP_429_WITH_PROTECTED_BROWSER_UNAVAILABLE",
     "EBAY_FEES_UNPROVEN",
     "NO_SUFFICIENT_METRICS_CANARY_AVAILABLE"
   ],
   "canaryExecution": {
     "commercialCanaries": 0,
-    "reason": "Exact binding resolution now passes. Luna Vault session is expired; no fresh shipping quote was obtained. No candidate demonstrates complete fees and sufficient metric sample.",
+    "reason": "Owner session renewal completed and preprod confirms SESSION_READY. Renewed capture reached Luna cart add but received HTTP 429; protected browser fallback unavailable. No fresh quote, no complete fees and no sufficient metrics canary.",
     "shippingCaptures": 0,
     "imageCalls": 0,
     "qualityUploads": 0,
@@ -5231,7 +5231,7 @@
     "marketplaceWrites": 0,
     "ebayAdsWrites": 0,
     "productionChanges": 0,
-    "shippingCaptureRequests": 1
+    "shippingCaptureRequests": 2
   },
   "queries": {
     "revenue-evidence-migration-applied": "select version,name from supabase_migrations.schema_migrations where name='product_research_keyword_handoff_read_v2' order by version desc limit 1\n",
@@ -5269,7 +5269,7 @@
     }
   ],
   "fastCloseout": {
-    "status": "BLOCKED_EVIDENCE_AND_LUNA_SESSION",
+    "status": "BLOCKED_LUNA_UPSTREAM_AND_COMMERCIAL_EVIDENCE",
     "shippingDuplicateRootCause": "READER_SCOPE_ERROR",
     "shippingFixDeployed": true,
     "shippingBefore": {
@@ -5290,7 +5290,7 @@
     "deletedRows": 0,
     "shippingJobUpdated": false,
     "uniqueAuthorityGuard": "Existing UNIQUE (marketplace_account_key, marketplace_id, ebay_item_id, evidence_type), plus fail-closed current LIVE identity resolver.",
-    "shippingCaptureHttpRequests": 1,
+    "shippingCaptureHttpRequests": 2,
     "freshShippingQuotesCaptured": 0,
     "NO_SUFFICIENT_METRICS_CANARY_AVAILABLE": true,
     "OTHER_VARIABLE_COST_POLICY_PROVEN": true,
@@ -5310,9 +5310,13 @@
     "safeForSingleListingPublicationCanary": false,
     "safeForSellOneLikeThis": false,
     "safeForEbayAdsWriteCanary": false,
-    "ownerSessionRenewalStatus": "PENDING_EXTENSION_TRANSFER",
+    "ownerSessionRenewalStatus": "COMPLETED_SESSION_READY",
     "renewalObservedAt": "2026-09-09T17:24:49.654Z",
-    "renewalFailureStage": "BEFORE_HANDOFF_CLAIM; EXACT_EXTENSION_ERROR_PENDING_OPERATOR_FEEDBACK"
+    "renewalFailureStage": null,
+    "renewedCaptureFailure": "LUNA_PROTECTED_BROWSER_UNAVAILABLE",
+    "primaryUpstreamFailure": "CURRENT_HTTP_429_LUNA_CART_ADD",
+    "lunaSessionReady": true,
+    "nextShippingAction": "EXISTING_CHROME_EXACT_LIVE_CAPTURE_ONE_LISTING"
   },
   "shippingAudit": {
     "rawQuotesBefore": {
@@ -5782,6 +5786,172 @@
         "ceremony",
         "operatorAction",
         "safety"
+      ]
+    },
+    "ownerRenewalCompletedReadback": {
+      "httpStatus": 201,
+      "observedAt": "2026-09-09T17:27:56.603Z",
+      "data": [
+        {
+          "id": "89cbd6b9-1981-464a-8614-9292a1f78bb4",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "COMPLETED",
+          "result_code": "LUNA_OWNER_HANDOFF_SESSION_READY",
+          "created_at": "2026-09-09 17:27:12.342+00",
+          "expires_at": "2026-09-09 17:35:12.342+00",
+          "claimed_at": "2026-09-09 17:27:33.54+00",
+          "completed_at": "2026-09-09 17:27:33.54+00"
+        },
+        {
+          "id": "f2f44dc0-8645-4f61-ba3a-2525622f420c",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "EXPIRED",
+          "result_code": "LUNA_OWNER_HANDOFF_SUPERSEDED",
+          "created_at": "2026-09-09 17:26:38.121+00",
+          "expires_at": "2026-09-09 17:34:38.121+00",
+          "claimed_at": null,
+          "completed_at": "2026-09-09 17:27:12.342+00"
+        },
+        {
+          "id": "f6395e87-a908-4844-9ae7-8b3e755e98d1",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "EXPIRED",
+          "result_code": "LUNA_OWNER_HANDOFF_SUPERSEDED",
+          "created_at": "2026-09-09 17:25:46.589+00",
+          "expires_at": "2026-09-09 17:33:46.589+00",
+          "claimed_at": null,
+          "completed_at": "2026-09-09 17:26:38.121+00"
+        },
+        {
+          "id": "6e593790-b00e-4d31-96b7-db3400f30e53",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "EXPIRED",
+          "result_code": "LUNA_OWNER_HANDOFF_SUPERSEDED",
+          "created_at": "2026-09-09 17:25:03.279+00",
+          "expires_at": "2026-09-09 17:33:03.279+00",
+          "claimed_at": null,
+          "completed_at": "2026-09-09 17:25:46.589+00"
+        },
+        {
+          "id": "23474e77-ab79-4e2b-a7c8-d7401e16f0d1",
+          "environment_binding": "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222",
+          "status": "EXPIRED",
+          "result_code": "LUNA_OWNER_HANDOFF_SUPERSEDED",
+          "created_at": "2026-09-09 17:24:54.258+00",
+          "expires_at": "2026-09-09 17:32:54.258+00",
+          "claimed_at": null,
+          "completed_at": "2026-09-09 17:25:03.279+00"
+        }
+      ]
+    },
+    "sessionReadyReadback": {
+      "httpStatus": 200,
+      "observedAt": "2026-09-09T17:28:00.914Z",
+      "prerequisites": {
+        "contractVersion": "SELLER_OS_LUNA_AUTOMATION_PREREQUISITES_V1",
+        "storageReadiness": "READY",
+        "schemaArtifactStatus": "MIGRATION_ARTIFACT_APPLIED",
+        "schemaAppliedStatus": "APPLIED",
+        "migrationArtifact": "20260821193830_create_seller_os_luna_stock_observation_storage.sql",
+        "migrationsCreated": 1,
+        "migrationsApplied": 1,
+        "dataGateStatus": "TARGETED_P2_DELTA_APPLIED",
+        "dataGateReason": "HISTORICAL_SCHEMA_DRIFT_REMAINS_OUT_OF_SCOPE",
+        "databaseMutationAuthorized": false,
+        "lunaProtectedSessionStatus": "SESSION_READY",
+        "canonicalServerReadReadiness": "READY_FOR_GATED_ACTIVATION",
+        "humanBootstrapRequired": false,
+        "humanBootstrapPath": null,
+        "sessionOwnership": "SERVER_OWNED",
+        "sessionStorage": "SUPABASE_VAULT",
+        "schedulerStatus": "DISABLED",
+        "productionSchedulerEnabled": false,
+        "productionLunaPolling": 0,
+        "p2I01Dependency": "BLOCKED",
+        "p2I01Blocker": "EXTERNAL_EBAY_QUOTA_BLOCKER",
+        "secretsIncluded": false,
+        "cookiesIncluded": false,
+        "environmentValuesIncluded": false
+      },
+      "error": null,
+      "responseFields": [
+        "success",
+        "prerequisites",
+        "browserRuntime",
+        "ceremony",
+        "operatorAction",
+        "safety"
+      ]
+    },
+    "renewedCaptureAttempt": {
+      "trace": "7b2c4157-1757-4bcd-8423-6c9518dd5ef3",
+      "startedAt": "2026-09-09T17:30:54.344Z",
+      "completedAt": "2026-09-09T17:30:57.792Z",
+      "httpStatus": 400,
+      "deploymentId": "dpl_MHdfK7iCxvDjJy3NpQkbjfEh1e87",
+      "implementationSha": "40d4ea46007b3d04220a1041756c1308ddbd7e49",
+      "requestCount": 1,
+      "body": {
+        "success": false,
+        "error": "LUNA_PROTECTED_BROWSER_UNAVAILABLE",
+        "diagnosis": {
+          "rateLimitEvidence": {
+            "classificationOrigin": "CURRENT_HTTP_429",
+            "upstreamHttpStatusClass": "HTTP_429",
+            "retryAfterPresent": false,
+            "retryAfterClass": "ABSENT",
+            "retryAfterSafeValue": null,
+            "finalUrlHostClass": "LUNA_WWW",
+            "finalPathClass": "LUNA_CART_ADD",
+            "cooldownRemainingClass": null
+          }
+        }
+      }
+    },
+    "rawQuotesAfterRenewedCapture": {
+      "httpStatus": 201,
+      "observedAt": "2026-09-09T17:35:54.287Z",
+      "data": [
+        {
+          "row_id": "live-listing-luna-shipping-v1:sha256:eee1b5039f9f086ac94ed7113f76a2abd0086ff7c16e95188dee5626758abd72",
+          "account_key": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+          "marketplace_id": "EBAY_US",
+          "ebay_item_id": "366650054490",
+          "linkage_id": "luna-linkage-v1:sha256:dd8b3869347250f18bbcaf11e578e4fb7b4fccbc8aebbf392dc194f4368f040c",
+          "luna_product_id": "9220846354656",
+          "luna_variant_id": "53002142286048",
+          "source_sku": "FL-NHRN1999804-Color-silver-bracelet",
+          "job_id": null,
+          "generation": null,
+          "status": "STALE",
+          "shipping_cost": "6.99",
+          "captured_at": "2026-09-08 23:02:31.173+00",
+          "fresh_until": "2026-09-09 05:02:31.173+00",
+          "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+          "source_evidence_digest": "sha256:b5bfd49bf934f4b485b95a1c47c4edbd95b1747e1b9e796e8d61e771fa36e736",
+          "created_at": "2026-09-08 23:02:31.207884+00",
+          "updated_at": null
+        },
+        {
+          "row_id": "live-listing-luna-shipping-v1:sha256:6cd44c477722aa694e2d635df1d3c9fceb4b355669a03ef4b36adaae67d7a2d5",
+          "account_key": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+          "marketplace_id": "EBAY_US",
+          "ebay_item_id": "366650054490",
+          "linkage_id": "luna-linkage-v1:sha256:dd8b3869347250f18bbcaf11e578e4fb7b4fccbc8aebbf392dc194f4368f040c",
+          "luna_product_id": "9220846354656",
+          "luna_variant_id": "53002142286048",
+          "source_sku": "FL-NHRN1999804-Color-silver-bracelet",
+          "job_id": null,
+          "generation": null,
+          "status": "STALE",
+          "shipping_cost": "6.99",
+          "captured_at": "2026-09-07 08:23:23.328+00",
+          "fresh_until": "2026-09-07 14:23:23.328+00",
+          "source_authority": "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING",
+          "source_evidence_digest": "sha256:92d3c8f078c7ff85c9bea4561b4eb6f01f96db52f60ff5f2bb347a1b1c7b26d8",
+          "created_at": "2026-09-07 08:23:23.600451+00",
+          "updated_at": null
+        }
       ]
     }
   },
