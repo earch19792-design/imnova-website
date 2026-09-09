@@ -10,6 +10,13 @@ function record(value: unknown): JsonRecord {
 
 export function parseEbaySellerStoreSubscriptionReadonly(value: unknown) {
   const body = record(value)
+  if (!Array.isArray(body.subscriptions) || body.subscriptions.some((entry) => {
+    const item = record(entry)
+    return typeof item.marketplaceId !== "string" || typeof item.subscriptionType !== "string"
+  })) {
+    return { status: "UNPROVEN" as const, marketplaceId: MARKETPLACE_ID,
+      storeSubscriptionLevel: null, matchingSubscriptionCount: null }
+  }
   const subscriptions = Array.isArray(body.subscriptions)
     ? body.subscriptions.map(record)
     : []

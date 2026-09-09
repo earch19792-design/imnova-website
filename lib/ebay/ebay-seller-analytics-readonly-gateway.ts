@@ -7,6 +7,7 @@ import {
   getEbayProductionIdentityBindingConfiguration,
 } from "./ebay-seller-account-scope"
 import { createEbayReadonlyRateLimitError } from "./ebay-readonly-rate-limit"
+import { projectEbayFeePerformanceV1 } from "./ebay-fee-context-domain-v1"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
@@ -50,7 +51,7 @@ function tradingXmlValue(xml: string, tag: string) {
     .trim() || null
 }
 
-async function assertAnalyticsSellerAccount(accessToken: string) {
+async function assertAnalyticsSellerAccount(accessToken: string, includeCountry = false) {
   const identity = getEbayProductionIdentityBindingConfiguration()
   if (!identity.bound) {
     throw new Error("EBAY_ANALYTICS_ACCOUNT_IDENTITY_REQUIRED")
@@ -67,6 +68,7 @@ async function assertAnalyticsSellerAccount(accessToken: string) {
     body: "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
       "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
       "<OutputSelector>User.UserID</OutputSelector>" +
+      (includeCountry ? "<DetailLevel>ReturnAll</DetailLevel><OutputSelector>User.RegistrationAddress.Country</OutputSelector>" : "") +
       "</GetUserRequest>",
     cache: "no-store",
     signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
@@ -93,6 +95,8 @@ async function assertAnalyticsSellerAccount(accessToken: string) {
   if (!fingerprintMatches || !userIdMatches) {
     throw new Error("EBAY_ANALYTICS_ACCOUNT_IDENTITY_MISMATCH")
   }
+  const country = includeCountry ? tradingXmlValue(xml, "Country") : null
+  return country && /^[A-Z]{2}$/.test(country) ? country : null
 }
 
 function assertReadonlyAnalyticsUrl(url: URL) {
@@ -219,4 +223,36 @@ export function getEbaySellerAnalyticsConfigurationState() {
     refreshTokenLogged: false,
     ebayWriteUsed: false,
   }
+}
+
+/** Fixed, bounded official reads. No report generation, writes, or retry loop. */
+export async function readEbayFeePerformanceReadonlyV1() {
+  let token = ""
+  try {
+    token = await getSellerAnalyticsAccessToken()
+    const registrationCountry = await assertAnalyticsSellerAccount(token, true)
+    const readProfile = async (kind: "STANDARDS" | "SERVICE", path: string) => {
+      const source = `https://api.ebay.com${path}`
+      const response = await fetch(source, { method: "GET",
+        headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+        signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS) })
+      const observedAt = new Date().toISOString()
+      if (!response.ok || response.status === 204) return { status: "UNPROVEN", httpStatus: response.status,
+        errorCode: `EBAY_FEE_${kind}_${response.status}`, source, observedAt }
+      return { ...projectEbayFeePerformanceV1(kind, await response.json()),
+        httpStatus: response.status, errorCode: null, source, observedAt }
+    }
+    const results = await Promise.allSettled([
+      readProfile("STANDARDS", "/sell/analytics/v1/seller_standards_profile/PROGRAM_US/CURRENT"),
+      readProfile("SERVICE", "/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US"),
+    ])
+    const profile = (index: number) => {
+      const result = results[index]
+      return result.status === "fulfilled" ? result.value :
+        { status: "UNPROVEN", httpStatus: null, errorCode: "EBAY_FEE_PROFILE_TRANSPORT_UNAVAILABLE" }
+    }
+    return { accountBindingExact: true, registrationCountry,
+      registrationCountrySource: "EBAY_TRADING_GET_USER_REGISTRATION_ADDRESS_COUNTRY",
+      observedAt: new Date().toISOString(), standards: profile(0), serviceMetrics: profile(1) }
+  } finally { token = "" }
 }
