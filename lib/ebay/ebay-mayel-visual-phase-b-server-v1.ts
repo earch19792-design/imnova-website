@@ -532,6 +532,13 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     ownerAuthorizationDigest: context.plan.ownerAuthorizationDigest,
     currentOfficialImageSetDigest: context.plan.currentOfficialImageSetDigest,
     currentImages: context.currentOfficialImageUrls,
+    currentListingVersionFields: context.official?.protectedFields ? {
+      title: context.official.protectedFields.title, sku: context.official.protectedFields.sku,
+      price: context.official.protectedFields.price ? Number(context.official.protectedFields.price) : null,
+      currency: context.official.protectedFields.currency,
+      quantity: context.official.protectedFields.quantity && context.official.protectedFields.quantitySold
+        ? Number(context.official.protectedFields.quantity) - Number(context.official.protectedFields.quantitySold) : null,
+    } : null,
     currentMainImage: context.plan.currentMainImage,
     currentSecondaryImages: context.plan.currentSecondaryImages,
     newMayelSecondaryImages: context.plan.newMayelSecondaryImages,

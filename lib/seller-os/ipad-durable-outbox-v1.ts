@@ -1,0 +1,95 @@
+import { createHash } from "node:crypto"
+import type { SupabaseClient } from "@supabase/supabase-js"
+import { parseOutboxIntentV1, stableOutboxJsonV1, outboxFriendlyStateV1, type OutboxIntent, type DurableOutboxReceipt } from "./ipad-outbox-contract-v1"
+import { ebayOfficialImageSetDigestV1 } from "../ebay/ebay-mayel-visual-phase-b-v1"
+export const IPAD_OUTBOX_TABLE = "seller_os_ipad_outbox_v1"
+export type OutboxRow = { id: string; account_key: string; actor_user_id: string; item_id: string; kind: string;
+  intent: OutboxIntent; binding: Record<string, unknown>; idempotency_key: string; payload_hash: string;
+  state: string; reason_code: string | null; received_at: string; lease_token: string; dispatch_count: number; official_readback: boolean }
+export type OutboxScope = { supabase: SupabaseClient; accountKey: string; actorUserId: string; owner?: boolean }
+const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
+export function publicOutboxReceiptV1(row: OutboxRow): DurableOutboxReceipt {
+ return { id: row.id, idempotencyKey: row.idempotency_key, state: outboxFriendlyStateV1(row.state), internalState: row.state,
+   receivedAt: row.received_at, reasonCode: row.reason_code, officialReadback: row.official_readback }
+}
+export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown }) {
+ const intent = parseOutboxIntentV1(input.intent)
+ const hash = `sha256:${createHash("sha256").update(stableOutboxJsonV1(intent)).digest("hex")}`
+ const previous = await input.supabase.from(IPAD_OUTBOX_TABLE).select("*").eq("account_key", input.accountKey)
+   .eq("actor_user_id", input.actorUserId).eq("idempotency_key", intent.idempotencyKey).maybeSingle()
+ if (previous.error) throw Error("OUTBOX_RECEIPT_READ_FAILED")
+ if (previous.data) {
+   if (previous.data.payload_hash !== hash) throw Error("OUTBOX_IDEMPOTENCY_PAYLOAD_CONFLICT")
+   return publicOutboxReceiptV1(previous.data as OutboxRow)
+ }
+ // Read only Seller OS evidence. Handoff deliberately has no upstream dependency.
+ let binding: Record<string, unknown> = { publicationAuthorizedByDraft: false, ownerAtHandoff: input.owner === true }
+ if (intent.kind.startsWith("IMAGE_")) {
+   const task = await input.supabase.from("ebay_mayel_visual_tasks_v1")
+     .select("id,ebay_item_id,assigned_operator_user_id,current_image_set,source_image_set_digest,status,visual_manifest_digest")
+     .eq("marketplace_account_key", input.accountKey).eq("id", intent.requestedChanges.taskId!).eq("ebay_item_id", intent.itemId).maybeSingle()
+   if (task.error || !task.data || (!input.owner && task.data.assigned_operator_user_id !== input.actorUserId)) throw Error("OUTBOX_TASK_SCOPE_REQUIRED")
+   if (task.data.assigned_operator_user_id !== input.actorUserId) {
+     if (task.data.status !== "PROMPT_READY" || task.data.visual_manifest_digest) throw Error("OUTBOX_TASK_ASSIGNEE_CONFLICT")
+     const assets = await input.supabase.from("ebay_listing_image_assets").select("id")
+       .eq("account_key", input.accountKey).eq("mayel_visual_task_id", task.data.id).limit(1)
+     if (assets.error || assets.data?.length) throw Error("OUTBOX_TASK_ASSIGNEE_CONFLICT")
+   }
+   if (intent.baseVersionHash !== task.data.source_image_set_digest) throw Error("OUTBOX_SAVED_BASE_CHANGED")
+   const { readMayelGeneratedImageV1 } = await import("./mayel-generated-image-binding-v1")
+   const origin = await readMayelGeneratedImageV1({ ...input, itemId: intent.itemId,
+     experimentId: intent.requestedChanges.experimentId!, assetId: intent.requestedChanges.assetId! })
+   binding = { ...binding, taskId: task.data.id, assetId: origin.assetId, sourceSha256: origin.outputSha256,
+     baseImageHash: ebayOfficialImageSetDigestV1(task.data.current_image_set), sourceImageSetDigest: task.data.source_image_set_digest }
+ } else {
+   const identity = await input.supabase.from("ebay_active_listings").select("ebay_item_id")
+     .eq("account_key", input.accountKey).eq("ebay_item_id", intent.itemId).limit(1)
+   if (identity.error || !identity.data?.length) throw Error("OUTBOX_LISTING_IDENTITY_REQUIRED")
+ }
+ const base = await input.supabase.from("ebay_active_listings")
+   .select("title,ebay_sku,ebay_price,ebay_quantity,currency,last_ebay_sync_at,source")
+   .eq("account_key", input.accountKey).eq("ebay_item_id", intent.itemId)
+   .order("last_ebay_sync_at", { ascending: false }).limit(1).maybeSingle()
+ if (base.error) throw Error("OUTBOX_BASE_READ_FAILED")
+ const b = base.data
+ binding.baseListing = b && String(b.source).startsWith("EBAY_TRADING_") && b.last_ebay_sync_at &&
+   b.title && b.ebay_sku && b.currency && b.ebay_price !== null && b.ebay_quantity !== null
+   ? { title: b.title, sku: b.ebay_sku, price: Number(b.ebay_price), currency: b.currency, quantity: Number(b.ebay_quantity) } : null
+ binding.baseObservedAt = b?.last_ebay_sync_at ?? null
+ binding.baseListingHash = binding.baseListing ? `sha256:${createHash("sha256").update(stableOutboxJsonV1(binding.baseListing)).digest("hex")}` : null
+ const saved = await input.supabase.rpc("seller_os_put_ipad_outbox_v1", { p_account_key: input.accountKey,
+   p_actor_user_id: input.actorUserId, p_intent: intent, p_hash: hash, p_binding: binding })
+ if (saved.error || !saved.data) throw Error(saved.error?.message?.includes("PAYLOAD_CONFLICT") ? "OUTBOX_IDEMPOTENCY_PAYLOAD_CONFLICT" : "OUTBOX_DURABLE_HANDOFF_FAILED")
+ return publicOutboxReceiptV1(saved.data as OutboxRow)
+}
+export async function readDurableOutboxV1(input: OutboxScope & { keys: string[] }) {
+ if (input.keys.length > 100 || input.keys.some(k => !/^ipados:v1:[a-f0-9]{64}$/.test(k))) throw Error("OUTBOX_RECEIPT_KEYS_INVALID")
+ if (!input.keys.length) return []
+ const read = await input.supabase.from(IPAD_OUTBOX_TABLE).select("id,idempotency_key,state,received_at,reason_code,official_readback")
+   .eq("account_key", input.accountKey).eq("actor_user_id", input.actorUserId).in("idempotency_key", input.keys)
+ if (read.error) throw Error("OUTBOX_RECEIPT_READ_FAILED")
+ return (read.data as OutboxRow[]).map(publicOutboxReceiptV1)
+}
+// The approval is durable existing Mayel authority, never a boolean in a draft.
+export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClient; row: OutboxRow }) {
+ const { row } = input
+ const [task, asset] = await Promise.all([
+   input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,status,assigned_operator_user_id,visual_manifest,visual_manifest_digest,source_image_set_digest")
+     .eq("marketplace_account_key", row.account_key).eq("id", row.intent.requestedChanges.taskId!).maybeSingle(),
+   input.supabase.from("ebay_listing_image_assets").select("id,status,approved_by,qa_result,source_sha256")
+     .eq("account_key", row.account_key).eq("id", row.intent.requestedChanges.assetId!).eq("mayel_visual_task_id", row.intent.requestedChanges.taskId!).maybeSingle(),
+ ])
+ if (task.error || asset.error) throw Error("OUTBOX_AUTHORITY_READ_FAILED")
+ const t = task.data, a = asset.data, manifest = record(t?.visual_manifest)
+ if (!t || t.ebay_item_id !== row.item_id || t.source_image_set_digest !== row.binding.sourceImageSetDigest ||
+     (a && a.source_sha256 !== row.binding.sourceSha256))
+   return { approved: false, reason: "OUTBOX_DRAFT_AUTHORITY_CHANGED", manifestDigest: null }
+ if (!a || t.assigned_operator_user_id !== row.actor_user_id || t.status !== "OWNER_PREVIEW_READY" || !t.visual_manifest_digest || a.status !== "approved" ||
+     a.approved_by !== row.actor_user_id || record(a.qa_result).automaticStatus !== "PASSED" ||
+     record(record(a.qa_result).humanReview).decision !== "APPROVE" ||
+     !Array.isArray(manifest.proposedOrderedImages) || !manifest.proposedOrderedImages.some(e => record(e).assetId === a.id))
+   return { approved: false, reason: "OWNER_VISUAL_REVIEW_REQUIRED", manifestDigest: null }
+ if (row.kind === "IMAGE_SYNC" && row.intent.requestedChanges.manifestDigest !== t.visual_manifest_digest)
+   return { approved: false, reason: "OUTBOX_APPROVED_MANIFEST_CHANGED", manifestDigest: null }
+ return { approved: true, reason: null, manifestDigest: String(t.visual_manifest_digest) }
+}

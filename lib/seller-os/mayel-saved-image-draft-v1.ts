@@ -36,7 +36,7 @@ export async function startMayelSavedImageDraftV1(input: Scope & { origin: Origi
     if (previous.generatedSourceSha256 !== input.origin.outputSha256) throw Error("MAYEL_SAVED_DRAFT_SOURCE_CHANGED")
     return { receipt: previous, completed: true }
   }
-  if (previous.phase === "DRAFT_PREPARING" && Date.now() - Date.parse(String(previous.startedAt)) < 120_000)
+  if (previous.phase === "DRAFT_PREPARING" && Date.now() - Date.parse(String(previous.lastAttemptAt ?? previous.startedAt)) < 120_000)
     throw Error("MAYEL_SAVED_DRAFT_ALREADY_RUNNING")
   const [assets, executions] = await Promise.all([
     input.supabase.from("ebay_listing_image_assets").select("id,status,uploaded_by")
@@ -50,13 +50,15 @@ export async function startMayelSavedImageDraftV1(input: Scope & { origin: Origi
       (assets.data ?? []).some(a => a.id !== input.origin.assetId || a.status !== "pending_review" || a.uploaded_by !== input.actorUserId))
     throw Error("MAYEL_SAVED_DRAFT_ACTIVE_WORK_CONFLICT")
   const startedAt = new Date().toISOString()
-  const receipt = { version: "MAYEL_SAVED_IMAGE_DRAFT_EXECUTION_V1", executionId: randomUUID(),
+  const resuming = previous.phase === "DRAFT_PREPARING" && previous.generatedSourceSha256 === input.origin.outputSha256
+  const receipt = { version: "MAYEL_SAVED_IMAGE_DRAFT_EXECUTION_V1", executionId: resuming ? String(previous.executionId) : randomUUID(),
     scope: "DRAFT_ONLY", phase: "DRAFT_PREPARING", assetId: input.origin.assetId,
     experimentId: input.origin.experimentId, itemId: input.origin.itemId, taskId: input.taskId,
     generatedSourceSha256: input.origin.outputSha256,
     actorUserId: input.actorUserId, previousAssignee: task.assigned_operator_user_id,
     assignmentAuthority: assigned ? "ASSIGNED_OPERATOR" : "OWNER_EXPLICIT_PREPARE",
-    startedAt, marketplaceWrites: 0, publishAuthorized: false }
+    startedAt: resuming ? String(previous.startedAt) : startedAt, lastAttemptAt: startedAt,
+    attemptCount: resuming ? Number(previous.attemptCount ?? 1) + 1 : 1, marketplaceWrites: 0, publishAuthorized: false }
   const claimed = await input.supabase.from("ebay_mayel_visual_tasks_v1").update({
     assigned_operator_user_id: input.actorUserId,
     selection_signal: { ...record(task.selection_signal), savedImageDraft: receipt }, updated_at: startedAt,

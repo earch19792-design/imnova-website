@@ -104,7 +104,7 @@ export async function prepareMayelImageReviewV1(input: Scope & { itemId: string;
 }
 
 export async function confirmMayelImageQueueV1(input: Scope & {
-  itemId: string; taskId: string; assetId: string; humanQa: unknown; replaceMainImage: boolean; expectedSourceDigest: string
+  itemId: string; taskId: string; assetId: string; humanQa: unknown; replaceMainImage: boolean; expectedSourceDigest: string; authorizeDraftSync?: boolean
 }) {
   if (input.replaceMainImage !== true) throw Error("MAYEL_IMAGE_REPLACEMENT_CONFIRMATION_REQUIRED")
   const task = await input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,source_image_set_digest,selection_signal")
@@ -112,7 +112,7 @@ export async function confirmMayelImageQueueV1(input: Scope & {
     .eq("assigned_operator_user_id", input.actorUserId).eq("ebay_item_id", input.itemId).maybeSingle()
   if (task.error || !task.data || task.data.source_image_set_digest !== input.expectedSourceDigest)
     throw Error("MAYEL_IMAGE_REVIEW_SOURCE_CHANGED")
-  if (savedImageDraftReceiptV1(task.data.selection_signal, input.assetId).scope === "DRAFT_ONLY")
+  if (savedImageDraftReceiptV1(task.data.selection_signal, input.assetId).scope === "DRAFT_ONLY" && input.authorizeDraftSync !== true)
     throw Error("MAYEL_DRAFT_ONLY_NO_PUBLICATION_AUTHORITY")
   const source = await input.supabase.from("ebay_listing_image_assets").select("source_type")
     .eq("account_key", input.accountKey).eq("mayel_visual_task_id", input.taskId).eq("id", input.assetId).maybeSingle()

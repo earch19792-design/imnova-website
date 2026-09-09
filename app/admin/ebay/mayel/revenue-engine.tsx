@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { supabase } from "@/lib/supabase"
@@ -7,6 +7,7 @@ import { FRIENDLY_ACTIONS, METRIC_WINDOWS, scheduledLocalTimeV1, type MetricWind
 import type { prepareTreatmentPreviewV1 } from "@/lib/seller-os/listing-treatment-runtime-v1"
 import { OwnerListingQualityReportControl } from "@/app/admin/owner-listing-quality-report-control"
 import { MayelImageWorkspace } from "./image-workspace"
+import { MayelLocalSaveStatus, useMayelLocalFirstV1 } from "./local-first"
 
 type Result = Awaited<ReturnType<typeof prepareTreatmentPreviewV1>>
 type ListingChoice = { itemId: string; title: string; sku?: string | null; observedAt?: string | null }
@@ -46,16 +47,43 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const [dates, setDates] = useState({ startsAt: "", endsAt: "" })
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [previewItemId, setPreviewItemId] = useState<string | null>(null)
-  useEffect(() => { let active = true; void request().then(p => {
+  const initialListingsRequested = useRef(false)
+  const local = useMayelLocalFirstV1({ menu, selected, metricWindow: window, policy, dates, listings, pageCursor }, saved => {
+    setMenu(saved.menu); setSelected(saved.selected); setWindow(saved.metricWindow as MetricWindow)
+    setPolicy(saved.policy as PromotionPolicy); setPreset("Personalizado"); setDates(saved.dates)
+    setListings(saved.listings); setPageCursor(saved.pageCursor)
+  })
+  const policyDraftSignature = JSON.stringify({ policy, selected, menu, dates })
+  useEffect(() => {
+    if (!local.ready || !local.actorId || menu !== 1 || !selected.length) return
+    let valid = true
+    void (async () => {
+      for (const itemId of selected) {
+        if (!valid) break
+        const listing = listings.find(l => l.itemId === itemId)
+        await local.saveDraft({ kind: "ADS_POLICY", itemId, listingTitle: listing?.title ?? itemId,
+          generationId: `ads-policy:${itemId}`, baseVersionHash: null, baseObservedAt: listing?.observedAt ?? null,
+          requestedChanges: { policy: policy.window !== "NOW" && dates.startsAt && dates.endsAt ? { ...policy,
+            startsAt: scheduledLocalTimeV1(dates.startsAt, policy.timeZone), endsAt: scheduledLocalTimeV1(dates.endsAt, policy.timeZone) } : policy } })
+      }
+    })().catch(e => setError(e instanceof Error ? e.message : "LOCAL_DRAFT_SAVE_FAILED"))
+    return () => { valid = false }
+  // The content signature avoids a new intent when only a receipt changes.
+  }, [policyDraftSignature, local.ready, local.actorId])
+  useEffect(() => {
+    if (!local.ready || initialListingsRequested.current) return
+    initialListingsRequested.current = true
+    let active = true; void request(undefined, pageCursor ?? undefined).then(p => {
     if (active) { setListings(p.listings); setNextCursor(p.nextCursor); setActionsAvailable(p.actionsAvailable === true);
       setAuthoritativeZero(p.authoritativeZero === true); setSelectionDetails([p.sourceFailureCode, p.traceId].filter(Boolean).join(" · "));
-      if (p.timeZone) setPolicy(old => ({ ...old, timeZone: p.timeZone })) }
-  }).catch(e => { if (active) setError(String(e.message)) }).finally(() => { if (active) setLoadingListings(false) }); return () => { active = false } }, [])
+      if (p.timeZone) setPolicy(old => ({ ...old, timeZone: old.timeZone || p.timeZone })) }
+  }).catch(e => { if (active) setError(String(e.message)) }).finally(() => { if (active) setLoadingListings(false) }); return () => { active = false }
+  }, [local.ready])
   async function page(after?: string) {
     setBusy(true); setLoadingListings(true); setError("")
     try { const p = await request(undefined, after); setListings(p.listings); setNextCursor(p.nextCursor); setPageCursor(after ?? null); setSelected([]); setResult(null);
       setActionsAvailable(p.actionsAvailable === true); setAuthoritativeZero(p.authoritativeZero === true); setSavedListingsOpen(false);
-      setSelectionDetails([p.sourceFailureCode, p.traceId].filter(Boolean).join(" · ")); if (p.timeZone) setPolicy(old => ({ ...old, timeZone: p.timeZone })) }
+      setSelectionDetails([p.sourceFailureCode, p.traceId].filter(Boolean).join(" · ")); if (p.timeZone) setPolicy(old => ({ ...old, timeZone: old.timeZone || p.timeZone })) }
     catch (e) { setError(e instanceof Error ? e.message : "REQUEST_FAILED") }
     finally { setBusy(false); setLoadingListings(false) }
   }
@@ -68,6 +96,13 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         startsAt: scheduledLocalTimeV1(dates.startsAt, policy.timeZone), endsAt: scheduledLocalTimeV1(dates.endsAt, policy.timeZone) }
       const p = await request({ mode, itemIds: itemId ? [itemId] : selected, policy: scheduledPolicy, window, idempotencyKey: key })
       setResult(p.result); setReceiptKey(key)
+      if (mode === "PREVIEW") for (const preview of p.result?.previews ?? []) {
+        const draft = preview.result?.preview
+        if (draft) await local.saveDraft({ kind: "LISTING_DRAFT", itemId: preview.itemId,
+          listingTitle: String(draft.title ?? preview.itemId), generationId: `listing-preview:${preview.itemId}`,
+          baseVersionHash: null, baseObservedAt: listings.find(l => l.itemId === preview.itemId)?.observedAt ?? null,
+          requestedChanges: { title: String(draft.title ?? ""), description: String(draft.description ?? "") } })
+      }
       if (mode === "RECEIPT") setMessage("Simulación guardada. Podrás comparar los resultados cuando haya una acción aplicada y datos posteriores.")
       if (mode === "IMAGE") { setImagePreview(p.imagePreviewUrl); setMessage("Imagen preparada desde la fuente autorizada. El borrador conserva sus controles de calidad y procedencia.") }
       if (mode === "MEASURE") setMessage(p.measurements?.every((m: { outcomes?: Record<string, string> }) => !m.outcomes || Object.values(m.outcomes).every(v => v === "INSUFFICIENT_EVIDENCE"))
@@ -77,13 +112,14 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   }
   function changePolicy(p: Partial<PromotionPolicy>) { setPolicy(old => ({ ...old, ...p })); setResult(null); setPreset("Personalizado") }
   return <section className="space-y-5">
+    <MayelLocalSaveStatus local={local} />
     <div className="flex justify-end">
       <a className={`${button} inline-flex items-center gap-2`} href="/manual-mayel-menu-v1.pdf?v=20260909" target="_blank" rel="noopener noreferrer"
         aria-label="Ayuda / Manual de Mayel (abre en otra pestaña)">Ayuda / Manual</a>
     </div>
     <nav aria-label="Acciones principales de Mayel" className="grid gap-2 sm:grid-cols-4">
       {FRIENDLY_ACTIONS.map((name, index) => <button className={`${button} ${menu === index ? "bg-[#dcebdc]" : ""}`} key={name}
-        onClick={() => setMenu(index)} aria-pressed={menu === index}>{name}</button>)}
+        disabled={!local.ready} onClick={() => setMenu(index)} aria-pressed={menu === index}>{name}</button>)}
     </nav>
     {menu === 2 ? <article className="rounded-2xl bg-white p-5"><p>Prepara un listing y revisa su borrador antes de publicarlo.</p>
       {owner ? <Link className="mt-3 inline-block underline" href="/admin/ebay/opportunity-queue">Abrir borradores</Link>
@@ -100,7 +136,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         <label className="mt-4 block"><input type="checkbox" checked={listings.length > 0 && selected.length === listings.length} disabled={busy || loadingListings || !listings.length}
           onChange={e => { setSelected(e.target.checked ? listings.map(l => l.itemId) : []); setResult(null) }} /> Seleccionar todos los mostrados</label>
         <div className="mt-3 grid max-h-64 gap-2 overflow-auto sm:grid-cols-2">{listings.map(l => <label className="flex gap-3 rounded-xl border p-3 text-sm" key={l.itemId}>
-          <input type="checkbox" checked={selected.includes(l.itemId)} disabled={busy} onChange={e => {
+          <input type="checkbox" checked={selected.includes(l.itemId)} disabled={busy || !local.ready} onChange={e => {
             setSelected(old => e.target.checked ? [...old, l.itemId] : old.filter(id => id !== l.itemId)); setResult(null)
           }} />{l.title || l.itemId}</label>)}</div>
         {nextCursor && <button className={`${button} mt-3`} disabled={busy} onClick={() => void page(nextCursor)}>Siguientes listings</button>}
@@ -188,7 +224,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         {menu === 1 && owner && <button className={button} disabled={busy} onClick={() => void analyze("RECEIPT")}>Guardar simulación</button>}
         <button className={button} disabled={busy} onClick={() => void analyze("MEASURE")}>Medir resultados</button>
       </section>}
-      {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={selected.join(",")} itemIds={selected} titles={Object.fromEntries(listings.map(l => [l.itemId, l.title]))} />}
+      {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={selected.join(",")} saveDraft={local.saveDraft} itemIds={selected} titles={Object.fromEntries(listings.map(l => [l.itemId, l.title]))} />}
       {menu === 0 && owner && <OwnerListingQualityReportControl />}
     </>}
     {message && <p role="status">{message}</p>}

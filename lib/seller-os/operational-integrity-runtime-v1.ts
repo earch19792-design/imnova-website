@@ -95,7 +95,12 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
       marketplaceWrites: 0 as const,
     })
   }
+  const { runIpadOutboxRuntimeV1 } = await import("./ipad-sync-runtime-v1")
+  const ipadOutbox = mayelVisualDelegatedExecution.listingWriteCount > 0
+    ? { status: "NEXT_RUNTIME_WRITE_BUDGET", processed: 0, listingWriteCount: 0, mediaWriteCount: 0 }
+    : await runIpadOutboxRuntimeV1(input).catch(() => ({ status: "RETRY_NEXT_RUNTIME", processed: 0, listingWriteCount: 0, mediaWriteCount: 0 }))
   return Object.freeze({
+    ipadOutbox,
     contractVersion: SELLER_OS_OPERATIONAL_INTEGRITY_RUNTIME_V1,
     status: initial.audit.status,
     snapshotContractVersion: initial.snapshot.contractVersion,
@@ -109,7 +114,7 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
     economicEvidenceRefresh,
     safety: Object.freeze({
       marketplaceWrites:
-        mayelVisualDelegatedExecution.listingWriteCount,
+        mayelVisualDelegatedExecution.listingWriteCount + ipadOutbox.listingWriteCount,
       productDecisions: 0 as const,
       categorySelections: 0 as const,
       publisherDispatches: 0 as const,

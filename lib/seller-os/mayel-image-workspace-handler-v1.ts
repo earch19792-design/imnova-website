@@ -17,7 +17,7 @@ export async function handleMayelImageWorkspaceV1(input: {
     if (!input.body || typeof input.body !== "object" || Array.isArray(input.body)) throw Error("MAYEL_WORKSPACE_INPUT_INVALID")
     const body = input.body as Record<string, unknown>
     if (body.mode !== "IMAGE_WORKSPACE" || !["READ", "PREPARE_REVIEW", "CONFIRM_QUEUE"].includes(String(body.action)) ||
-        Object.keys(body).some(key => !["mode", "action", "itemIds", "itemId", "taskId", "assetId", "experimentId", "humanQa", "replaceMainImage", "expectedSourceDigest"].includes(key)))
+        Object.keys(body).some(key => !["mode", "action", "itemIds", "itemId", "taskId", "assetId", "experimentId", "humanQa", "replaceMainImage", "expectedSourceDigest", "authorizeDraftSync"].includes(key)))
       throw Error("MAYEL_WORKSPACE_INPUT_INVALID")
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) throw Error("MAYEL_WORKSPACE_ACCOUNT_REQUIRED")
@@ -41,7 +41,7 @@ export async function handleMayelImageWorkspaceV1(input: {
       await prepareMayelImageReviewV1({ ...scope, itemId, taskId: body.taskId === null ? null : String(body.taskId), experimentId: String(body.experimentId), assetId: String(body.assetId) })
     } else {
       await confirmMayelImageQueueV1({ ...scope, itemId, taskId: String(body.taskId), assetId: String(body.assetId),
-        humanQa: body.humanQa, replaceMainImage: body.replaceMainImage === true, expectedSourceDigest: typeof body.expectedSourceDigest === "string" ? body.expectedSourceDigest : "" })
+        humanQa: body.humanQa, authorizeDraftSync: body.authorizeDraftSync === true, replaceMainImage: body.replaceMainImage === true, expectedSourceDigest: typeof body.expectedSourceDigest === "string" ? body.expectedSourceDigest : "" })
     }
     return reply({ success: true, ...await readMayelImageWorkspaceV1({ ...scope, itemIds: [itemId] }), traceId })
   } catch (error) {
