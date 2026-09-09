@@ -118,7 +118,8 @@ async function readLatestQualityUploadReceiptV1(input: {
     if (result.error) throw new Error("QUALITY_UPLOAD_RECEIPT_READ_FAILED")
     const attempt = result.data
     if (!attempt) return { status: "MISSING" as const }
-    let uploaded = attempt.valid_import_id === selected?.id ? selected : null
+    let uploaded: { id: string; report_date: string; signals_imported: number } | null =
+      attempt.valid_import_id === selected?.id ? selected : null
     if (attempt.valid_import_id && !uploaded) {
       const report = await input.supabase.from("ebay_listing_quality_report_imports")
         .select("id,report_date,signals_imported")
