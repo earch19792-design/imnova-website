@@ -40,6 +40,10 @@ import {
   sellerOsEconomicShippingLegacyRecoveryGenerationV1,
   type SellerOsEconomicShippingLegacyRecoveryGateV1,
 } from "../seller-os/economic-shipping-legacy-recovery-authority-v1"
+import {
+  SELLER_OS_LEGACY_OUT_OF_SCOPE_DISPOSITION_AUTHORITY_V2,
+  SELLER_OS_LEGACY_SHIPPING_INCIDENT_COHORT_ID_V1,
+} from "../seller-os/incident-cohort-reconciler-authority-guard-v1"
 import { LUNA_HTTP_SHIPPING_SOURCE } from
   "./ebay-luna-authoritative-shipping-v1"
 import {
@@ -915,6 +919,29 @@ export async function closeLunaEconomicShippingExecutionFailureV1(input:
   return Object.freeze(record(result.data))
 }
 
+export async function closeLegacyShippingIncidentOutOfScopeDispositionV2(
+  input: Readonly<{ supabase: SupabaseClient; accountKey: string;
+    jobId: string }>,
+) {
+  const disposition = await input.supabase.rpc(
+    SELLER_OS_LEGACY_OUT_OF_SCOPE_DISPOSITION_AUTHORITY_V2, {
+      p_marketplace_account_key: input.accountKey,
+      p_cohort_id: SELLER_OS_LEGACY_SHIPPING_INCIDENT_COHORT_ID_V1,
+      p_job_id: input.jobId,
+    })
+  const receipt = record(disposition.data)
+  if (disposition.error || receipt.closed !== true ||
+      receipt.economicJobStateMutated !== false ||
+      receipt.recoveryRowCreated !== false ||
+      receipt.recoveryGenerationCreated !== false ||
+      receipt.shippingLegacyRecoveryGenerationCreated !== false ||
+      receipt.chromeDispatchCount !== 0 ||
+      receipt.marketplaceWriteCount !== 0) {
+    throw new Error("SELLER_OS_INCIDENT_OUT_OF_SCOPE_DISPOSITION_FAILED")
+  }
+  return Object.freeze(receipt)
+}
+
 export async function acquireOneLegacyEconomicShippingRecoveryV1(input:
   Readonly<{ supabase: SupabaseClient; accountKey: string; jobId: string;
     runtimeInstanceId: string; leaderSessionId: string; sessionSecret: string;
@@ -988,15 +1015,7 @@ export async function acquireOneLegacyEconomicShippingRecoveryV1(input:
       historicalAttemptCount: Number(classification.historicalAttemptCount) })
   }
   if (classification.classification === "OUT_OF_SCOPE_NO_ACTIVE_LISTING") {
-    const closed = await input.supabase.rpc(
-      "close_seller_os_economic_shipping_legacy_out_of_scope_v1",
-      commonGate)
-    if (closed.error || record(closed.data).closed !== true) {
-      throw new Error("SELLER_OS_LEGACY_SHIPPING_OUT_OF_SCOPE_CLOSE_FAILED")
-    }
-    return Object.freeze({ jobs: Object.freeze([]), classification,
-      recoveryGeneration, outOfScopeClosed: true as const,
-      historicalAttemptCount: Number(classification.historicalAttemptCount) })
+    throw new Error("SELLER_OS_INCIDENT_OUT_OF_SCOPE_MEMBERSHIP_REQUIRED")
   }
   if (classification.classification !== "RECOVERABLE_VALID_SCOPE") {
     throw new Error("SELLER_OS_LEGACY_SHIPPING_RECOVERABLE_SCOPE_REQUIRED")

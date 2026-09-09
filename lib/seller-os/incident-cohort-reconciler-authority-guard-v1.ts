@@ -1,8 +1,14 @@
 export const SELLER_OS_LEGACY_SHIPPING_INCIDENT_COHORT_ID_V1 =
   "legacy-shipping-incident-v1:sha256:e10438c73be76dd6ac8b55d75c25a726c69d4a8adf0fce4d070835b50e4c92ba" as const
 
-export const SELLER_OS_LEGACY_OUT_OF_SCOPE_DISPOSITION_AUTHORITY_V1 =
-  "close_seller_os_economic_shipping_legacy_out_of_scope_v1" as const
+export const SELLER_OS_LEGACY_OUT_OF_SCOPE_DISPOSITION_AUTHORITY_V2 =
+  "close_seller_os_economic_shipping_legacy_out_of_scope_v2" as const
+
+export const SELLER_OS_LEGACY_OUT_OF_SCOPE_DISPOSITION_CONTRACT_V2 =
+  "SELLER_OS_LEGACY_SHIPPING_OUT_OF_SCOPE_DISPOSITION_CONTRACT_V2" as const
+
+export const SELLER_OS_LEGACY_OUT_OF_SCOPE_DISPOSITION_REASON_V2 =
+  "LIVE_LISTING_SHIPPING_EXACT_CURRENT_LIVE_REQUIRED" as const
 
 export type IncidentCohortMemberV1 = Readonly<{
   jobId: string
@@ -34,6 +40,6 @@ export function guardIncidentCohortFromGenericReconciliationV1<
       "SELLER_OS_LEGACY_SHIPPING_INCIDENT_MEMBERS_V1" as const,
     currentEconomicJobEligibilityUsedForMembership: false as const,
     outOfScopeDispositionAuthority:
-      SELLER_OS_LEGACY_OUT_OF_SCOPE_DISPOSITION_AUTHORITY_V1,
+      SELLER_OS_LEGACY_OUT_OF_SCOPE_DISPOSITION_AUTHORITY_V2,
   })
 }

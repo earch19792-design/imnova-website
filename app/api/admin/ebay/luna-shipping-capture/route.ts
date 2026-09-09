@@ -34,6 +34,7 @@ import {
   readLatestLunaShippingRuntimeTraceV1,
   acquireLunaChromeShippingJobsV1,
   acquireOneLegacyEconomicShippingRecoveryV1,
+  closeLegacyShippingIncidentOutOfScopeDispositionV2,
   closeLunaEconomicShippingExecutionFailureV1,
   resolveLunaChromeShippingJobsV1,
   resolveLunaChromeShippingLiveListingJobV1,
@@ -221,6 +222,24 @@ export async function POST(req: Request) {
       return listingAiResponse({ success: true, result,
         safety: { durableWriteScope:
           "SELLER_OS_ECONOMIC_SHIPPING_FAILURE_CLOSE_V1",
+          lunaPurchases: 0, marketplaceWrites: 0 } })
+    }
+    if (body.action === "dispose_legacy_shipping_incident_out_of_scope") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const jobId = typeof body.jobId === "string" ? body.jobId.trim() : ""
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+          .test(jobId)) {
+        throw new Error("SELLER_OS_INCIDENT_DISPOSITION_JOB_ID_INVALID")
+      }
+      const result =
+        await closeLegacyShippingIncidentOutOfScopeDispositionV2({
+          supabase: auth.supabase, accountKey: auth.accountKey, jobId,
+        })
+      return listingAiResponse({ success: true, result,
+        safety: { exactlyOneDisposition: true,
+          durableWriteScope:
+            "SELLER_OS_LEGACY_SHIPPING_OUT_OF_SCOPE_DISPOSITION_CONTRACT_V2",
+          economicJobWrites: 0, recoveryWrites: 0, chromeDispatches: 0,
           lunaPurchases: 0, marketplaceWrites: 0 } })
     }
     if (body.action === "recover_one_legacy_economic_shipping_job") {
