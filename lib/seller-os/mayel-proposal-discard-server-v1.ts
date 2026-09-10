@@ -3,6 +3,14 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { discardProposalManifestV1, excludeDiscardedProposalsV1 } from "./mayel-proposal-discard-v1"
 import type { MayelVisualOutputRole } from "../ebay/ebay-mayel-visual-workstation-v1"
 
+export async function archiveRejectedMayelProposalsV1(input: { supabase: SupabaseClient; accountKey: string; actorUserId: string;
+  taskId: string; itemId: string; assetIds: string[] }) {
+  const r = await input.supabase.rpc("seller_os_archive_rejected_proposals_v1", { p_account: input.accountKey, p_actor: input.actorUserId,
+    p_task: input.taskId, p_item: input.itemId, p_asset_ids: input.assetIds })
+  if (r.error || !r.data) throw Error(r.error?.message?.match(/PROPOSAL_[A-Z_]+/)?.[0] ?? "PROPOSAL_ARCHIVE_FAILED")
+  return { ...r.data, marketplaceWrites: 0, ebayTraffic: 0 }
+}
+
 export async function discardMayelProposalsV1(input: { supabase: SupabaseClient; accountKey: string; actorUserId: string;
   taskId: string; itemId: string; expectedManifestDigest: string; assetIds: string[] }) {
   const t = await input.supabase.from("ebay_mayel_visual_tasks_v1")
