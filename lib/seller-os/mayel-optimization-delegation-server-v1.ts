@@ -96,8 +96,8 @@ export async function enqueueDelegatedVisualV1(input: { supabase: SupabaseClient
   if (t.error || !t.data) throw Error("MAYEL_OPTIMIZATION_TASK_REQUIRED")
   const task = t.data
   const pendingDecision = record(record(task.selection_signal).pendingGalleryDecision)
-  if (pendingDecision.contract === "MAYEL_PENDING_FULL_GALLERY_DECISION_V1") {
-    if (pendingDecision.state === "REQUIRES_ATTENTION" || pendingDecision.expectedManifestDigest !== task.visual_manifest_digest)
+  if (pendingDecision.contract === "MAYEL_PENDING_FULL_GALLERY_DECISION_V1" && pendingDecision.expectedManifestDigest === task.visual_manifest_digest) {
+    if (pendingDecision.state === "REQUIRES_ATTENTION")
       return { status: "REQUIRES_ATTENTION", reason: "CURRENT_GALLERY_DECISION_CHANGED", receipt: null }
     if (Date.parse(String(pendingDecision.nextAttemptAt)) > Date.now()) return { status: "WAITING_FOR_DATA", reason: "WAIT_RETRY_WINDOW", receipt: null }
     const { saveFullMayelGalleryV1 } = await import("./mayel-full-gallery-server-v1")

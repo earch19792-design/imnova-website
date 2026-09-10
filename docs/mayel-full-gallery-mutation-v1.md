@@ -10,7 +10,7 @@ The original FULL delegation remains immutable. A private, revocable, append-onl
 
 Normal asset review adopts Mayel's durable placement decision without OWNER slot selection. A previously chosen hero stays a main replacement. Missing placement evidence never defaults to append. The delegated operator can specify a secondary replacement directly; full-gallery strategies specify insertion/removal/reorder before dispatch. No OWNER approval is introduced.
 
-A gallery decision awaiting current eBay evidence is saved in the existing task before any upstream read. The existing bounded discovery resumes it, without a new worker, timer or poller. Its pending record grants no write authority. Material gallery drift stops it with REQUIRES_ATTENTION.
+A gallery decision awaiting current eBay evidence is saved in the existing task before any upstream read. The existing bounded discovery resumes it, without a new worker, timer or poller. Its pending record grants no write authority. Material gallery drift stops it with REQUIRES_ATTENTION. That pending state belongs only to its recorded base generation; it cannot suppress a subsequent valid manifest.
 
 Only exact ordered official readback closes a full-gallery intent. Trading verifies the complete EPS URL sequence; Inventory verifies its complete imageUrls plus the official gallery, without perceptual similarity as a substitute for slot identity. Receipts retain expected and actual order. ORDER_OR_REPLACEMENT_MISMATCH cannot become SYNCED. Unknown commit recovery reads before retry and does not issue another write blindly.
 
