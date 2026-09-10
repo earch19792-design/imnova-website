@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { validateMayelContentPatchV1 } from "../seller-os/mayel-autonomous-content-v1"
 
 import type { JsonRecord } from "./ebay-draft-only-readiness"
 import {
@@ -1132,6 +1133,24 @@ export function buildEbayInventoryManagedImageReplacementV1(input: {
     nonAuthorizedFieldsPreserved: true as const })
 }
 
+export function buildEbayInventoryManagedContentReplacementV1(input: {
+  sku: string; inventoryItemPayload: JsonRecord; expectedEvidenceDigest: string; patch: unknown;
+}) {
+  const p = record(input.inventoryItemPayload), product = record(p.product)
+  const patch = validateMayelContentPatchV1(input.patch)
+  // Reuse the certified full-replacement whitelist and preservation guard.
+  const validated = buildEbayInventoryManagedTitleReplacementV1({ ...input,
+    currentTitle: String(product.title ?? ""), targetTitle: String(product.title ?? "") })
+  const payload = { ...validated.payload, product: { ...record(validated.payload.product), ...patch } }
+  const mask = (value: JsonRecord) => {
+    const out = { ...value, product: { ...record(value.product) } }
+    for (const key of Object.keys(patch)) delete out.product[key]
+    return out
+  }
+  if (canonicalJson(mask(validated.payload)) !== canonicalJson(mask(payload))) throw Error("CONTENT_FULL_REPLACE_PRESERVATION_FAILED")
+  return { payload, nonAuthorizedFieldsPreserved: true as const }
+}
+
 export function ebayReadbackMismatchPathsV1(
   actual: unknown,
   expected: unknown,
@@ -1738,6 +1757,20 @@ export async function executeEbayInventoryManagedImageMutationV1(input: {
     nonAuthorizedFieldsPreserved: replacement.nonAuthorizedFieldsPreserved,
     replacementPayload: replacement.payload,
   }
+}
+
+export async function executeEbayInventoryManagedContentMutationV1(input: {
+  accountKey: string; itemId: string; sku: string; patch: unknown;
+  inventoryItemPayload: JsonRecord; inventoryEvidenceDigest: string;
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  if (config.target !== "PRODUCTION" || !normalizedListingId(input.itemId) || !input.sku.trim() || input.sku.length > 50)
+    throw Error("CONTENT_INVENTORY_SCOPE_INVALID")
+  const authenticated = await authenticatedToken(config, fetchImpl, true, true)
+  if (!input.accountKey.endsWith(`:${authenticated.actualFingerprint}`)) throw Error("EBAY_LISTING_MANAGEMENT_ACCOUNT_MISMATCH")
+  const replacement = buildEbayInventoryManagedContentReplacementV1({ ...input, expectedEvidenceDigest: input.inventoryEvidenceDigest })
+  const url = new URL(`/sell/inventory/v1/inventory_item/${encodeURIComponent(input.sku)}`, config.apiOrigin)
+  return write(config, authenticated.token, url, "PUT", replacement.payload, fetchImpl)
 }
 
 export async function createEbayUnpublishedOffer(

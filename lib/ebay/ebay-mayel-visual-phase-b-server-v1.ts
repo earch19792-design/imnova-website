@@ -1,4 +1,5 @@
 import { visualAssetOwnerApprovedV1 } from "../seller-os/visual-asset-sync-state-v1"
+import { visualExecutionScopeV1 } from "../seller-os/mayel-visual-execution-scope-v1"
 import { slotManifestMatchesGalleryV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
 import { createHash, randomUUID } from "node:crypto"
 import { resolveMayelVisualRegistryBindingV1 } from "./ebay-mayel-visual-registry-binding-v1"
@@ -1361,13 +1362,20 @@ export async function applyMayelVisualManifestToEbayV1(input: {
   const executionId = randomUUID()
   const ownerApprovalId = randomUUID()
   const executor = "EBAY_INVENTORY_CREATE_OR_REPLACE_INVENTORY_ITEM_IMAGE_ONLY_V1"
+  let ownProductProof: unknown = null
+  if (optimizationGrant && !context.task.listing_package_id) {
+    const proof = await input.supabase.rpc("seller_os_read_visual_current_product_truth_v1", { p_account_key: input.accountKey, p_task_id: input.taskId })
+    if (proof.error) throw Error("MAYEL_CURRENT_PRODUCT_TRUTH_READ_FAILED")
+    ownProductProof = proof.data
+  }
+  const executionScope = visualExecutionScopeV1(context.task, context.plan.proposedFinalOrderedImageUrls, ownProductProof)
   const inserted = {
     id: executionId,
     owner_approval_id: optimizationGrant?.id ?? ownerApprovalId,
     visual_task_id: context.task.id,
     visual_manifest_id: context.task.visual_manifest_id,
     active_listing_id: context.task.active_listing_id,
-    listing_package_id: context.task.listing_package_id,
+    listing_package_id: executionScope.listingPackageId,
     owner_user_id: input.ownerUserId,
     marketplace_account_key: input.accountKey,
     marketplace_id: "EBAY_US",
@@ -1379,7 +1387,7 @@ export async function applyMayelVisualManifestToEbayV1(input: {
       context.plan.currentOfficialImageSetDigest,
     proposed_final_ordered_image_urls:
       context.plan.proposedFinalOrderedImageUrls,
-    main_image_url: context.plan.currentMainImage,
+    main_image_url: executionScope.mainImageUrl,
     canonical_asset_ids: context.plan.canonicalAssetIds,
     canonical_asset_sha256s: context.plan.canonicalAssetSha256s,
     management_model: context.management.managementModel,
@@ -1402,7 +1410,7 @@ export async function applyMayelVisualManifestToEbayV1(input: {
       if (existing) return { ...publicExecution(existing as JsonRecord),
         repeatedRequest: true, duplicateMarketplaceWriteCount: 0 }
     }
-    throw new Error("MAYEL_VISUAL_PHASE_B_OWNER_APPROVAL_PERSIST_FAILED")
+    throw new Error(insertError?.code === "23514" ? "MAYEL_VISUAL_PHASE_B_EXECUTION_SCOPE_REJECTED" : "MAYEL_VISUAL_PHASE_B_OWNER_APPROVAL_PERSIST_FAILED")
   }
   let execution = await updateExecution({ supabase: input.supabase,
     executionId, phases: ["OWNER_APPROVED"], patch: { phase: "PREFLIGHT" } })

@@ -6,6 +6,7 @@ import sharp from "sharp"
 import {
   getEbayTradingReadOnlyAccessToken,
   tradingXmlContainer,
+  tradingXmlContainers,
   tradingXmlTagValue,
 } from "./ebay-manual-listing-trading-readonly"
 import { getEbayBaseApplicationTokenV1 } from
@@ -47,6 +48,7 @@ export type OfficialListingSnapshot = {
   protectedFields: OfficialTradingProtectedFieldsV1 | null
   observedAt: string
   sourceAuthority?: string
+  content?: { title: string; description: string; aspects: Record<string, string[]>; variationPresent: boolean }
 }
 
 export type OfficialTradingProtectedFieldsV1 = Readonly<{
@@ -240,7 +242,7 @@ function getUserRequestXml() {
     "</GetUserRequest>"
 }
 
-function getItemRequestXml(itemId: string) {
+function getItemRequestXml(itemId: string, includeContent = false) {
   return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
     "<GetItemRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
     `<ItemID>${itemId}</ItemID>` +
@@ -268,7 +270,7 @@ function getItemRequestXml(itemId: string) {
         "Item.PictureDetails.PictureURL",
         "Item.PictureDetails.ExternalPictureURL",
         "Item.PictureDetails.GalleryURL",
-    ].map((selector) => `<OutputSelector>${selector}</OutputSelector>`).join("") +
+    ].concat(includeContent ? ["Item.Variations"] : []).map((selector) => `<OutputSelector>${selector}</OutputSelector>`).join("") +
     "</GetItemRequest>"
 }
 
@@ -377,6 +379,7 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
   accountKey: string
   fetchImpl: FetchLike
   durableAccountIdentityProven?: boolean
+  includeContent?: boolean
 }): Promise<OfficialListingSnapshot> {
   const identity = getEbayProductionIdentityBindingConfiguration()
   if (
@@ -396,7 +399,7 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
     tradingCall({
       callName: "GetItem",
       accessToken: input.accessToken,
-      body: getItemRequestXml(input.itemId),
+      body: getItemRequestXml(input.itemId, input.includeContent),
       fetchImpl: input.fetchImpl,
       timeoutMs: READ_TIMEOUT_MS,
     })])
@@ -463,7 +466,23 @@ export async function readOfficialActiveListingImageSnapshotV1(input: {
     tradingPictureReadback,
     protectedFields,
     observedAt: new Date().toISOString(),
+    ...(input.includeContent ? { content: {
+      title: protectedFields.title,
+      description: decodeListingDescriptionV1(tradingXmlContainer(item, "Description")),
+      aspects: Object.fromEntries(tradingXmlContainers(tradingXmlContainer(item, "ItemSpecifics"), "NameValueList")
+        .map(entry => [tradingXmlTagValue(entry, "Name") ?? "", xmlTagValues(entry, "Value")])),
+      variationPresent: Boolean(tradingXmlContainer(item, "Variations")),
+    } } : {}),
   } satisfies OfficialListingSnapshot
+}
+
+export function decodeListingDescriptionV1(raw: string) {
+  if (/^<!\[CDATA\[[\s\S]*\]\]>$/.test(raw)) return raw.slice(9, -3)
+  return raw.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_all, n: string) => {
+      const point = n[0].toLowerCase() === "x" ? Number.parseInt(n.slice(1), 16) : Number(n)
+      return point >= 0 && point <= 0x10ffff ? String.fromCodePoint(point) : _all
+    }).replace(/&amp;/g, "&")
 }
 
 export async function readOfficialActiveListingBrowseSnapshotV1(input: {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { visualScopeFailureDefinitelyUnsentV1 } from "./mayel-visual-execution-scope-v1"
 import { approvedVisualReadbackMatchesV1 } from "./visual-sync-readback-v1"
 import { stableOutboxJsonV1 } from "./ipad-outbox-contract-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -25,6 +26,21 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
    if (claim.error) throw Error("OUTBOX_CLAIM_FAILED")
    const row = claim.data?.[0] as OutboxRow | undefined
    if (!row) break
+   let preDispatchFailureProven = false
+   if (row.binding.ownerDelegation && row.dispatch_count === 1 &&
+       ["MAYEL_VISUAL_PHASE_B_OWNER_APPROVAL_PERSIST_FAILED", "MAYEL_VISUAL_PHASE_B_EXECUTION_SCOPE_REJECTED"].includes(row.reason_code ?? "")) {
+     const task = await input.supabase.from("ebay_mayel_visual_tasks_v1")
+       .select("listing_package_id,visual_manifest,visual_manifest_digest").eq("id", row.intent.requestedChanges.taskId!)
+       .eq("marketplace_account_key", input.accountKey).maybeSingle()
+     const execution = await input.supabase.from("ebay_mayel_visual_phase_b_executions_v1").select("id")
+       .eq("marketplace_account_key", input.accountKey).eq("visual_task_id", row.intent.requestedChanges.taskId!)
+       .eq("visual_manifest_digest", row.intent.requestedChanges.manifestDigest!).maybeSingle()
+     preDispatchFailureProven = !task.error && !execution.error && visualScopeFailureDefinitelyUnsentV1({
+       reason: row.reason_code, dispatchCount: row.dispatch_count, executionAbsent: !execution.data,
+       manifestMatches: task.data?.visual_manifest_digest === row.intent.requestedChanges.manifestDigest, task: task.data ?? {} })
+   }
+   const recoveryProof = preDispatchFailureProven ? { previousReason: row.reason_code, dispatchCounterPreserved: true,
+     authority: "DETERMINISTIC_EXECUTION_SCOPE_CHECK_REJECTION", executionRecordAbsent: true, observedAt: new Date().toISOString() } : null
    let manifestDigest: string | null = typeof row.binding.executionManifestDigest === "string" ? row.binding.executionManifestDigest : null
    let expectedImages: string[] = [], ownerApproved = false
    let managementModel: string | null = null
@@ -88,7 +104,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
          receipt: matchesIntent ? { executionId: e?.id ?? null, phase: e?.phase ?? "ALREADY_APPLIED_OFFICIALLY_VERIFIED", manifestDigest, officialDigest: preview.currentOfficialImageSetDigest, observedAt: new Date().toISOString(), writesThisReconciliation: 0 } : null }
      },
      markDispatch: async () => {
-       if (!manifestDigest || row.dispatch_count !== 0) throw Error("OUTBOX_DUPLICATE_DISPATCH_BLOCKED")
+       if (!manifestDigest || row.dispatch_count !== 0 && !preDispatchFailureProven) throw Error("OUTBOX_DUPLICATE_DISPATCH_BLOCKED")
        await patch({ state: "SYNCING", dispatch_count: 1, binding: { ...row.binding, executionManifestDigest: manifestDigest } })
      },
      execute: async () => {
@@ -110,11 +126,11 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        const due = retryAt && Date.parse(retryAt) > Date.now() ? retryAt : new Date(Date.now() + 15 * 60_000).toISOString()
        await patch({ state, reason_code: reason, next_attempt_at: due, lease_until: null, lease_token: null,
          official_readback: state === "SYNCED" && proof?.official === true && proof.matchesIntent,
-         ...(proof?.receipt ? { execution_receipt: proof.receipt } : {}),
+         ...(proof?.receipt || recoveryProof ? { execution_receipt: { ...proof?.receipt, ...(recoveryProof ? { preDispatchRecovery: recoveryProof } : {}) } } : {}),
          ...(state === "SYNCED" && manifestDigest ? { binding: { ...row.binding, executionManifestDigest: manifestDigest } } : {}) })
      },
    }
-   const result = await executeOutboxOperationV1({ state: row.state, dispatchCount: row.dispatch_count,
+   const result = await executeOutboxOperationV1({ state: row.state, dispatchCount: row.dispatch_count, preDispatchFailureProven,
      baseHash: typeof row.binding.baseImageHash === "string" ? row.binding.baseImageHash : null, kind: row.kind }, deps)
    dispatchAttempts += result.dispatchAttempts; writeOutcomeUnknown ||= result.writeOutcomeUnknown
    listingWriteCount += result.writes; mediaWriteCount += result.mediaWrites; processed++

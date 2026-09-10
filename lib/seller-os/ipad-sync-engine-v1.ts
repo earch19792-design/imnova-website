@@ -1,5 +1,5 @@
 import { outboxTransientFailureV1 } from "./ipad-outbox-contract-v1"
-export type SyncOperation = { state: string; dispatchCount: number; baseHash: string | null; kind: string }
+export type SyncOperation = { state: string; dispatchCount: number; baseHash: string | null; kind: string; preDispatchFailureProven?: boolean }
 export type SyncReadback = { official: boolean; baseHash: string | null; matchesIntent: boolean; safetyPass: boolean; reason: string | null; receipt: Record<string, unknown> | null }
 export type SyncDependencies = {
  authority: () => Promise<{ approved: boolean; reason: string | null }>;
@@ -13,12 +13,12 @@ export type SyncDependencies = {
 // Browser lifecycle never participates here. Dispatch intent is persisted before
 // the call; an uncertain commit requires official readback, never a blind retry.
 export async function executeOutboxOperationV1(op: SyncOperation, d: SyncDependencies) {
- let dispatched = ["UNKNOWN_COMMIT", "OFFICIAL_READBACK_REQUIRED"].includes(op.state) || op.dispatchCount > 0
+ let dispatched = op.preDispatchFailureProven !== true && (["UNKNOWN_COMMIT", "OFFICIAL_READBACK_REQUIRED"].includes(op.state) || op.dispatchCount > 0)
  let ownerApproved = false
  let writes = 0, mediaWrites = 0, dispatchedThisRun = false, executionReturned = false
  const result = () => ({ writes, mediaWrites, dispatchAttempts: dispatchedThisRun ? 1 : 0, writeOutcomeUnknown: dispatchedThisRun && !executionReturned })
  try {
-   if (!["IMAGE_DRAFT", "IMAGE_SYNC", "IMAGE_UPLOAD"].includes(op.kind)) {
+   if (!["IMAGE_DRAFT", "IMAGE_SYNC", "IMAGE_UPLOAD", "LISTING_OPTIMIZATION"].includes(op.kind)) {
      await d.finish("ATTENTION", "DRAFT_IS_NOT_WRITE_AUTHORITY"); return result()
    }
    if (!dispatched) {

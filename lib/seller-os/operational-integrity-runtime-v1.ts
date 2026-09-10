@@ -99,8 +99,34 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
   const ipadOutbox = mayelVisualDelegatedExecution.listingWriteCount > 0
     ? { status: "NEXT_RUNTIME_WRITE_BUDGET", processed: 0, listingWriteCount: 0, mediaWriteCount: 0 }
     : await runIpadOutboxRuntimeV1(input).catch(() => ({ status: "RETRY_NEXT_RUNTIME", processed: 0, listingWriteCount: 0, mediaWriteCount: 0 }))
+  // Permanent OWNER delegation uses the same runtime and one shared dispatch budget.
+  // No additional worker, heartbeat, Shipping claim or portfolio scan is introduced.
+  const contentBudgetAvailable = mayelVisualDelegatedExecution.status !== "DEGRADED" && ipadOutbox.status !== "RETRY_NEXT_RUNTIME" &&
+    mayelVisualDelegatedExecution.listingWriteCount === 0 &&
+    ipadOutbox.listingWriteCount === 0 && !("dispatchAttempts" in ipadOutbox && Number(ipadOutbox.dispatchAttempts) > 0) &&
+    !("writeOutcomeUnknown" in ipadOutbox && ipadOutbox.writeOutcomeUnknown)
+  let mayelContent: { status: string; writes: number; dispatchAttempts: number } = { status: "NEXT_RUNTIME_WRITE_BUDGET", writes: 0, dispatchAttempts: 0 }
+  if (contentBudgetAvailable) {
+    const { runMayelContentOutboxV1, enqueueMayelContentOptimizationV1 } = await import("./mayel-autonomous-content-server-v1")
+    try {
+      mayelContent = await runMayelContentOutboxV1(input)
+      if (mayelContent.status === "NO_DUE_WORK" && "visualQueue" in mayelContinuousPortfolio) {
+        const candidates = mayelContinuousPortfolio.visualQueue.outcomes.filter(o => o.eligible === true && typeof o.taskId === "string")
+        // Rotate within the already-read bounded portfolio at the existing cadence.
+        // At most one content evidence preparation per runtime, never a new scan.
+        const index = candidates.length ? Math.floor((input.now ?? new Date()).getTime() / (30 * 60_000)) % candidates.length : 0
+        const candidate = candidates[index]
+        if (typeof candidate?.taskId === "string") {
+          const queued = await enqueueMayelContentOptimizationV1({ ...input, taskId: candidate.taskId })
+          mayelContent = { status: queued.status, writes: 0, dispatchAttempts: 0 }
+          if (queued.status === "PENDING_EBAY_SYNC") mayelContent = await runMayelContentOutboxV1(input)
+        }
+      }
+    } catch { mayelContent = { status: "RETRY_NEXT_RUNTIME", writes: 0, dispatchAttempts: 0 } }
+  }
   return Object.freeze({
     ipadOutbox,
+    mayelContent,
     contractVersion: SELLER_OS_OPERATIONAL_INTEGRITY_RUNTIME_V1,
     status: initial.audit.status,
     snapshotContractVersion: initial.snapshot.contractVersion,
@@ -114,7 +140,7 @@ export async function runSellerOsOperationalIntegrityRuntimeV1(
     economicEvidenceRefresh,
     safety: Object.freeze({
       marketplaceWrites:
-        mayelVisualDelegatedExecution.listingWriteCount + ipadOutbox.listingWriteCount,
+        mayelVisualDelegatedExecution.listingWriteCount + ipadOutbox.listingWriteCount + mayelContent.writes,
       productDecisions: 0 as const,
       categorySelections: 0 as const,
       publisherDispatches: 0 as const,
