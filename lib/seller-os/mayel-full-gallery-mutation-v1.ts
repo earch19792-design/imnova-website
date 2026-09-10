@@ -116,3 +116,14 @@ export function fullGalleryReadbackV1(expected: readonly string[], official: rea
     removed.every(u => !official.includes(u))
   return { synced: match, state: match ? "SYNCED" : "ORDER_OR_REPLACEMENT_MISMATCH", officialReadback: match }
 }
+
+/** Projection of the existing content outbox; task, generation and the currently
+ * observed complete gallery must all match its official receipt. */
+export function contentGalleryReceiptMatchesV1(input: { taskId: string; itemId: string; manifestDigest: string;
+  currentImages: readonly string[]; receipt: Record<string, unknown> }) {
+  const r = input.receipt
+  return r.task_id === input.taskId && r.item_id === input.itemId && r.manifestDigest === input.manifestDigest &&
+    r.state === "SYNCED" && r.official_readback === true && r.readbackItem === input.itemId &&
+    r.readbackAuthority === "OFFICIAL_EBAY_CONTENT_READBACK_V1" && input.currentImages.length > 0 &&
+    JSON.stringify(r.afterGallery) === JSON.stringify(input.currentImages)
+}

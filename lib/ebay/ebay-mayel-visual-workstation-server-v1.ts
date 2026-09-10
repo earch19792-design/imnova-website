@@ -1,3 +1,4 @@
+import { contentGalleryReceiptMatchesV1 } from "../seller-os/mayel-full-gallery-mutation-v1"
 import { decideMayelAssetPositionV1 } from "../seller-os/mayel-visual-intent-v1"
 import { approvalGalleryV1, assertReviewIntentV1, MAYEL_ASSET_TRANSITION_V1 } from "../seller-os/mayel-approved-asset-transition-v1"
 import { buildVisualIntentManifestV1, type VisualIntentV1 } from "../seller-os/mayel-visual-intent-v1"
@@ -1253,7 +1254,7 @@ export async function readMayelVisualWorkstationV1(input: {
   const { readOptimizationGrantV1, readDelegatedVisualAuthorityV1 } = await import("../seller-os/mayel-optimization-delegation-server-v1")
   const optimizationGrant = await readOptimizationGrantV1(input.supabase, input.accountKey)
   const contentStates = optimizationGrant && taskIds.length ? await input.supabase.from("seller_os_mayel_content_outbox_v1")
-    .select("task_id,item_id,state,official_readback,created_at,actions:audit->actions").eq("account_key", input.accountKey).in("task_id", taskIds)
+    .select("task_id,item_id,state,official_readback,created_at,actions:audit->actions,manifestDigest:audit->galleryMutation->>visualManifestDigest,afterGallery:execution_receipt->afterGallery,readbackItem:execution_receipt->>itemId,readbackAuthority:execution_receipt->>authority").eq("account_key", input.accountKey).in("task_id", taskIds)
     .order("created_at", { ascending: false }).limit(100) : { data: [], error: null }
   const outputsByTaskId = new Map<string, JsonRecord[]>()
   for (const output of (assetRead.data ?? []) as JsonRecord[]) {
@@ -1297,14 +1298,15 @@ export async function readMayelVisualWorkstationV1(input: {
     }
     const gallery = savedOfficialGalleryV1(task.selection_signal)
     const currentGallerySynced = Boolean(gallery && galleryMatchesSyncReceiptV1({ taskId: String(task.id),
-      manifestDigest: String(task.visual_manifest_digest), currentGalleryDigest: gallery.digest, receipts: outboxRead.data ?? [] }))
+      manifestDigest: String(task.visual_manifest_digest), currentGalleryDigest: gallery.digest, receipts: outboxRead.data ?? [] }) || gallery && !contentStates.error && (contentStates.data ?? []).some(receipt =>
+      contentGalleryReceiptMatchesV1({ taskId: String(task.id), itemId: String(task.ebay_item_id), manifestDigest: String(task.visual_manifest_digest), currentImages: gallery.images, receipt })))
     const galleryRebaseRequired = Boolean(!currentGallerySynced && task.visual_manifest_digest && gallery &&
       JSON.stringify([record(task.visual_manifest).currentMainImage, ...(Array.isArray(record(task.visual_manifest).currentSecondaryImages)
         ? record(task.visual_manifest).currentSecondaryImages as unknown[] : [])]) !== JSON.stringify(gallery.images))
     const latestOptimization = contentStates.error ? null : contentStates.data?.find(row => row.task_id === task.id && row.item_id === task.ebay_item_id)
     tasks.push({ autonomousOptimization: Boolean(optimizationGrant), latestOptimization: latestOptimization ? {
       state: latestOptimization.state, officialReadback: latestOptimization.official_readback === true,
-      label: Array.isArray(latestOptimization.actions) && latestOptimization.actions.includes("IMAGE_REORDER") ? "Orden de imágenes" : "Texto del listing" } : null,
+      label: Array.isArray(latestOptimization.actions) && latestOptimization.actions.some(a => a === "IMAGE_REORDER" || a === "IMAGE_REMOVAL") ? "Galería de imágenes" : "Texto del listing" } : null,
       currentGallerySynced, visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
       sku: String(evidence.sku ?? ""),
       productTitle: String(evidence.productTitle ?? ""),

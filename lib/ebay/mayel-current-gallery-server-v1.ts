@@ -1,3 +1,4 @@
+import { contentGalleryReceiptMatchesV1 } from "../seller-os/mayel-full-gallery-mutation-v1"
 import { galleryMatchesSyncReceiptV1 } from "./mayel-gallery-slot-policy-v1"
 import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -55,7 +56,18 @@ export async function refreshMayelStationGalleryV1(input: { supabase: SupabaseCl
   const manifest = record(task.data.visual_manifest)
   const base = [manifest.currentMainImage, ...(Array.isArray(manifest.currentSecondaryImages) ? manifest.currentSecondaryImages : [])]
   const drift = Boolean(task.data.visual_manifest_digest && JSON.stringify(base) !== JSON.stringify(gallery.images))
-  if (drift) {
+  const existingOnly = manifest.galleryMutationContract === "MAYEL_FULL_GALLERY_MUTATION_V1" &&
+    Array.isArray(manifest.proposedOrderedImages) && manifest.proposedOrderedImages.every(e => !record(e).assetId)
+  if (drift && existingOnly) {
+    const receipt = await input.supabase.from("seller_os_mayel_content_outbox_v1")
+      .select("task_id,item_id,state,official_readback,manifestDigest:audit->galleryMutation->>visualManifestDigest,afterGallery:execution_receipt->afterGallery,readbackItem:execution_receipt->>itemId,readbackAuthority:execution_receipt->>authority")
+      .eq("account_key", input.accountKey).eq("task_id", input.taskId).eq("item_id", task.data.ebay_item_id)
+      .eq("audit->galleryMutation->>visualManifestDigest", task.data.visual_manifest_digest).eq("state", "SYNCED").eq("official_readback", true).limit(1).maybeSingle()
+    if (receipt.error) throw Error("MAYEL_GALLERY_SYNC_RECEIPT_READ_FAILED")
+    if (receipt.data && contentGalleryReceiptMatchesV1({ taskId: input.taskId, itemId: task.data.ebay_item_id,
+      manifestDigest: task.data.visual_manifest_digest, currentImages: gallery.images, receipt: receipt.data }))
+      return { gallery, status: "SYNCED", marketplaceWrites: 0 }
+  } else if (drift) {
     const receipts = await input.supabase.from("seller_os_ipad_outbox_v1")
       .select("intent,binding,state,official_readback,execution_receipt")
       .eq("account_key", input.accountKey).eq("item_id", task.data.ebay_item_id)

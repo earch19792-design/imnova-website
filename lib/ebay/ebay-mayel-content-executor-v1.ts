@@ -36,7 +36,7 @@ export async function galleryReorderReadbackMatchesV1(current: Awaited<ReturnTyp
   delete before.orderedGallery; delete (after as Record<string, unknown>).orderedGallery
   return desired.length > 0 && digest(current.galleryUrls) === digest(desired) && digest(before) === digest(after) &&
     digest(contentInventoryProtectedV1(current.inventoryPreserved, ["imageUrls"])) === digest(contentInventoryProtectedV1(audit.inventoryBefore, ["imageUrls"])) &&
-    (await verifyOfficialOrderedImageSetV1(current.official, desired, fetch)).verified
+    (await verifyOfficialOrderedImageSetV1(current.official, desired, fetch, record(audit.galleryMutation).galleryMutationContract === "MAYEL_FULL_GALLERY_MUTATION_V1")).verified
 }
 export async function executeGalleryReorderMutationV1(input: { accountKey: string; itemId: string; sku: string;
   current: Awaited<ReturnType<typeof readMayelContentLiveV1>>; after: string[]; claimToken: string; idempotencyKey: string; galleryMutation?: Record<string, unknown> }) {

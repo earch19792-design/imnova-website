@@ -60,10 +60,12 @@ export async function saveFullMayelGalleryV1(input: { supabase: SupabaseClient; 
   if (!provenGalleryRemovalsV1(task, input.decisions, input.expectedCurrentImages)) throw Error("REMOVAL_PRODUCT_EVIDENCE_UNPROVEN")
   if (input.decisions.some(d => d.action === "REMOVE")) grant = await withGalleryRemovalGrantV1(input.supabase, grant)
   // Validate shape and asset binding before persisting a resumable decision.
-  buildFullGalleryMutationV1({ visualTaskId: task.id, ebayItemId: task.ebay_item_id, accountKey: input.accountKey,
+  const planned = buildFullGalleryMutationV1({ visualTaskId: task.id, ebayItemId: task.ebay_item_id, accountKey: input.accountKey,
     generation: replayGeneration, currentImages: input.expectedCurrentImages, decisions: input.decisions,
     assets: assets.map(a => ({ assetId: a.id, role: a.mayel_output_role as MayelVisualOutputRole, outputSha256: a.output_sha256, publicUrl: a.public_url })),
     productTruthDigest: task.product_truth_digest, sourceImageSetDigest: task.source_image_set_digest })
+  if (JSON.stringify(planned.proposedOrderedImages.map(e => e.publicUrl)) === JSON.stringify(input.expectedCurrentImages))
+    return { status: "NO_GALLERY_CHANGE", marketplaceWrites: 0 }
   const pendingDecision = { contract: "MAYEL_PENDING_FULL_GALLERY_DECISION_V1", state: "WAITING_FOR_CURRENT_GALLERY",
     actorUserId: input.actorUserId, expectedManifestDigest: input.expectedManifestDigest,
     expectedCurrentImages: input.expectedCurrentImages, decisions: input.decisions, generation: replayGeneration, writeAuthority: false }
