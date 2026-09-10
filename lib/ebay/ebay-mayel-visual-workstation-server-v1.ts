@@ -1,3 +1,4 @@
+import { decideMayelAssetPositionV1 } from "../seller-os/mayel-visual-intent-v1"
 import { approvalGalleryV1, assertReviewIntentV1, MAYEL_ASSET_TRANSITION_V1 } from "../seller-os/mayel-approved-asset-transition-v1"
 import { buildVisualIntentManifestV1, type VisualIntentV1 } from "../seller-os/mayel-visual-intent-v1"
 import { galleryMatchesSyncReceiptV1, replacementSlotOrderV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
@@ -932,13 +933,12 @@ function orderedIntentForManifest(input: { task: JsonRecord
     entry.kind === "MAYEL_ASSET" ? [entry.assetId] : []))
   const representedCurrent = new Set(retained.flatMap((entry) =>
     entry.kind === "CURRENT_OFFICIAL" ? [entry.publicUrl] : []))
+  if (input.assets.some(asset => !representedAssets.has(asset.assetId))) throw Error("MAYEL_DETERMINISTIC_POSITION_REQUIRED")
   return [
     ...retained,
     ...input.currentImages.filter((url) => !representedCurrent.has(url))
       .map((publicUrl) => ({ kind: "CURRENT_OFFICIAL" as const, publicUrl })),
-    ...input.assets.filter((asset) => !representedAssets.has(asset.assetId))
-      .map((asset) => ({ kind: "MAYEL_ASSET" as const,
-        assetId: asset.assetId })),
+
   ]
 }
 
@@ -1128,7 +1128,12 @@ export async function reviewMayelVisualOutputV1(input: {
     throw new Error("MAYEL_VISUAL_HUMAN_QA_INCOMPLETE")
   }
   const currentImages = approvalGalleryV1(task, savedOfficialGalleryV1(task.selection_signal), input.expectedGalleryDigest)
-  if (!input.visualIntent) throw Error("VISUAL_INTENT_REQUIRED")
+  if (!input.visualIntent) {
+    const { readOptimizationGrantV1 } = await import("../seller-os/mayel-optimization-delegation-server-v1")
+    const { optimizationGrantActiveV1 } = await import("../seller-os/mayel-optimization-delegation-v1")
+    if (!optimizationGrantActiveV1(await readOptimizationGrantV1(input.supabase, input.accountKey), input.accountKey)) throw Error("VISUAL_INTENT_REQUIRED")
+    input.visualIntent = decideMayelAssetPositionV1({ assetId: input.assetId, role, currentImages, manifest: record(task.visual_manifest) })
+  }
   const previous = record(task.visual_manifest).visualIntents
   assertReviewIntentV1(currentImages, Array.isArray(previous) ? previous as VisualIntentV1[] : [], input.visualIntent)
   // Persist the semantic decision before promotion. A crash cannot lose it;

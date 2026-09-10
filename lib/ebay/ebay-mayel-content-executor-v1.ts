@@ -4,6 +4,7 @@ import { protectedContentFieldsV1, validateMayelContentPatchV1, type MayelLiveCo
 import { getEbayTradingReadOnlyAccessToken, tradingXmlTagValue } from "./ebay-manual-listing-trading-readonly"
 import { readOfficialActiveListingImageSnapshotV1, verifyOfficialOrderedImageSetV1 } from "./ebay-active-listing-image-revision-service"
 import { prepareEbayActiveListingManagementExecutorV1, executeEbayInventoryManagedContentMutationV1, executeEbayInventoryManagedImageMutationV1 } from "./ebay-draft-only-gateway"
+import { existingGalleryMutationDecisionV1 } from "../seller-os/mayel-full-gallery-mutation-v1"
 import { galleryReorderDecisionV1 } from "../seller-os/mayel-gallery-reorder-v1"
 import { getEbayProRuntimeBoundary } from "./environment-boundaries"
 
@@ -38,9 +39,10 @@ export async function galleryReorderReadbackMatchesV1(current: Awaited<ReturnTyp
     (await verifyOfficialOrderedImageSetV1(current.official, desired, fetch)).verified
 }
 export async function executeGalleryReorderMutationV1(input: { accountKey: string; itemId: string; sku: string;
-  current: Awaited<ReturnType<typeof readMayelContentLiveV1>>; after: string[]; claimToken: string; idempotencyKey: string }) {
+  current: Awaited<ReturnType<typeof readMayelContentLiveV1>>; after: string[]; claimToken: string; idempotencyKey: string; galleryMutation?: Record<string, unknown> }) {
   if (getEbayProRuntimeBoundary({ pathname: "/api/runtime/operational-integrity", method: "POST" }).runtime !== "seller_os_dedicated_preprod") throw Error("CONTENT_PREPROD_ONLY")
-  galleryReorderDecisionV1(input.current.galleryUrls, input.after)
+  if (input.galleryMutation) existingGalleryMutationDecisionV1(input.current.galleryUrls, input.after, input.galleryMutation)
+  else galleryReorderDecisionV1(input.current.galleryUrls, input.after)
   const m = input.current.management
   if (m.managementModel === "INVENTORY_API_MANAGED") {
     const result = await executeEbayInventoryManagedImageMutationV1({ ...input, targetImageUrls: input.after,

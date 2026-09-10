@@ -63,7 +63,7 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
      const ids = Array.isArray(proposed) ? proposed.map(record).flatMap(e => typeof e.assetId === "string" ? [e.assetId] : []) : []
      if (!ids.includes(intent.requestedChanges.assetId!) || !ids.length) throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
      const native = await input.supabase.from("ebay_listing_image_assets")
-       .select("id,status,mayel_approval_status,qa_result,source_sha256,output_sha256,public_url,product_truth_digest,source_image_set_digest,owner_sync_approval").eq("account_key", input.accountKey)
+       .select("id,status,mayel_output_role,mayel_approval_status,qa_result,source_sha256,output_sha256,public_url,product_truth_digest,source_image_set_digest,owner_sync_approval").eq("account_key", input.accountKey)
        .eq("mayel_visual_task_id", task.data.id).in("id", ids)
      const sourceDigest = task.data.source_image_set_digest
      if (native.error || native.data?.length !== ids.length ||
@@ -124,7 +124,7 @@ export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClie
  const [task, assets] = await Promise.all([
    input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,status,assigned_operator_user_id,visual_manifest,visual_manifest_digest,source_image_set_digest,product_truth_digest,marketplace_account_key,current_image_set,selection_signal,source_image_references,evidence_pack")
      .eq("marketplace_account_key", row.account_key).eq("id", row.intent.requestedChanges.taskId!).maybeSingle(),
-   input.supabase.from("ebay_listing_image_assets").select("id,status,approved_by,qa_result,public_url,source_sha256,output_sha256,mayel_approval_status,owner_sync_approval,source_image_set_digest,product_truth_digest")
+   input.supabase.from("ebay_listing_image_assets").select("id,status,mayel_output_role,approved_by,qa_result,public_url,source_sha256,output_sha256,mayel_approval_status,owner_sync_approval,source_image_set_digest,product_truth_digest")
      .eq("account_key", row.account_key).eq("mayel_visual_task_id", row.intent.requestedChanges.taskId!).in("status", ["pending_review", "approved"]),
  ])
  if (task.error || assets.error) throw Error("OUTBOX_AUTHORITY_READ_FAILED")

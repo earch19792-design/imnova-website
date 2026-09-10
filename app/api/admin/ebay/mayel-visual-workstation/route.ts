@@ -367,6 +367,20 @@ export async function POST(request: Request) {
           taskId: String(body.visualTaskId ?? ""), itemId: String(body.expectedItemId ?? ""), assetId: String(body.assetId ?? "") })
         return json({ success: true, result, marketplaceWrites: 0 })
       }
+      if (body?.action === "PREPARE_FULL_GALLERY_DECISION_V1") {
+        const taskId = uuid(body.visualTaskId)
+        if (!taskId || !Array.isArray(body.decisions) || body.decisions.length > 48 || !Array.isArray(body.expectedCurrentImages))
+          return json({ success: false, error: "FULL_GALLERY_DECISION_REQUIRED" }, 400)
+        const db = getSupabaseAdminClient()
+        const t = await db.from("ebay_mayel_visual_tasks_v1").select("assigned_operator_user_id,ebay_item_id")
+          .eq("id", taskId).eq("marketplace_account_key", accountKey()).maybeSingle()
+        if (t.error || !t.data || t.data.ebay_item_id !== body.expectedItemId) throw Error("EXACT_VISUAL_TASK_REQUIRED")
+        const { saveFullMayelGalleryV1 } = await import("@/lib/seller-os/mayel-full-gallery-server-v1")
+        const result = await saveFullMayelGalleryV1({ supabase: db, accountKey: accountKey(), actorUserId: t.data.assigned_operator_user_id,
+          taskId, expectedManifestDigest: typeof body.expectedManifestDigest === "string" ? body.expectedManifestDigest : null,
+          expectedCurrentImages: body.expectedCurrentImages, decisions: body.decisions as import("@/lib/seller-os/mayel-full-gallery-mutation-v1").GalleryDecisionV1[] })
+        return json({ success: true, result, marketplaceWrites: 0, ownerApprovalRequired: false })
+      }
       if (body?.action === "RUN_DELEGATED_VISUAL_SYNC_V1") {
         const { runDelegatedVisualScopedV1 } = await import("@/lib/seller-os/mayel-delegated-visual-scoped-run-v1")
         const result = await runDelegatedVisualScopedV1({
@@ -689,6 +703,16 @@ export async function POST(request: Request) {
       visualEligibility: result.canaryAvailable ? "ELIGIBLE" :
         "BLOCKED_IDENTITY", marketplaceWrites: 0 })
     }
+    if (action === "SAVE_FULL_GALLERY_DECISION") {
+      const taskId = uuid(body?.visualTaskId)
+      if (!taskId || !Array.isArray(body?.decisions) || body.decisions.length > 48 || !Array.isArray(body.expectedCurrentImages))
+        return json({ success: false, error: "FULL_GALLERY_DECISION_REQUIRED" }, 400)
+      const { saveFullMayelGalleryV1 } = await import("@/lib/seller-os/mayel-full-gallery-server-v1")
+      const result = await saveFullMayelGalleryV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(), actorUserId: auth.userId,
+        taskId, expectedManifestDigest: typeof body.expectedVisualManifestDigest === "string" ? body.expectedVisualManifestDigest : null,
+        expectedCurrentImages: body.expectedCurrentImages, decisions: body.decisions })
+      return json({ success: true, ...result, ownerApprovalRequired: false, marketplaceWrites: 0 })
+    }
     if (action === "SAVE_ASSET_INTENT") {
       const taskId = uuid(body?.visualTaskId), assetId = uuid(body?.assetId)
       if (!body || !taskId || !assetId || typeof body.visualIntent !== "string" || !["REPLACE_MAIN", "REPLACE_SLOT", "ADD_SECONDARY"].includes(body.visualIntent) ||
@@ -772,14 +796,14 @@ export async function POST(request: Request) {
         body?.decision === "REJECT" ? body.decision : null
       if (!taskId || !assetId || !decision) return json({ success: false,
         error: "MAYEL_VISUAL_REVIEW_CONTRACT_INVALID" }, 400)
-      if (decision === "APPROVE" && (typeof body?.visualIntent !== "string" || !["REPLACE_MAIN", "REPLACE_SLOT", "ADD_SECONDARY"].includes(body.visualIntent) ||
+      if (decision === "APPROVE" && body?.visualIntent && (typeof body?.visualIntent !== "string" || !["REPLACE_MAIN", "REPLACE_SLOT", "ADD_SECONDARY"].includes(body.visualIntent) ||
           typeof body.targetImagePosition !== "number" || !Number.isInteger(body.targetImagePosition))) return json({ success: false, error: "VISUAL_INTENT_REQUIRED" }, 400)
       const result = await reviewMayelVisualOutputV1({
         supabase: getSupabaseAdminClient(), accountKey: accountKey(),
         actorUserId: auth.userId, taskId, assetId, decision,
         humanQa: body?.humanQa,
         expectedGalleryDigest: typeof body?.expectedGalleryDigest === "string" ? body.expectedGalleryDigest : null,
-        visualIntent: decision === "APPROVE" ? { assetId, visualIntent: body?.visualIntent as VisualIntentV1["visualIntent"], targetImagePosition: body?.targetImagePosition as number } : undefined,
+        visualIntent: decision === "APPROVE" && body?.visualIntent ? { assetId, visualIntent: body?.visualIntent as VisualIntentV1["visualIntent"], targetImagePosition: body?.targetImagePosition as number } : undefined,
         rejectionReason: typeof body?.rejectionReason === "string"
           ? body.rejectionReason : null })
       const grant = decision === "APPROVE" ? await readOptimizationGrantV1(getSupabaseAdminClient(), accountKey()) : null

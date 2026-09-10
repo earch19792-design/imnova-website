@@ -540,7 +540,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "REVIEW_OUTPUT",
           visualTaskId: task.visualTaskId, assetId: output.id, decision,
-          visualIntent: intent, targetImagePosition: targetPosition,
+          visualIntent: task.autonomousOptimization ? undefined : intent, targetImagePosition: task.autonomousOptimization ? undefined : targetPosition,
           humanQa: decision === "APPROVE" ? checks : undefined,
           expectedGalleryDigest: task.currentGalleryDigest,
           rejectionReason: decision === "REJECT" ? reason : undefined }),
@@ -581,7 +581,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
           className="mt-2 aspect-square w-full rounded-xl bg-[#f4efe7] object-contain" />
       </div>
     </div>
-    {!status.synced && output.status !== "rejected" && <div className="mt-4">
+    {!task.autonomousOptimization && !status.synced && output.status !== "rejected" && <div className="mt-4">
       <label className="block text-sm font-semibold">¿Qué cambio quieres preparar?
         <select value={intent} onChange={e => setIntent(e.target.value as typeof intent)} className="mt-2 min-h-11 w-full rounded-xl border p-3">
           <option value="">Selecciona la intención</option><option value="REPLACE_MAIN">Reemplazar sólo la imagen principal</option>
@@ -613,7 +613,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
           <button type="button" disabled={busy || !reason}
             onClick={() => void submit("REJECT")}
             className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-[#b75d43] px-3 text-sm font-semibold text-[#8b4937] disabled:opacity-40"><X className="h-4 w-4" />Rechazar</button>
-          <button type="button" disabled={busy || !complete || !intent}
+          <button type="button" disabled={busy || !complete || (!task.autonomousOptimization && !intent)}
             onClick={() => void submit("APPROVE")}
             className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1d5961] px-3 text-sm font-semibold text-white disabled:opacity-40"><Check className="h-4 w-4" />{task.autonomousOptimization ? "Guardar evaluación QA" : "Aprobar"}</button>
         </div>
@@ -818,6 +818,23 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
     } catch (error) { setMessage(error instanceof Error ? error.message : "No pudimos confirmar el Preview.") }
     finally { setSaving(false) }
   }
+  const fullDecisions = task.visualManifest?.galleryMutationContract === "MAYEL_FULL_GALLERY_MUTATION_V1" && Array.isArray(task.visualManifest.galleryDecisions)
+    ? task.visualManifest.galleryDecisions as { action: string; sourcePosition: number | null; targetPosition: number | null; visualRole: string; intentReason: string; beforeImage: string | null; afterImage: string | null }[] : []
+  if (fullDecisions.length) return <section className="mt-7 rounded-2xl border p-5" aria-label="Antes y después de la galería completa">
+    <h4 className="text-xl font-semibold">Orden que Mayel preparó para eBay</h4>
+    <p className="mt-2 text-sm">Mayel comprueba la galería actual antes de sincronizar. Cada cambio conserva su posición exacta.</p>
+    {task.galleryRebaseRequired && <p role="status">La galería cambió. Mayel debe reevaluar estas posiciones.</p>}
+    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[...fullDecisions].sort((a,b) => (a.targetPosition ?? 25)-(b.targetPosition ?? 25)).map((d,i) =>
+      <article key={i} className="rounded-xl border bg-white p-3" data-image-position={d.targetPosition ?? undefined}>
+        <p className="font-semibold">{d.targetPosition === null ? `Retirar imagen ${d.sourcePosition! + 1}` : d.targetPosition === 0 ? "Principal" : `Imagen ${d.targetPosition + 1}`}</p>
+        <p className="text-sm">{({ KEEP: "Conservar", REPLACE: "Reemplazar", REMOVE: "Eliminar", ADD: "Agregar", REORDER: "Mover", REPLACE_MAIN: "Reemplazar principal" } as Record<string,string>)[d.action]} · {({ MAIN: "Principal", PRIMARY_BENEFIT: "Beneficio", DETAIL: "Detalle", DIMENSIONS: "Dimensiones", PACKAGE_CONTENTS: "Contenido", LIFESTYLE: "Uso / Lifestyle", CURRENT: "Imagen actual" } as Record<string,string>)[d.visualRole] ?? "Imagen del producto"}</p>
+        {d.sourcePosition !== null && d.targetPosition !== null && d.sourcePosition !== d.targetPosition && <p className="text-xs">Imagen {d.sourcePosition + 1} → Imagen {d.targetPosition + 1}</p>}
+        <div className="mt-3 grid grid-cols-2 gap-2"><figure>{d.beforeImage ? <img src={d.beforeImage} alt="Antes" className="aspect-square w-full object-contain"/> : <p>Posición nueva</p>}<figcaption>Antes</figcaption></figure>
+          <figure>{d.afterImage ? <img src={d.afterImage} alt="Después" className="aspect-square w-full object-contain"/> : <p>Se elimina</p>}<figcaption>Después</figcaption></figure></div>
+        <p className="mt-2 text-sm">{d.intentReason}</p>
+      </article>)}</div>
+    <p className="mt-3 text-sm">{task.currentGallerySynced ? "Sincronizada con eBay: orden confirmado oficialmente." : "Preparada. La sincronización requiere confirmar todas las posiciones en eBay."}</p>
+  </section>
   const explicitPreview = task.visualManifest?.intentContract === "MAYEL_VISUAL_INTENT_V1" && Array.isArray(task.visualManifest.slotPreview)
     ? task.visualManifest.slotPreview as { targetImagePosition: number; before: string | null; after: string; action: string; assetId: string | null }[] : []
   if (explicitPreview.some(p => p.action === "ADD")) return <section className="mt-7 rounded-2xl border p-5" aria-label="Preview completo de la galería">
@@ -845,7 +862,7 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
       const asset = approved.find(o => o.id === selected[position])
       const after = asset?.previewUrl ?? before
       return <article key={`${position}:${before}`} data-image-position={position} className="rounded-xl border bg-white p-3">
-        <p className="font-semibold">{position + 1} · {position === 0 ? "Principal" : "Secundaria"}</p>
+        <p className="font-semibold">{position === 0 ? "Principal" : `Imagen ${position + 1}`}</p>
         <div className="mt-2 grid grid-cols-2 gap-2"><figure><img src={before} alt={`Antes · posición ${position + 1}`} className="aspect-square w-full object-contain"/><figcaption>Antes</figcaption></figure>
           <figure><img src={after} alt={`Después · posición ${position + 1}`} className="aspect-square w-full object-contain"/><figcaption>Después</figcaption></figure></div>
         <p className="mt-2 text-sm">{asset ? "Reemplazar" : "Conservar"}</p>

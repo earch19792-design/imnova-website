@@ -2,18 +2,22 @@ import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { keywordRecord as record, keywordWireDigestV1 as digest, readKeywordDecisionHandoffV1 } from "./keyword-intelligence-handoff-v1"
 import { prepareMayelOwnContentV1, mayelContentDiffV1, type MayelLiveContentV1 } from "./mayel-autonomous-content-v1"
-import { readOptimizationGrantV1 } from "./mayel-optimization-delegation-server-v1"
+import { readOptimizationGrantV1, withGalleryRemovalGrantV1 } from "./mayel-optimization-delegation-server-v1"
 import { authorizeOptimizationV1, optimizationGrantActiveV1 } from "./mayel-optimization-delegation-v1"
 import { executeOutboxOperationV1 } from "./ipad-sync-engine-v1"
 import { getEbayProRuntimeBoundary } from "../ebay/environment-boundaries"
 import { galleryReorderDecisionV1 } from "./mayel-gallery-reorder-v1"
 
+import { existingGalleryMutationDecisionV1, FULL_GALLERY_MUTATION_V1 } from "./mayel-full-gallery-mutation-v1"
+import { provenGalleryRemovalsV1 } from "./mayel-full-gallery-server-v1"
+
 const TABLE = "seller_os_mayel_content_outbox_v1"
 type Input = { supabase: SupabaseClient; accountKey: string; taskId: string }
-export async function enqueueMayelGalleryReorderV1(input: Input & { actorUserId: string; expectedManifestDigest: string; after: string[] }) {
-  const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+export async function enqueueMayelGalleryReorderV1(input: Input & { actorUserId: string; expectedManifestDigest: string; after: string[]; galleryMutation?: Record<string, unknown> }) {
+  let grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+  if (input.galleryMutation) grant = await withGalleryRemovalGrantV1(input.supabase, grant)
   if (!grant || !optimizationGrantActiveV1(grant, input.accountKey) || !grant.allowed_actions.includes("IMAGE_REORDER")) throw Error("OWNER_DELEGATION_REQUIRED")
-  const t = await input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,assigned_operator_user_id,visual_manifest_digest")
+  const t = await input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,assigned_operator_user_id,visual_manifest_digest,source_image_references,product_truth_digest")
     .eq("id", input.taskId).eq("marketplace_account_key", input.accountKey).maybeSingle()
   if (t.error || !t.data || t.data.visual_manifest_digest !== input.expectedManifestDigest ||
       ![t.data.assigned_operator_user_id, grant.owner_user_id].includes(input.actorUserId)) throw Error("DELEGATED_VISUAL_SCOPE_CHANGED")
@@ -25,14 +29,15 @@ export async function enqueueMayelGalleryReorderV1(input: Input & { actorUserId:
   if ((await collectSellerOsEbayTradingRateLimitStatusV1()).gateState !== "OPEN") return { status: "WAITING_FOR_EBAY", id: null }
   const { readMayelContentLiveV1 } = await import("../ebay/ebay-mayel-content-executor-v1")
   const current = await readMayelContentLiveV1({ accountKey: input.accountKey, itemId: t.data.ebay_item_id, sku: String(proof.sku) })
-  const decision = galleryReorderDecisionV1(current.galleryUrls, input.after)
+  const decision = input.galleryMutation ? existingGalleryMutationDecisionV1(current.galleryUrls, input.after, input.galleryMutation) : galleryReorderDecisionV1(current.galleryUrls, input.after)
+  if (decision.actions.some(a => !grant!.allowed_actions.includes(a)) || input.galleryMutation && !provenGalleryRemovalsV1(t.data, input.galleryMutation.galleryDecisions as import("./mayel-full-gallery-mutation-v1").GalleryDecisionV1[], current.galleryUrls)) throw Error("GALLERY_REMOVAL_AUTHORITY_REQUIRED")
   if (!decision.changed) return { status: "ALREADY_OPTIMIZED", id: null }
-  const sourceDigest = digest({ proof, beforeGallery: decision.beforeGallery, afterGallery: decision.afterGallery })
+  const sourceDigest = digest({ proof, beforeGallery: decision.beforeGallery, afterGallery: decision.afterGallery, ...(input.galleryMutation ? { galleryMutation: input.galleryMutation } : {}) })
   const key = digest({ accountKey: input.accountKey, itemId: proof.itemId, sourceDigest, kind: "GALLERY_REORDER" })
   const prior = await input.supabase.from(TABLE).select("id,state").eq("account_key", input.accountKey).eq("idempotency_key", key).maybeSingle()
   if (prior.error) throw Error("CONTENT_OUTBOX_READ_FAILED")
   if (prior.data) return { status: prior.data.state, id: prior.data.id }
-  const audit = { ...decision, proof, categoryId: current.categoryId, before: current.content, after: current.content, patch: {},
+  const audit = { ...decision, ...(input.galleryMutation ? { galleryMutation: input.galleryMutation } : {}), proof, categoryId: current.categoryId, before: current.content, after: current.content, patch: {},
     protectedBefore: current.protectedFields, inventoryBefore: current.inventoryPreserved, currentLiveReadbackAt: current.observedAt,
     managementModel: current.management.managementModel, mayelDecision: "AUTO_AUTHORIZED_BY_OWNER_DELEGATION", grantDigest: grant.authority_digest,
     evidenceUsed: { authority: "CURRENT_OFFICIAL_ORDERED_IMAGE_SET", observedAt: current.observedAt, productTruth: proof } }
@@ -119,7 +124,9 @@ export async function runMayelContentOutboxV1(input: { supabase: SupabaseClient;
   const row = claim.data?.[0]
   if (!row) return { status: "NO_DUE_WORK", writes: 0, dispatchAttempts: 0 }
   const audit = record(row.audit), proof = record(audit.proof), patch = record(audit.patch)
-  const reorder = digest(audit.actions) === digest(["IMAGE_REORDER"])
+  const mutation = record(audit.galleryMutation)
+  const fullGallery = mutation.galleryMutationContract === FULL_GALLERY_MUTATION_V1
+  const reorder = fullGallery || digest(audit.actions) === digest(["IMAGE_REORDER"])
   const { readMayelContentLiveV1, executeMayelContentMutationV1, contentReadbackMatchesV1, galleryReorderReadbackMatchesV1, executeGalleryReorderMutationV1 } = await import("../ebay/ebay-mayel-content-executor-v1")
   let current: Awaited<ReturnType<typeof readMayelContentLiveV1>> | null = null
   const save = async (values: Record<string, unknown>) => {
@@ -129,13 +136,20 @@ export async function runMayelContentOutboxV1(input: { supabase: SupabaseClient;
   }
   const result = await executeOutboxOperationV1({ state: row.state, dispatchCount: row.dispatch_count, baseHash: row.base_hash, kind: "LISTING_OPTIMIZATION" }, {
     authority: async () => {
-      const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+      let grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+      if (fullGallery) grant = await withGalleryRemovalGrantV1(input.supabase, grant)
       if (reorder) {
         const p = await input.supabase.rpc("seller_os_read_visual_current_product_truth_v1", { p_account_key: input.accountKey, p_task_id: row.task_id })
         const before = Array.isArray(audit.beforeGallery) ? audit.beforeGallery.map(String) : [], after = Array.isArray(audit.afterGallery) ? audit.afterGallery.map(String) : []
-        const qa = galleryReorderDecisionV1(before, after)
+        const qa = fullGallery ? existingGalleryMutationDecisionV1(before, after, mutation) : galleryReorderDecisionV1(before, after)
+        let removalProven = true
+        if (fullGallery) {
+          const t = await input.supabase.from("ebay_mayel_visual_tasks_v1").select("source_image_references,product_truth_digest").eq("id", row.task_id).eq("marketplace_account_key", input.accountKey).maybeSingle()
+          removalProven = !t.error && Boolean(t.data) && provenGalleryRemovalsV1(t.data!, mutation.galleryDecisions as import("./mayel-full-gallery-mutation-v1").GalleryDecisionV1[], before)
+        }
         return { approved: !p.error && digest(p.data) === digest(proof) && proof.itemId === row.item_id && proof.accountKey === input.accountKey &&
-          digest({ proof, beforeGallery: before, afterGallery: after }) === row.source_digest && qa.changed &&
+          digest({ proof, beforeGallery: before, afterGallery: after, ...(fullGallery ? { galleryMutation: mutation } : {}) }) === row.source_digest && qa.changed && removalProven &&
+          qa.actions.every(a => grant?.allowed_actions.includes(a)) &&
           optimizationGrantActiveV1(grant, input.accountKey) && grant?.id === row.grant_id && grant?.authority_digest === audit.grantDigest && grant?.allowed_actions.includes("IMAGE_REORDER") === true,
           reason: "GALLERY_REORDER_AUTHORITY_REVALIDATION" }
       }
@@ -170,7 +184,7 @@ export async function runMayelContentOutboxV1(input: { supabase: SupabaseClient;
     execute: async () => {
       if (!current) throw Error("CURRENT_LIVE_READBACK_REQUIRED")
       if (reorder) return executeGalleryReorderMutationV1({ accountKey: input.accountKey, itemId: row.item_id, sku: String(proof.sku), current,
-        after: Array.isArray(audit.afterGallery) ? audit.afterGallery.map(String) : [], claimToken: row.lease_token, idempotencyKey: row.idempotency_key })
+        after: Array.isArray(audit.afterGallery) ? audit.afterGallery.map(String) : [], galleryMutation: fullGallery ? mutation : undefined, claimToken: row.lease_token, idempotencyKey: row.idempotency_key })
       // Last exact read is immediately before dispatch. The executor preserves
       // all unrequested fields and never retries a mutation.
       return executeMayelContentMutationV1({ accountKey: input.accountKey, itemId: row.item_id, sku: String(proof.sku),

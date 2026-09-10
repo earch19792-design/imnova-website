@@ -491,7 +491,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     // Inventory can acknowledge a replacement before the LIVE gallery catches
     // up. Only a matching current GetItem gallery can close the outbox green.
     approvedGalleryAlreadyOfficial = context.official !== null &&
-      (await verifyOfficialOrderedImageSetV1(context.official, expectedOfficialUrls, input.fetchImpl ?? fetch)).verified
+      (await verifyOfficialOrderedImageSetV1(context.official, expectedOfficialUrls, input.fetchImpl ?? fetch, record(context.task.visual_manifest).galleryMutationContract === "MAYEL_FULL_GALLERY_MUTATION_V1")).verified
   }
   const safeRebaseAvailable = context.plan.blocker ===
     "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
@@ -1270,6 +1270,8 @@ export async function executeMayelTradingVisualLiveCanaryV1(input: {
         postwrite_snapshot: {
           listingActive: after.listingStatus.toLowerCase() === "active",
           officialOrderedImageSetMatch: exactImages,
+          expectedFinalOrder: exactSet.pictureUrls, officialFinalOrder: after.pictureUrls,
+          expectedRemovedImagesAbsent: context.currentOfficialImageUrls.filter(u => !exactSet.pictureUrls.includes(u)).every(u => !after.pictureUrls.includes(u)),
           nonAuthorizedFieldsUnchanged: differences.length === 0,
           mainImageUnchanged, mayelAssetPresent,
           afterImageCount: after.pictureUrls.length,
@@ -1282,7 +1284,8 @@ export async function executeMayelTradingVisualLiveCanaryV1(input: {
         postwrite_readback_at: new Date().toISOString(),
         applied_verified_at: verified ? new Date().toISOString() : null,
         last_error_code: verified ? null
-          : "MAYEL_TRADING_VISUAL_OFFICIAL_READBACK_MISMATCH",
+          : record(context.task.visual_manifest).galleryMutationContract === "MAYEL_FULL_GALLERY_MUTATION_V1"
+            ? "ORDER_OR_REPLACEMENT_MISMATCH" : "MAYEL_TRADING_VISUAL_OFFICIAL_READBACK_MISMATCH",
         claim_token: null, lease_expires_at: null,
       } })
     return Object.freeze({ execution: publicExecution(terminal),
@@ -1526,7 +1529,7 @@ export async function applyMayelVisualManifestToEbayV1(input: {
     const inventoryImagesMatch = JSON.stringify(inventoryImageUrls)
       === JSON.stringify(context.plan.proposedFinalOrderedImageUrls)
     const tradingVerification = await verifyOfficialOrderedImageSetV1(
-      afterOfficial, context.plan.proposedFinalOrderedImageUrls, fetchImpl)
+      afterOfficial, context.plan.proposedFinalOrderedImageUrls, fetchImpl, record(context.task.visual_manifest).galleryMutationContract === "MAYEL_FULL_GALLERY_MUTATION_V1")
     const nonAuthorizedFieldsUnchanged = withoutImages(
       context.management.inventoryItemPayload) === withoutImages(
       afterManagement.inventoryItemPayload)
@@ -1611,7 +1614,8 @@ export async function executeMayelTradingVisualDelegatedManifestV1(input: {
     throw new Error(context.plan.blocker
       ?? "MAYEL_TRADING_VISUAL_RUNTIME_PREFLIGHT_FAILED")
   }
-  if (record(context.task.visual_manifest).galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY") {
+  if (record(context.task.visual_manifest).galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" ||
+      record(context.task.visual_manifest).galleryMutationContract === "MAYEL_FULL_GALLERY_MUTATION_V1") {
     if (!uuid(input.outboxId) || !uuid(input.outboxLeaseToken)) throw Error("OWNER_GALLERY_PREVIEW_REQUIRED")
     const outbox = await input.supabase.from("seller_os_ipad_outbox_v1")
       .select("id,account_key,actor_user_id,item_id,kind,intent,binding,idempotency_key,payload_hash,state,reason_code,received_at,lease_token,dispatch_count,official_readback")
@@ -1846,6 +1850,8 @@ export async function executeMayelTradingVisualDelegatedManifestV1(input: {
         postwrite_snapshot: {
           listingActive: after.listingStatus.toLowerCase() === "active",
           officialOrderedImageSetMatch: exactImages,
+          expectedFinalOrder: exactSet.pictureUrls, officialFinalOrder: after.pictureUrls,
+          expectedRemovedImagesAbsent: context.currentOfficialImageUrls.filter(u => !exactSet.pictureUrls.includes(u)).every(u => !after.pictureUrls.includes(u)),
           nonAuthorizedFieldsUnchanged: differences.length === 0,
           heroPositionMatch, mainImageUnchanged:
             after.pictureUrls[0] === context.currentOfficialImageUrls[0],
@@ -1860,7 +1866,8 @@ export async function executeMayelTradingVisualDelegatedManifestV1(input: {
         postwrite_readback_at: new Date().toISOString(),
         applied_verified_at: verified ? new Date().toISOString() : null,
         last_error_code: verified ? null
-          : "MAYEL_TRADING_VISUAL_OFFICIAL_READBACK_MISMATCH",
+          : record(context.task.visual_manifest).galleryMutationContract === "MAYEL_FULL_GALLERY_MUTATION_V1"
+            ? "ORDER_OR_REPLACEMENT_MISMATCH" : "MAYEL_TRADING_VISUAL_OFFICIAL_READBACK_MISMATCH",
         claim_token: null, lease_expires_at: null,
       } })
     return Object.freeze({ status: verified
