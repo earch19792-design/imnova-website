@@ -1,10 +1,11 @@
 "use client"
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { MayelShippingSnapshotV1 } from "@/lib/seller-os/mayel-shipping-visibility-v1"
 import { supabase } from "@/lib/supabase"
 import { flushLocalOutboxV1, readLocalOutboxV1, readLocalImageBlobV1, readLocalImageSelectionsV1, saveLocalOutboxDraftV1, saveLocalOutboxReceiptV1,
   saveMayelLocalWorkspaceV1, readMayelLocalWorkspaceV1, type DraftInput, type LocalOutboxRecord, type MayelLocalWorkspace } from "@/lib/seller-os/ipad-local-outbox-v1"
 import { type OutboxIntent, type DurableOutboxReceipt } from "@/lib/seller-os/ipad-outbox-contract-v1"
-async function transport(action: "PUT" | "READ", value: OutboxIntent | string[]) {
+async function transport(action: "PUT" | "READ", value: OutboxIntent | string[], shippingItemIds?: string[]) {
  const { data } = await supabase.auth.getSession()
  if (!data.session) throw Error("OUTBOX_SESSION_REQUIRED")
  if (action === "PUT" && !Array.isArray(value) && value.kind === "IMAGE_UPLOAD") {
@@ -28,7 +29,7 @@ async function transport(action: "PUT" | "READ", value: OutboxIntent | string[])
  }
  const r = await fetch("/api/admin/ebay/assistant/revenue-engine", { method: "POST", cache: "no-store", signal: AbortSignal.timeout(15000),
    headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-   body: JSON.stringify({ mode: "IPAD_OUTBOX", action, ...(action === "PUT" ? { intent: value } : { keys: value }) }) })
+   body: JSON.stringify({ mode: "IPAD_OUTBOX", action, ...(action === "PUT" ? { intent: value } : { keys: value, ...(shippingItemIds ? { shippingItemIds } : {}) }) }) })
  const result = await r.json()
  if (!r.ok || !result.success) throw Error(result.error ?? "OUTBOX_SERVER_UNREACHABLE")
  return result
@@ -38,6 +39,9 @@ export function useMayelLocalFirstV1(workspace: Omit<MayelLocalWorkspace, "actor
  const [ready, setReady] = useState(false)
  const [rows, setRows] = useState<LocalOutboxRecord[]>([])
  const [error, setError] = useState("")
+ const [shipping, setShipping] = useState<MayelShippingSnapshotV1 | null>(null)
+ const visibleItems = useRef<string[]>([])
+ visibleItems.current = workspace.listings.map(row => row.itemId).slice(0, 20)
  const [serverError, setServerError] = useState("")
  const [localImagesPending, setLocalImagesPending] = useState(false)
  const restoring = useRef(restore); restoring.current = restore
@@ -50,10 +54,12 @@ export function useMayelLocalFirstV1(workspace: Omit<MayelLocalWorkspace, "actor
    const operation = (async () => {
      try {
        const saved = await flushLocalOutboxV1(actorId, async intent => (await transport("PUT", intent)).receipt as DurableOutboxReceipt)
-       // Re-read receipts so server-side progress appears on the next visit.
-       for (let start = 0; start < saved.length; start += 100) {
+       // Reuse the existing visible-page receipt cycle for durable Shipping status.
+       // An empty receipt batch still reads status; no extra scheduler/heartbeat.
+       for (let start = 0; start < Math.max(1, saved.length); start += 100) {
          const batch = saved.slice(start, start + 100)
-         const response = await transport("READ", batch.map(r => r.intent.idempotencyKey))
+         const response = await transport("READ", batch.map(r => r.intent.idempotencyKey), start === 0 ? visibleItems.current : undefined)
+         if (response.shipping) setShipping(response.shipping)
          for (const receipt of response.receipts as DurableOutboxReceipt[]) {
            const row = batch.find(r => r.intent.idempotencyKey === receipt.idempotencyKey)
            if (row) await saveLocalOutboxReceiptV1(row, receipt)
@@ -121,7 +127,7 @@ export function useMayelLocalFirstV1(workspace: Omit<MayelLocalWorkspace, "actor
    } else void flush()
    return row
  }, [actorId, flush])
- return { ready, actorId, rows, error, serverError, saveDraft, localImagesPending }
+ return { ready, actorId, rows, error, serverError, saveDraft, localImagesPending, shipping }
 }
 export function MayelLocalSaveStatus({ local }: { local: ReturnType<typeof useMayelLocalFirstV1> }) {
  const latest = [...new Map([...local.rows].sort((a,b) => a.intent.createdAt.localeCompare(b.intent.createdAt)).map(r => [`${r.intent.itemId}:${r.intent.kind}`, r])).values()]

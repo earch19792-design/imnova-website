@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase"
 import { FRIENDLY_ACTIONS, METRIC_WINDOWS, scheduledLocalTimeV1, type MetricWindow, type PromotionPolicy } from "@/lib/seller-os/listing-treatment-engine-v1"
 import type { prepareTreatmentPreviewV1 } from "@/lib/seller-os/listing-treatment-runtime-v1"
 import { OwnerListingQualityReportControl } from "@/app/admin/owner-listing-quality-report-control"
+import { MayelShippingStatus, MayelListingShippingStatus } from "./shipping-status"
 import { MayelImageWorkspace } from "./image-workspace"
 import { MayelAdsActivationPreview } from "./ads-activation-preview"
 import { MayelVisualWorkstation } from "@/app/admin/mayel-visual-workstation"
@@ -115,6 +116,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   }
   function changePolicy(p: Partial<PromotionPolicy>) { setPolicy(old => ({ ...old, ...p })); setResult(null); setPreset("Personalizado") }
   return <section className="space-y-5">
+    <MayelShippingStatus snapshot={local.shipping} />
     <MayelLocalSaveStatus local={local} />
     <div className="flex justify-end">
       <a className={`${button} inline-flex items-center gap-2`} href="/manual-mayel-menu-v1.pdf?v=20260909" target="_blank" rel="noopener noreferrer"
@@ -152,7 +154,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         <div className="mt-3 grid max-h-64 gap-2 overflow-auto sm:grid-cols-2">{listings.map(l => <label className="flex gap-3 rounded-xl border p-3 text-sm" key={l.itemId}>
           <input type="checkbox" checked={selected.includes(l.itemId)} disabled={busy || !local.ready} onChange={e => {
             setSelected(old => e.target.checked ? [...old, l.itemId] : old.filter(id => id !== l.itemId)); setResult(null)
-          }} />{l.title || l.itemId}</label>)}</div>
+          }} /><span>{l.title || l.itemId}{menu === 1 && <MayelListingShippingStatus snapshot={local.shipping} itemId={l.itemId} />}</span></label>)}</div>
         {nextCursor && <button className={`${button} mt-3`} disabled={busy} onClick={() => void page(nextCursor)}>Siguientes listings</button>}
         {pageCursor && <button className={`${button} mt-3`} disabled={busy} onClick={() => void page()}>Volver al inicio</button>}
         <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -188,7 +190,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
           <a className="underline" href={`https://www.ebay.com/itm/${l.itemId}`} target="_blank" rel="noopener noreferrer">Ver listing en eBay</a>
         </article>)}
       </section>}
-      {menu === 1 && owner && <MayelAdsActivationPreview key={selected.join(",")} itemIds={selected} />}
+      {menu === 1 && owner && <MayelAdsActivationPreview key={selected.join(",")} itemIds={selected} shipping={local.shipping} />}
       {result && <section className="space-y-4" aria-label="Recomendación de Mayel">
         {menu !== 0 && <div className="rounded-2xl bg-[#dcebdc] p-5"><p>{result.summary.selected} seleccionados · {result.summary.ready} listos para impulsar · {result.summary.optimizeFirst} mejorar primero</p>
           <p>{result.summary.blockedMargin} bloqueados por margen · {result.summary.blockedEvidence} por evidencia · {result.summary.blockedStock} por stock</p>
@@ -198,6 +200,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         {menu === 1 && result.summary.ready > 0 && <button className={button} onClick={() => { setSelected(result.rows.filter(r => r.treatment === "SCALE" && r.promotion.status === "SIMULATION_READY").map(r => r.itemId)); setResult(null) }}>Seleccionar todos los listos de esta página</button>}
         {[...result.rows].sort((a, b) => menu === 3 ? ["PROFIT_PROTECT", "RESTOCK", "OPTIMIZE", "SCALE", "TEST", "HOLD"].indexOf(a.treatment) - ["PROFIT_PROTECT", "RESTOCK", "OPTIMIZE", "SCALE", "TEST", "HOLD"].indexOf(b.treatment) : 0).map(row => <article key={row.itemId} className="space-y-3 rounded-2xl bg-white p-5">
           <h3 className="text-lg font-semibold">{row.title}</h3><p className="font-semibold">{row.label}</p><p>{row.why}</p><p>{row.recommendedAction}</p>
+          {menu === 1 && <MayelListingShippingStatus snapshot={local.shipping} itemId={row.itemId} />}
           <p>Datos del listing: <strong>{row.commercialEnvelope.label}</strong></p>
           {row.treatment === "TEST" && <p className="text-sm">Estamos reuniendo datos para decidir con confianza. Mayel volverá a evaluarlos en el próximo análisis. Mientras tanto, no se preparará una promoción.</p>}
           <dl className="grid gap-3 text-sm sm:grid-cols-3">{([["impressions", "Impresiones"], ["views", "Visitas"], ["ctr", "CTR"], ["unitsSold", "Unidades vendidas"], ["conversion", "Conversión"], ["salesRevenue", "Ventas"]] as const).map(([key, label]) => <div key={key}>

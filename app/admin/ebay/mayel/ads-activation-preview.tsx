@@ -1,4 +1,6 @@
 "use client"
+import { MayelListingShippingStatus } from "./shipping-status"
+import type { MayelShippingSnapshotV1 } from "@/lib/seller-os/mayel-shipping-visibility-v1"
 import { useState } from "react"
 import { supabase } from "@/lib/supabase"
 import type { readAdsRevenueActivationV1 } from "@/lib/seller-os/ebay-ads-revenue-runtime-v1"
@@ -6,7 +8,7 @@ import type { readAdsRevenueActivationV1 } from "@/lib/seller-os/ebay-ads-revenu
 type Result = Awaited<ReturnType<typeof readAdsRevenueActivationV1>>
 const pct = (n: number | null) => n === null ? "Por comprobar" : `${n.toFixed(2)}%`
 const money = (n: number | null) => n === null ? "Por comprobar" : `$${n.toFixed(2)}`
-export function MayelAdsActivationPreview({ itemIds }: { itemIds: string[] }) {
+export function MayelAdsActivationPreview({ itemIds, shipping }: { itemIds: string[]; shipping: MayelShippingSnapshotV1 | null }) {
   const [result, setResult] = useState<Result | null>(null), [busy, setBusy] = useState(false), [error,setError] = useState("")
   async function review() {
     setBusy(true); setError(""); setResult(null)
@@ -32,6 +34,7 @@ export function MayelAdsActivationPreview({ itemIds }: { itemIds: string[] }) {
       {result.rows.map(row => <article key={row.itemId} className="rounded-xl border p-4">
         <h3 className="font-semibold">{row.preview.TITLE ?? row.itemId}</h3>
         <p className="font-medium">{row.treatmentLabel}</p>
+        <MayelListingShippingStatus snapshot={shipping} itemId={row.itemId} />
         <p>{row.singleListingAdsCanaryReady ? "Requiere tu aprobación antes de gastar." : "Esperando los datos necesarios para completar la revisión."}</p>
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">{[
           ["Precio", money(row.preview.SALE_PRICE)], ["Costo", money(row.preview.PRODUCT_COST)],
@@ -40,10 +43,10 @@ export function MayelAdsActivationPreview({ itemIds }: { itemIds: string[] }) {
           ["Techo Ads seguro", pct(row.preview.MAX_SAFE_AD_RATE_PCT)], ["Ads recomendada", pct(row.preview.PROPOSED_AD_RATE_PCT)],
           ["Ganancia después Ads", money(row.preview.PROJECTED_PROFIT_AFTER_ADS)],
         ].map(([label, value]) => <div key={label}><dt className="text-sm">{label}</dt><dd className="font-semibold">{value}</dd></div>)}</dl>
-        <p className="mt-2 text-sm">{row.shippingStatus === "SHIPPING_PROVEN" ? "Shipping vigente y comprobado para este listing." : "Shipping pendiente de una cotización vigente. La conexión con Luna no confirma el costo."}</p>
+
         <p className="mt-2 text-sm">{row.preview.WHY_MAYEL_RECOMMENDS_PROMOTION}</p>
         {!row.ownerPolicyValid && <p>Revisa las fechas y los límites de tu política de publicidad.</p>}
-        <details><summary>Ver detalles</summary><pre className="overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ itemId:row.itemId, blockers:row.blockers, preview:row.preview, feeEstimateMode:row.feeEstimateMode, metricsStatus:row.metricsStatus, simulations:row.simulations },null,2)}</pre></details>
+        <details><summary>Ver detalles</summary><p className="text-sm">{row.shippingStatus === "SHIPPING_PROVEN" ? "Shipping comprobado al preparar este cálculo." : "Este cálculo esperaba Shipping vigente. La conexión con Luna no confirma el costo."}</p><pre className="overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ itemId:row.itemId, blockers:row.blockers, preview:row.preview, feeEstimateMode:row.feeEstimateMode, metricsStatus:row.metricsStatus, simulations:row.simulations },null,2)}</pre></details>
       </article>)}
     </>}
   </section>
