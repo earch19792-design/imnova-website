@@ -83,3 +83,12 @@ export function reusableEconomicShippingEvidenceV1(input: Readonly<{
     observedAt + maximumAgeSeconds * 1_000 >= now &&
     observedAt >= requiredAfter
 }
+
+/** HTTP Retry-After and durable retry timestamps are timing authority only. */
+export function shippingRetryAfterAtV1(value: unknown, now = Date.now()) {
+  if (typeof value !== "string" && typeof value !== "number") return null
+  const raw = String(value).trim()
+  const at = /^\d+$/.test(raw) ? now + Number(raw) * 1_000 : Date.parse(raw)
+  return Number.isFinite(at) && at >= now && at <= 8.64e15
+    ? new Date(at).toISOString() : null
+}

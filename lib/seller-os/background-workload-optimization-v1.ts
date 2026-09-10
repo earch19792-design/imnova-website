@@ -311,10 +311,9 @@ export function createSellerOsBackgroundWorkloadControllerV1(input: Readonly<{
       if (state.circuitState === "HALF_OPEN") closeCircuit()
       state.emptyPollOrdinal += 1
       state.metrics.emptyPolls += 1
-      // The terminal Shipping tier has no negative jitter: at most one empty
-      // acquisition in a half-open 15-minute window. Earlier tiers retain ±10%.
-      const delay = input.producer === "LUNA_SHIPPING" &&
-          state.emptyPollOrdinal >= SELLER_OS_BACKGROUND_EMPTY_BACKOFF_MS.length
+      // Shipping uses the certified fifteen-minute idle tier from the first
+      // empty claim. Research retains its existing backoff and jitter.
+      const delay = input.producer === "LUNA_SHIPPING"
         ? SELLER_OS_BACKGROUND_MAX_CATCHUP_MS
         : sellerOsEmptyPollBackoffMsV1(state.emptyPollOrdinal, random)
       state.emptyBackoffUntilMs = atMs + delay

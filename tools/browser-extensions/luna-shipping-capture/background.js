@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.54"
+const EXTENSION_BUILD_VERSION = "1.0.55"
 const WORKER_CONTROL_ALARM = "seller-os-luna-shipping-worker-control-v1"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
@@ -928,6 +928,45 @@ async function probeBindingCapability(tabId) {
   }
 }
 
+// Independent read-only capability observation. No cart, navigation, fetch,
+// binding mutation or job discovery. Existing worker events drive transitions.
+let captureCapabilityProbeInFlight = false
+async function reportCaptureCapability(existingTabId) {
+  if (!sellerPort || captureCapabilityProbeInFlight || activeJob) return
+  captureCapabilityProbeInFlight = true
+  const responsePort = sellerPort
+  try {
+    const binding = await readDestinationBinding()
+    const candidates = Number.isInteger(existingTabId) ? [{ id: existingTabId }]
+      : (await queryTabs({ url: ["https://shop.app/*"] }))
+        .slice(0, MAX_BIND_DISCOVERY_TABS)
+    let checkoutDomReady = false
+    if (binding) {
+      for (const tab of candidates) {
+        if ((await probeBindingCapability(tab.id)).eligible) {
+          checkoutDomReady = true
+          break
+        }
+      }
+    }
+    if (sellerPort === responsePort) responsePort.postMessage({
+      type: "LUNA_CAPTURE_CAPABILITY_STATE_V1", probe: {
+        contract: "LUNA_CAPTURE_READ_ONLY_PROBE_V1",
+        observedAt: new Date().toISOString(),
+        canonicalBindingPresent: Boolean(binding), checkoutDomReady,
+        captureAvailable: Boolean(binding) && checkoutDomReady,
+      },
+    })
+  } catch {
+    if (sellerPort === responsePort) responsePort.postMessage({
+      type: "LUNA_CAPTURE_CAPABILITY_STATE_V1", probe: {
+        contract: "LUNA_CAPTURE_READ_ONLY_PROBE_V1", observedAt: new Date().toISOString(),
+        captureAvailable: false, canonicalBindingPresent: false, checkoutDomReady: false,
+      },
+    })
+  } finally { captureCapabilityProbeInFlight = false }
+}
+
 async function requestDestinationOperationFromTab(tabId, message) {
   try {
     return await boundedBindStep(sendTabMessage(tabId, message),
@@ -1514,6 +1553,10 @@ chrome.runtime.onConnectExternal.addListener((port) => {
           activeJob?.identity?.candidateId ?? "NONE" })
       return
     }
+    if (message?.type === "SELLER_OS_GET_LUNA_CAPTURE_CAPABILITY_V1") {
+      void reportCaptureCapability()
+      return
+    }
     if (message?.type === GET_BINDING_STORAGE_DIAGNOSTIC) {
       void bindingStorageDiagnostic().then((diagnostic) =>
         port.postMessage(diagnostic))
@@ -1959,4 +2002,13 @@ chrome.webNavigation?.onCommitted?.addListener((details) => {
 
 chrome.webNavigation?.onCompleted?.addListener((details) => {
   observeCheckoutNavigation(details, true)
+})
+
+// Reuse Chrome lifecycle events. A heartbeat never probes or claims Shipping.
+chrome.tabs.onUpdated?.addListener?.((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete" || activeJob || !sellerPort) return
+  try {
+    const url = new URL(tab.url)
+    if (url.protocol === "https:" && url.hostname === "shop.app") void reportCaptureCapability(tabId)
+  } catch { /* A non-checkout tab is not a capability transition. */ }
 })

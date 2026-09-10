@@ -712,6 +712,7 @@ type EconomicShippingRefreshJobV1 = Readonly<{
   shipping_freshness_generation?: string | null
   shipping_required_evidence_after?: string | null
   shipping_legacy_recovery_generation?: string | null
+  shipping_execution_authority?: string | null
 }>
 
 function economicLiveTarget(job: EconomicShippingRefreshJobV1,
@@ -738,18 +739,10 @@ async function acquireEconomicLiveListingShippingJobsV1(input: Readonly<{
   if (input.limit <= 0) return Object.freeze({ jobs: Object.freeze([]),
     eligiblePendingJobCount: 0, claimedJobCount: 0, reusedEvidenceCount: 0,
     leaseConflictCount: 0, claimFailureCount: 0 })
-  const observedAt = new Date(input.now ?? Date.now()).toISOString()
-  const pending = await input.supabase.from(
-    "seller_os_economic_evidence_refresh_jobs_v1")
-    .select("job_id,marketplace_account_key,ebay_item_id,source_identity,status,last_evidence_id,next_retry_at,attempt_count,first_detected_at,lease_owner,lease_expires_at,shipping_legacy_recovery_generation")
-    .eq("marketplace_account_key", input.accountKey)
-    .eq("evidence_type", "LUNA_CURRENT_SHIPPING")
-    .in("status", ["STALE", "MISSING", "WAITING_FOR_WORKER",
-      "FAILED_RETRYABLE"])
-    .is("shipping_legacy_recovery_generation", null)
-    .or(`next_retry_at.is.null,next_retry_at.lte.${observedAt}`)
-    .order("last_detected_at", { ascending: true })
-    .limit(SELLER_OS_ECONOMIC_SHIPPING_BATCH_LIMIT_V1)
+  const pending = await input.supabase.rpc(
+    "discover_seller_os_current_shipping_refresh_v1", {
+      p_marketplace_account_key: input.accountKey,
+    })
   if (pending.error) {
     throw new Error("LUNA_ECONOMIC_SHIPPING_JOB_DISCOVERY_FAILED")
   }
@@ -1144,7 +1137,12 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   runtimeInstanceId: string
   sessionSecret: string
   now?: number
+  maximumJobs?: 1
 }>): Promise<LunaChromeShippingJobAcquisitionV1> {
+  if (input.maximumJobs === 1) {
+    const current = await acquireEconomicLiveListingShippingJobsV1({ ...input, limit: 1 })
+    if (current.eligiblePendingJobCount > 0) return Object.freeze(current)
+  }
   let eligible: readonly LunaChromeShippingJobV1[] = Object.freeze([])
   let standardDiscoveryError: unknown = null
   try {
@@ -1161,7 +1159,7 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   const jobs: LunaChromeShippingJobV1[] = []
   let leaseConflictCount = 0
   let claimFailureCount = 0
-  for (const job of eligible) {
+  for (const job of eligible.slice(0, input.maximumJobs ?? eligible.length)) {
     const claim = await input.supabase.rpc(
       "claim_seller_os_luna_shipping_job_v1", {
         p_account_key: input.accountKey,
@@ -1182,8 +1180,8 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     supabase: input.supabase, accountKey: input.accountKey,
     runtimeInstanceId: input.runtimeInstanceId,
     sessionSecret: input.sessionSecret,
-    limit: Math.min(SELLER_OS_ECONOMIC_SHIPPING_BATCH_LIMIT_V1,
-      Math.max(0, LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH - jobs.length)),
+    limit: input.maximumJobs === 1 ? 0 : Math.min(SELLER_OS_ECONOMIC_SHIPPING_BATCH_LIMIT_V1,
+      Math.max(0, (input.maximumJobs ?? LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH) - jobs.length)),
     now: input.now,
   })
   jobs.push(...economic.jobs)
@@ -1212,7 +1210,7 @@ export async function tryPersistEconomicLiveListingShippingCaptureV1(
 ) {
   const candidates = await input.supabase.from(
     "seller_os_economic_evidence_refresh_jobs_v1")
-    .select("job_id,ebay_item_id,source_identity,lease_owner,lease_expires_at,shipping_freshness_generation,shipping_required_evidence_after,shipping_legacy_recovery_generation")
+    .select("job_id,ebay_item_id,source_identity,lease_owner,lease_expires_at,shipping_freshness_generation,shipping_required_evidence_after,shipping_legacy_recovery_generation,shipping_execution_authority")
     .eq("marketplace_account_key", input.accountKey)
     .eq("evidence_type", "LUNA_CURRENT_SHIPPING")
     .eq("status", "REFRESHING")
@@ -1258,7 +1256,7 @@ export async function tryPersistEconomicLiveListingShippingCaptureV1(
       supabase: input.supabase, target, capture: input.capture,
       sessionSecret: input.sessionSecret, now: input.now,
     })
-    const observedAt = new Date(input.now ?? Date.now()).toISOString()
+    const observedAt = input.capture.observedAt
     const evidence = buildEconomicEvidenceV1({
       accountKey: input.accountKey, itemId: target.ebayItemId,
       evidenceType: "LUNA_CURRENT_SHIPPING",
@@ -1288,8 +1286,9 @@ export async function tryPersistEconomicLiveListingShippingCaptureV1(
     if (shippingClaim.error || shippingClaim.data !== true) {
       throw new Error("LUNA_ECONOMIC_SHIPPING_SECONDARY_FINISH_FAILED")
     }
-    const recoveryGeneration = text(
-      row.shipping_legacy_recovery_generation, 180)
+    const recoveryGeneration = row.shipping_execution_authority ===
+      "CURRENT_OPERATIONAL_V1" ? null : text(
+        row.shipping_legacy_recovery_generation, 180)
     const finish = await input.supabase.rpc(recoveryGeneration
       ? "finish_seller_os_economic_shipping_legacy_recovery_v1"
       : "finish_seller_os_economic_refresh_job_v1", recoveryGeneration ? {

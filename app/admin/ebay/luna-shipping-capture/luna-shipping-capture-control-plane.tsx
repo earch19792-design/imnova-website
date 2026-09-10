@@ -39,7 +39,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.54"
+const EXPECTED_EXTENSION_VERSION = "1.0.55"
 const RUNTIME_TRACE_CONTRACT = "LUNA_SHIPPING_RUNTIME_TRACE_V1"
 const SELLER_OS_EXTENSION_ORIGIN = SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
@@ -609,6 +609,9 @@ export function LunaShippingCaptureControlPlane({
     if (hasExactLiveTarget) setLiveTarget(requestedLiveTarget)
     let busy = false
     let extensionReady = false
+    let captureProbe: Record<string, unknown> | null = null
+    let captureNextAttemptAt = 0
+    let captureProbeInFlight = false
     let canonicalBindingStatusRead = false
     let canonicalDestinationBindingPresent = false
     let canonicalDestinationMismatchProven = false
@@ -810,6 +813,17 @@ export function LunaShippingCaptureControlPlane({
 
     const fail = (value: unknown, source = "UNCLASSIFIED_ASYNC_FAILURE") => {
       if (!active) return
+      if (mode === "AUTO" && busy) {
+        captureProbe = null
+        captureNextAttemptAt = Math.max(captureNextAttemptAt, Date.now() + 900_000)
+        void adminPost("capture_capability_state", {
+          runtimeInstanceId, leaderSessionId: claimAuthoritySessionId,
+          failure: true, retryAfter: (value as { retryAfter?: unknown })?.retryAfter ?? null,
+        }).then((receipt) => {
+          const next = Date.parse(receipt.capability?.nextAttemptAt ?? "")
+          if (Number.isFinite(next)) captureNextAttemptAt = Math.max(captureNextAttemptAt, next)
+        }).catch(() => { /* Persisted admission cooldown remains in force. */ })
+      }
       const economicRefresh = jobs[index]?.economicRefresh
       if (economicRefresh &&
           !economicFailureCloseStarted.has(economicRefresh.jobId)) {
@@ -1006,9 +1020,19 @@ export function LunaShippingCaptureControlPlane({
       if (hasExactLiveTarget) {
         throw new Error("LUNA_EXACT_LIVE_TARGET_GLOBAL_QUEUE_FORBIDDEN")
       }
+      if (nextMode === "AUTO") {
+        const capability = await adminPost("capture_capability_state", {
+          runtimeInstanceId, leaderSessionId: claimAuthoritySessionId,
+          probe: captureProbe,
+        })
+        const next = Date.parse(capability.capability?.nextAttemptAt ?? "")
+        if (Number.isFinite(next)) captureNextAttemptAt = Math.max(captureNextAttemptAt, next)
+      }
       const payload = await adminPost("resolve_jobs", { candidateIds,
         ...(nextMode === "AUTO" ? { runtimeInstanceId,
           leaderSessionId: claimAuthoritySessionId } : {}) })
+      const durableNext = Date.parse(payload.acquisition?.nextAttemptAt ?? "")
+      if (Number.isFinite(durableNext)) captureNextAttemptAt = Math.max(captureNextAttemptAt, durableNext)
       const resolved = Array.isArray(payload.jobs) ? payload.jobs : []
       const pendingCount = Number(
         payload.acquisition?.eligiblePendingJobCount ?? resolved.length)
@@ -1153,6 +1177,21 @@ export function LunaShippingCaptureControlPlane({
         scheduleProductionAcquisition(Math.max(
           SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS,
           workloadController.nextDelayMs()))
+        return
+      }
+      // Connection/heartbeat is never capture authority. Reuse the existing
+      // scheduler; this probe reads existing DOM/storage and creates no cart.
+      if (Date.now() < captureNextAttemptAt) {
+        scheduleProductionAcquisition(captureNextAttemptAt - Date.now())
+        return
+      }
+      if (captureProbe?.captureAvailable !== true ||
+          Date.parse(String(captureProbe?.observedAt ?? "")) < Date.now() - 300_000) {
+        if (port && !captureProbeInFlight) {
+          captureProbeInFlight = true
+          port.postMessage({ type: "SELLER_OS_GET_LUNA_CAPTURE_CAPABILITY_V1" })
+        }
+        scheduleProductionAcquisition(900_000)
         return
       }
       if (extensionReady && canonicalBindingStatusRead &&
@@ -1420,6 +1459,19 @@ export function LunaShippingCaptureControlPlane({
             type: "SELLER_OS_GET_ACTIVE_LUNA_SHIPPING_JOB_STATUS",
           })
           dispatchPendingExactPortJob()
+          return
+        }
+        if (message?.type === "LUNA_CAPTURE_CAPABILITY_STATE_V1") {
+          captureProbeInFlight = false
+          if (message.probe?.contract !== "LUNA_CAPTURE_READ_ONLY_PROBE_V1") return
+          captureProbe = message.probe
+          if (captureProbe?.captureAvailable === true && !busy) {
+            if (discoveryRetryTimer !== null) {
+              window.clearTimeout(discoveryRetryTimer)
+              discoveryRetryTimer = null
+            }
+            scheduleProductionAcquisition(Math.max(0, captureNextAttemptAt - Date.now()))
+          }
           return
         }
         if (message?.type === "LUNA_SHIPPING_RUNTIME_TRACE_EVENT") {
@@ -1878,8 +1930,10 @@ export function LunaShippingCaptureControlPlane({
           if (typeof message.lastRuntimeState === "string") {
             setLastRuntimeState(message.lastRuntimeState)
           }
-          fail(new Error(typeof message.error === "string"
-            ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"))
+          fail(Object.assign(new Error(typeof message.error === "string"
+            ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"), {
+            retryAfter: message.retryAfter ?? null,
+          }))
           if (mode === "AUTO") scheduleProductionAcquisition()
           return
         }

@@ -12,7 +12,7 @@ Extensión MV3 separada y limitada exclusivamente a cotizaciones de envío de Lu
 4. La extensión abre automáticamente la página canónica de captura de Seller OS.
 
 El ID estable de la extensión es `mhpkojahbbfdgodeaecggpjaplllgclk`.
-El artefacto canónico actual es `1.0.54` y su único origen Seller OS externo es
+El artefacto canónico actual es `1.0.55` y su único origen Seller OS externo es
 `https://imnova-seller-os-preprod.vercel.app`.
 Después de instalarla, Seller OS entrega lotes acotados y la extensión procesa los
 candidatos secuencialmente. También puede recibir un único job transitorio de
@@ -47,3 +47,8 @@ no adquiere jobs si el service worker cargado todavía no anuncia esa capacidad.
   envío, total o restauración del carrito.
 - Cada paso tiene como máximo dos intentos. Un cambio del DOM devuelve
   `LUNA_SHIPPING_DOM_CONTRACT_CHANGED`.
+
+La versión 1.0.55 separa conexión y capacidad de captura. La reanudación automática
+requiere el probe de sólo lectura de un checkout existente y el permiso durable
+del líder. Un heartbeat no crea claims. Los 429 y las ventanas vacías conservan
+el backoff de Phase A; no hay un poller nuevo.
