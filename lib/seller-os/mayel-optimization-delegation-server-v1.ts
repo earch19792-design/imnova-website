@@ -19,6 +19,7 @@ export async function readDelegatedVisualAuthorityV1(input: { supabase: Supabase
   const grant = input.grant === undefined ? await readOptimizationGrantV1(input.supabase, input.accountKey) : input.grant
   const manifest = record(task.visual_manifest), signal = record(task.selection_signal)
   const proposed = Array.isArray(manifest.proposedOrderedImages) ? manifest.proposedOrderedImages.map(record) : []
+  const participatingAssets = assets.filter(a => proposed.some(e => e.assetId === a.id))
   const intents = Array.isArray(manifest.visualIntents) ? manifest.visualIntents.map(record) : []
   let compatible = false
   try {
@@ -54,7 +55,7 @@ export async function readDelegatedVisualAuthorityV1(input: { supabase: Supabase
       baseGenerationCompatible: compatible && stableOutboxJsonV1(gallery.images) === stableOutboxJsonV1(task.current_image_set),
       qaPass: proposed.some(e => e.assetId) && proposed.every(e => !e.assetId || assets.some(a => a.id === e.assetId &&
         a.output_sha256 === e.outputSha256 && a.public_url === e.publicUrl && delegatedVisualQaV1(a, task))),
-      unsupportedClaimCount: assets.length > 0 && assets.every(a => delegatedVisualQaV1(a, task)) ? 0 : null,
+      unsupportedClaimCount: participatingAssets.length > 0 && participatingAssets.every(a => delegatedVisualQaV1(a, task)) ? 0 : null,
       competitorContaminationCount: sourcesProven ? 0 : null,
     } })
   return { ...decision, grant, proposed, productTruthProof }

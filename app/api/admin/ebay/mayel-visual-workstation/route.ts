@@ -353,6 +353,7 @@ export async function POST(request: Request) {
   if (boundaryBlocked(request)) return json({ success: false,
     error: "MAYEL_VISUAL_WORKSTATION_DEDICATED_PREPROD_ONLY" }, 403)
   const contentType = request.headers.get("content-type") ?? ""
+  let transitionTrace: Record<string, string | null> = {}
   try {
     if (validation.authenticationMode === "service_role") {
       if (!contentType.startsWith("application/json")) return json({
@@ -360,6 +361,12 @@ export async function POST(request: Request) {
         error: "MAYEL_TRADING_VISUAL_CANARY_REQUEST_INVALID" }, 400)
       const body = await request.json().catch(() => null) as
         Record<string, unknown> | null
+      if (body?.action === "RECOVER_APPROVED_ASSET_TRANSITION_V1") {
+        const { recoverApprovedAssetTransitionV1 } = await import("@/lib/seller-os/mayel-approved-asset-transition-server-v1")
+        const result = await recoverApprovedAssetTransitionV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+          taskId: String(body.visualTaskId ?? ""), expectedItemId: String(body.expectedItemId ?? ""), assetId: String(body.assetId ?? "") })
+        return json({ success: true, result, marketplaceWrites: 0 })
+      }
       if (body?.action === "RUN_DELEGATED_VISUAL_SYNC_V1") {
         const { runDelegatedVisualScopedV1 } = await import("@/lib/seller-os/mayel-delegated-visual-scoped-run-v1")
         const result = await runDelegatedVisualScopedV1({
@@ -459,6 +466,8 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null) as
       Record<string, unknown> | null
     const action = typeof body?.action === "string" ? body.action : ""
+    transitionTrace = { action: /^[A-Z0-9_]{1,80}$/.test(action) ? action : null,
+      taskId: uuid(body?.visualTaskId), assetId: uuid(body?.assetId) }
     if (action === "AUTHORIZE_FULL_VISUAL_DELEGATION") {
       if (!ownerRole) return json({ success: false,
         error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
@@ -682,7 +691,7 @@ export async function POST(request: Request) {
     }
     if (action === "SAVE_ASSET_INTENT") {
       const taskId = uuid(body?.visualTaskId), assetId = uuid(body?.assetId)
-      if (!body || !taskId || !assetId || typeof body.visualIntent !== "string" || !["REPLACE_MAIN", "ADD_SECONDARY"].includes(body.visualIntent) ||
+      if (!body || !taskId || !assetId || typeof body.visualIntent !== "string" || !["REPLACE_MAIN", "REPLACE_SLOT", "ADD_SECONDARY"].includes(body.visualIntent) ||
           typeof body.targetImagePosition !== "number" || !Number.isInteger(body.targetImagePosition)) return json({ success: false, error: "VISUAL_INTENT_REQUIRED" }, 400)
       const result = await saveMayelVisualAssetIntentV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
         actorUserId: auth.userId, owner: ownerRole, taskId, expectedVisualManifestDigest: typeof body.expectedVisualManifestDigest === "string" ? body.expectedVisualManifestDigest : null,
@@ -763,24 +772,29 @@ export async function POST(request: Request) {
         body?.decision === "REJECT" ? body.decision : null
       if (!taskId || !assetId || !decision) return json({ success: false,
         error: "MAYEL_VISUAL_REVIEW_CONTRACT_INVALID" }, 400)
-      if (decision === "APPROVE" && (typeof body?.visualIntent !== "string" || !["REPLACE_MAIN", "ADD_SECONDARY"].includes(body.visualIntent) ||
+      if (decision === "APPROVE" && (typeof body?.visualIntent !== "string" || !["REPLACE_MAIN", "REPLACE_SLOT", "ADD_SECONDARY"].includes(body.visualIntent) ||
           typeof body.targetImagePosition !== "number" || !Number.isInteger(body.targetImagePosition))) return json({ success: false, error: "VISUAL_INTENT_REQUIRED" }, 400)
       const result = await reviewMayelVisualOutputV1({
         supabase: getSupabaseAdminClient(), accountKey: accountKey(),
         actorUserId: auth.userId, taskId, assetId, decision,
         humanQa: body?.humanQa,
+        expectedGalleryDigest: typeof body?.expectedGalleryDigest === "string" ? body.expectedGalleryDigest : null,
         visualIntent: decision === "APPROVE" ? { assetId, visualIntent: body?.visualIntent as VisualIntentV1["visualIntent"], targetImagePosition: body?.targetImagePosition as number } : undefined,
         rejectionReason: typeof body?.rejectionReason === "string"
           ? body.rejectionReason : null })
-      return json({ success: true, outcome: decision === "APPROVE"
-        ? "CANONICAL_ASSET_CREATED_OWNER_PREVIEW_READY"
+      const grant = decision === "APPROVE" ? await readOptimizationGrantV1(getSupabaseAdminClient(), accountKey()) : null
+      const delegated = optimizationGrantActiveV1(grant, accountKey())
+      const handoff = delegated ? await enqueueDelegatedVisualV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(), taskId }) : null
+      return json({ success: true, delegated, handoff, ownerApprovalRequired: !delegated,
+        outcome: decision === "APPROVE"
+        ? delegated ? handoff?.status : "CANONICAL_ASSET_CREATED_OWNER_PREVIEW_READY"
         : "MAYEL_OUTPUT_REJECTED",
         assetId: result.asset.id, status: result.asset.status,
         sameDecisionIdempotent: result.idempotent,
         visualManifestDigest:
           (result.manifest as Record<string, unknown> | null)
             ?.visualManifestDigest ?? null,
-        ownerApprovalStatus: "PENDING",
+        ownerApprovalStatus: delegated ? handoff?.receipt ? "AUTO_AUTHORIZED_BY_OWNER_DELEGATION" : "DELEGATED_GUARDS_PENDING" : "PENDING",
         marketplaceWriteCapabilityFromPhaseA: false,
         marketplaceWrites: 0 })
     }
@@ -788,7 +802,7 @@ export async function POST(request: Request) {
       error: "MAYEL_VISUAL_ACTION_INVALID" }, 400)
   } catch (error) {
     const errorCode = safeCode(error)
-    console.warn("MAYEL_VISUAL_ACTION_FAILED", { errorCode,
+    console.warn("MAYEL_VISUAL_ACTION_FAILED", { ...transitionTrace, errorCode,
       marketplaceWrites: 0 })
     return json({ success: false, error: errorCode,
       operatorMessage: safeOperatorMessage(error),

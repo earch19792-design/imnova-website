@@ -59,6 +59,7 @@ type VisualTask = {
   currentGallerySynced?: boolean
   currentGalleryProven?: boolean
   currentGalleryObservedAt?: string | null
+  currentGalleryDigest?: string | null
   galleryRebaseRequired?: boolean
   outputs: VisualOutput[]
   visualManifest: Record<string, unknown> | null
@@ -526,7 +527,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
       await visualRequest("/api/admin/ebay/mayel-visual-workstation", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "SAVE_ASSET_INTENT", visualTaskId: task.visualTaskId, assetId: output.id,
           visualIntent: intent, targetImagePosition: targetPosition, expectedVisualManifestDigest: task.visualManifestDigest }) })
-      await onDone(); setMessage("Intención guardada. Revisa el Preview antes de aprobar.")
+      await onDone(); setMessage(task.autonomousOptimization ? "Intención guardada. Mayel comprobará la evidencia y sincronizará cuando sea segura." : "Intención guardada. Revisa el Preview antes de aprobar.")
     } catch { setMessage("No pudimos guardar el cambio. Revisa que la posición esté disponible.") }
     finally { setSavingIntent(false) }
   }
@@ -541,6 +542,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
           visualTaskId: task.visualTaskId, assetId: output.id, decision,
           visualIntent: intent, targetImagePosition: targetPosition,
           humanQa: decision === "APPROVE" ? checks : undefined,
+          expectedGalleryDigest: task.currentGalleryDigest,
           rejectionReason: decision === "REJECT" ? reason : undefined }),
       })
       await onDone()
@@ -587,10 +589,11 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
         </select></label>
       {output.status === "approved" && <button type="button" disabled={busy || savingIntent || !intent} onClick={() => void saveIntent()}
         className="mt-2 min-h-11 rounded-xl border px-4 disabled:opacity-40">Guardar intención y Preview</button>}
-      <p className="mt-2 text-sm">Conserva las demás posiciones. Guardar la intención no autoriza sincronizar.</p>
+      <p className="mt-2 text-sm">{task.autonomousOptimization ? "Conserva las demás posiciones. Mayel aplica la delegación sólo después de validar QA y evidencia." : "Conserva las demás posiciones. Guardar la intención no autoriza sincronizar."}</p>
     </div>}
     {output.status === "pending_review" && <div className="mt-4">
-      <p className="text-sm font-semibold">Comparación humana obligatoria</p>
+      <p className="text-sm font-semibold">{task.autonomousOptimization ? "QA de identidad pendiente" : "Comparación humana obligatoria"}</p>
+      {task.autonomousOptimization && <p className="mt-2 text-sm">Mayel continúa automáticamente cuando la evaluación semántica está guardada y es segura. La delegación no aprueba cambios en la identidad ni datos sin evidencia.</p>}
       <div className="mt-2 grid gap-2 sm:grid-cols-2">{baseChecks.map(([key, label]) =>
         <label key={key} className="flex min-h-11 items-start gap-2 rounded-xl bg-[#f4efe7] p-3 text-xs leading-5">
           <input type="checkbox" checked={checks[key] === true}
@@ -612,7 +615,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
             className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-[#b75d43] px-3 text-sm font-semibold text-[#8b4937] disabled:opacity-40"><X className="h-4 w-4" />Rechazar</button>
           <button type="button" disabled={busy || !complete || !intent}
             onClick={() => void submit("APPROVE")}
-            className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1d5961] px-3 text-sm font-semibold text-white disabled:opacity-40"><Check className="h-4 w-4" />Aprobar</button>
+            className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1d5961] px-3 text-sm font-semibold text-white disabled:opacity-40"><Check className="h-4 w-4" />{task.autonomousOptimization ? "Guardar evaluación QA" : "Aprobar"}</button>
         </div>
       </div>
       {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}

@@ -1,3 +1,4 @@
+import { approvalGalleryV1, assertReviewIntentV1, MAYEL_ASSET_TRANSITION_V1 } from "../seller-os/mayel-approved-asset-transition-v1"
 import { buildVisualIntentManifestV1, type VisualIntentV1 } from "../seller-os/mayel-visual-intent-v1"
 import { galleryMatchesSyncReceiptV1, replacementSlotOrderV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
 import { readCurrentMayelGalleryV1, savedOfficialGalleryV1 } from "./mayel-current-gallery-server-v1"
@@ -1049,9 +1050,7 @@ async function manifestForApproval(input: {
   assets.push({ assetId: input.asset.id,
     role: input.asset.mayel_output_role,
     outputSha256: input.asset.output_sha256, publicUrl: input.publicUrl })
-  const currentImages = Array.isArray(input.task.current_image_set)
-    ? input.task.current_image_set.filter((url): url is string =>
-      Boolean(httpsUrl(url))) : []
+  const currentImages = approvalGalleryV1(input.task, savedOfficialGalleryV1(input.task.selection_signal))
   if (input.visualIntent) {
     const old = record(input.task.visual_manifest)
     const previous = Array.isArray(old.visualIntents) ? old.visualIntents as VisualIntentV1[] : []
@@ -1081,6 +1080,7 @@ export async function reviewMayelVisualOutputV1(input: {
   assetId: string
   decision: "APPROVE" | "REJECT"
   humanQa?: unknown
+  expectedGalleryDigest?: string | null
   rejectionReason?: string | null
   replaceMainImage?: boolean
   visualIntent?: VisualIntentV1
@@ -1092,7 +1092,7 @@ export async function reviewMayelVisualOutputV1(input: {
     .eq("uploaded_by", input.actorUserId).maybeSingle()
   if (error || !asset) throw new Error("MAYEL_VISUAL_ASSET_NOT_FOUND")
   if (asset.status === "approved" && input.decision === "APPROVE") {
-    if (asset.source_type === "SELLER_OS_ASSISTANT_IMAGE_VARIANT") {
+    if (asset.source_type === "SELLER_OS_ASSISTANT_IMAGE_VARIANT" || record(task.visual_manifest).intentContract === "MAYEL_VISUAL_INTENT_V1") {
       // Approval replay must not rebuild the gallery and restore a removed hero.
       return { asset, manifest: task.visual_manifest, idempotent: true }
     }
@@ -1106,7 +1106,8 @@ export async function reviewMayelVisualOutputV1(input: {
   if (input.decision === "REJECT") {
     const allowed = ["IDENTITY_DRIFT", "INCORRECT_COLOR",
       "INVENTED_ACCESSORY", "INCORRECT_TEXT", "INCORRECT_DIMENSION",
-      "LOW_QUALITY", "ROLE_MISMATCH", "OTHER_SAFE_REASON"]
+      "LOW_QUALITY", "ROLE_MISMATCH", "OTHER_SAFE_REASON", "UNSUPPORTED_PRODUCT_FACTS",
+      "FALSE_FEATURES", "UNPROVEN_ACCESSORIES", "PRODUCT_MISREPRESENTATION"]
     if (!input.rejectionReason || !allowed.includes(input.rejectionReason)) {
       throw new Error("MAYEL_VISUAL_REJECTION_REASON_REQUIRED")
     }
@@ -1126,6 +1127,21 @@ export async function reviewMayelVisualOutputV1(input: {
       !validateMayelHumanQaV1(input.humanQa, role)) {
     throw new Error("MAYEL_VISUAL_HUMAN_QA_INCOMPLETE")
   }
+  const currentImages = approvalGalleryV1(task, savedOfficialGalleryV1(task.selection_signal), input.expectedGalleryDigest)
+  if (!input.visualIntent) throw Error("VISUAL_INTENT_REQUIRED")
+  const previous = record(task.visual_manifest).visualIntents
+  assertReviewIntentV1(currentImages, Array.isArray(previous) ? previous as VisualIntentV1[] : [], input.visualIntent)
+  // Persist the semantic decision before promotion. A crash cannot lose it;
+  // it is not OWNER approval and does not authorize any marketplace write.
+  const transitionDecision = { contract: MAYEL_ASSET_TRANSITION_V1, taskId: task.id, assetId: asset.id,
+    actorUserId: input.actorUserId, outputSha256: asset.output_sha256,
+    sourceImageSetDigest: task.source_image_set_digest, productTruthDigest: task.product_truth_digest,
+    checks: input.humanQa, intent: input.visualIntent, currentImages,
+    galleryDigest: savedOfficialGalleryV1(task.selection_signal)!.digest, writeAuthority: false }
+  const decisionSave = await input.supabase.rpc("seller_os_record_visual_safe_decision_v1", {
+    p_account_key: input.accountKey, p_actor_user_id: input.actorUserId, p_task_id: input.taskId,
+    p_asset_id: input.assetId, p_decision: transitionDecision })
+  if (decisionSave.error || !decisionSave.data) throw Error("MAYEL_VISUAL_SAFE_DECISION_SAVE_FAILED")
   const staged = await input.supabase.storage.from(STAGING_BUCKET)
     .download(String(asset.output_storage_path))
   if (staged.error) throw new Error("MAYEL_VISUAL_STAGING_READ_FAILED")
@@ -1138,7 +1154,7 @@ export async function reviewMayelVisualOutputV1(input: {
   const publicPath = `mayel-visual/${input.taskId}/${input.assetId}/${asset.output_sha256}.jpg`
   const publicUrl = input.supabase.storage.from(PUBLIC_BUCKET)
     .getPublicUrl(publicPath).data.publicUrl
-  const approvalQa = { ...record(asset.qa_result),
+  const approvalQa = { ...record(asset.qa_result), transitionDecision,
     humanReview: { decision: "APPROVE", checks: input.humanQa,
       reviewedBy: input.actorUserId } }
   let manifest
@@ -1170,6 +1186,9 @@ export async function reviewMayelVisualOutputV1(input: {
   if (promotionError || !promotion) {
     await removeUncommittedPublicUpload({ supabase: input.supabase,
       path: publicPath })
+    const code = String(promotionError?.message ?? "")
+    console.warn("MAYEL_VISUAL_PROMOTION_REJECTED", { taskId: input.taskId, assetId: input.assetId,
+      stage: "DURABLE_PROMOTION", code: /^[A-Z_]+$/.test(code) ? code : "DATABASE_REJECTED" })
     throw new Error("MAYEL_VISUAL_APPROVAL_PERSIST_FAILED")
   }
   const result = record(promotion)
@@ -1255,7 +1274,7 @@ export async function readMayelVisualWorkstationV1(input: {
         previewExpiresInSeconds = previewUrl ? 300 : null
       }
       outputs.push({ ...output, previewUrl, previewExpiresInSeconds,
-        sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? [], { active: Boolean(optimizationGrant), authorized: delegated?.authorized === true }) })
+        sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? [], { active: Boolean(optimizationGrant), authorized: delegated?.authorized === true && output.status === "approved" && delegated.proposed.some(p => p.assetId === output.id) }) })
     }
     const { evidence, prompt: promptContract, storedMatchesCanonical } =
       canonicalPromptForTask(task)
@@ -1304,6 +1323,7 @@ export async function readMayelVisualWorkstationV1(input: {
       currentImages: savedOfficialGalleryV1(task.selection_signal)?.images ?? task.current_image_set as string[],
       currentGalleryProven: Boolean(savedOfficialGalleryV1(task.selection_signal)),
       currentGalleryObservedAt: savedOfficialGalleryV1(task.selection_signal)?.observedAt ?? null,
+      currentGalleryDigest: savedOfficialGalleryV1(task.selection_signal)?.digest ?? null,
       galleryRebaseRequired, outputs,
       visualManifest: task.visual_manifest ? record(task.visual_manifest) : null,
       visualManifestDigest: text(task.visual_manifest_digest, 100),
