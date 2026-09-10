@@ -1,4 +1,4 @@
-import { readSellingFeeTaxPolicyV1 } from "../ebay/ebay-selling-fee-tax-policy-v1"
+import { readSellingFeeTaxPolicyV1, retainedSellingFeeTaxPolicyV1 } from "../ebay/ebay-selling-fee-tax-policy-v1"
 import type { createProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SafeMarketplaceOrder } from "../marketplace/commercial-monitor-domain"
@@ -23,8 +23,16 @@ export async function persistProducedEbayFeeV1(input: Scope & { itemId: string |
   if (head.error || !head.data || (head.data.ebay_item_id && head.data.ebay_item_id !== input.itemId) ||
       (head.data.sku && input.sku && head.data.sku !== input.sku)) throw Error("FEE_BINDING_CONFLICT")
   const context = feeRecordV1(input.context)
-  const feeTaxPolicy = input.itemId && feeRecordV1(context.identity).accountBindingExact === true
-    ? await readSellingFeeTaxPolicyV1(input.now) : null
+  // Retain fresh official document evidence across server/browser lifecycles.
+  // One exact-item history read; never refresh a still-current public policy.
+  const taxHistory = input.itemId && feeRecordV1(context.identity).accountBindingExact === true
+    ? await input.supabase.from("seller_os_ebay_fee_authorities_v1").select("authority")
+      .eq("marketplace_account_key",input.accountKey).eq("ebay_item_id",input.itemId)
+      .order("observed_at",{ascending:false}).order("authority_id").limit(2) : null
+  const retainedTax = retainedSellingFeeTaxPolicyV1(taxHistory?.error ? [] :
+    (taxHistory?.data ?? []).map(row=>feeRecordV1(row.authority).feeTaxPolicy),input.now)
+  const feeTaxPolicy = retainedTax ?? (input.itemId && feeRecordV1(context.identity).accountBindingExact === true
+    ? await readSellingFeeTaxPolicyV1(input.now) : null)
   const authority = produceEbayFeeAuthorityV1({...input,context:{...context,feeTaxPolicy,packageData:head.data.input_revision}})
   const written = await input.supabase.rpc("seller_os_record_fee_authority_v1", {
     p_binding_key: bindingKey, p_expected_updated_at: head.data.updated_at, p_authority: authority,

@@ -14,6 +14,17 @@ export function parseSellingFeeTaxPolicyV1(html: string, now: Date): SellingFeeT
   return { source: SELLING_FEE_TAX_SOURCE, digest: createHash("sha256").update(scopes[0][0]).digest("hex"),
     observedAt: now.toISOString(), freshUntil: new Date(now.getTime()+6*3600_000).toISOString(), applicableStates: names.map(s=>states[s]) }
 }
+export function retainedSellingFeeTaxPolicyV1(values: unknown[], now: Date): SellingFeeTaxPolicyV1 | null {
+  const policies=values.slice(0,2).filter((v): v is SellingFeeTaxPolicyV1 => {
+    if (!v || typeof v!=="object") return false
+    const p=v as SellingFeeTaxPolicyV1
+    return p.source===SELLING_FEE_TAX_SOURCE && /^[a-f0-9]{64}$/.test(p.digest ?? "") &&
+      Date.parse(p.observedAt)<=now.getTime() && Date.parse(p.freshUntil)>now.getTime() &&
+      Date.parse(p.freshUntil)-Date.parse(p.observedAt)<=6*3600_000 &&
+      Array.isArray(p.applicableStates) && [...p.applicableStates].sort().join(",")==="HI,SD,TX,WA"
+  })
+  return policies.sort((a,b)=>Date.parse(b.observedAt)-Date.parse(a.observedAt))[0] ?? null
+}
 let cached: SellingFeeTaxPolicyV1 | null = null
 let nextReadAt = 0
 let inFlight: Promise<SellingFeeTaxPolicyV1 | null> | null = null
