@@ -82,8 +82,11 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
         .filter(v=>typeof v==="string"&&Number.isFinite(Date.parse(v))).map(v=>Date.parse(String(v))+6*3600000),
       ...[resolved?.authority?.freshUntil,policy.freshUntil].filter(v=>typeof v==="string"&&Number.isFinite(Date.parse(v)))
         .map(v=>Date.parse(String(v))))).toISOString()
+  // One exact hypothetical order is useful arithmetic, but cannot authorize
+  // promotion across unknown future buyers. Pre-sale exposure must be bounded.
+  const preSaleScopeProven=resolved?.authority?.feeBasis.method==="PROVEN_UPPER_BOUND"
   const state:FeeLifecycleState = input.itemId && !exact ? "CONFLICT" : input.itemId && (!sourceFresh || Date.parse(freshUntil)<=input.now.getTime()) ? "STALE" :
-    resolved?.status==="PROVEN" ? "PROVEN_PRE_SALE" : "PENDING_ORDER_CONTEXT"
+    resolved?.status==="PROVEN" && preSaleScopeProven ? "PROVEN_PRE_SALE" : "PENDING_ORDER_CONTEXT"
   const body={contractVersion:EBAY_FEE_AUTHORITY_V1,producerVersion:EBAY_FEE_PRODUCER_V1,
     marketplaceAccountKey:input.accountKey,marketplace:"EBAY_US",itemId:input.itemId,sku:input.sku,packageId:input.packageId,
     categoryId:str(listing.categoryId),categoryPath:str(listing.categoryPath),saleFormat:str(listing.saleFormat),
@@ -94,7 +97,8 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     state,economicsState:state==="PROVEN_PRE_SALE"?"ECONOMICS_PROVEN":components.some(c=>c.status==="PENDING_AUTHORITY") ? "PROMOTION_BLOCKED_EVIDENCE" : "PENDING_ORDER_CONTEXT",
     label:state==="CONFLICT"?"Economía: revisar identidad":state==="STALE"?"Economía: actualizando evidencia":
       state==="PROVEN_PRE_SALE"?"Economía: datos completos":components.some(c=>c.status==="PENDING_AUTHORITY") ? "Economía: esperando evidencia de fees" : "Economía: esperando datos de la orden",
-    pendingIsError: false, resolutionBlockers: resolved?.blockers ?? coverage.blockers,
+    pendingIsError: false, resolutionBlockers: [...(resolved?.blockers ?? coverage.blockers),
+      ...(resolved?.status==="PROVEN" && !preSaleScopeProven?["FUTURE_ORDER_EXPOSURE_BOUND_REQUIRED"]:[])],
     boundCoverage:coverage,
     officialContingentRateLimits:exact && performance.registrationCountry===contingentPolicy.registeredCountry &&
       Date.parse(contingentPolicy.observedAt)<=input.now.getTime() && Date.parse(contingentPolicy.freshUntil)>input.now.getTime()
