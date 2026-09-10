@@ -78,7 +78,7 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
          authorityDigest: delegated.grant.authority_digest, manifestDigest: task.data.visual_manifest_digest }
        binding.optimizationAudit = { before: task.data.current_image_set, after: delegated.proposed,
          why: "Mejora visual aprobada por Mayel dentro de la delegación OWNER",
-         evidenceUsed: { productTruthDigest: task.data.product_truth_digest, sourceImageSetDigest: task.data.source_image_set_digest,
+         evidenceUsed: { currentProductTruth: delegated.productTruthProof, productTruthDigest: task.data.product_truth_digest, sourceImageSetDigest: task.data.source_image_set_digest,
            sourceReferences: task.data.source_image_references }, mayelDecision: task.data.visual_manifest,
          qaResult: native.data.map(a => ({ assetId: a.id, qa: a.qa_result })) }
      }

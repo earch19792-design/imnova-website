@@ -569,6 +569,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     visualManifestDigest: context.plan.visualManifestDigest,
     ownerAuthorizationDigest: context.plan.ownerAuthorizationDigest,
     currentOfficialImageSetDigest: context.plan.currentOfficialImageSetDigest,
+    officialObservedAt: context.official?.observedAt ?? null,
     currentImages: context.currentOfficialImageUrls,
     currentListingVersionFields: context.official?.protectedFields ? {
       title: context.official.protectedFields.title, sku: context.official.protectedFields.sku,

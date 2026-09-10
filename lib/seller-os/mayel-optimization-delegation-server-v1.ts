@@ -34,13 +34,22 @@ export async function readDelegatedVisualAuthorityV1(input: { supabase: Supabase
   const sourcesProven = references.length > 0 && references.every(r => typeof r.sha256 === "string" && /^[a-f0-9]{64}$/.test(r.sha256) &&
     (r.authority === "OFFICIAL_EBAY_CURRENT_LISTING_IMAGE" && r.referenceId === `EBAY_ITEM_${task.ebay_item_id}` ||
       ownSourcePack && ["AUTHORIZED_LUNA_SOURCE_PACK", "APPROVED_CANONICAL_LISTING_ASSET", "SAVED_AUTHORIZED_GENERATOR_SOURCE"].includes(String(r.authority))))
+  let productTruthProof: Record<string, unknown> | null = null
+  if (grant && signal.productTruthSupported !== true && task.status === "OWNER_PREVIEW_READY" && proposed.some(e => e.assetId)) {
+    const proof = await input.supabase.rpc("seller_os_read_visual_current_product_truth_v1", { p_account_key: input.accountKey, p_task_id: task.id })
+    if (proof.error) throw Error("MAYEL_CURRENT_PRODUCT_TRUTH_READ_FAILED")
+    const value = record(proof.data)
+    if (value.authority === "EXACT_LIVE_LINKED_PRODUCT_TRUTH_V1" && value.taskId === task.id &&
+        value.itemId === task.ebay_item_id && value.accountKey === input.accountKey && value.visualSourceDigest === task.source_image_set_digest)
+      productTruthProof = value
+  }
   const gallery = record(signal.currentOfficialGallery)
   const decision = authorizeOptimizationV1({ grant, accountKey: input.accountKey,
     actions: intents.map(i => i.visualIntent === "REPLACE_MAIN" ? "MAIN_IMAGE_REPLACEMENT" :
       i.visualIntent === "REPLACE_SLOT" ? "SECONDARY_IMAGE_REPLACEMENT" : i.visualIntent === "ADD_SECONDARY" ? "IMAGE_ADDITION" : "UNSUPPORTED"),
     guards: {
       exactListingIdentity: task.marketplace_account_key === input.accountKey && manifest.ebayItemId === task.ebay_item_id && manifest.visualTaskId === task.id,
-      productTruthProven: signal.productTruthSupported === true,
+      productTruthProven: signal.productTruthSupported === true || productTruthProof !== null,
       currentLiveReadbackPass: gallery.authority === "CURRENT_OFFICIAL_ORDERED_IMAGE_SET" && Array.isArray(gallery.images),
       baseGenerationCompatible: compatible && stableOutboxJsonV1(gallery.images) === stableOutboxJsonV1(task.current_image_set),
       qaPass: proposed.some(e => e.assetId) && proposed.every(e => !e.assetId || assets.some(a => a.id === e.assetId &&
@@ -48,7 +57,7 @@ export async function readDelegatedVisualAuthorityV1(input: { supabase: Supabase
       unsupportedClaimCount: assets.length > 0 && assets.every(a => delegatedVisualQaV1(a, task)) ? 0 : null,
       competitorContaminationCount: sourcesProven ? 0 : null,
     } })
-  return { ...decision, grant, proposed }
+  return { ...decision, grant, proposed, productTruthProof }
 }
 
 /** Called by the existing bounded runtime. This creates one immutable intent;
@@ -63,7 +72,25 @@ export async function enqueueDelegatedVisualV1(input: { supabase: SupabaseClient
     .select("id,status,mayel_approval_status,qa_result,source_sha256,output_sha256,public_url,source_image_set_digest,product_truth_digest")
     .eq("account_key", input.accountKey).eq("mayel_visual_task_id", task.id).eq("status", "approved").limit(7)
   if (a.error || !a.data?.length || a.data.length > 6) throw Error("MAYEL_OPTIMIZATION_ASSETS_REQUIRED")
-  const authority = await readDelegatedVisualAuthorityV1({ ...input, task, assets: a.data })
+  let authority = await readDelegatedVisualAuthorityV1({ ...input, task, assets: a.data })
+  if (authority.grant && authority.reason === "CURRENT_LIVE_READBACK_REQUIRED") {
+    // Existing quota gate and exact management-aware readback. No new poller.
+    const { readMayelVisualPhaseBPreviewV1 } = await import("../ebay/ebay-mayel-visual-phase-b-server-v1")
+    const preview = await readMayelVisualPhaseBPreviewV1(input)
+    if (preview.officialReadStatus !== "PASS" || !preview.accountIdentityProven || !preview.listingIdentityProven ||
+        !preview.currentImageSetProven || preview.officialReadAuthority === "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1")
+      return { status: "WAITING_FOR_DATA", reason: preview.blocker, receipt: null }
+    const selectionSignal = { ...record(task.selection_signal), currentOfficialGallery: {
+      authority: "CURRENT_OFFICIAL_ORDERED_IMAGE_SET", images: preview.currentImages,
+      digest: preview.currentOfficialImageSetDigest, observedAt: preview.officialObservedAt,
+      managementModel: preview.managementModel } }
+    const saved = await input.supabase.from("ebay_mayel_visual_tasks_v1").update({ selection_signal: selectionSignal })
+      .eq("id", task.id).eq("marketplace_account_key", input.accountKey).eq("visual_manifest_digest", task.visual_manifest_digest)
+      .select("id").maybeSingle()
+    if (saved.error || !saved.data) throw Error("MAYEL_GALLERY_OBSERVATION_SAVE_FAILED")
+    task.selection_signal = selectionSignal
+    authority = await readDelegatedVisualAuthorityV1({ ...input, task, assets: a.data })
+  }
   if (!authority.authorized || !authority.grant) return { status: "REQUIRES_ATTENTION", reason: authority.reason, receipt: null }
   const { saveDurableOutboxV1 } = await import("./ipad-durable-outbox-v1")
   const idempotencyKey = `ipados:v1:${createHash("sha256").update(`${input.accountKey}:${task.id}:${task.visual_manifest_digest}:${MAYEL_OPTIMIZATION_DELEGATION_V1}`).digest("hex")}`
