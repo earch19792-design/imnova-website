@@ -2,9 +2,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
 const source = resolve("tools/browser-extensions/luna-shipping-capture")
+const version = JSON.parse(readFileSync(resolve(source, "manifest.json"), "utf8")).version
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("EXTENSION_VERSION_INVALID")
 const outputPaths = [
   "public/seller-os-tools/luna-shipping-capture-extension.zip",
-  "public/seller-os-tools/luna-shipping-capture-extension-v1.0.54.zip",
+  `public/seller-os-tools/luna-shipping-capture-extension-v${version}.zip`,
 ]
 const files = [
   "manifest.json", "background.js", "content.js", "startup-probe.json", "README.md",
