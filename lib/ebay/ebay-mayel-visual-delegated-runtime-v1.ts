@@ -48,6 +48,11 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
     mediaWriteCount: 0, outcomes: Object.freeze([]),
     status: "WAITING_FOR_DELEGATION" as const })
 
+  // Unfinished tasks also need their complete gallery. Hydration has its own
+  // durable eligibility, independent of image QA or a publication manifest.
+  const galleryWork = dependencies ? { data: [], error: null } : await input.supabase.rpc(
+    "seller_os_pending_mayel_galleries_v1", { p_account: input.accountKey })
+  if (galleryWork.error || (galleryWork.data?.length ?? 0) > 1) throw Error("MAYEL_GALLERY_DISCOVERY_FAILED")
   const tasks = await input.supabase.rpc("seller_os_pending_mayel_visual_manifests_v1", {
     p_account_key: input.accountKey,
   })
@@ -74,14 +79,28 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
   // Reuse the existing operational cadence, not a new poller. Analytics is a
   // separate read-only quota authority; no Trading preflight is attempted while
   // the shared application bucket is blocked (including Trading error 518).
-  if (pendingTasks.length) {
+  if (pendingTasks.length || galleryWork.data?.length) {
     const collectQuota = dependencies?.quota ?? (await import("./ebay-trading-rate-limit-observability-v1")).collectSellerOsEbayTradingRateLimitStatusV1
     const quota = await collectQuota()
-    if (quota.gateState !== "OPEN") return Object.freeze({ authorityActive: true,
+    if (quota.gateState !== "OPEN") {
+      if (galleryWork.data?.length) {
+        const { nextOutboxAttemptAtV1 } = await import("../seller-os/ipad-outbox-contract-v1")
+        const deferred = await input.supabase.rpc("seller_os_defer_mayel_galleries_v1", {
+          p_account: input.accountKey, p_next: nextOutboxAttemptAtV1(quota.nextSafeTradingProbeAt) })
+        if (deferred.error) throw Error("MAYEL_GALLERY_BACKOFF_SAVE_FAILED")
+      }
+      return Object.freeze({ authorityActive: true,
       discoveredCount: pendingTasks.length, claimedCount: 0, listingWriteCount: 0,
       mediaWriteCount: 0, outcomes: Object.freeze([]),
       status: "WAITING_FOR_EBAY" as const, nextAttemptAt: quota.nextSafeTradingProbeAt,
       proposalsPreserved: true, quotaGate: quota.gateState })
+    }
+  }
+  if (galleryWork.data?.length) {
+    const { recoverMissingMayelGalleryV1 } = await import("./mayel-gallery-recovery-server-v1")
+    const recovered = await recoverMissingMayelGalleryV1({ ...input, taskId: galleryWork.data[0].id })
+    return { authorityActive: true, discoveredCount: 1, claimedCount: 0,
+      listingWriteCount: 0, mediaWriteCount: 0, outcomes: [recovered], status: recovered.status }
   }
 
   // A terminal execution is the durable authority that a prior runtime

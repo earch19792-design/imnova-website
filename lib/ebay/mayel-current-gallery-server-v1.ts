@@ -1,3 +1,4 @@
+import { galleryListingSkuV1 } from "./mayel-gallery-binding-v1"
 import { contentGalleryReceiptMatchesV1 } from "../seller-os/mayel-full-gallery-mutation-v1"
 import { galleryMatchesSyncReceiptV1 } from "./mayel-gallery-slot-policy-v1"
 import "server-only"
@@ -21,15 +22,15 @@ export async function readCurrentMayelGalleryV1(input: { supabase: SupabaseClien
   if (input.offlineOnly) return null
   const { collectSellerOsEbayTradingRateLimitStatusV1 } = await import("./ebay-trading-rate-limit-observability-v1")
   if ((await collectSellerOsEbayTradingRateLimitStatusV1()).gateState !== "OPEN") return null
-  const active = await input.supabase.from("ebay_active_listings").select("ebay_sku")
-    .eq("account_key", input.accountKey).eq("ebay_item_id", input.itemId).eq("listing_status", "active").maybeSingle()
-  const sku = active.data?.ebay_sku
+  const active = await input.supabase.from("ebay_active_listings").select("account_key,ebay_item_id,ebay_sku,listing_status,raw_payload")
+    .eq("account_key", input.accountKey).eq("ebay_item_id", input.itemId).eq("listing_status", "active").limit(3)
+  const sku = galleryListingSkuV1(active.data ?? [], input.itemId, input.accountKey)
   if (active.error || !sku || input.sku && input.sku !== sku) return null
   const fetchImpl = input.fetchImpl ?? fetch
   const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
   const official = await readOfficialActiveListingImageSnapshotV1({ accessToken, itemId: input.itemId,
     expectedSku: sku, accountKey: input.accountKey, fetchImpl })
-  return { authority: "CURRENT_OFFICIAL_ORDERED_IMAGE_SET", images: official.pictureUrls,
+  return { authority: "CURRENT_OFFICIAL_ORDERED_IMAGE_SET", itemId: input.itemId, ebaySku: sku, images: official.pictureUrls,
     digest: ebayOfficialImageSetDigestV1(official.pictureUrls), observedAt: official.observedAt }
 }
 
@@ -44,6 +45,10 @@ export async function refreshMayelStationGalleryV1(input: { supabase: SupabaseCl
   const cached = savedOfficialGalleryV1(task.data.selection_signal)
   if (cached && Date.now() - Date.parse(cached.observedAt) >= 0 && Date.now() - Date.parse(cached.observedAt) < 60_000)
     return { gallery: cached, reused: true, marketplaceWrites: 0 }
+  if (!cached) {
+    const { recoverMissingMayelGalleryV1 } = await import("./mayel-gallery-recovery-server-v1")
+    return recoverMissingMayelGalleryV1(input)
+  }
   let gallery
   try { gallery = await readCurrentMayelGalleryV1({ ...input, itemId: task.data.ebay_item_id }) }
   catch { return { gallery: cached, status: "WAITING_FOR_DATA", marketplaceWrites: 0 } }

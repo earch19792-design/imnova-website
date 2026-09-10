@@ -1,3 +1,4 @@
+import { galleryListingSkuV1 } from "./mayel-gallery-binding-v1"
 import { contentGalleryReceiptMatchesV1 } from "../seller-os/mayel-full-gallery-mutation-v1"
 import { discardedProposalIdsV1, excludeDiscardedProposalsV1 } from "../seller-os/mayel-proposal-discard-v1"
 import { decideMayelAssetPositionV1 } from "../seller-os/mayel-visual-intent-v1"
@@ -285,7 +286,7 @@ export async function ensureMayelVisualTaskV1(input: {
   for (const signal of signals) {
     const itemId = text(signal.item_id, 20)
     if (!itemId || !/^\d{9,20}$/.test(itemId)) continue
-    const [{ data: link, error: linkError }, { data: active, error: activeError },
+    const [{ data: link, error: linkError }, { data: activeRows, error: activeError },
       { data: experiment, error: experimentError },
       { data: duplicateTask, error: duplicateError }] = await Promise.all([
       savedSource ? Promise.resolve({ data: null, error: null }) : input.supabase.from("ebay_manual_listing_links")
@@ -293,10 +294,10 @@ export async function ensureMayelVisualTaskV1(input: {
         .eq("account_key", input.accountKey).eq("ebay_item_id", itemId)
         .eq("verification_status", "verified").maybeSingle(),
       savedSource ? Promise.resolve({ data: null, error: null }) : input.supabase.from("ebay_active_listings")
-        .select("id,title,ebay_sku,supplier_sku,listing_status,raw_payload")
+        .select("id,account_key,ebay_item_id,title,ebay_sku,supplier_sku,listing_status,raw_payload")
         .eq("account_key", input.accountKey).eq("ebay_item_id", itemId)
         .eq("listing_status", "active")
-        .maybeSingle(),
+        .limit(3),
       input.supabase.from("ebay_listing_experiments_v1")
         .select("experiment_id,lifecycle_status").eq("account_key", input.accountKey)
         .eq("ebay_item_id", itemId).in("lifecycle_status",
@@ -306,6 +307,10 @@ export async function ensureMayelVisualTaskV1(input: {
         .eq("ebay_item_id", itemId).in("status", OPEN_TASK_STATES)
         .limit(1).maybeSingle(),
     ])
+    const activeSku = galleryListingSkuV1(activeRows ?? [], itemId, input.accountKey)
+    const active = activeSku ? (activeRows ?? []).find(r => r.id === link?.connector_listing_id)
+      ?? (activeRows ?? []).find(r => record(r.raw_payload).source === "EBAY_TRADING_GET_MY_EBAY_SELLING")
+      ?? activeRows?.[0] : null
     if (linkError || activeError || experimentError || duplicateError) {
       throw new Error("MAYEL_VISUAL_ELIGIBILITY_READ_FAILED")
     }
@@ -1004,9 +1009,9 @@ async function refreshManifest(input: { supabase: SupabaseClient
         publicUrl }] : []
   })
   if (!assets.length) return null
-  const currentImages = Array.isArray(input.task.current_image_set)
+  const currentImages = savedOfficialGalleryV1(input.task.selection_signal)?.images ?? (Array.isArray(input.task.current_image_set)
     ? input.task.current_image_set.filter((url): url is string =>
-      Boolean(httpsUrl(url))) : []
+      Boolean(httpsUrl(url))) : [])
   const manifest = buildMayelOrderedVisualManifestV2({
     visualTaskId: String(input.task.id),
     ebayItemId: String(input.task.ebay_item_id),
@@ -1330,6 +1335,7 @@ export async function readMayelVisualWorkstationV1(input: {
       productTruthDigest: String(task.product_truth_digest),
       sourceImages: sourceImages as MayelSourceImageReferenceV1[],
       currentImages: savedOfficialGalleryV1(task.selection_signal)?.images ?? task.current_image_set as string[],
+      galleryRecovery: record(record(task.selection_signal).galleryRecovery),
       currentGalleryProven: Boolean(savedOfficialGalleryV1(task.selection_signal)),
       currentGalleryObservedAt: savedOfficialGalleryV1(task.selection_signal)?.observedAt ?? null,
       currentGalleryDigest: savedOfficialGalleryV1(task.selection_signal)?.digest ?? null,

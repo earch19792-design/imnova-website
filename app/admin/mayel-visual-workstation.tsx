@@ -59,6 +59,7 @@ type VisualTask = {
     storagePath: string | null; authority: string; position: number }[]
   currentImages: string[]
   currentGallerySynced?: boolean
+  galleryRecovery?: { state?: string; nextAttemptAt?: string }
   currentGalleryProven?: boolean
   currentGalleryObservedAt?: string | null
   currentGalleryDigest?: string | null
@@ -980,6 +981,10 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation, canOperate, busy, o
     <section className="mt-6 rounded-2xl border border-blue-200 bg-blue-50/50 p-4" aria-label="Última galería verificada de eBay">
       <h5 className="text-base font-semibold text-blue-900">{task.currentGalleryProven ? "ANTES · Última galería verificada de eBay" : "ANTES · Imágenes guardadas, galería eBay por verificar"} · {task.currentImages.length} fotos</h5>
       <p className="mt-1 text-sm">{task.currentGalleryProven ? "Es la última lectura guardada." : "Todavía no hay una lectura oficial completa confirmada."} Se comprobará otra vez antes de sincronizar.</p>
+      {!task.currentGalleryProven && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+        Galería incompleta en Seller OS · {task.galleryRecovery?.state === "RECOVERING" ? "Recuperando las fotos de eBay…" : "Recuperación automática pendiente de eBay."}
+        {" "}Las fotos mostradas no representan necesariamente toda la galería publicada. Tus propuestas siguen guardadas.
+      </p>}
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{task.currentImages.map((url,p) => <figure key={`${p}:${url}`} className="overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
         <img src={url} alt={`Foto de eBay ${p+1}`} className="aspect-square w-full bg-white object-contain p-2" />
         <figcaption className="border-t border-blue-100 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">{p === 0 ? "Principal" : `Imagen ${p+1}`} · eBay</figcaption>
