@@ -1,3 +1,4 @@
+import type { GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
 import { createHash, randomUUID } from "node:crypto"
 import { resolveMayelVisualRegistryBindingV1 } from "./ebay-mayel-visual-registry-binding-v1"
 
@@ -239,6 +240,7 @@ function reconcileManagementWithOfficialTradingListing(
 }
 
 async function loadContext(input: {
+  slotReplacements?: readonly GalleryReplacementV1[]
   supabase: SupabaseClient
   accountKey: string
   taskId: string
@@ -352,6 +354,7 @@ async function loadContext(input: {
     canonicalPublicAssetUrlAllowed: canonicalAssetUrlAllowed,
   })
   const rebase = buildMayelVisualPhaseBRebaseV1({
+    slotReplacements: input.slotReplacements,
     visualTaskId: String(task.id),
     ebayItemId: String(task.ebay_item_id),
     visualManifest: task.visual_manifest,
@@ -463,6 +466,25 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
   fetchImpl?: FetchLike
 }) {
   const context = await loadContext({ ...input, fetchImpl: input.fetchImpl ?? fetch })
+  const proposedEntries = Array.isArray(record(context.task.visual_manifest).proposedOrderedImages)
+    ? (record(context.task.visual_manifest).proposedOrderedImages as unknown[]).map(record) : []
+  const fingerprints = proposedEntries.filter(e => uuid(e.assetId) && text(e.outputSha256, 80)).map(e => ({
+    url: String(e.publicUrl), fingerprint: digestCanonical({ account: input.accountKey, itemId: String(context.task.ebay_item_id),
+      assetId: String(e.assetId), assetSha256: String(e.outputSha256), route: MAYEL_TRADING_MEDIA_PREPARATION_ROUTE }) }))
+  const receipts = fingerprints.length ? await input.supabase.from("seller_os_operational_learning_ledger_v1")
+    .select("evidence_fingerprint,evidence").eq("marketplace_account_key", input.accountKey)
+    .eq("invariant_code", MAYEL_TRADING_MEDIA_LEDGER_INVARIANT).eq("status", "RESOLVED")
+    .eq("mechanism_version", MAYEL_TRADING_MEDIA_LEDGER_MECHANISM)
+    .in("evidence_fingerprint", fingerprints.map(e => e.fingerprint)).limit(6) : { data: [], error: null }
+  if (receipts.error) throw Error("MAYEL_TRADING_MEDIA_LEDGER_READ_FAILED")
+  const expectedOfficialUrls = proposedEntries.map(e => {
+    const fingerprint = fingerprints.find(f => f.url === e.publicUrl)?.fingerprint
+    const media = record(record(receipts.data?.find(r => r.evidence_fingerprint === fingerprint)?.evidence).mediaPreparation)
+    return fingerprint && classifyMayelTradingImageHostV1(String(media.epsImageUrl ?? "")) === "EBAY_EPS"
+      ? String(media.epsImageUrl) : String(e.publicUrl)
+  })
+  const approvedGalleryAlreadyOfficial = context.officialReadStatus === "PASS" && context.currentImageSetProven &&
+    expectedOfficialUrls.length > 0 && JSON.stringify(expectedOfficialUrls) === JSON.stringify(context.currentOfficialImageUrls)
   const safeRebaseAvailable = context.plan.blocker ===
     "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
     && context.rebase.safe
@@ -662,6 +684,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
 }
 
 export async function rebaseMayelVisualPhaseBPreviewV1(input: {
+  slotReplacements?: readonly GalleryReplacementV1[]
   supabase: SupabaseClient
   accountKey: string
   taskId: string
@@ -719,6 +742,7 @@ export async function rebaseMayelVisualPhaseBPreviewV1(input: {
     throw new Error("MAYEL_VISUAL_REBASE_DURABLE_READBACK_FAILED")
   }
   return Object.freeze({
+    approvedGalleryAlreadyOfficial,
     safeRebaseApplied: true,
     visualTaskId: input.taskId,
     oldVisualManifestDigest: oldDigest,
@@ -1687,6 +1711,19 @@ export async function executeMayelTradingVisualDelegatedManifestV1(input: {
     | null = null
   try {
     tradingToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
+    const immediatelyBefore = await readOfficialActiveListingImageSnapshotV1({
+      accessToken: tradingToken, itemId: String(context.task.ebay_item_id), expectedSku: context.sku,
+      accountKey: input.accountKey, fetchImpl, durableAccountIdentityProven: true })
+    if (JSON.stringify(immediatelyBefore.pictureUrls) !== JSON.stringify(context.currentOfficialImageUrls) ||
+        protectedFieldDifferences(context.official.protectedFields as JsonRecord,
+          immediatelyBefore.protectedFields as JsonRecord).length) {
+      const stopped = await updateExecution({ supabase: input.supabase, executionId,
+        phases: ["EXECUTING"], patch: { phase: "WRITE_FAILED", final_state: "WRITE_FAILED",
+          marketplace_write_count: 0, last_error_code: "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED",
+          claim_token: null, lease_expires_at: null } })
+      return Object.freeze({ status: "GALLERY_CHANGED" as const, execution: publicExecution(stopped),
+        mediaApiWriteCount: mediaWriteCount, tradingListingWriteCount: 0 })
+    }
     write = await reviseMayelTradingPicturesOnceV1({
       accessToken: tradingToken,
       itemId: String(context.task.ebay_item_id),

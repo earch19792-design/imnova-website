@@ -865,7 +865,14 @@ function offerListingId(value: JsonRecord) {
 }
 
 function completeOfferCollection(result: ReadResult) {
-  if (!result.ok) return false
+  // Exact-SKU getOffers: the official API_INVENTORY 25713 envelope means
+  // no offer is available. An arbitrary 404, gateway failure or mixed errors
+  // is never an empty collection. Trading still requires inventory absence.
+  if (!result.ok) {
+    const errors = safeReadErrors(result)
+    return result.status === 404 && result.body.offers === undefined && errors.length > 0 && errors.every(e =>
+      String(e.errorId) === "25713" && e.domain === "API_INVENTORY" && e.category === "REQUEST")
+  }
   const total = Number(result.body.total)
   const size = Number(result.body.size)
   // eBay's zero-result envelope may omit `offers` entirely while explicitly

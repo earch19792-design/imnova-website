@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Check, ChevronLeft, ChevronRight, Clipboard, ShieldCheck, Star,
+import { Check, Clipboard, ShieldCheck,
   Trash2, Upload, X } from
   "lucide-react"
 
@@ -52,6 +52,9 @@ type VisualTask = {
   sourceImages: { referenceId: string; sha256: string; url: string | null;
     storagePath: string | null; authority: string; position: number }[]
   currentImages: string[]
+  currentGalleryProven?: boolean
+  currentGalleryObservedAt?: string | null
+  galleryRebaseRequired?: boolean
   outputs: VisualOutput[]
   visualManifest: Record<string, unknown> | null
   visualManifestDigest: string | null
@@ -734,120 +737,77 @@ type OrderedGalleryEntry = {
   assetId: string | null
 }
 
-function OrderedGalleryManager({ task, busy, onDone }: { task: VisualTask
-  busy: boolean; onDone: () => Promise<void> }) {
-  const approved = useMemo(() => task.outputs.filter((output) =>
-    output.status === "approved" && output.previewUrl), [task.outputs])
-  const initialOrder = useMemo(() => {
-    const manifestOrder = Array.isArray(task.visualManifest?.proposedOrderedImages)
-      ? task.visualManifest?.proposedOrderedImages as Record<string, unknown>[]
-      : []
-    const fromManifest = manifestOrder.flatMap((entry) => {
-      const publicUrl = typeof entry.publicUrl === "string"
-        ? entry.publicUrl : null
-      if (!publicUrl) return []
-      const assetId = typeof entry.assetId === "string" ? entry.assetId : null
-      return [{ key: assetId ? `asset:${assetId}` : `current:${publicUrl}`,
-        kind: assetId ? "MAYEL_ASSET" as const :
-          "CURRENT_OFFICIAL" as const,
-        publicUrl, assetId }]
-    })
-    if (fromManifest.length) return fromManifest
-    return [
-      ...task.currentImages.map((publicUrl) => ({
-        key: `current:${publicUrl}`, kind: "CURRENT_OFFICIAL" as const,
-        publicUrl, assetId: null })),
-      ...approved.map((output) => ({ key: `asset:${output.id}`,
-        kind: "MAYEL_ASSET" as const, publicUrl: output.previewUrl as string,
-        assetId: output.id })),
-    ]
-  }, [approved, task.currentImages, task.visualManifest])
-  const [order, setOrder] = useState<OrderedGalleryEntry[]>(initialOrder)
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
+function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
+  owner: boolean; busy: boolean; onDone: () => Promise<void> }) {
+  const approved = task.outputs.filter(o => o.status === "approved" && o.previewUrl)
+  const [selected, setSelected] = useState<Record<number, string>>({})
   const [message, setMessage] = useState("")
-  useEffect(() => setOrder(initialOrder), [initialOrder])
-
-  if (!approved.length) return null
-  function move(from: number, to: number) {
-    if (to < 0 || to >= order.length || from === to) return
-    setOrder((current) => {
-      const next = [...current]
-      const [entry] = next.splice(from, 1)
-      next.splice(to, 0, entry)
-      return next
-    })
-  }
-  function useAsMain(index: number, removeOldHero: boolean) {
-    setOrder((current) => {
-      const selected = current[index]
-      if (!selected) return current
-      const oldHero = task.currentImages[0]
-      const rest = current.filter((_, candidate) => candidate !== index)
-        .filter((entry) => !removeOldHero || entry.publicUrl !== oldHero)
-      return [selected, ...rest]
-    })
-  }
+  const [saving, setSaving] = useState(false)
+  const manifestSlots = task.visualManifest?.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" &&
+    Array.isArray(task.visualManifest.slotReplacements) ? task.visualManifest.slotReplacements as
+      { targetImagePosition: number; assetId: string }[] : []
+  const slotKey = JSON.stringify(manifestSlots)
+  useEffect(() => { setSelected(Object.fromEntries((JSON.parse(slotKey) as
+    { targetImagePosition: number; assetId: string }[]).map(r => [r.targetImagePosition, r.assetId]))) }, [slotKey])
   async function save() {
-    setMessage("")
+    setSaving(true); setMessage("")
     try {
-      await visualRequest("/api/admin/ebay/mayel-visual-workstation", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "SAVE_ORDERED_GALLERY",
-          visualTaskId: task.visualTaskId,
-          expectedVisualManifestDigest: task.visualManifestDigest,
-          finalOrder: order.map((entry) => entry.kind === "MAYEL_ASSET"
-            ? { kind: entry.kind, assetId: entry.assetId }
-            : { kind: entry.kind, publicUrl: entry.publicUrl }) }),
-      })
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "SAVE_GALLERY_SLOTS",
+          visualTaskId: task.visualTaskId, expectedVisualManifestDigest: task.visualManifestDigest,
+          expectedCurrentImages: task.currentImages,
+          slotReplacements: Object.entries(selected).filter(([,id]) => Boolean(id)).map(([position,assetId]) =>
+            ({ targetImagePosition: Number(position), assetId })) }) })
+      await onDone(); setMessage("Preview guardado. Revisa cada posición antes de confirmar la sincronización.")
+    } catch (error) { await onDone(); setMessage(error instanceof Error ? error.message : "No pudimos guardar el Preview.") }
+    finally { setSaving(false) }
+  }
+  async function confirmPreview() {
+    setSaving(true); setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "CONFIRM_GALLERY_PREVIEW", visualTaskId: task.visualTaskId,
+          expectedVisualManifestDigest: task.visualManifestDigest, confirmation: "CONFIRM_FULL_GALLERY_PREVIEW_V1" }) })
+      setMessage("Pendiente de sincronizar. Seller OS recibió el Preview confirmado; puedes cerrar el iPad.")
       await onDone()
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message :
-        "No pudimos guardar este orden.")
-    }
+    } catch (error) { setMessage(error instanceof Error ? error.message : "No pudimos confirmar el Preview.") }
+    finally { setSaving(false) }
   }
   return <section className="mt-7 rounded-2xl border border-[#cbd9d4] bg-[#f8fbf9] p-5"
-    data-mayel-ordered-six-image-workflow>
-    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#1d5961]">Así quedará en eBay</p>
-    <h4 className="mt-2 font-serif text-xl font-semibold">Ordena la galería</h4>
-    <p className="mt-2 text-sm text-[#64675f]">La posición 1 será la imagen principal. Arrastra en desktop o usa las flechas táctiles en iPad.</p>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{order.map((entry, index) => {
-      const currentHero = entry.publicUrl === task.currentImages[0]
-      return <article key={entry.key} draggable
-        onDragStart={() => setDragIndex(index)}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={() => { if (dragIndex !== null) move(dragIndex, index)
-          setDragIndex(null) }}
-        className="rounded-2xl border border-[#d9e2de] bg-white p-3">
-        <img src={entry.publicUrl} alt={`Imagen ${index + 1} de la galería propuesta`}
-          className="aspect-square w-full rounded-xl bg-[#f4efe7] object-contain" />
-        <p className="mt-3 text-xs font-semibold">{index + 1} · {index === 0
-          ? "PRINCIPAL" : "SECUNDARIA"}</p>
-        {currentHero && <p className="mt-1 text-[11px] text-[#617159]">Principal actual en eBay</p>}
-        {entry.kind === "MAYEL_ASSET" && <p className="mt-1 text-[11px] text-[#617159]">Lista para usar · aprobada por Mayel</p>}
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {index > 0 && <button type="button" disabled={busy}
-            onClick={() => useAsMain(index, false)}
-            className="min-h-11 rounded-xl bg-[#1d5961] px-3 text-xs font-semibold text-white"><Star className="mr-1 inline h-3.5 w-3.5" />Usar como principal</button>}
-          {entry.kind === "MAYEL_ASSET" && index > 0 && task.currentImages[0] &&
-            <button type="button" disabled={busy}
-              onClick={() => useAsMain(index, true)}
-              className="min-h-11 rounded-xl border border-[#1d5961] px-3 text-xs font-semibold text-[#1d5961]">Reemplazar principal</button>}
-          <button type="button" disabled={busy || index === 0}
-            aria-label="Mover a la izquierda" onClick={() => move(index, index - 1)}
-            className="min-h-11 min-w-11 rounded-xl border border-[#cbd9d4] disabled:opacity-35"><ChevronLeft className="mx-auto h-4 w-4" /></button>
-          <button type="button" disabled={busy || index === order.length - 1}
-            aria-label="Mover a la derecha" onClick={() => move(index, index + 1)}
-            className="min-h-11 min-w-11 rounded-xl border border-[#cbd9d4] disabled:opacity-35"><ChevronRight className="mx-auto h-4 w-4" /></button>
-          {order.length > 1 && <button type="button" disabled={busy}
-            onClick={() => setOrder((current) => current.filter((_, candidate) => candidate !== index))}
-            className="min-h-11 rounded-xl border border-[#b75d43] px-3 text-xs font-semibold text-[#8b4937]"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{entry.kind === "MAYEL_ASSET" ? "Eliminar de la propuesta" : "Retirar de la nueva galería"}</button>}
-        </div>
-      </article>})}</div>
-    <button type="button" disabled={busy || !order.length}
-      onClick={() => void save()}
-      className="mt-4 min-h-12 rounded-xl bg-[#26312d] px-5 text-sm font-semibold text-white disabled:opacity-40">Usar este orden</button>
-    <p className="mt-2 text-xs text-[#617159]">Mayel controla el orden final. Seller OS no lo reordena silenciosamente y sólo prepara un cambio visual.</p>
-    {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
+    data-mayel-ordered-six-image-workflow data-full-official-gallery>
+    <h4 className="font-serif text-xl font-semibold">Galería actual de eBay</h4>
+    <p className="mt-2 text-sm">{task.currentGalleryProven ? `${task.currentImages.length} imágenes en su orden oficial.` :
+      "Esperando la galería oficial completa. Tus propuestas siguen guardadas."} Sólo cambia la posición que selecciones.</p>
+    {task.galleryRebaseRequired && <p role="status" className="mt-2 text-sm">La galería cambió. Revisa el nuevo Preview; la sincronización está detenida.</p>}
+    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{task.currentImages.map((before, position) => {
+      const asset = approved.find(o => o.id === selected[position])
+      const after = asset?.previewUrl ?? before
+      return <article key={`${position}:${before}`} data-image-position={position} className="rounded-xl border bg-white p-3">
+        <p className="font-semibold">{position + 1} · {position === 0 ? "Principal" : "Secundaria"}</p>
+        <div className="mt-2 grid grid-cols-2 gap-2"><figure><img src={before} alt={`Antes · posición ${position + 1}`} className="aspect-square w-full object-contain"/><figcaption>Antes</figcaption></figure>
+          <figure><img src={after} alt={`Después · posición ${position + 1}`} className="aspect-square w-full object-contain"/><figcaption>Después</figcaption></figure></div>
+        <p className="mt-2 text-sm">{asset ? "Reemplazar" : "Conservar"}</p>
+        <label className="mt-2 block text-xs">Tratamiento de esta posición
+          <select aria-label={`Tratamiento posición ${position + 1}`} value={selected[position] ?? ""}
+            disabled={busy || saving || !task.currentGalleryProven}
+            onChange={e => setSelected(current => ({ ...current, [position]: e.target.value }))}
+            className="mt-1 min-h-11 w-full rounded-lg border px-2">
+            <option value="">Conservar</option>{approved.map(o => <option key={o.id} value={o.id}
+              disabled={Object.entries(selected).some(([p,id]) => Number(p) !== position && id === o.id)}>
+              Reemplazar con propuesta · {labels[o.mayel_output_role]}</option>)}
+          </select></label>
+        <button type="button" disabled={busy || saving} onClick={() => void navigator.clipboard.writeText(
+          `${task.prompt}\nTARGET_IMAGE_POSITION=${position}\nMejora sólo esta posición usando las fuentes autorizadas. Conserva la identidad del producto. Imagen de referencia: ${before}`)
+          .then(() => setMessage(`Prompt de mejora copiado para la posición ${position + 1}. Las otras posiciones se conservan.`))}
+          className="mt-2 min-h-11 rounded-lg border px-3 text-xs">Crear mejora de esta posición</button>
+      </article>
+    })}</div>
+    <button type="button" disabled={busy || saving || !task.currentGalleryProven || !Object.values(selected).some(Boolean)}
+      onClick={() => void save()} className="mt-4 min-h-11 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">Guardar Preview de estas posiciones</button>
+    {owner && manifestSlots.length > 0 && <button type="button" disabled={busy || saving || task.galleryRebaseRequired ||
+      !task.currentGalleryProven || JSON.stringify(selected) !== JSON.stringify(Object.fromEntries(manifestSlots.map(r => [r.targetImagePosition,r.assetId])))}
+      onClick={() => void confirmPreview()} className="ml-2 mt-4 min-h-11 rounded-xl border border-[#1d5961] px-4 text-sm font-semibold disabled:opacity-40">Confirmar este Preview para sincronizar</button>}
+    {message && <p role="status" className="mt-3 text-sm">{message}</p>}
   </section>
 }
 
@@ -1403,6 +1363,21 @@ export function MayelVisualWorkstation({ canOperate,
   }, [focusedItemId])
 
   useEffect(() => {
+    if (!selectedVisualTaskId) return
+    let active = true
+    const refreshGallery = () => {
+      if (document.visibilityState !== "visible") return
+      void visualRequest("/api/admin/ebay/mayel-visual-workstation", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          action: "READ_CURRENT_GALLERY", visualTaskId: selectedVisualTaskId }) })
+        .then(() => { if (active) return load() }).catch(() => {})
+    }
+    refreshGallery()
+    document.addEventListener("visibilitychange", refreshGallery)
+    return () => { active = false; document.removeEventListener("visibilitychange", refreshGallery) }
+  }, [selectedVisualTaskId, load])
+
+  useEffect(() => {
     if (focusedItemId || !selectedVisualTaskId) return
     const selectedTask = tasks.find((task) =>
       task.visualTaskId === selectedVisualTaskId)
@@ -1560,7 +1535,7 @@ export function MayelVisualWorkstation({ canOperate,
           <HumanQa key={output.id} task={task} output={output} busy={busy} owner={canOwnerAuthorize}
             onDone={refresh} />)}</div>
       </section>}
-      {canOperate && <OrderedGalleryManager task={task} busy={busy}
+      {canOperate && <OrderedGalleryManager task={task} owner={canOwnerAuthorize} busy={busy}
         onDone={refresh} />}
       <div className="mt-6"><OwnerPreview task={task}
         canOwnerAuthorize={canOwnerAuthorize} delegation={delegation} /></div>

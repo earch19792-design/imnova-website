@@ -8,7 +8,7 @@ export type SyncDependencies = {
  finish: (state: string, reason: string | null, readback?: SyncReadback, retryAt?: string | null) => Promise<void>;
  markDispatch: () => Promise<void>;
  transition: (state: string) => Promise<void>;
- execute: () => Promise<{ writes: number; mediaWrites: number }>;
+ execute: () => Promise<{ writes: number; mediaWrites: number; stoppedReason?: string }>;
 }
 // Browser lifecycle never participates here. Dispatch intent is persisted before
 // the call; an uncertain commit requires official readback, never a blind retry.
@@ -53,6 +53,9 @@ export async function executeOutboxOperationV1(op: SyncOperation, d: SyncDepende
    await d.markDispatch()
    dispatched = true; dispatchedThisRun = true
    const executed = await d.execute(); executionReturned = true; writes = executed.writes; mediaWrites = executed.mediaWrites
+   if (executed.stoppedReason && writes === 0) {
+     await d.finish("REQUIRES_ATTENTION", executed.stoppedReason); return result()
+   }
    await d.transition("OFFICIAL_READBACK_REQUIRED")
    const after = await d.readback()
    await d.finish(after.official && after.matchesIntent ? "SYNCED" : "OFFICIAL_READBACK_REQUIRED",

@@ -1,3 +1,4 @@
+import { replacementSlotOrderV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
 import {
   buildMayelOrderedVisualManifestV2,
   buildMayelVisualManifestV1,
@@ -188,6 +189,7 @@ export function buildMayelVisualPhaseBPlanV1(input: {
  * exact Phase A task. This never authorizes or executes a marketplace write.
  */
 export function buildMayelVisualPhaseBRebaseV1(input: {
+  slotReplacements?: readonly GalleryReplacementV1[]
   visualTaskId: string
   ebayItemId: string
   visualManifest: unknown
@@ -264,14 +266,21 @@ export function buildMayelVisualPhaseBRebaseV1(input: {
     mayelReworkRequired: blocker ===
       "MAYEL_VISUAL_REBASE_EVIDENCE_BINDING_CONFLICT",
     mainImagePreserved: false })
-  const rebasedManifest = manifest.contractVersion ===
+  const replacements = input.slotReplacements ?? (manifest.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" &&
+    Array.isArray(manifest.slotReplacements) ? manifest.slotReplacements as GalleryReplacementV1[] : undefined)
+  if (!input.slotReplacements && replacements?.some(r => oldCurrent[r.targetImagePosition] !== currentOfficial[r.targetImagePosition]))
+    return Object.freeze({ safe: false, blocker: "MAYEL_VISUAL_REPLACEMENT_TARGET_CHANGED", manifest: null,
+      visualManifestDigest: null, currentOfficialImageSetDigest: currentDigest,
+      mayelAssetPreserved: true, mayelReworkRequired: false, mainImagePreserved: false })
+  const rebasedManifest = replacements || manifest.contractVersion ===
     MAYEL_ORDERED_VISUAL_MANIFEST_VERSION
     ? buildMayelOrderedVisualManifestV2({
       visualTaskId: input.visualTaskId,
       ebayItemId: input.ebayItemId,
       currentImages: currentOfficial,
       assets: approvedAssets,
-      finalOrder: (() => {
+      slotReplacements: replacements,
+      finalOrder: replacements ? replacementSlotOrderV1(currentOfficial, replacements) : (() => {
         const retained: Array<{
           kind: "MAYEL_ASSET"; assetId: string
         } | { kind: "CURRENT_OFFICIAL"; publicUrl: string }> = []

@@ -1,3 +1,5 @@
+import { replacementSlotOrderV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
+import { readCurrentMayelGalleryV1, savedOfficialGalleryV1 } from "./mayel-current-gallery-server-v1"
 import "server-only"
 
 import { createHash, randomUUID } from "node:crypto"
@@ -112,13 +114,7 @@ function sourceReferences(packageDataValue: unknown, sourcePackValue: unknown) {
   }).slice(0, 24)
 }
 
-function currentImageUrls(packageDataValue: unknown) {
-  const packageData = record(packageDataValue)
-  const values = Array.isArray(packageData.imageUrls)
-    ? packageData.imageUrls : []
-  return [...new Set(values.map(httpsUrl)
-    .filter((value): value is string => Boolean(value)))].slice(0, 24)
-}
+
 
 async function authoritativeLiveVisualPortfolioV1() {
   const monitor = await loadSellerOsAssistantMonitorV1()
@@ -329,6 +325,8 @@ export async function ensureMayelVisualTaskV1(input: {
         : input.offlineOnly ? null : (await authoritativeLiveVisualListingsV1()).find((listing) =>
           listing.itemId === itemId) ?? null
       if (!authoritative) continue
+      const officialGallery = await readCurrentMayelGalleryV1({ ...input, itemId,
+        sku: authoritative.sku }).catch(() => null)
       const evidencePack = buildMayelCurrentLiveVisualEvidencePackV1({
         ebayItemId: itemId, sku: authoritative.sku,
         title: authoritative.title,
@@ -344,7 +342,7 @@ export async function ensureMayelVisualTaskV1(input: {
         listing_package_id: null, candidate_key: `mayel-live:${itemId}`,
         assigned_operator_user_id: input.actorUserId,
         selection_authority: savedSource ? "SELLER_OS_SAVED_LISTING_VISUAL_DRAFT" : "SELLER_OS_AUTHORITATIVE_LIVE_VISUAL_PORTFOLIO",
-        selection_signal: { signalType: savedSource ? "SAVED_GENERATOR_EVIDENCE_PENDING_OFFICIAL_RECHECK" : "CURRENT_LIVE_VISUAL_ELIGIBILITY",
+        selection_signal: { currentOfficialGallery: officialGallery, signalType: savedSource ? "SAVED_GENERATOR_EVIDENCE_PENDING_OFFICIAL_RECHECK" : "CURRENT_LIVE_VISUAL_ELIGIBILITY",
           priorityClass: authoritative.highVisualPriority ? "HIGH" : "NORMAL",
           observedAt: authoritative.observedAt,
           productTruthSupported: false,
@@ -355,7 +353,7 @@ export async function ensureMayelVisualTaskV1(input: {
         product_truth_digest: evidencePack.productTruthDigest,
         source_image_references: evidencePack.sourceImageSet,
         source_image_set_digest: evidencePack.sourceImageSetDigest,
-        current_image_set: [authoritative.currentImageUrl],
+        current_image_set: officialGallery?.images ?? [],
         prompt_contract_version: MAYEL_CHATGPT_VISUAL_PROMPT_VERSION,
         prompt_text: prompt.text, prompt_digest: prompt.digest,
         status: "PROMPT_READY",
@@ -381,8 +379,10 @@ export async function ensureMayelVisualTaskV1(input: {
       .order("created_at", { ascending: false }).limit(1).maybeSingle()
     if (sourceError) throw new Error("MAYEL_VISUAL_SOURCE_PACK_READ_FAILED")
     const refs = sourceReferences(listingPackage.package_data, sourcePack)
-    const currentImages = currentImageUrls(listingPackage.package_data)
-    if (!refs.length || !currentImages.length) continue
+    const officialGallery = await readCurrentMayelGalleryV1({ ...input, itemId,
+      sku: active.ebay_sku }).catch(() => null)
+    const currentImages = officialGallery?.images ?? []
+    if (!refs.length) continue
     let evidencePack
     try {
       evidencePack = buildMayelProductEvidencePackV1({ ebayItemId: itemId,
@@ -394,6 +394,7 @@ export async function ensureMayelVisualTaskV1(input: {
     }
     const prompt = buildMayelChatGptVisualPromptV1(evidencePack)
     const selectionSignal = {
+      currentOfficialGallery: officialGallery,
       signalId: uuid(signal.id), signalType: text(signal.signal_type, 80),
       priorityClass: text(signal.priority_class, 40),
       observedAt: text(signal.report_observed_at, 80),
@@ -795,6 +796,8 @@ export async function uploadMayelVisualOutputBatchV1(input: {
 }
 
 export async function saveMayelOrderedGalleryIntentV2(input: {
+  slotReplacements?: readonly GalleryReplacementV1[]
+  expectedCurrentImages?: readonly string[]
   supabase: SupabaseClient
   accountKey: string
   actorUserId: string
@@ -804,6 +807,10 @@ export async function saveMayelOrderedGalleryIntentV2(input: {
     publicUrl?: string | null; assetId?: string | null }>[]
 }) {
   const task = await taskForActor(input)
+  if (savedOfficialGalleryV1(task.selection_signal) && !input.slotReplacements)
+    throw Error("MAYEL_VISUAL_SLOT_BINDING_REQUIRED")
+  if (input.slotReplacements && (input.expectedVisualManifestDigest ?? null) !== (task.visual_manifest_digest ?? null))
+    throw Error("MAYEL_VISUAL_REBASE_STALE_PREVIEW")
   const assetsRead = await input.supabase.from("ebay_listing_image_assets")
     .select("id,mayel_output_role,output_sha256,public_url")
     .eq("mayel_visual_task_id", input.taskId).eq("status", "approved")
@@ -818,23 +825,31 @@ export async function saveMayelOrderedGalleryIntentV2(input: {
       publicUrl && outputSha256 ? [{ assetId: row.id, role, outputSha256,
         publicUrl }] : []
   })
+  const officialGallery = input.slotReplacements ? await readCurrentMayelGalleryV1({ ...input,
+    itemId: String(task.ebay_item_id) }) : null
+  if (input.slotReplacements && (!officialGallery || JSON.stringify(officialGallery.images) !== JSON.stringify(input.expectedCurrentImages))) {
+    if (officialGallery) await input.supabase.from("ebay_mayel_visual_tasks_v1")
+      .update({ selection_signal: { ...record(task.selection_signal), currentOfficialGallery: officialGallery } })
+      .eq("id", input.taskId).eq("marketplace_account_key", input.accountKey)
+    throw Error("MAYEL_VISUAL_GALLERY_CHANGED_REVIEW_REQUIRED")
+  }
+  const currentImages = officialGallery?.images ?? (Array.isArray(task.current_image_set) ? task.current_image_set.filter((u): u is string => Boolean(httpsUrl(u))) : [])
   const manifest = buildMayelOrderedVisualManifestV2({
-    visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
-    currentImages: Array.isArray(task.current_image_set)
-      ? task.current_image_set.flatMap((url) => {
-        const normalized = httpsUrl(url)
-        return normalized ? [normalized] : []
-      }) : [],
-    assets, finalOrder: input.finalOrder,
+    visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id), currentImages,
+    assets, finalOrder: input.slotReplacements ? replacementSlotOrderV1(currentImages, input.slotReplacements) : input.finalOrder,
+    slotReplacements: input.slotReplacements,
     productTruthDigest: String(task.product_truth_digest),
     sourceImageSetDigest: String(task.source_image_set_digest),
   })
   let update = input.supabase.from("ebay_mayel_visual_tasks_v1")
     .update({ status: "OWNER_PREVIEW_READY", visual_manifest: manifest,
+      ...(officialGallery ? { current_image_set: officialGallery.images,
+        selection_signal: { ...record(task.selection_signal), currentOfficialGallery: officialGallery } } : {}),
       visual_manifest_digest: manifest.visualManifestDigest,
       updated_at: new Date().toISOString() })
     .eq("id", input.taskId).eq("marketplace_account_key", input.accountKey)
     .eq("assigned_operator_user_id", input.actorUserId)
+  if (input.slotReplacements && !input.expectedVisualManifestDigest) update = update.is("visual_manifest_digest", null)
   if (input.expectedVisualManifestDigest) {
     update = update.eq("visual_manifest_digest",
       input.expectedVisualManifestDigest)
@@ -886,6 +901,9 @@ function orderedIntentForManifest(input: { task: JsonRecord
   currentImages: readonly string[]
   assets: readonly { assetId: string; role: MayelVisualOutputRole
     outputSha256: string; publicUrl: string }[] }) {
+  const policy = record(input.task.visual_manifest)
+  if (policy.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" && Array.isArray(policy.slotReplacements))
+    return replacementSlotOrderV1(input.currentImages, policy.slotReplacements as GalleryReplacementV1[])
   const assetIds = new Set(input.assets.map((asset) => asset.assetId))
   const currentUrls = new Set(input.currentImages)
   const previous = Array.isArray(record(input.task.visual_manifest)
@@ -943,6 +961,8 @@ async function refreshManifest(input: { supabase: SupabaseClient
     visualTaskId: String(input.task.id),
     ebayItemId: String(input.task.ebay_item_id),
     currentImages, assets,
+    slotReplacements: record(input.task.visual_manifest).galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY"
+      ? record(input.task.visual_manifest).slotReplacements as GalleryReplacementV1[] : undefined,
     finalOrder: orderedIntentForManifest({ task: input.task,
       currentImages, assets }),
     productTruthDigest: String(input.task.product_truth_digest),
@@ -988,7 +1008,9 @@ async function manifestForApproval(input: {
     visualTaskId: String(input.task.id),
     ebayItemId: String(input.task.ebay_item_id),
     currentImages, assets,
-    finalOrder: input.replaceMainImage
+    slotReplacements: record(input.task.visual_manifest).galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY"
+      ? record(input.task.visual_manifest).slotReplacements as GalleryReplacementV1[] : undefined,
+    finalOrder: record(input.task.visual_manifest).galleryPolicy !== "REPLACE_APPROVED_SLOTS_ONLY" && input.replaceMainImage
       ? replaceMayelHeroIntentV1(orderedIntentForManifest({ task: input.task, currentImages, assets }), input.asset.id)
       : orderedIntentForManifest({ task: input.task, currentImages, assets }),
     productTruthDigest: String(input.task.product_truth_digest),
@@ -1207,7 +1229,12 @@ export async function readMayelVisualWorkstationV1(input: {
       sourceImageSetDigest: String(task.source_image_set_digest),
       productTruthDigest: String(task.product_truth_digest),
       sourceImages: sourceImages as MayelSourceImageReferenceV1[],
-      currentImages: task.current_image_set as string[], outputs,
+      currentImages: savedOfficialGalleryV1(task.selection_signal)?.images ?? task.current_image_set as string[],
+      currentGalleryProven: Boolean(savedOfficialGalleryV1(task.selection_signal)),
+      currentGalleryObservedAt: savedOfficialGalleryV1(task.selection_signal)?.observedAt ?? null,
+      galleryRebaseRequired: Boolean(task.visual_manifest_digest && savedOfficialGalleryV1(task.selection_signal) &&
+        JSON.stringify([record(task.visual_manifest).currentMainImage, ...(Array.isArray(record(task.visual_manifest).currentSecondaryImages) ? record(task.visual_manifest).currentSecondaryImages as unknown[] : [])]) !==
+          JSON.stringify(savedOfficialGalleryV1(task.selection_signal)?.images)), outputs,
       visualManifest: task.visual_manifest ? record(task.visual_manifest) : null,
       visualManifestDigest: text(task.visual_manifest_digest, 100),
       marketplaceWriteCapability: false as const })

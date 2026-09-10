@@ -1,3 +1,4 @@
+import { refreshMayelStationGalleryV1 } from "../../../../../lib/ebay/mayel-current-gallery-server-v1"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 120
@@ -580,6 +581,35 @@ export async function POST(request: Request) {
         : "PROMOTION_SPEND_DELEGATION_REVOKED",
       promotionDelegation: outcome.authority, marketplaceWrites: 0 })
     }
+    if (action === "CONFIRM_GALLERY_PREVIEW") {
+      if (!ownerRole) return json({ success: false, error: "OWNER_GALLERY_PREVIEW_REQUIRED" }, 403)
+      const taskId = uuid(body?.visualTaskId)
+      if (!taskId || typeof body?.expectedVisualManifestDigest !== "string")
+        return json({ success: false, error: "MAYEL_GALLERY_PREVIEW_STALE" }, 400)
+      const { confirmMayelGalleryPreviewV1 } = await import("../../../../../lib/seller-os/mayel-gallery-preview-handoff-v1")
+      const receipt = await confirmMayelGalleryPreviewV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        actorUserId: auth.userId, taskId, expectedDigest: body.expectedVisualManifestDigest,
+        confirmation: String(body.confirmation ?? "") })
+      return json({ success: true, receipt, marketplaceWrites: 0 })
+    }
+    if (action === "RESUME_GALLERY_SYNC") {
+      if (!ownerRole) return json({ success: false, error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
+      const outboxId = uuid(body?.outboxId), itemId = String(body?.ebayItemId ?? "")
+      if (!outboxId || !/^\d{9,20}$/.test(itemId)) return json({ success: false, error: "OUTBOX_EXACT_SCOPE_REQUIRED" }, 400)
+      const owned = await getSupabaseAdminClient().from("seller_os_ipad_outbox_v1").select("id")
+        .eq("id", outboxId).eq("item_id", itemId).eq("account_key", accountKey()).eq("actor_user_id", auth.userId).maybeSingle()
+      if (owned.error || !owned.data) return json({ success: false, error: "OUTBOX_EXACT_SCOPE_REQUIRED" }, 403)
+      const { runIpadOutboxRuntimeV1 } = await import("../../../../../lib/seller-os/ipad-sync-runtime-v1")
+      const result = await runIpadOutboxRuntimeV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(), outboxId, itemId })
+      return json({ success: true, ...result })
+    }
+    if (action === "READ_CURRENT_GALLERY") {
+      const taskId = uuid(body?.visualTaskId)
+      if (!taskId) return json({ success: false, error: "MAYEL_VISUAL_TASK_INVALID" }, 400)
+      const result = await refreshMayelStationGalleryV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        taskId, actorUserId: auth.userId, owner: ownerRole })
+      return json({ success: true, ...result })
+    }
     if (action === "REBASE_VISUAL_MANIFEST") {
       if (!ownerRole) return json({ success: false,
         error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
@@ -593,6 +623,7 @@ export async function POST(request: Request) {
       const rebase = await rebaseMayelVisualPhaseBPreviewV1({
         supabase: getSupabaseAdminClient(), accountKey: accountKey(), taskId,
         expectedVisualManifestDigest: expectedDigest,
+        ...(Array.isArray(body?.slotReplacements) ? { slotReplacements: body.slotReplacements as { targetImagePosition: number; assetId: string }[] } : {}),
       })
       return json({ success: true, outcome: "OWNER_PREVIEW_SAFE_REBASED",
         rebase, marketplaceWrites: 0 })
@@ -634,6 +665,17 @@ export async function POST(request: Request) {
       visualTaskId: result.task?.id ?? null,
       visualEligibility: result.canaryAvailable ? "ELIGIBLE" :
         "BLOCKED_IDENTITY", marketplaceWrites: 0 })
+    }
+    if (action === "SAVE_GALLERY_SLOTS") {
+      const taskId = uuid(body?.visualTaskId)
+      const slotReplacements = Array.isArray(body?.slotReplacements) ? body.slotReplacements : []
+      if (!taskId || !slotReplacements.length || !Array.isArray(body?.expectedCurrentImages))
+        return json({ success: false, error: "MAYEL_VISUAL_SLOT_BINDING_INVALID" }, 400)
+      const result = await saveMayelOrderedGalleryIntentV2({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        actorUserId: auth.userId, taskId, finalOrder: [], slotReplacements,
+        expectedCurrentImages: body.expectedCurrentImages,
+        expectedVisualManifestDigest: typeof body.expectedVisualManifestDigest === "string" ? body.expectedVisualManifestDigest : null })
+      return json({ success: true, ...result, marketplaceWrites: 0 })
     }
     if (action === "SAVE_ORDERED_GALLERY") {
       const taskId = uuid(body?.visualTaskId)

@@ -13,7 +13,7 @@ export function publicOutboxReceiptV1(row: OutboxRow): DurableOutboxReceipt {
  return { id: row.id, idempotencyKey: row.idempotency_key, state: outboxFriendlyStateV1(row.state), internalState: row.state,
    receivedAt: row.received_at, reasonCode: row.reason_code, officialReadback: row.official_readback }
 }
-export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown }) {
+export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown; galleryPreviewDigest?: string }) {
  const intent = parseOutboxIntentV1(input.intent)
  const hash = `sha256:${createHash("sha256").update(stableOutboxJsonV1(intent)).digest("hex")}`
  const previous = await input.supabase.from(IPAD_OUTBOX_TABLE).select("*").eq("account_key", input.accountKey)
@@ -24,10 +24,13 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
    return publicOutboxReceiptV1(previous.data as OutboxRow)
  }
  // Read only Seller OS evidence. Handoff deliberately has no upstream dependency.
- let binding: Record<string, unknown> = { publicationAuthorizedByDraft: false, ownerAtHandoff: input.owner === true }
+ let binding: Record<string, unknown> = { publicationAuthorizedByDraft: false, ownerAtHandoff: input.owner === true,
+   ...(input.owner === true && typeof input.galleryPreviewDigest === "string" && input.galleryPreviewDigest === intent.requestedChanges.manifestDigest
+     ? { ownerGalleryPreview: { confirmation: "CONFIRM_FULL_GALLERY_PREVIEW_V1", ownerUserId: input.actorUserId,
+       manifestDigest: input.galleryPreviewDigest } } : {}) }
  if (intent.kind.startsWith("IMAGE_")) {
    const task = await input.supabase.from("ebay_mayel_visual_tasks_v1")
-     .select("id,ebay_item_id,assigned_operator_user_id,current_image_set,source_image_set_digest,status,visual_manifest_digest")
+     .select("id,ebay_item_id,assigned_operator_user_id,current_image_set,source_image_set_digest,status,visual_manifest_digest,visual_manifest")
      .eq("marketplace_account_key", input.accountKey).eq("id", intent.requestedChanges.taskId!).eq("ebay_item_id", intent.itemId).maybeSingle()
    if (task.error || !task.data || (!input.owner && task.data.assigned_operator_user_id !== input.actorUserId)) throw Error("OUTBOX_TASK_SCOPE_REQUIRED")
    if (task.data.assigned_operator_user_id !== input.actorUserId) {
@@ -52,6 +55,17 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
        if (!asset || record(asset.qa_result).automaticStatus !== "PASSED") throw Error("OUTBOX_UPLOAD_ASSETS_INCOMPLETE")
        return { assetId: asset.id, sourceSha256: file.sha256 }
      })
+   } else if (intent.kind === "IMAGE_SYNC") {
+     const proposed = record(task.data.visual_manifest).proposedOrderedImages
+     const ids = Array.isArray(proposed) ? proposed.map(record).flatMap(e => typeof e.assetId === "string" ? [e.assetId] : []) : []
+     if (!ids.includes(intent.requestedChanges.assetId!) || !ids.length) throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
+     const native = await input.supabase.from("ebay_listing_image_assets")
+       .select("id,source_sha256,source_image_set_digest").eq("account_key", input.accountKey)
+       .eq("mayel_visual_task_id", task.data.id).in("id", ids)
+     if (native.error || native.data?.length !== ids.length ||
+         native.data.some(a => a.source_image_set_digest !== task.data.source_image_set_digest))
+       throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
+     binding = { ...binding, assets: native.data.map(a => ({ assetId: a.id, sourceSha256: a.source_sha256 })) }
    } else {
      const { readMayelGeneratedImageV1 } = await import("./mayel-generated-image-binding-v1")
      const origin = await readMayelGeneratedImageV1({ ...input, itemId: intent.itemId,
@@ -102,6 +116,11 @@ export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClie
  if (!t || t.ebay_item_id !== row.item_id || t.source_image_set_digest !== row.binding.sourceImageSetDigest ||
      !bound.length || bound.some(b => !assets.data?.some(a => a.id === b.assetId && a.source_sha256 === b.sourceSha256)))
    return { approved: false, reason: "OUTBOX_DRAFT_AUTHORITY_CHANGED", manifestDigest: null }
+ const galleryPreview = record(row.binding.ownerGalleryPreview)
+ if (manifest.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" && (row.kind !== "IMAGE_SYNC" ||
+     galleryPreview.confirmation !== "CONFIRM_FULL_GALLERY_PREVIEW_V1" || galleryPreview.ownerUserId !== row.actor_user_id ||
+     galleryPreview.manifestDigest !== t.visual_manifest_digest))
+   return { approved: false, reason: "OWNER_VISUAL_REVIEW_REQUIRED", manifestDigest: null }
  const proposed = Array.isArray(manifest.proposedOrderedImages) ? manifest.proposedOrderedImages.map(record) : []
  if (t.assigned_operator_user_id !== row.actor_user_id || t.status !== "OWNER_PREVIEW_READY" || !t.visual_manifest_digest ||
      !assets.data?.length || !proposed.some(e => e.assetId) ||

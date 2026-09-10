@@ -1,3 +1,4 @@
+import { replacementSlotOrderV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
 import { createHash } from "node:crypto"
 
 export const MAYEL_VISUAL_WORKSTATION_VERSION =
@@ -492,11 +493,16 @@ export function buildMayelOrderedVisualManifestV2(input: {
   assets: readonly MayelApprovedVisualAssetV1[]
   finalOrder: readonly Readonly<{ kind: "CURRENT_OFFICIAL" | "MAYEL_ASSET"
     publicUrl?: string | null; assetId?: string | null }>[]
+  slotReplacements?: readonly GalleryReplacementV1[]
   productTruthDigest: string
   sourceImageSetDigest: string
 }) {
   const currentImages = [...new Set(input.currentImages.filter((url) =>
     /^https:\/\//.test(url)))]
+  if (input.slotReplacements && JSON.stringify(input.finalOrder) !==
+      JSON.stringify(replacementSlotOrderV1(currentImages, input.slotReplacements))) {
+    throw Error("MAYEL_VISUAL_UNAUTHORIZED_SLOT_CHANGE")
+  }
   const assetsById = new Map(input.assets.map((asset) =>
     [asset.assetId, asset]))
   const allowedCurrent = new Set(currentImages)
@@ -536,6 +542,8 @@ export function buildMayelOrderedVisualManifestV2(input: {
     publicUrl: entry.publicUrl,
   }))
   const material = {
+    ...(input.slotReplacements ? { galleryPolicy: "REPLACE_APPROVED_SLOTS_ONLY",
+      slotReplacements: input.slotReplacements.map(r => ({ ...r })) } : {}),
     contractVersion: MAYEL_ORDERED_VISUAL_MANIFEST_VERSION,
     visualTaskId: input.visualTaskId, ebayItemId: input.ebayItemId,
     currentMainImage: currentHero,

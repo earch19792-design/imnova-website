@@ -1,16 +1,27 @@
+import { randomUUID } from "node:crypto"
 import { approvedVisualReadbackMatchesV1 } from "./visual-sync-readback-v1"
 import { stableOutboxJsonV1 } from "./ipad-outbox-contract-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { IPAD_OUTBOX_TABLE, readOutboxImageAuthorityV1, type OutboxRow } from "./ipad-durable-outbox-v1"
 import { executeOutboxOperationV1, type SyncReadback } from "./ipad-sync-engine-v1"
 import { getEbayProRuntimeBoundary } from "../ebay/environment-boundaries"
-export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; accountKey: string }) {
+export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; accountKey: string; outboxId?: string; itemId?: string }) {
  if (getEbayProRuntimeBoundary({ pathname: "/api/runtime/operational-integrity", method: "POST" }).runtime !== "seller_os_dedicated_preprod")
    return { status: "OUTSIDE_PREPROD", processed: 0, listingWriteCount: 0, mediaWriteCount: 0 }
+ if (Boolean(input.outboxId) !== Boolean(input.itemId) || input.outboxId &&
+     (!/^[a-f0-9-]{36}$/i.test(input.outboxId) || !/^\d{9,20}$/.test(input.itemId!))) throw Error("OUTBOX_EXACT_SCOPE_REQUIRED")
  let listingWriteCount = 0, mediaWriteCount = 0, processed = 0, dispatchAttempts = 0, writeOutcomeUnknown = false
  // Bounded work shares the existing scheduled operational runtime.
- for (let i = 0; i < 3 && dispatchAttempts < 1; i++) {
-   const claim = await input.supabase.rpc("seller_os_claim_ipad_outbox_v1", { p_account_key: input.accountKey })
+ for (let i = 0; i < (input.outboxId ? 1 : 3) && dispatchAttempts < 1; i++) {
+   const claim = input.outboxId && input.itemId
+     ? await input.supabase.from(IPAD_OUTBOX_TABLE).update({ lease_token: randomUUID(),
+         lease_until: new Date(Date.now() + 5 * 60_000).toISOString() })
+       .eq("id", input.outboxId).eq("account_key", input.accountKey).eq("item_id", input.itemId)
+       .in("state", ["APPROVED_FOR_EBAY_SYNC", "PENDING_EBAY_SYNC", "REVALIDATING", "SYNCING", "OFFICIAL_READBACK_REQUIRED", "UNKNOWN_COMMIT"])
+       .lte("next_attempt_at", new Date().toISOString())
+       .or(`lease_until.is.null,lease_until.lt.${new Date().toISOString()}`)
+       .select("id,account_key,actor_user_id,item_id,kind,intent,binding,idempotency_key,payload_hash,state,reason_code,received_at,lease_token,dispatch_count,official_readback")
+     : await input.supabase.rpc("seller_os_claim_ipad_outbox_v1", { p_account_key: input.accountKey })
    if (claim.error) throw Error("OUTBOX_CLAIM_FAILED")
    const row = claim.data?.[0] as OutboxRow | undefined
    if (!row) break
@@ -66,7 +77,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        const alreadyApplied = approvedVisualReadbackMatchesV1({ official, ownerApproved, baseListingCompatible,
          approvedManifestDigest: manifestDigest, currentManifestDigest: preview.visualManifestDigest,
          expectedImages, currentImages: preview.currentImages })
-       const matchesIntent = alreadyApplied || official && baseListingCompatible && Boolean(e && e.phase === "APPLIED_AND_OFFICIALLY_VERIFIED" &&
+       const matchesIntent = alreadyApplied || official && ownerApproved && baseListingCompatible && preview.visualManifestDigest === manifestDigest && preview.approvedGalleryAlreadyOfficial || official && baseListingCompatible && Boolean(e && e.phase === "APPLIED_AND_OFFICIALLY_VERIFIED" &&
          e.proposed_image_digest === preview.currentOfficialImageSetDigest && e.postwrite_snapshot?.nonAuthorizedFieldsUnchanged === true)
        return { official, baseHash: preview.currentOfficialImageSetDigest, matchesIntent,
          safetyPass: baseListingCompatible && preview.safeToExecuteVisualChange && preview.visualOnlyDiff && preview.unauthorizedFieldDiffCount === 0 && preview.visualManifestDigest === manifestDigest,
@@ -81,7 +92,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
      execute: async () => {
        const { executeMayelTradingVisualDelegatedManifestV1 } = await import("../ebay/ebay-mayel-visual-phase-b-server-v1")
        const result = await executeMayelTradingVisualDelegatedManifestV1({ ...input, taskId: row.intent.requestedChanges.taskId! })
-       return { writes: result.tradingListingWriteCount, mediaWrites: result.mediaApiWriteCount }
+       return { writes: result.tradingListingWriteCount, mediaWrites: result.mediaApiWriteCount, ...(result.status === "GALLERY_CHANGED" ? { stoppedReason: "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED" } : {}) }
      },
      finish: async (state: string, reason: string | null, proof?: SyncReadback, retryAt?: string | null) => {
        const due = retryAt && Date.parse(retryAt) > Date.now() ? retryAt : new Date(Date.now() + 15 * 60_000).toISOString()
