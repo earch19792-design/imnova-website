@@ -62,8 +62,9 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
      const native = await input.supabase.from("ebay_listing_image_assets")
        .select("id,source_sha256,source_image_set_digest").eq("account_key", input.accountKey)
        .eq("mayel_visual_task_id", task.data.id).in("id", ids)
+     const sourceDigest = task.data.source_image_set_digest
      if (native.error || native.data?.length !== ids.length ||
-         native.data.some(a => a.source_image_set_digest !== task.data.source_image_set_digest))
+         native.data.some(a => a.source_image_set_digest !== sourceDigest))
        throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
      binding = { ...binding, assets: native.data.map(a => ({ assetId: a.id, sourceSha256: a.source_sha256 })) }
    } else {

@@ -548,6 +548,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     ? "eBay Trading alcanzó temporalmente su límite de llamadas. Tu trabajo está guardado y se aplicará cuando vuelva a estar disponible."
     : null
   const preview = {
+    approvedGalleryAlreadyOfficial,
     contractVersion: "MAYEL_VISUAL_WORKSTATION_PHASE_B_V1",
     visualManifestId: uuid(context.task.visual_manifest_id),
     visualManifestDigest: context.plan.visualManifestDigest,
@@ -742,7 +743,6 @@ export async function rebaseMayelVisualPhaseBPreviewV1(input: {
     throw new Error("MAYEL_VISUAL_REBASE_DURABLE_READBACK_FAILED")
   }
   return Object.freeze({
-    approvedGalleryAlreadyOfficial,
     safeRebaseApplied: true,
     visualTaskId: input.taskId,
     oldVisualManifestDigest: oldDigest,
