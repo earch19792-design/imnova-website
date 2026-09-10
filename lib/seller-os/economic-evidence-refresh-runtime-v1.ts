@@ -549,6 +549,14 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
     const other=explicitOtherCostV1({accountKey:input.accountKey,itemId:job.ebay_item_id,economics:{
       salePrice:component("EBAY_LIVE_PRICE"),productCost:component("LUNA_CURRENT_COST"),shippingCost:component("LUNA_CURRENT_SHIPPING"),
       ebayFees:{value:fee.amount,reference:fee.reference,fresh:fee.status==="PROVEN"},otherCosts:component("OTHER_EXPLICIT_COSTS")}})
+    // Reuse an existing component without extending its source TTL or hiding a
+    // stale material cost behind a new null observation and the older zero policy.
+    if (other.value!==null && other.reference && rows.some((r:JsonRecord)=>r.evidence_id===other.reference)) {
+      await finishJob({supabase:input.supabase,job,workerId,evidenceId:other.reference,
+        status:other.fresh?"FRESH":"WAITING_FOR_WORKER",failureClass:null,nextRetryAt:retryAt(now,6*60*60_000)})
+      sourceResults.push({itemId:job.ebay_item_id,evidenceType:job.evidence_type,status:other.fresh?"FRESH":"WAITING_FOR_WORKER"})
+      continue
+    }
     const proven=other.fresh && other.value!==null
     await persistOutcome({ supabase: input.supabase,
       accountKey: input.accountKey, job, workerId, value: proven?other.value:null,

@@ -58,7 +58,7 @@ export function resolveListingPreSaleFeesV1(input: { accountKey: string; itemId:
   if (!basisValid) blockers.push("TOTAL_FEE_BASIS_UNPROVEN")
   const components: R[] = []
   const add = (type: string, amount: number, evidence: R, extra: R = {}) => components.push({
-    type, status: "PROVEN", amount: cents(amount), source: evidence.source,
+    type, status: "PROVEN", amount: basis.method === "PROVEN_UPPER_BOUND" ? Math.ceil((amount - 1e-9) * 100) / 100 : cents(amount), source: evidence.source,
     sourceVersion: evidence.sourceVersion, reference: evidence.reference, ...extra,
   })
   if (policyValid && basisValid && basis.quantity === 1 && basis.orderItemCount === 1) {

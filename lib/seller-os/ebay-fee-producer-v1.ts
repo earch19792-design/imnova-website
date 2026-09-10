@@ -77,7 +77,12 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     categoryId:str(listing.categoryId),salePrice:knownPrice,now:input.now,bundle:{...supplied,policies:[policy]}}) : null
   const sourceFresh=exact&&str(c.observedAt)!==null&&Date.parse(String(c.observedAt))<=input.now.getTime()&&
     input.now.getTime()-Date.parse(String(c.observedAt))<6*3600000
-  const state:FeeLifecycleState = input.itemId && !exact ? "CONFLICT" : input.itemId && !sourceFresh ? "STALE" :
+  const freshUntil=new Date(Math.min(input.now.getTime()+6*3600000,
+      ...[c.observedAt,listing.observedAt,performance.observedAt,standards.observedAt,service.observedAt]
+        .filter(v=>typeof v==="string"&&Number.isFinite(Date.parse(v))).map(v=>Date.parse(String(v))+6*3600000),
+      ...[resolved?.authority?.freshUntil,policy.freshUntil].filter(v=>typeof v==="string"&&Number.isFinite(Date.parse(v)))
+        .map(v=>Date.parse(String(v))))).toISOString()
+  const state:FeeLifecycleState = input.itemId && !exact ? "CONFLICT" : input.itemId && (!sourceFresh || Date.parse(freshUntil)<=input.now.getTime()) ? "STALE" :
     resolved?.status==="PROVEN" ? "PROVEN_PRE_SALE" : "PENDING_ORDER_CONTEXT"
   const body={contractVersion:EBAY_FEE_AUTHORITY_V1,producerVersion:EBAY_FEE_PRODUCER_V1,
     marketplaceAccountKey:input.accountKey,marketplace:"EBAY_US",itemId:input.itemId,sku:input.sku,packageId:input.packageId,
@@ -106,11 +111,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     amount:state==="PROVEN_PRE_SALE"?resolved?.amount??null:null,
     resolvedAuthority:state==="PROVEN_PRE_SALE"?resolved?.authority??null:null,
     promotionBlockedEvidence:state!=="PROVEN_PRE_SALE",ebayAdsWriteEnabled:false,
-    observedAt:input.now.toISOString(),freshUntil:new Date(Math.min(input.now.getTime()+6*3600000,
-      ...[c.observedAt,listing.observedAt,performance.observedAt,standards.observedAt,service.observedAt]
-        .filter(v=>typeof v==="string"&&Number.isFinite(Date.parse(v))).map(v=>Date.parse(String(v))+6*3600000),
-      ...[resolved?.authority?.freshUntil,policy.freshUntil].filter(v=>typeof v==="string"&&Number.isFinite(Date.parse(v)))
-        .map(v=>Date.parse(String(v))))).toISOString()}
+    observedAt:input.now.toISOString(),freshUntil:freshUntil}
   const fingerprint=feeDigestV1({...body,observedAt:undefined,freshUntil:undefined})
   return {...body,inputFingerprint:fingerprint,authorityId:feeDigestV1([fingerprint,input.now.toISOString()])}
 }
