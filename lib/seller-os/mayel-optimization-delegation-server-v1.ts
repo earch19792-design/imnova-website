@@ -95,6 +95,17 @@ export async function enqueueDelegatedVisualV1(input: { supabase: SupabaseClient
     .eq("id", input.taskId).eq("marketplace_account_key", input.accountKey).maybeSingle()
   if (t.error || !t.data) throw Error("MAYEL_OPTIMIZATION_TASK_REQUIRED")
   const task = t.data
+  const pendingDecision = record(record(task.selection_signal).pendingGalleryDecision)
+  if (pendingDecision.contract === "MAYEL_PENDING_FULL_GALLERY_DECISION_V1") {
+    if (pendingDecision.state === "REQUIRES_ATTENTION" || pendingDecision.expectedManifestDigest !== task.visual_manifest_digest)
+      return { status: "REQUIRES_ATTENTION", reason: "CURRENT_GALLERY_DECISION_CHANGED", receipt: null }
+    if (Date.parse(String(pendingDecision.nextAttemptAt)) > Date.now()) return { status: "WAITING_FOR_DATA", reason: "WAIT_RETRY_WINDOW", receipt: null }
+    const { saveFullMayelGalleryV1 } = await import("./mayel-full-gallery-server-v1")
+    const resumed = await saveFullMayelGalleryV1({ ...input, actorUserId: String(pendingDecision.actorUserId),
+      expectedManifestDigest: task.visual_manifest_digest, expectedCurrentImages: pendingDecision.expectedCurrentImages as string[],
+      decisions: pendingDecision.decisions as GalleryDecisionV1[] })
+    return { status: String(resumed.status), reason: typeof resumed.reason === "string" ? resumed.reason : null, receipt: null }
+  }
   const pendingManifest = record(task.visual_manifest)
   if (pendingManifest.galleryMutationContract === FULL_GALLERY_MUTATION_V1 && Array.isArray(pendingManifest.proposedOrderedImages) &&
       pendingManifest.proposedOrderedImages.every(e => !record(e).assetId)) {

@@ -1,3 +1,4 @@
+import { nextOutboxAttemptAtV1 } from "./ipad-outbox-contract-v1"
 import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { keywordRecord as record, keywordWireDigestV1 as digest, readKeywordDecisionHandoffV1 } from "./keyword-intelligence-handoff-v1"
@@ -192,7 +193,7 @@ export async function runMayelContentOutboxV1(input: { supabase: SupabaseClient;
     },
     finish: async (state, reason, readback, retryAt) => save({ state: state === "OWNER_APPROVAL_REQUIRED" ? "REQUIRES_ATTENTION" : state,
       reason_code: reason, lease_token: null, lease_until: null,
-      next_attempt_at: retryAt && Date.parse(retryAt) > Date.now() ? retryAt : new Date(Date.now() + 15 * 60_000).toISOString(),
+      next_attempt_at: nextOutboxAttemptAtV1(retryAt),
       official_readback: state === "SYNCED" && readback?.official === true && readback.matchesIntent,
       ...(readback?.receipt ? { execution_receipt: readback.receipt } : {}) }),
   })

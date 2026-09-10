@@ -507,13 +507,14 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
   const [reason, setReason] = useState("")
   const [message, setMessage] = useState("")
   const [approvingSync, setApprovingSync] = useState(false)
-  const [intent, setIntent] = useState<"" | "REPLACE_MAIN" | "ADD_SECONDARY">("")
+  const [intent, setIntent] = useState<"" | "REPLACE_MAIN" | "REPLACE_SLOT" | "ADD_SECONDARY">("")
+  const [replacementPosition, setReplacementPosition] = useState(1)
   const [savingIntent, setSavingIntent] = useState(false)
   const intents = Array.isArray(task.visualManifest?.visualIntents) ? task.visualManifest.visualIntents as
     { assetId: string; visualIntent: string; targetImagePosition: number }[] : []
   const appliedIntent = intents.find(i => i.assetId === output.id)
   const addPosition = task.currentImages.length + intents.filter(i => i.visualIntent === "ADD_SECONDARY" && i.assetId !== output.id).length
-  const targetPosition = intent === "REPLACE_MAIN" ? 0 : addPosition
+  const targetPosition = intent === "REPLACE_MAIN" ? 0 : intent === "REPLACE_SLOT" ? replacementPosition : addPosition
   const beforePosition = appliedIntent?.targetImagePosition ?? (intent ? targetPosition : 0)
   const status = visualAssetStatusV1({ generated: Boolean(output.previewUrl),
     qaPassed: output.qa_result.automaticStatus === "PASSED" && output.mayel_approval_status === "APPROVED",
@@ -540,7 +541,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "REVIEW_OUTPUT",
           visualTaskId: task.visualTaskId, assetId: output.id, decision,
-          visualIntent: task.autonomousOptimization ? undefined : intent, targetImagePosition: task.autonomousOptimization ? undefined : targetPosition,
+          visualIntent: intent || undefined, targetImagePosition: intent ? targetPosition : undefined,
           humanQa: decision === "APPROVE" ? checks : undefined,
           expectedGalleryDigest: task.currentGalleryDigest,
           rejectionReason: decision === "REJECT" ? reason : undefined }),
@@ -581,12 +582,17 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
           className="mt-2 aspect-square w-full rounded-xl bg-[#f4efe7] object-contain" />
       </div>
     </div>
-    {!task.autonomousOptimization && !status.synced && output.status !== "rejected" && <div className="mt-4">
+    {(!task.autonomousOptimization || !owner) && !status.synced && output.status !== "rejected" && <div className="mt-4">
       <label className="block text-sm font-semibold">¿Qué cambio quieres preparar?
         <select value={intent} onChange={e => setIntent(e.target.value as typeof intent)} className="mt-2 min-h-11 w-full rounded-xl border p-3">
           <option value="">Selecciona la intención</option><option value="REPLACE_MAIN">Reemplazar sólo la imagen principal</option>
+          <option value="REPLACE_SLOT" disabled={task.currentImages.length < 2}>Reemplazar una imagen secundaria</option>
           <option value="ADD_SECONDARY" disabled={addPosition >= 24}>Añadir secundaria · posición {addPosition + 1}</option>
         </select></label>
+      {intent === "REPLACE_SLOT" && <label className="mt-2 block text-sm">Posición exacta
+        <select value={replacementPosition} onChange={e => setReplacementPosition(Number(e.target.value))} className="mt-2 min-h-11 w-full rounded-xl border p-3">
+          {task.currentImages.slice(1).map((_,i) => <option key={i+1} value={i+1}>Imagen {i+2}</option>)}
+        </select></label>}
       {output.status === "approved" && <button type="button" disabled={busy || savingIntent || !intent} onClick={() => void saveIntent()}
         className="mt-2 min-h-11 rounded-xl border px-4 disabled:opacity-40">Guardar intención y Preview</button>}
       <p className="mt-2 text-sm">{task.autonomousOptimization ? "Conserva las demás posiciones. Mayel aplica la delegación sólo después de validar QA y evidencia." : "Conserva las demás posiciones. Guardar la intención no autoriza sincronizar."}</p>

@@ -498,3 +498,6 @@ export async function collectSellerOsEbayTradingRateLimitStatusV1(
     inFlight = null
   }
 }
+
+/** Read existing retry authority without acquiring quota evidence or traffic. */
+export function cachedTradingNextSafeProbeAtV1() { return cache?.value.nextSafeTradingProbeAt ?? null }

@@ -1,3 +1,4 @@
+import { nextOutboxAttemptAtV1 } from "./ipad-outbox-contract-v1"
 import { randomUUID } from "node:crypto"
 import { visualScopeFailureDefinitelyUnsentV1 } from "./mayel-visual-execution-scope-v1"
 import { approvedVisualReadbackMatchesV1 } from "./visual-sync-readback-v1"
@@ -127,7 +128,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        return { writes: result.tradingListingWriteCount, mediaWrites: result.mediaApiWriteCount, ...(result.status === "GALLERY_CHANGED" ? { stoppedReason: "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED" } : {}) }
      },
      finish: async (state: string, reason: string | null, proof?: SyncReadback, retryAt?: string | null) => {
-       const due = retryAt && Date.parse(retryAt) > Date.now() ? retryAt : new Date(Date.now() + 15 * 60_000).toISOString()
+       const due = nextOutboxAttemptAtV1(retryAt)
        await patch({ state, reason_code: reason, next_attempt_at: due, lease_until: null, lease_token: null,
          official_readback: state === "SYNCED" && proof?.official === true && proof.matchesIntent,
          ...(proof?.receipt || recoveryProof ? { execution_receipt: { ...proof?.receipt, ...(recoveryProof ? { preDispatchRecovery: recoveryProof } : {}) } } : {}),

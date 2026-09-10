@@ -737,6 +737,7 @@ export async function verifyOfficialOrderedImageSetV1(
     return { verified: false, method: "NO_MATCH" }
   }
   if (snapshot.pictureUrls.length !== expected.length) return { verified: false, method: "NO_MATCH" }
+  if (strictIdentity) return sameUrls(snapshot.pictureUrls, expected) ? { verified: true, method: "EXACT_PICTURE_URLS" } : { verified: false, method: "NO_MATCH" }
   if (sameUrls(snapshot.externalPictureUrls, expected)) {
     return { verified: true, method: "EXACT_EXTERNAL_URLS" }
   }
@@ -748,7 +749,6 @@ export async function verifyOfficialOrderedImageSetV1(
     || !expected.every((url) => approvedStorageUrl(url) || ebayPictureUrl(url))) {
     return { verified: false, method: "NO_MATCH" }
   }
-  if (strictIdentity) return { verified: false, method: "NO_MATCH" }
   const matches = await Promise.all(snapshot.pictureUrls.map((observed, index) =>
     perceptuallySame(expected[index], observed,
       approvedStorageUrl(expected[index]) ? "approved" : "ebay", fetchImpl)))

@@ -109,3 +109,8 @@ export function outboxFriendlyStateV1(state: string): OutboxFriendlyState {
 export function outboxTransientFailureV1(code: string) {
   return /EBAY_QUOTA_EXHAUSTED|EBAY_TEMPORARILY_UNAVAILABLE|EBAY_RATE_LIMITED|TEMPORARY_UPSTREAM_FAILURE|RATE_LIMIT|HTTP_429|HTTP_5[0-9]{2}|EBAY_ERROR_518|MAYEL_SAVED_DRAFT_ALREADY_RUNNING|TIMEOUT|FETCH_FAILED|WAITING_FOR_EBAY/.test(code)
 }
+
+/** Shared existing outbox fallback, also used by pending gallery preparation. */
+export function nextOutboxAttemptAtV1(retryAt?: string | null, now = Date.now()) {
+  return retryAt && Date.parse(retryAt) > now ? retryAt : new Date(now + 15 * 60_000).toISOString()
+}

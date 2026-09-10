@@ -1,20 +1,15 @@
 import { buildMayelOrderedVisualManifestV2, mayelVisualDigestV1, type MayelApprovedVisualAssetV1 } from "../ebay/ebay-mayel-visual-workstation-v1"
 
 export type VisualIntentV1 = { assetId: string; visualIntent: "REPLACE_MAIN" | "REPLACE_SLOT" | "ADD_SECONDARY"; targetImagePosition: number; intentReason?: string }
-/** A preserved decision wins. Without a proven replacement target, Mayel
- * deliberately preserves the live sequence and places additional coverage last.
- * More specific strategies use the full-gallery decision contract. */
+/** Adopt a durable Mayel decision without OWNER approval. Absence of a target
+ * is not permission to append; the operator/runtime must provide its decision. */
 export function decideMayelAssetPositionV1(input: { assetId: string; role: string; currentImages: readonly string[]; manifest: Record<string, unknown> }) : VisualIntentV1 {
   const intents = Array.isArray(input.manifest.visualIntents) ? input.manifest.visualIntents as VisualIntentV1[] : []
   const saved = intents.find(i => i.assetId === input.assetId)
   if (saved) return saved
   if (input.manifest.selectedHeroAssetId === input.assetId) return { assetId: input.assetId, visualIntent: "REPLACE_MAIN", targetImagePosition: 0,
     intentReason: "Mayel ya seleccionó esta propuesta como principal; conserva las demás imágenes." }
-  if (!input.role || !input.currentImages.length) throw Error("MAYEL_POSITION_EVIDENCE_REQUIRED")
-  const targetImagePosition = input.currentImages.length + intents.filter(i => i.visualIntent === "ADD_SECONDARY").length
-  if (targetImagePosition >= 24) throw Error("MAYEL_GALLERY_CAPACITY_REQUIRES_DECISION")
-  return { assetId: input.assetId, visualIntent: "ADD_SECONDARY", targetImagePosition,
-    intentReason: "Añadir cobertura visual después de la secuencia actual; no hay un reemplazo demostrado para esta propuesta." }
+  throw Error("MAYEL_POSITION_EVIDENCE_REQUIRED")
 }
 export function visualIntentOrderV1(current: readonly string[], intents: readonly VisualIntentV1[]) {
   if (!current.length || current.length > 24 || new Set(current).size !== current.length ||
