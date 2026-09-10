@@ -36,7 +36,7 @@ export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Reco
   const synced = currentRows.some(r => r.state === "SYNCED" && r.official_readback === true &&
     record(r.binding).executionManifestDigest === task.visual_manifest_digest)
   const active = currentRows.find(r => ["OFFICIAL_READBACK_REQUIRED", "UNKNOWN_COMMIT", "SYNCING", "REVALIDATING", "PENDING_EBAY_SYNC"].includes(String(r.state)))
-  const recoveryAttention = record(record(asset.qa_result).transitionRecovery).state === "REQUIRES_ATTENTION"
+  const recoveryAttention = asset.status === "pending_review" && record(record(asset.qa_result).transitionRecovery).state === "REQUIRES_ATTENTION"
   const state = synced ? "SYNCED" : attention || recoveryAttention || asset.status === "rejected" || delegation.active && !delegation.authorized && asset.status === "approved" ? "REQUIRES_ATTENTION" :
     !approved ? delegation.active ? "QA_READY" : record(asset.qa_result).automaticStatus === "PASSED" ? "OWNER_APPROVAL_REQUIRED" : "DRAFT" :
     synced ? "SYNCED" : active ? active.state === "UNKNOWN_COMMIT" ? "OFFICIAL_READBACK_REQUIRED" : String(active.state) : "APPROVED_FOR_EBAY_SYNC"

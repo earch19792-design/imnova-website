@@ -36,7 +36,7 @@ export function assertReviewIntentV1(current: string[], previous: readonly Visua
 }
 
 /** Do not let an older unreviewed proposal starve a durable safe decision. */
-export function recoverableVisualAssetV1(assets: Record<string, unknown>[], task: Record<string, unknown>) {
+export function recoverableVisualAssetV1<T extends Record<string, unknown>>(assets: T[], task: Record<string, unknown>) {
   return assets.find(a => a.status !== "approved" && savedSafeDecisionV1(a, task).safe) ??
     assets.find(a => a.status === "approved" && a.mayel_approval_status === "APPROVED") ?? assets[0]
 }
