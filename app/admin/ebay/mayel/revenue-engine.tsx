@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase"
 import { FRIENDLY_ACTIONS, METRIC_WINDOWS, scheduledLocalTimeV1, type MetricWindow, type PromotionPolicy } from "@/lib/seller-os/listing-treatment-engine-v1"
 import type { prepareTreatmentPreviewV1 } from "@/lib/seller-os/listing-treatment-runtime-v1"
 import { OwnerListingQualityReportControl } from "@/app/admin/owner-listing-quality-report-control"
+import { promotionShippingLabelV1, promotionMetricLabelV1, promotionDataLabelV1, promotionEconomicStatusV1 } from "@/lib/seller-os/mayel-promotion-ui-semantics-v1"
 import { MayelShippingStatus, MayelListingShippingStatus } from "./shipping-status"
 import { MayelImageWorkspace } from "./image-workspace"
 import { MayelAdsActivationPreview } from "./ads-activation-preview"
@@ -201,10 +202,10 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         {[...result.rows].sort((a, b) => menu === 3 ? ["PROFIT_PROTECT", "RESTOCK", "OPTIMIZE", "SCALE", "TEST", "HOLD"].indexOf(a.treatment) - ["PROFIT_PROTECT", "RESTOCK", "OPTIMIZE", "SCALE", "TEST", "HOLD"].indexOf(b.treatment) : 0).map(row => <article key={row.itemId} className="space-y-3 rounded-2xl bg-white p-5">
           <h3 className="text-lg font-semibold">{row.title}</h3><p className="font-semibold">{row.label}</p><p>{row.why}</p><p>{row.recommendedAction}</p>
           {menu === 1 && <MayelListingShippingStatus snapshot={local.shipping} itemId={row.itemId} />}
-          <p>Datos del listing: <strong>{row.commercialEnvelope.label}</strong></p>
+          <p>Datos del listing: <strong>{promotionDataLabelV1({ complete: row.commercialEnvelope.status === "COMPLETO", sampleSufficient: row.metricAssessment.metricSampleSufficient, treatment: row.treatment })}</strong></p>
           {row.treatment === "TEST" && <p className="text-sm">Estamos reuniendo datos para decidir con confianza. Mayel volverá a evaluarlos en el próximo análisis. Mientras tanto, no se preparará una promoción.</p>}
           <dl className="grid gap-3 text-sm sm:grid-cols-3">{([["impressions", "Impresiones"], ["views", "Visitas"], ["ctr", "CTR"], ["unitsSold", "Unidades vendidas"], ["conversion", "Conversión"], ["salesRevenue", "Ventas"]] as const).map(([key, label]) => <div key={key}>
-            <dt>{label} · {window}</dt><dd className="font-semibold">{row.metrics.windows[window]?.[key]?.value ?? "Sin datos para este periodo"}</dd></div>)}</dl>
+            <dt>{label} · {window}</dt><dd className="font-semibold">{promotionMetricLabelV1(key, row.metrics.windows[window]?.[key]?.value, row.metrics.windows[window]?.[key]?.unit)}</dd></div>)}</dl>
           <section aria-label="Observaciones disponibles" className="rounded-xl bg-slate-50 p-3">
             <h4 className="font-semibold">Datos disponibles de otros periodos</h4>
             <p className="text-sm">Cada dato conserva el periodo informado por eBay. No se usa como sustituto del periodo seleccionado.</p>
@@ -213,18 +214,18 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
               if (row.metrics.windows[window]?.[key]?.value !== null || observation?.availability !== "AVAILABLE" ||
                 observation.identity.itemId !== row.itemId || !observation.source.evidenceReference ||
                 observation.value === null || !Number.isFinite(observation.value) || !observation.reportingWindow) return null
-              return <p key={key} className="mt-2 text-sm">{label}: <strong>{observation.value}</strong> · {observation.reportingWindow.start.slice(0, 10)} a {observation.reportingWindow.end.slice(0, 10)} · {observation.reportingWindow.timeZone ?? "Horario por comprobar"}
+              return <p key={key} className="mt-2 text-sm">{label}: <strong>{promotionMetricLabelV1(key, observation.value, observation.unit)}</strong> · {observation.reportingWindow.start.slice(0, 10)} a {observation.reportingWindow.end.slice(0, 10)} · {observation.reportingWindow.timeZone ?? "Horario por comprobar"}
                 {observation.freshness.status !== "FRESH" && " · Pendiente de actualización"}</p>
             })}
           </section>
           <dl className="grid gap-3 text-sm sm:grid-cols-3">{([["Precio", row.economics.components.salePrice.value], ["Coste del producto", row.economics.components.productCost.value],
             ["Envío", row.economics.components.shippingCost.value], ["Comisiones eBay", row.economics.components.ebayFees.value], ["Otros costes", row.economics.components.otherCosts.value],
-            ["Beneficio antes de Ads", row.economics.profitBeforeAds]] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="font-semibold">{money(value)}</dd></div>)}</dl>
+            ["Beneficio antes de Ads", row.economics.profitBeforeAds]] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="font-semibold">{label === "Envío" ? promotionShippingLabelV1({itemId:row.itemId,value:row.economics.components.shippingCost.value,reference:row.economics.components.shippingCost.reference,snapshot:local.shipping}) : money(value)}</dd></div>)}</dl>
           <p>Margen antes de Ads: {row.economics.marginBeforeAds === null ? "Por comprobar" : `${row.economics.marginBeforeAds.toFixed(2)}%`}</p>
-          {row.economics.economicsUnproven && <p className="text-sm text-amber-800">{row.feeHandoff && row.feeHandoff.status !== "PROVEN" ? row.feeHandoff.label : "Faltan costes vigentes para comprobar el beneficio."}</p>}
+          <p role="status" className="text-sm text-amber-800">{promotionEconomicStatusV1({ feesProven:row.economics.components.ebayFees.fresh && !!row.economics.components.ebayFees.reference && row.economics.components.ebayFees.value !== null, economicsProven:!row.economics.economicsUnproven }).label}</p>
           <p>Quality: {row.quality.freshness ?? "Por comprobar"} · {row.quality.reportDate ?? "Sin fecha"} · {row.quality.recommendations.length} recomendaciones</p>
           {row.quality.recommendations.map((r, i) => <p key={i} className="text-sm">{r.recommendationText} · {r.actionState}</p>)}
-          <p className="text-sm">Tasa recomendada: {row.promotion.recommendedAdRate ?? "Por comprobar"}% · Máxima segura: {row.promotion.maxSafeAdRate ?? "Por comprobar"}%</p>
+          <p className="text-sm">Tasa recomendada: {row.promotion.recommendedAdRate ?? "Por comprobar"}% · Techo Ads seguro: {row.promotion.maxSafeAdRate === null ? "Esperando datos" : `${row.promotion.maxSafeAdRate}%`}</p>
           <p className="text-sm">Ads por venta: {money(row.promotion.projectedAdCost)} · Beneficio después: {money(row.promotion.projectedProfitAfterAds)} · Margen: {row.promotion.projectedMarginAfterAds?.toFixed(2) ?? "Por comprobar"}%</p>
           {result.previews?.find(p => p.itemId === row.itemId)?.result.preview && <button className={button} onClick={() => setPreviewItemId(row.itemId)}>Ver Preview del listing</button>}
           {previewItemId === row.itemId && (() => {
@@ -237,7 +238,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
             </section> : null
           })()}
           {owner && row.treatment === "OPTIMIZE" && row.diagnosticPriorities.includes("MAIN_IMAGE") && <button className={button} disabled={busy} onClick={() => void analyze("IMAGE", row.itemId)}>Preparar mejora de imagen</button>}
-          <details><summary>Ver detalles</summary><pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ row, preview: result.previews?.find(p => p.itemId === row.itemId) }, null, 2)}</pre></details>
+          <details><summary>Ver detalles</summary><pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ ECONOMICS:promotionEconomicStatusV1({feesProven:row.economics.components.ebayFees.fresh && !!row.economics.components.ebayFees.reference && row.economics.components.ebayFees.value !== null,economicsProven:!row.economics.economicsUnproven}).status, row, preview: result.previews?.find(p => p.itemId === row.itemId) }, null, 2)}</pre></details>
         </article>)}
         {menu === 1 && owner && <button className={button} disabled={busy} onClick={() => void analyze("RECEIPT")}>Guardar simulación</button>}
         <button className={button} disabled={busy} onClick={() => void analyze("MEASURE")}>Medir resultados</button>

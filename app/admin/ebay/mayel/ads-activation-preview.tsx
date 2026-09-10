@@ -1,4 +1,5 @@
 "use client"
+import { promotionShippingLabelV1, promotionEconomicStatusV1, promotionDataLabelV1 } from "@/lib/seller-os/mayel-promotion-ui-semantics-v1"
 import { MayelListingShippingStatus } from "./shipping-status"
 import type { MayelShippingSnapshotV1 } from "@/lib/seller-os/mayel-shipping-visibility-v1"
 import { useState } from "react"
@@ -38,15 +39,17 @@ export function MayelAdsActivationPreview({ itemIds, shipping }: { itemIds: stri
         <p>{row.singleListingAdsCanaryReady ? "Requiere tu aprobación antes de gastar." : "Esperando los datos necesarios para completar la revisión."}</p>
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">{[
           ["Precio", money(row.preview.SALE_PRICE)], ["Costo", money(row.preview.PRODUCT_COST)],
-          ["Shipping", money(row.preview.SHIPPING)], ["Fees eBay", money(row.preview.EBAY_FEES)],
+          ["Envío", promotionShippingLabelV1({itemId:row.itemId,value:row.preview.SHIPPING,reference:row.commercialEnvelope.shipping.reference,snapshot:shipping})], ["Fees eBay", money(row.preview.EBAY_FEES)],
           ["Ganancia antes Ads", money(row.preview.PROFIT_BEFORE_ADS)], ["Margen", pct(row.preview.MARGIN_BEFORE_ADS)],
           ["Techo Ads seguro", pct(row.preview.MAX_SAFE_AD_RATE_PCT)], ["Ads recomendada", pct(row.preview.PROPOSED_AD_RATE_PCT)],
           ["Ganancia después Ads", money(row.preview.PROJECTED_PROFIT_AFTER_ADS)],
         ].map(([label, value]) => <div key={label}><dt className="text-sm">{label}</dt><dd className="font-semibold">{value}</dd></div>)}</dl>
 
+        <p>Datos del listing: <strong>{promotionDataLabelV1({complete:row.economicsProven,sampleSufficient:row.metricsStatus === "COMPARABLE_SAMPLE",treatment:row.treatment,ownerActionRequired:!row.ownerPolicyValid})}</strong></p>
+        <p role="status">{promotionEconomicStatusV1({feesProven:row.ebayFeeAuthorityPass,economicsProven:row.economicsProven}).label}</p>
         <p className="mt-2 text-sm">{row.preview.WHY_MAYEL_RECOMMENDS_PROMOTION}</p>
         {!row.ownerPolicyValid && <p>Revisa las fechas y los límites de tu política de publicidad.</p>}
-        <details><summary>Ver detalles</summary><p className="text-sm">{row.shippingStatus === "SHIPPING_PROVEN" ? "Shipping comprobado al preparar este cálculo." : "Este cálculo esperaba Shipping vigente. La conexión con Luna no confirma el costo."}</p><pre className="overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ itemId:row.itemId, blockers:row.blockers, preview:row.preview, feeEstimateMode:row.feeEstimateMode, metricsStatus:row.metricsStatus, simulations:row.simulations },null,2)}</pre></details>
+        <details><summary>Ver detalles</summary><p className="text-sm">{row.shippingStatus === "SHIPPING_PROVEN" ? "Shipping comprobado al preparar este cálculo." : "Este cálculo esperaba Shipping vigente. La conexión con Luna no confirma el costo."}</p><pre className="overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ ECONOMICS:promotionEconomicStatusV1({feesProven:row.ebayFeeAuthorityPass,economicsProven:row.economicsProven}).status, itemId:row.itemId, blockers:row.blockers, preview:row.preview, feeEstimateMode:row.feeEstimateMode, metricsStatus:row.metricsStatus, simulations:row.simulations },null,2)}</pre></details>
       </article>)}
     </>}
   </section>

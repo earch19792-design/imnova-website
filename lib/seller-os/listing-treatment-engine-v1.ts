@@ -108,7 +108,7 @@ export function projectListingMetricsV1(listing: CommercialListingReadModel) {
     const hours = { "24H": 24, "7D": 168, "30D": 720 }[window]
     const exact = o?.identity.itemId === listing.identity.itemId && o?.availability === "AVAILABLE" &&
       valid(o.value) && duration === hours * 3600000 && Boolean(o.source.evidenceReference)
-    return { value: exact ? o!.value : null, reference: o?.source.evidenceReference ?? null,
+    return { value: exact ? o!.value : null, unit: o?.unit ?? null, reference: o?.source.evidenceReference ?? null,
       window: w && inclusiveDays && Number.isFinite(Date.parse(w.end)) ? { ...w, end: new Date(Date.parse(w.end) + 86400000).toISOString() } : w ?? null,
       sourceWindow: w ?? null, windowSemantics: inclusiveDays ? "INCLUSIVE_SOURCE_DATES_TO_EXCLUSIVE_END" : "ELAPSED_INTERVAL",
       freshness: o?.freshness.status ?? "UNKNOWN",
