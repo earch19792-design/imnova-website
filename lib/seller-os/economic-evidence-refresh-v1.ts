@@ -1,3 +1,4 @@
+import { consumeFeeLifecycleV1 } from "./pre-sale-economics-v1"
 import { createHash } from "node:crypto"
 
 export const SELLER_OS_ECONOMIC_EVIDENCE_REFRESH_V1 =
@@ -85,8 +86,9 @@ export function buildEconomicEvidenceV1(input: Readonly<{
   }
   const capturedAt = new Date(input.capturedAt).toISOString()
   const freshUntil = input.status === "FRESH"
-    ? new Date(Date.parse(capturedAt) +
-      ECONOMIC_EVIDENCE_MAXIMUM_AGE_SECONDS_V1[input.evidenceType] * 1_000)
+    ? new Date(Math.min(Date.parse(capturedAt) +
+      ECONOMIC_EVIDENCE_MAXIMUM_AGE_SECONDS_V1[input.evidenceType] * 1_000,
+      input.evidenceType === "EXPECTED_EBAY_FEE" && input.metadata?.feeLifecycleV1 ? Date.parse(String((input.metadata.feeLifecycleV1 as JsonRecord).freshUntil)) : Infinity))
       .toISOString()
     : null
   const body = Object.freeze({
@@ -131,6 +133,7 @@ export type LatestEconomicEvidenceV1 = Readonly<{
   value_amount: number | string | null
   fresh_until: string | null
   freshness_status: EconomicRefreshStatusV1
+  evidence_metadata?: JsonRecord
 }>
 
 export function evidenceIsFreshV1(
@@ -156,8 +159,13 @@ export function calculateLiveEconomicsV1(input: Readonly<{
   const missing = required.filter((type) =>
     !evidenceIsFreshV1(input.evidence[type],
       Date.parse(input.calculatedAt ?? new Date().toISOString())))
+  const checkedFee = consumeFeeLifecycleV1({accountKey:input.accountKey,itemId:input.itemId,
+    authority:input.evidence.EXPECTED_EBAY_FEE?.evidence_metadata?.feeLifecycleV1,
+    salePrice:input.evidence.EBAY_LIVE_PRICE?.value_amount == null ? null : Number(input.evidence.EBAY_LIVE_PRICE.value_amount),
+    now:new Date(input.calculatedAt ?? Date.now())})
+  if (checkedFee.status!=="PROVEN" && !missing.includes("EXPECTED_EBAY_FEE")) missing.push("EXPECTED_EBAY_FEE")
   const rawValues = Object.fromEntries(required.map((type) => [type,
-    missing.includes(type) ? null : Number(input.evidence[type]!.value_amount)]))
+    missing.includes(type) ? null : type === "EXPECTED_EBAY_FEE" ? checkedFee.amount : Number(input.evidence[type]!.value_amount)]))
   const values = rawValues as Record<EconomicEvidenceTypeV1, number | null>
   const status = missing.length === 0 ? "PROVEN" as const
     : missing.length === required.length ? "UNPROVEN" as const

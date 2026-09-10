@@ -6,7 +6,8 @@ export const CONTINGENT_FEE_RISKS_V1 = ["BUYER_TAX", "INTERNATIONAL_APPLICABILIT
  * Only trusted server evidence may supply this bundle. */
 export function assessFeeBoundCoverageV1(bundleValue: unknown, now: Date) {
   const b = feeRecordV1(bundleValue), basis = feeRecordV1(b.basis), context = feeRecordV1(b.context)
-  if (basis.method !== "PROVEN_UPPER_BOUND") return { pass: true, blockers: [] as string[] }
+  if (basis.method !== "PROVEN_UPPER_BOUND") return { pass: basis.method === "EXACT_SCENARIO",
+    blockers: basis.method === "EXACT_SCENARIO" ? [] as string[] : ["TOTAL_FEE_BASIS_UNPROVEN"] }
   const coverage = Array.isArray(b.boundCoverage) ? b.boundCoverage.map(feeRecordV1) : []
   const blockers = CONTINGENT_FEE_RISKS_V1.filter(risk => {
     const matches = coverage.filter(c => c.component === risk)

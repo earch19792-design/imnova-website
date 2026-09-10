@@ -1,3 +1,4 @@
+import { explicitOtherCostV1, consumeFeeLifecycleV1 } from "./pre-sale-economics-v1"
 import "server-only"
 
 import { randomUUID } from "node:crypto"
@@ -60,6 +61,7 @@ function text(value: unknown, maximum = 500) {
 }
 
 function money(value: unknown) {
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed >= 0
     ? Number(parsed.toFixed(4)) : null
@@ -164,7 +166,7 @@ async function persistOutcome(input: Readonly<{
     evidence })
   await finishJob({ supabase: input.supabase, job: input.job,
     workerId: input.workerId, status: input.status, evidenceId,
-    failureClass: input.limitationCode,
+    failureClass: input.metadata?.pendingIsError === false ? null : input.limitationCode,
     nextRetryAt: input.nextRetryAt })
   return evidence
 }
@@ -252,11 +254,7 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
     listing.marketplaceCertification.status === "US_CERTIFIED")
   const itemIds = listings.map((listing) => listing.itemId)
   const [evidenceRead, jobsRead, linkageRead] = await Promise.all([
-    input.supabase.from("seller_os_live_economic_evidence_v1")
-      .select("evidence_id,ebay_item_id,evidence_type,value_amount,fresh_until,freshness_status,captured_at")
-      .eq("marketplace_account_key", input.accountKey)
-      .in("ebay_item_id", itemIds).order("captured_at", { ascending: false })
-      .limit(1_000),
+    input.supabase.rpc("seller_os_latest_economic_evidence_v1", {p_account_key: input.accountKey, p_item_ids: itemIds}),
     input.supabase.from("seller_os_economic_evidence_refresh_jobs_v1")
       .select("*").eq("marketplace_account_key", input.accountKey)
       .in("ebay_item_id", itemIds).limit(500),
@@ -524,38 +522,47 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
       const proven = authority.state === "PROVEN_PRE_SALE"
       await persistOutcome({ supabase: input.supabase, accountKey: input.accountKey, job, workerId,
         value: authority.amount, sourceAuthority: authority.contractVersion,
-        sourceEntityId: authority.authorityId, status: proven ? "FRESH" : "SOURCE_UNAVAILABLE",
-        limitationCode: proven ? null : authority.state,
+        sourceEntityId: authority.authorityId, status: proven ? "FRESH" : "WAITING_FOR_WORKER",
+        limitationCode: proven ? null : authority.economicsState,
         nextRetryAt: authority.freshUntil, now,
-        metadata: { feeLifecycleV1: authority, feeAuthorityV1: authority.resolvedAuthority,
+        metadata: { feeLifecycleV1: authority, feeAuthorityV1: authority.resolvedAuthority, feeSourceContextV1: context,
+          businessStatus: authority.economicsState, pendingIsError: false,
           ...(resolutionInputs ? { feeResolutionInputsV1: resolutionInputs } : {}),
           categoryId: context.listing.categoryId, confidence: proven ? "PROVEN" : "PENDING" } })
       sourceResults.push({ itemId: job.ebay_item_id, evidenceType: job.evidence_type,
-        status: proven ? "FRESH" : "SOURCE_UNAVAILABLE" })
+        status: proven ? "FRESH" : "WAITING_FOR_WORKER" })
     } catch (error) { await processFailure(job, error) }
   }
 
   for (const job of await claim({ supabase: input.supabase,
     accountKey: input.accountKey, workerId,
     types: ["OTHER_EXPLICIT_COSTS"], limit: 100 })) {
+    const current = await input.supabase.rpc("seller_os_latest_economic_evidence_v1", {p_account_key: input.accountKey,p_item_ids:[job.ebay_item_id]})
+    if (current.error) throw Error("EXPLICIT_COST_INPUT_READ_FAILED")
+    const rows=(current.data??[]).map(record)
+    const component=(type:string)=>{const r=rows.find((r:JsonRecord)=>r.evidence_type===type)??{};return {
+      value:r.value_amount==null?null:Number(r.value_amount),reference:typeof r.evidence_id==="string"?r.evidence_id:null,
+      fresh:evidenceIsFreshV1(r as LatestEconomicEvidenceV1,now.getTime())}}
+    const feeRow=rows.find((r:JsonRecord)=>r.evidence_type==="EXPECTED_EBAY_FEE")
+    const fee=consumeFeeLifecycleV1({accountKey:input.accountKey,itemId:job.ebay_item_id,
+      authority:record(feeRow?.evidence_metadata).feeLifecycleV1,salePrice:component("EBAY_LIVE_PRICE").value,now})
+    const other=explicitOtherCostV1({accountKey:input.accountKey,itemId:job.ebay_item_id,economics:{
+      salePrice:component("EBAY_LIVE_PRICE"),productCost:component("LUNA_CURRENT_COST"),shippingCost:component("LUNA_CURRENT_SHIPPING"),
+      ebayFees:{value:fee.amount,reference:fee.reference,fresh:fee.status==="PROVEN"},otherCosts:component("OTHER_EXPLICIT_COSTS")}})
+    const proven=other.fresh && other.value!==null
     await persistOutcome({ supabase: input.supabase,
-      accountKey: input.accountKey, job, workerId, value: null,
+      accountKey: input.accountKey, job, workerId, value: proven?other.value:null,
       sourceAuthority: "SELLER_OS_EXPLICIT_COST_COMPONENT_REGISTRY",
-      sourceEntityId: job.ebay_item_id, status: "SOURCE_UNAVAILABLE",
-      limitationCode: "EXPLICIT_OTHER_COST_AUTHORITY_NOT_CONFIGURED",
-      nextRetryAt: retryAt(now, 24 * 60 * 60_000), now,
-      metadata: { hiddenGenericReserveUsed: false,
-        authoritativeZeroClaimed: false } })
+      sourceEntityId: other.reference??job.ebay_item_id, status: proven?"FRESH":"WAITING_FOR_WORKER",
+      limitationCode: proven?null:"EXPLICIT_OTHER_COST_AUTHORITY_OR_DEPENDENCIES_REQUIRED",
+      nextRetryAt: retryAt(now, 6 * 60 * 60_000), now,
+      metadata: { hiddenGenericReserveUsed: false, pendingIsError:false,
+        policyReference:other.reference, authoritativeZeroClaimed:proven && other.value===0 } })
     sourceResults.push({ itemId: job.ebay_item_id,
-      evidenceType: job.evidence_type, status: "SOURCE_UNAVAILABLE" })
+      evidenceType: job.evidence_type, status: proven?"FRESH":"WAITING_FOR_WORKER" })
   }
 
-  const finalEvidenceRead = await input.supabase.from(
-    "seller_os_live_economic_evidence_v1")
-    .select("evidence_id,ebay_item_id,evidence_type,value_amount,fresh_until,freshness_status,captured_at")
-    .eq("marketplace_account_key", input.accountKey)
-    .in("ebay_item_id", itemIds).order("captured_at", { ascending: false })
-    .limit(1_000)
+  const finalEvidenceRead = await input.supabase.rpc("seller_os_latest_economic_evidence_v1", {p_account_key: input.accountKey, p_item_ids: itemIds})
   if (finalEvidenceRead.error) {
     throw new Error("ECONOMIC_REFRESH_FINAL_EVIDENCE_READ_FAILED")
   }

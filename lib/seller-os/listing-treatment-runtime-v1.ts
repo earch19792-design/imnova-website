@@ -1,3 +1,4 @@
+import { resolvePreSaleEconomicsV1, adsCanaryEconomicsV1 } from "./pre-sale-economics-v1"
 import { readEbayFeeHandoffV1 } from "./ebay-fee-runtime-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { CommercialMonitorGetDto } from "../ebay/commercial-monitor-readonly-contract"
@@ -7,10 +8,7 @@ import { currentLiveListingsForMonitorV1 } from "../ebay/ebay-seller-os-live-por
 import { prepareRevenueFirstListingPreviewV1 } from "./revenue-first-preview-v1"
 import { keywordWireDigestV1 } from "./keyword-intelligence-handoff-v1"
 import { readOwnHistoryMetricsV1 } from "./listing-metrics-cold-start-v1"
-import { consumeListingFeeAuthorityV1 } from "./listing-fee-authority-v1"
-import { resolveDurableListingFeeMetadataV1 } from "./listing-fee-resolver-v1"
 import { buildListingCommercialEnvelopeV1, type CommercialComponentName, type CommercialComponent } from "./listing-commercial-envelope-v1"
-import ownerVariableCostPolicy from "../../docs/owner-variable-cost-policy-v1.json" with { type: "json" }
 import { readCommercialPackageBindingV1 } from "./listing-commercial-binding-v1"
 import { resolveMaximumOfficialEbayImageV1 } from "../ebay/ebay-seller-os-visual-quality-v1"
 import { diagnoseListingTreatmentV1, projectListingMetricsV1, promotionPortfolioPreviewV1,
@@ -18,7 +16,6 @@ import { diagnoseListingTreatmentV1, projectListingMetricsV1, promotionPortfolio
   compareTreatmentReceiptV1,
   type Economics, type MetricWindow, type PromotionPolicy } from "./listing-treatment-engine-v1"
 
-const fields = { salePrice: "EBAY_LIVE_PRICE", productCost: "LUNA_CURRENT_COST", shippingCost: "LUNA_CURRENT_SHIPPING", ebayFees: "EXPECTED_EBAY_FEE", otherCosts: "OTHER_EXPLICIT_COSTS" } as const
 export async function readListingTreatmentsV1(input: { supabase: SupabaseClient; accountKey: string;
   monitor: CommercialMonitorGetDto; itemIds: string[]; policy: PromotionPolicy; window: MetricWindow; now?: Date }) {
   validatePromotionPolicyV1(input.policy)
@@ -29,11 +26,7 @@ export async function readListingTreatmentsV1(input: { supabase: SupabaseClient;
   const listings = input.itemIds.map(id => live.find(l => l.identity.itemId === id))
   if (listings.some(l => !l)) throw Error("EXACT_CURRENT_LIVE_LISTING_REQUIRED")
   const [economicsRead, artifact] = await Promise.all([
-    input.supabase.from("seller_os_live_economic_evidence_v1")
-      .select("evidence_id,ebay_item_id,evidence_type,value_amount,value_currency,captured_at,fresh_until,freshness_status,source_authority,evidence_metadata")
-      .eq("marketplace_account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
-      .in("ebay_item_id", input.itemIds).order("captured_at", { ascending: false })
-      .order("created_at", { ascending: false }).limit(500),
+    input.supabase.rpc("seller_os_latest_economic_evidence_v1", {p_account_key:input.accountKey,p_item_ids:input.itemIds}),
     readDurableListingQualityArtifactV1({ supabase: input.supabase, accountKey: input.accountKey, now: now.toISOString() }),
   ])
   const quality = normalizeEbayListingQualityReport({ artifact, listings: input.monitor.listings })
@@ -50,30 +43,17 @@ export async function readListingTreatmentsV1(input: { supabase: SupabaseClient;
     const metricAssessment = await readOwnHistoryMetricsV1({ supabase: input.supabase,
       accountKey: input.accountKey, itemId, sku: listing!.identity.sku, window: input.window, now,
       start: requestedStart, end: requestedEnd })
-    const economics = Object.fromEntries(Object.entries(fields).map(([key, type]) => {
-      const row = economicsRead.error ? null : economicsRead.data?.find(r => r.ebay_item_id === itemId && r.evidence_type === type)
-      return [key, { value: row?.value_amount === null || row?.value_amount === undefined ? null : Number(row.value_amount),
-        reference: row?.evidence_id ?? null, fresh: Boolean(row && row.value_currency === "USD" && row.freshness_status === "FRESH" &&
-          Date.parse(row.fresh_until) >= now.getTime() && Date.parse(row.captured_at) <= now.getTime()) }]
-    })) as Omit<Economics, "adFeeBasis">
-    const feeRow = economicsRead.error ? null : economicsRead.data?.find(r => r.ebay_item_id === itemId && r.evidence_type === "EXPECTED_EBAY_FEE")
     const feeHandoff = await readEbayFeeHandoffV1({ supabase: input.supabase, accountKey: input.accountKey,
       itemId, packageId: packageBinding.packageId, sku: listing!.identity.sku, now })
-    const feeMetadata = feeHandoff ? { feeAuthorityV1: feeHandoff.resolvedAuthority } : feeRow?.evidence_metadata as Record<string, unknown> | undefined
-    const resolvedFees = resolveDurableListingFeeMetadataV1({ metadata: feeMetadata, accountKey: input.accountKey,
-      itemId, categoryId: packageBinding.categoryId, salePrice: economics.salePrice.value, now })
-    const feeAuthority = consumeListingFeeAuthorityV1({ metadata: resolvedFees.metadata, accountKey: input.accountKey, itemId,
-      categoryId: packageBinding.categoryId,
-      salePrice: economics.salePrice.value, now })
-    economics.ebayFees = { value: feeAuthority.amount, reference: feeAuthority.reference,
-      fresh: feeAuthority.status === "PROVEN" && (feeHandoff ? feeHandoff.status === "PROVEN" : economics.ebayFees.fresh) }
-    const ownerPolicyApplicable = input.accountKey === ownerVariableCostPolicy.marketplaceAccountKey &&
-      ownerVariableCostPolicy.observedCurrentItemIds.includes(itemId) &&
-      [economics.productCost, economics.shippingCost, economics.ebayFees].every(c => c.fresh && c.reference && c.value !== null)
-    if (ownerPolicyApplicable) economics.otherCosts = { value: ownerVariableCostPolicy.OTHER_PROVEN_VARIABLE_COSTS,
-      reference: `${ownerVariableCostPolicy.contractVersion}:${ownerVariableCostPolicy.recordedAt}`, fresh: true }
-    const complete: Economics = { ...economics, adFeeBasis: { value: feeAuthority.adFeeBasis,
-      reference: feeAuthority.reference, fresh: economics.ebayFees.fresh && feeAuthority.adFeeBasis !== null } }
+    const evidence=(economicsRead.error?[]:economicsRead.data??[]).filter((r:{ebay_item_id:string})=>r.ebay_item_id===itemId)
+    const price=evidence.find((r:{evidence_type:string})=>r.evidence_type==="EBAY_LIVE_PRICE")
+    const resolved=resolvePreSaleEconomicsV1({accountKey:input.accountKey,itemId,now,evidence,
+      listing:{ebay_price:price?.value_amount,ebay_sku:listing!.identity.sku,currency:"USD"},
+      feeHead:feeHandoff?{authority:feeHandoff.authority,sku:listing!.identity.sku,state:feeHandoff.authority.state}:null})
+    const {economics:complete,fee:feeAuthority}=resolved
+    const economics:Omit<Economics,"adFeeBasis">={salePrice:complete.salePrice,productCost:complete.productCost,
+      shippingCost:complete.shippingCost,ebayFees:complete.ebayFees,otherCosts:complete.otherCosts}
+    const preSalePromotion=adsCanaryEconomicsV1(complete,input.policy,input.policy.maxRate)
     const recommendations = quality.recommendations.filter(r => r.listingKey === listing!.key && r.associationStatus === "ITEM_ID_CERTIFIED")
     const quantity = listing!.stock.quantity
     const stockProven = quantity.availability === "AVAILABLE" && quantity.freshness.status === "FRESH" && quantity.identity.itemId === itemId
@@ -108,13 +88,14 @@ export async function readListingTreatmentsV1(input: { supabase: SupabaseClient;
       source: "ebay_listing_quality_report_imports" }
     const commercialEnvelope = buildListingCommercialEnvelopeV1({ accountKey: input.accountKey, packageId: packageBinding.packageId, itemId, components, now })
     rows.push({ ...treatment, title: listing!.identity.title, metrics, metricAssessment, feeAuthority,
-      feeResolution: resolvedFees.resolution, feeHandoff, commercialEnvelope,
+      feeResolution: {status:feeAuthority.status,blockers:feeAuthority.blockers}, feeHandoff,
+      commercialEnvelope:{...commercialEnvelope,preSaleEconomics:{productCost:economics.productCost,shipping:economics.shippingCost,feeAuthority,
+        profitBeforeAds:preSalePromotion.profitBeforeAds,marginBeforeAds:preSalePromotion.marginBeforeAds,maxSafeAdRatePct:preSalePromotion.maxSafeAdRatePct}},
       safeEconomics: feeHandoff?.authority.feeEstimateMode === "CONSERVATIVE_SAFE_BOUND" ? {
         profitSafeBeforeAds: treatment.economics.profitBeforeAds, marginSafeBeforeAds: treatment.economics.marginBeforeAds,
-        maxSafeAdRatePct: treatment.promotion.maxSafeAdRate } : null,
+        maxSafeAdRatePct: preSalePromotion.maxSafeAdRatePct } : null,
       quality: { ...quality, recommendations }, economicsReadAvailable: !economicsRead.error,
-      limitations: [...(metricAssessment.reason ? [metricAssessment.reason] : []), ...feeAuthority.blockers,
-        ...(resolvedFees.resolution?.blockers ?? [])],
+      limitations: [...(metricAssessment.reason ? [metricAssessment.reason] : []), ...feeAuthority.blockers],
       previewUrl: `/admin/ebay/listing-optimization/preview?itemId=${itemId}` })
   }
   return { rows, summary: promotionPortfolioPreviewV1(rows), policy: input.policy,

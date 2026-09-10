@@ -1,14 +1,13 @@
+import { adsPostSaleLearningV1 } from "./ads-post-sale-report-ingestion-v1"
 import contract from "../../docs/ebay-ads-revenue-official-contract-v1.json" with { type: "json" }
-import variableCosts from "../../docs/owner-variable-cost-policy-v1.json" with { type: "json" }
-import { consumeListingFeeAuthorityV1 } from "./listing-fee-authority-v1"
-import { EBAY_FEE_AUTHORITY_V1, feeRecordV1 as record, feeDigestV1 } from "./ebay-fee-producer-v1"
-import { listingEconomicsV1, validatePromotionPolicyV1, type Economics, type PromotionPolicy } from "./listing-treatment-engine-v1"
+import { adsCanaryEconomicsV1, resolvePreSaleEconomicsV1 } from "./pre-sale-economics-v1"
+export { adsCanaryEconomicsV1 } from "./pre-sale-economics-v1"
+import { feeRecordV1 as record, feeDigestV1 } from "./ebay-fee-producer-v1"
+import { validatePromotionPolicyV1, type PromotionPolicy } from "./listing-treatment-engine-v1"
 
 export const ADS_REVENUE_ACTIVATION_V1 = "SELLER_OS_EBAY_ADS_REVENUE_ACTIVATION_FINAL_V1"
 const arr = (v: unknown) => Array.isArray(v) ? v.map(record) : []
 const amount = (v: unknown): number | null => (typeof v === "number" || typeof v === "string" && /^\d+(\.\d+)?$/.test(v)) && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null
-const down = (n: number) => Math.floor(n * 100 + 1e-9) / 100
-const ceil = (n: number) => Math.ceil(n * 100 - 1e-9) / 100
 const fresh = (v: Record<string, unknown>, now: Date) => Date.parse(String(v.observedAt)) <= now.getTime() && Date.parse(String(v.freshUntil)) > now.getTime()
 export function adsOfficialContractV1(now: Date) {
   const operations = ["getAdvertisingEligibility", "getCampaigns", "getCampaign", "getAds", "getAd", "createAdByListingId", "updateBid", "deleteAd", "findCampaignByAdReference", "suggestItems"]
@@ -17,36 +16,6 @@ export function adsOfficialContractV1(now: Date) {
     contract.sources.every(s => /^[a-f0-9]{64}$/.test(s.sha256))
   return { certified: pass, reference: contract.contractVersion, reviewedAt: contract.reviewedAt, reviewDueAt: contract.reviewDueAt,
     scope: "OFFICIAL_DOCUMENTED_CONTRACT", accountEligibilityProven: false, marketplaceWrites: 0 }
-}
-
-/** All values must come from the server's current authority, never UI amounts.
- * The ad basis may be a conservative bound larger than the item sale price. */
-export function adsCanaryEconomicsV1(e: Economics, policy: PromotionPolicy, recommendedRate: number | null) {
-  validatePromotionPolicyV1(policy)
-  const result = listingEconomicsV1(e)
-  const empty = { ...result, maxSafeAdRatePct: null as number | null, allowedAdRate: null as number | null,
-    proposedAdRatePct: null as number | null, projectedAdCost: null as number | null,
-    projectedProfitAfterAds: null as number | null, projectedMarginAfterAds: null as number | null,
-    promotionBlockedMargin: false, status: "BLOCKED_EVIDENCE" }
-  if (result.economicsUnproven || !e.adFeeBasis.fresh || !e.adFeeBasis.reference || e.adFeeBasis.value === null || e.adFeeBasis.value < e.salePrice.value!) return empty
-  // A cent of reserved profit cannot be spent by rounding the fee up.
-  const room = down(result.profitBeforeAds! - Math.max(policy.minProfit, e.salePrice.value! * policy.minMargin / 100))
-  const maxSafeAdRatePct = Math.max(0, Math.min(100, down(room / e.adFeeBasis.value * 100)))
-  const cap = recommendedRate === null || !Number.isFinite(recommendedRate) || recommendedRate < 0 || recommendedRate > 100 ? null :
-    Math.min(recommendedRate, policy.maxRate, maxSafeAdRatePct)
-  const rate = cap === null ? null : Math.floor(cap * 10 + 1e-9) / 10
-  const blockedMargin = room < 0 || maxSafeAdRatePct < policy.minRate
-  if (blockedMargin || rate === null || rate < policy.minRate || rate < contract.adRate.apiMinPct)
-    return { ...empty, maxSafeAdRatePct, allowedAdRate: cap, promotionBlockedMargin: blockedMargin,
-      status: blockedMargin ? "BLOCKED_MARGIN" : rate === null ? "RECOMMENDED_RATE_REQUIRED" : "NO_REPRESENTABLE_RATE_IN_POLICY" }
-  const projectedAdCost = ceil(e.adFeeBasis.value * rate / 100)
-  const projectedProfitAfterAds = down(result.profitBeforeAds! - projectedAdCost)
-  const projectedMarginAfterAds = projectedProfitAfterAds / e.salePrice.value! * 100
-  const safe = projectedProfitAfterAds + 1e-9 >= policy.minProfit && projectedMarginAfterAds + 1e-9 >= policy.minMargin
-  return { ...empty, maxSafeAdRatePct, allowedAdRate: cap, proposedAdRatePct: safe ? rate : null,
-    projectedAdCost: safe ? projectedAdCost : null, projectedProfitAfterAds: safe ? projectedProfitAfterAds : null,
-    projectedMarginAfterAds: safe ? projectedMarginAfterAds : null, promotionBlockedMargin: !safe,
-    status: !safe ? "BLOCKED_MARGIN" : policy.mode === "OFF" ? "POLICY_OFF" : "PREVIEW_READY" }
 }
 
 export type AdsOfficialObservationV1 = {
@@ -69,33 +38,12 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
   if (!exact) blockers.push("EXACT_CURRENT_LISTING_REQUIRED")
   const inStock = exact && amount(listing.ebay_quantity) !== null && Number(listing.ebay_quantity) > 0
   if (!inStock) blockers.push("CURRENT_STOCK_REQUIRED")
-  const component = (type: string) => {
-    const rows = evidence.filter(e => e.evidence_type === type), row = rows.length === 1 ? rows[0] : {}
-    return { value: amount(row.value_amount), reference: typeof row.evidence_id === "string" ? row.evidence_id : null,
-      fresh: row.freshness_status === "FRESH" && row.value_currency === "USD" && fresh({ observedAt: row.captured_at, freshUntil: row.fresh_until }, input.now) }
-  }
-  const e = Object.fromEntries(Object.entries({ salePrice: "EBAY_LIVE_PRICE", productCost: "LUNA_CURRENT_COST", shippingCost: "LUNA_CURRENT_SHIPPING", ebayFees: "EXPECTED_EBAY_FEE", otherCosts: "OTHER_EXPLICIT_COSTS" }).map(([k,v]) => [k,component(v)])) as Omit<Economics,"adFeeBasis">
-  if (amount(listing.ebay_price) !== e.salePrice.value || listing.currency !== "USD") e.salePrice.fresh = false
-  const fee = consumeListingFeeAuthorityV1({ accountKey: input.accountKey, itemId, categoryId: typeof authority.categoryId === "string" ? authority.categoryId : null,
-    salePrice: e.salePrice.value, now: input.now, metadata: { feeAuthorityV1: authority.resolvedAuthority } })
-  const feeProven = authority.contractVersion === EBAY_FEE_AUTHORITY_V1 && authority.marketplaceAccountKey === input.accountKey &&
-    authority.itemId === itemId && head.sku === listing.ebay_sku && authority.sku === listing.ebay_sku &&
-    head.state === "PROVEN_PRE_SALE" && authority.state === "PROVEN_PRE_SALE" && fresh(authority, input.now) && fee.status === "PROVEN"
+  const resolved = resolvePreSaleEconomicsV1({accountKey:input.accountKey,itemId,listing,evidence,feeHead:head,now:input.now})
+  const {economics:e,fee,feeProven,base}=resolved
+  const economics=e
   const supportedListingModel = ["FixedPriceItem", "FIXED_PRICE"].includes(String(record(authority.resolvedAuthority).saleFormat))
   if (!supportedListingModel) blockers.push("ADS_FIXED_PRICE_LISTING_REQUIRED")
-  e.ebayFees = { value: feeProven ? fee.amount : null, reference: feeProven ? fee.reference : null, fresh: feeProven }
-  if (variableCosts.OWNER_VARIABLE_COST_POLICY_CONFIRMED && variableCosts.marketplaceAccountKey === input.accountKey &&
-    variableCosts.observedCurrentItemIds.includes(itemId) && e.productCost.fresh && e.shippingCost.fresh && feeProven && e.otherCosts.value === null)
-    e.otherCosts = { value: variableCosts.OTHER_PROVEN_VARIABLE_COSTS, reference: variableCosts.contractVersion, fresh: true }
-  const economics: Economics = { ...e, adFeeBasis: { value: feeProven ? fee.adFeeBasis : null, reference: feeProven ? fee.reference : null, fresh: feeProven } }
-  // A bound on base fees does not automatically bound tax/conversion on an
-  // additional advertising fee. Require explicit non-applicability here.
-  if (feeProven && ["TAX_ON_FEES", "CURRENCY_CONVERSION"].some(type =>
-    !arr(record(authority.resolvedAuthority).components).some(c => c.type === type && c.status === "NOT_APPLICABLE" && c.amount === 0))) {
-    economics.adFeeBasis.fresh = false
-    blockers.push("AD_INCREMENTAL_TAX_OR_CONVERSION_BOUND_REQUIRED")
-  }
-  const base = listingEconomicsV1(economics)
+  if (!resolved.incrementalAdCostsProven) blockers.push("AD_INCREMENTAL_TAX_OR_CONVERSION_BOUND_REQUIRED")
   blockers.push(...base.missing.map(k => `ECONOMICS_REQUIRED:${k}`))
   if (!feeProven) blockers.push("SELLER_OS_EBAY_FEE_AUTHORITY_REQUIRED", ...fee.blockers)
   const draft = record(raw.policyDraft), policy = input.policyOverride ?? draft.policy as PromotionPolicy | undefined
@@ -136,8 +84,7 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
     economicsProven: !base.economicsUnproven && feeProven, ebayFeeAuthorityPass: feeProven,
     basePreSaleFeeProven: authority.basePreSaleFeeProven === true,
     contingentOrderComponents: authority.contingentOrderComponents ?? null,
-    postSaleLearning: { feeReconciliation: raw.latestFeeReconciliation ?? null, adSpend: null, attributedSales: null,
-      profitAfterAds: null, status: "OFFICIAL_AD_REPORT_EVIDENCE_REQUIRED", causalAttribution: false },
+    postSaleLearning: adsPostSaleLearningV1({accountKey:input.accountKey,itemId,feeReconciliation:raw.latestFeeReconciliation,report:raw.latestAdsReport}),
     feeEstimateMode: authority.feeEstimateMode ?? null, economicsAutoResolution: true, codexRequiredForListingEconomics: false,
     ownerPolicyLoaded: !!policy, ownerPolicyValid: policyValid, policySource: input.policyOverride ? "CURRENT_OWNER_PREVIEW_INPUT" : draft.id ?? null,
     promotionBlockedMargin: promotion?.promotionBlockedMargin ?? false,

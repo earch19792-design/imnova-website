@@ -1,4 +1,5 @@
 import contingentPolicy from "../../docs/ebay-official-contingent-fee-policy-v1.json" with { type: "json" }
+import { automaticFeeResolutionInputsV1 } from "./automatic-fee-inputs-v1"
 import { assessFeeBoundCoverageV1 } from "./ebay-fee-safe-bound-v1"
 import { createHash } from "node:crypto"
 import { resolveListingPreSaleFeesV1 } from "./listing-fee-resolver-v1"
@@ -61,9 +62,11 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
       regulatoryNA?null:"OFFICIAL_MARKETPLACE_SCOPE"),
     component("TAX_ON_FEES",true,feeSource,"SELLER_REGISTRATION_JURISDICTION_AND_FEE_TAX_INVOICE",null,null,"CURRENT_ACCOUNT_FEE_TAX_AUTHORITY"),
   ]
-  const coverage=assessFeeBoundCoverageV1(input.resolutionInputs,input.now)
-  const resolutionContext=feeRecordV1(feeRecordV1(input.resolutionInputs).context)
-  const supplied=feeRecordV1(input.resolutionInputs)
+  const resolutionInputs = automaticFeeResolutionInputsV1({ context: input.context,
+    packageData: c.packageData, previousMetadata: { feeResolutionInputsV1: input.resolutionInputs } })
+  const coverage=assessFeeBoundCoverageV1(resolutionInputs,input.now)
+  const resolutionContext=feeRecordV1(feeRecordV1(resolutionInputs).context)
+  const supplied=feeRecordV1(resolutionInputs)
   const adjustments=(Array.isArray(supplied.adjustments)?supplied.adjustments:[]).map(feeRecordV1)
   const currentSurchargesMatch=adjustments.every(a=>a.type==="SELLER_PERFORMANCE" ? noPerformance || Number(a.amount)>0 :
     a.type==="SERVICE_METRICS" ? noService || Number(a.amount)>0 : true)
@@ -82,9 +85,11 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     storeContext:store,sellerContext:{standards,serviceMetrics:service},policyVersion:str(policy.sourceVersion),
     policyObservedAt:str(policy.observedAt),sourceEffectiveDate:policy.sourceEffectiveDate??null,
     sourceObservedAt:str(c.observedAt),
-    state,economicsState:state==="PROVEN_PRE_SALE"?"ECONOMICS_PROVEN":"ECONOMICS_PENDING_ORDER_CONTEXT",
+    automaticFeeProducer: true, codexRuntimeDependency: false,
+    state,economicsState:state==="PROVEN_PRE_SALE"?"ECONOMICS_PROVEN":components.some(c=>c.status==="PENDING_AUTHORITY") ? "PROMOTION_BLOCKED_EVIDENCE" : "PENDING_ORDER_CONTEXT",
     label:state==="CONFLICT"?"Economía: revisar identidad":state==="STALE"?"Economía: actualizando evidencia":
-      state==="PROVEN_PRE_SALE"?"Economía: datos completos":"Economía: esperando datos de la orden",
+      state==="PROVEN_PRE_SALE"?"Economía: datos completos":components.some(c=>c.status==="PENDING_AUTHORITY") ? "Economía: esperando evidencia de fees" : "Economía: esperando datos de la orden",
+    pendingIsError: false, resolutionBlockers: resolved?.blockers ?? coverage.blockers,
     boundCoverage:coverage,
     officialContingentRateLimits:exact && performance.registrationCountry===contingentPolicy.registeredCountry &&
       Date.parse(contingentPolicy.observedAt)<=input.now.getTime() && Date.parse(contingentPolicy.freshUntil)>input.now.getTime()

@@ -1,3 +1,4 @@
+import { quotaHoldEconomicsReportV1, postQuotaResetResumeV1 } from "./ebay-economics-quota-hold-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readCurrentLiveAuthorityV1 } from "../ebay/ebay-current-live-authority-v1"
 import { ADS_REVENUE_ACTIVATION_V1, buildAdsActivationListingV1, selectAdsCanaryV1, adsOfficialContractV1 } from "./ebay-ads-revenue-activation-v1"
@@ -7,7 +8,7 @@ import { readAdsActivationOfficialV1 } from "../ebay/ebay-ads-activation-readonl
 /** Normal Mayel path; no Trading reads during quota hold and no marketplace writes. Reads the
  * durable policy/economic heads even during quota hold. No new outbox/worker. */
 export async function readAdsRevenueActivationV1(input: { supabase: SupabaseClient; accountKey: string; actorId: string;
-  itemIds: string[]; policy?: PromotionPolicy; now?: Date }) {
+  itemIds: string[]; policy?: PromotionPolicy; durableOnly?: boolean; now?: Date }) {
   if (!Array.isArray(input.itemIds) || input.itemIds.length < 1 || input.itemIds.length > 20 ||
     new Set(input.itemIds).size !== input.itemIds.length || input.itemIds.some(id => typeof id !== "string" || !/^\d{9,20}$/.test(id))) throw Error("ADS_BOUNDED_INPUT_REQUIRED")
   const now = input.now ?? new Date()
@@ -18,6 +19,7 @@ export async function readAdsRevenueActivationV1(input: { supabase: SupabaseClie
     p_account_key: input.accountKey, p_item_ids: input.itemIds, p_actor_id: input.actorId,
   })
   if (data.error || !Array.isArray(data.data) || data.data.length !== input.itemIds.length) throw Error("ADS_DURABLE_INPUT_READ_FAILED")
+  const economicsAudit = quotaHoldEconomicsReportV1({accountKey:input.accountKey,rawRows:data.data,now})
   const rows = data.data.map(raw => buildAdsActivationListingV1({ accountKey: input.accountKey, raw,
     currentItemIds: authority.currentItemIds, currentLiveFresh: authority.currentState === "CURRENT_FRESH",
     policyOverride: input.policy, now }))
@@ -29,7 +31,7 @@ export async function readAdsRevenueActivationV1(input: { supabase: SupabaseClie
     !row.promotionBlockedMargin && row.preview.PROPOSED_AD_RATE_PCT !== null && !row.blockers.includes("OWNER_POLICY_WINDOW_NOT_ACTIVE"))
   const deadline = Date.now() + 40000
   let officialCandidatesExamined = 0
-  for (const {index} of candidates) {
+  for (const {index} of input.durableOnly ? [] : candidates) {
     if (officialCandidatesExamined >= 3 || Date.now() > deadline) { officialReadBlocker = "ADS_OFFICIAL_READ_BUDGET_REACHED"; break }
     const read = await readAdsActivationOfficialV1({ accountKey: input.accountKey, itemId: rows[index].itemId,
       currentLiveFresh: authority.currentState === "CURRENT_FRESH", now })
@@ -40,11 +42,13 @@ export async function readAdsRevenueActivationV1(input: { supabase: SupabaseClie
   }
   const candidate = selectAdsCanaryV1(rows)
   return { contractVersion: ADS_REVENUE_ACTIVATION_V1, observedAt: now.toISOString(),
-    status: candidate ? "OWNER_APPROVAL_REQUIRED" : "BLOCKED", rows, proposedCanary: candidate?.preview ?? null,
+    status: candidate ? "OWNER_APPROVAL_REQUIRED" : input.durableOnly ? "EBAY_QUOTA_HOLD" : "BLOCKED", economicsAudit, rows, proposedCanary: candidate?.preview ?? null,
     officialContract: adsOfficialContractV1(now), currentLiveState: authority.currentState,
     sourceFailureCode: authority.sourceFailureCode, nextAutomaticLiveRetryAt: authority.nextRetryAt,
     summary: { examined: rows.length, economicsProven: rows.filter(r => r.economicsProven).length,
       ready: rows.filter(r => r.singleListingAdsCanaryReady).length, selectedCanaryCount: candidate ? 1 : 0 },
+    resume:postQuotaResetResumeV1({quotaHeld:input.durableOnly===true || authority.currentState!=="CURRENT_FRESH",currentEvidenceFresh:authority.currentState==="CURRENT_FRESH",
+      economicsProven:rows.some(r=>r.economicsProven),eligibilityProven:!!candidate,canaryItemId:candidate?.itemId??null}),
     ownerApprovalRequired: true, ebayAdsWriteEnabled: false, multiListingAdsWriteEnabled: false,
     marketplaceWrites: 0, ebayAdsWrites: 0, officialApiCalls, officialCandidatesExamined, officialReadBlocker, codexRuntimeDependency: false }
 }

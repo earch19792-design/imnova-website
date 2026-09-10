@@ -21,7 +21,7 @@ export async function persistProducedEbayFeeV1(input: Scope & { itemId: string |
     .eq("marketplace_account_key", input.accountKey).eq("binding_key", bindingKey).single()
   if (head.error || !head.data || (head.data.ebay_item_id && head.data.ebay_item_id !== input.itemId) ||
       (head.data.sku && input.sku && head.data.sku !== input.sku)) throw Error("FEE_BINDING_CONFLICT")
-  const authority = produceEbayFeeAuthorityV1(input)
+  const authority = produceEbayFeeAuthorityV1({...input,context:{...feeRecordV1(input.context),packageData:head.data.input_revision}})
   const written = await input.supabase.rpc("seller_os_record_fee_authority_v1", {
     p_binding_key: bindingKey, p_expected_updated_at: head.data.updated_at, p_authority: authority,
   })
@@ -67,17 +67,19 @@ export async function readEbayFeeHandoffV1(input: Scope & { itemId: string | nul
   const authority = feeRecordV1(a?.data?.authority)
   const pending = h.state === "PENDING_ORDER_CONTEXT"
   const fresh = Date.parse(String(authority.freshUntil)) > input.now.getTime() && Date.parse(String(authority.observedAt)) <= input.now.getTime()
-  const usable = !pending && h.state === "PROVEN_PRE_SALE" && fresh
+  const usable = !pending && h.state === "PROVEN_PRE_SALE" && authority.state === "PROVEN_PRE_SALE" &&
+    authority.contractVersion === "SELLER_OS_EBAY_FEE_AUTHORITY_V1" && authority.marketplaceAccountKey === input.accountKey &&
+    authority.itemId === input.itemId && authority.sku === input.sku && fresh
   const actual = input.itemId ? await run(input.supabase.from("seller_os_ebay_fee_reconciliation_receipts_v1")
     .select("receipt").eq("marketplace_account_key", input.accountKey).eq("ebay_item_id", input.itemId)
     .eq("sku", input.sku ?? "").order("observed_at", { ascending: false }).order("receipt_id").limit(1).maybeSingle(), "seller_os_ebay_fee_reconciliation_receipts_v1") : null
-  return { authority: { ...authority, state: pending ? "PENDING_ORDER_CONTEXT" : !fresh ? "STALE" : h.state,
+  return { authority: { ...authority, state: !fresh ? "STALE" : pending ? "PENDING_ORDER_CONTEXT" : h.state,
     feeEstimateMode: typeof authority.feeEstimateMode === "string" ? authority.feeEstimateMode : null,
     resolvedAuthority: usable ? authority.resolvedAuthority : null, amount: usable ? authority.amount : null },
-    label: usable ? "Economía: estimación disponible" : pending || fresh ? "Economía: esperando datos de la orden" : "Economía: actualizando evidencia",
+    label: usable ? "Economía: estimación disponible" : !fresh ? "Economía: actualizando evidencia" : authority.economicsState === "PROMOTION_BLOCKED_EVIDENCE" ? "Economía: esperando evidencia de fees" : "Economía: esperando datos de la orden",
     resolvedAuthority: usable ? authority.resolvedAuthority : null,
     actualPostSaleFee: actual?.error ? null : actual?.data?.receipt ?? null,
-    reference: h.authority_id, status: usable ? "PROVEN" : pending || fresh ? "PENDING" : "STALE" }
+    reference: h.authority_id, status: usable ? "PROVEN" : !fresh ? "STALE" : "PENDING" }
 }
 
 export async function reconcileEbayOrderFeesV1(input: Scope & { order: SafeMarketplaceOrder; observedAt: string }) {
