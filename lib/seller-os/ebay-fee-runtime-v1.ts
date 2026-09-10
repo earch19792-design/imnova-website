@@ -1,3 +1,4 @@
+import { readSellingFeeTaxPolicyV1 } from "../ebay/ebay-selling-fee-tax-policy-v1"
 import type { createProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SafeMarketplaceOrder } from "../marketplace/commercial-monitor-domain"
@@ -21,7 +22,10 @@ export async function persistProducedEbayFeeV1(input: Scope & { itemId: string |
     .eq("marketplace_account_key", input.accountKey).eq("binding_key", bindingKey).single()
   if (head.error || !head.data || (head.data.ebay_item_id && head.data.ebay_item_id !== input.itemId) ||
       (head.data.sku && input.sku && head.data.sku !== input.sku)) throw Error("FEE_BINDING_CONFLICT")
-  const authority = produceEbayFeeAuthorityV1({...input,context:{...feeRecordV1(input.context),packageData:head.data.input_revision}})
+  const context = feeRecordV1(input.context)
+  const feeTaxPolicy = input.itemId && feeRecordV1(context.identity).accountBindingExact === true
+    ? await readSellingFeeTaxPolicyV1(input.now) : null
+  const authority = produceEbayFeeAuthorityV1({...input,context:{...context,feeTaxPolicy,packageData:head.data.input_revision}})
   const written = await input.supabase.rpc("seller_os_record_fee_authority_v1", {
     p_binding_key: bindingKey, p_expected_updated_at: head.data.updated_at, p_authority: authority,
   })

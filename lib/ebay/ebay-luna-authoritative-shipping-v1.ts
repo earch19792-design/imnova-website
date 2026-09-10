@@ -339,6 +339,8 @@ export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
     browserFallbackUsed: true,
     quote: null,
     blocker: browser.blocker,
+    retryNotBefore: http.retryNotBefore ?? new Date(now + (http.retryAfterMs ?? 60_000)).toISOString(),
+    rateLimitScope: "LUNA_SCOPED_429",
     rateLimitEvidence,
   })
 }

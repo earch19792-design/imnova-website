@@ -43,7 +43,7 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
   if (assets.error || executions.error || (assets.data?.length ?? 0) > 120 || (executions.data?.length ?? 0) > 100)
     throw Error("MAYEL_WORKSPACE_RECEIPT_READ_INCOMPLETE")
   const proposals = []
-  const outbox = await input.supabase.from("seller_os_ipad_outbox_v1").select("binding,state,official_readback")
+  const outbox = await input.supabase.from("seller_os_ipad_outbox_v1").select("id,item_id,intent,binding,state,official_readback,received_at")
     .eq("account_key", input.accountKey).in("item_id", input.itemIds).in("kind", ["IMAGE_DRAFT", "IMAGE_SYNC", "IMAGE_UPLOAD"])
     .neq("state", "SUPERSEDED").limit(500)
   if (outbox.error || (outbox.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")

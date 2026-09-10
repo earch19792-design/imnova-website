@@ -124,7 +124,18 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
       {FRIENDLY_ACTIONS.map((name, index) => <button className={`${button} ${menu === index ? "bg-[#dcebdc]" : ""}`} key={name}
         disabled={!local.ready} onClick={() => setMenu(index)} aria-pressed={menu === index}>{name}</button>)}
     </nav>
-    {menu === 2 ? <article className="rounded-2xl bg-white p-5"><p>Prepara un listing y revisa su borrador antes de publicarlo.</p>
+    {menu === 2 ? <article className="space-y-4 rounded-2xl bg-white p-5">
+      <h2 className="text-xl font-semibold">Publicar nuevo listing</h2><p>Prepara un listing y revisa su borrador antes de publicarlo.</p>
+      <div className="grid gap-3 sm:grid-cols-3" aria-label="Estados de nuevos borradores">
+        <section><h3 className="font-semibold">Listos para publicar</h3><p>Revisa el borrador completo y su autorización en la bandeja.</p></section>
+        <section><h3 className="font-semibold">Esperando datos</h3><p>El borrador se conserva mientras llegan los datos pendientes.</p></section>
+        <section><h3 className="font-semibold">Requieren revisión</h3><p>Comprueba los cambios señalados antes de aprobar.</p></section>
+      </div>
+      <section className="border-t pt-4" aria-label="Cambios de listings activos">
+        <h3 className="font-semibold">Pendientes de sincronizar con eBay</h3>
+        <p>Los cambios de imágenes de listings activos se revisan en Mejorar listings. Se sincronizan con su aprobación individual; conservan el listing existente.</p>
+        <button className={button} onClick={() => setMenu(0)}>Revisar cambios de listings activos</button>
+      </section>
       {owner ? <Link className="mt-3 inline-block underline" href="/admin/ebay/opportunity-queue">Abrir borradores</Link>
         : <p className="mt-3">La publicación necesita revisión y autorización del owner.</p>}</article> : <>
       <div className="rounded-2xl bg-white p-5">
@@ -228,13 +239,13 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         {menu === 1 && owner && <button className={button} disabled={busy} onClick={() => void analyze("RECEIPT")}>Guardar simulación</button>}
         <button className={button} disabled={busy} onClick={() => void analyze("MEASURE")}>Medir resultados</button>
       </section>}
-      {menu === 0 && selected.length > 0 && <MayelImageWorkspace key={`saved-images:${selected.join(",")}`} owner={owner} saveDraft={local.saveDraft} itemIds={selected} titles={Object.fromEntries(listings.map(l => [l.itemId, l.title]))} />}
+      {menu === 0 && (visualStationItemId || selected.length > 0) && <MayelImageWorkspace key={`saved-images:${visualStationItemId ?? selected.join(",")}`} owner={owner} saveDraft={local.saveDraft} itemIds={visualStationItemId ? [visualStationItemId] : selected} titles={Object.fromEntries(listings.map(l => [l.itemId, l.title]))} />}
       {menu === 0 && selected.length > 0 && <div className="space-y-3 rounded-2xl bg-white p-5">
         <p>Crea hasta seis propuestas en tu ChatGPT y vuelve a cargarlas juntas para revisión.</p>
         {selected.map(itemId => <button key={itemId} className={button} onClick={() => setVisualStationItemId(itemId)}>
           Abrir Estación visual · {itemId.slice(-4)}</button>)}
       </div>}
-      {menu === 0 && visualStationItemId && selected.includes(visualStationItemId) &&
+      {menu === 0 && visualStationItemId &&
         <MayelVisualWorkstation key={`visual-station:${visualStationItemId}`} focusedItemId={visualStationItemId} localOutbox={local} canOperate canOwnerAuthorize={owner} />}
       {menu === 0 && owner && <OwnerListingQualityReportControl />}
     </>}

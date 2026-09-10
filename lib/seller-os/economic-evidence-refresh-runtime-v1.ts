@@ -87,7 +87,9 @@ function sourceStatusForError(error: unknown, now: Date) : Readonly<{
   return Object.freeze({
     status: worker ? "WAITING_FOR_WORKER" as const
       : "FAILED_RETRYABLE" as const,
-    nextRetryAt: retryAt(now, worker ? 15 * 60_000 : 30 * 60_000),
+    nextRetryAt: new Date(Math.max(now.getTime() + (worker ? 15 * 60_000 : 30 * 60_000),
+      error instanceof LiveListingShippingEvidenceCaptureErrorV1 && error.retryNotBefore && Number.isFinite(Date.parse(error.retryNotBefore))
+        ? Date.parse(error.retryNotBefore) : 0)).toISOString(),
   })
 }
 

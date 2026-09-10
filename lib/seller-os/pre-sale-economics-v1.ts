@@ -51,6 +51,10 @@ export function consumeFeeLifecycleV1(input: {accountKey:string; itemId:string; 
   return {...fee,status:proven?"PROVEN" as const:"NEEDS_EVIDENCE" as const,amount:proven?fee.amount:null,
     reference:proven?fee.reference:null,adFeeBasis:proven?fee.adFeeBasis:null}
 }
+export function otherVariableCostPolicyPresentV1(accountKey: string, itemId: string) {
+  return variableCosts.OWNER_VARIABLE_COST_POLICY_CONFIRMED && variableCosts.marketplaceAccountKey === accountKey &&
+    variableCosts.observedCurrentItemIds.includes(itemId)
+}
 export function explicitOtherCostV1(input: {accountKey:string;itemId:string;economics:Omit<Economics,"adFeeBasis">}) {
   const e=input.economics
   // A newly observed material cost always overrides the older zero policy.
@@ -75,5 +79,5 @@ export function resolvePreSaleEconomicsV1(input: {accountKey:string;itemId:strin
   const incrementalAdCostsProven=!feeProven || ["TAX_ON_FEES","CURRENCY_CONVERSION"].every(type=>
     arr(record(authority.resolvedAuthority).components).some(c=>c.type===type && c.status==="NOT_APPLICABLE" && c.amount===0))
   if (!incrementalAdCostsProven) economics.adFeeBasis.fresh=false
-  return {economics,fee,feeProven,incrementalAdCostsProven,base:listingEconomicsV1(economics)}
+  return {economics,fee,feeProven,incrementalAdCostsProven,otherVariableCostPolicyPresent:otherVariableCostPolicyPresentV1(input.accountKey,input.itemId),base:listingEconomicsV1(economics)}
 }

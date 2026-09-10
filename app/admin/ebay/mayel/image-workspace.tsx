@@ -1,4 +1,5 @@
 "use client"
+import { friendlyVisualSyncV1 } from "@/lib/seller-os/mayel-visual-scope-v1"
 import { useState } from "react"
 import Image from "next/image"
 import { supabase } from "@/lib/supabase"
@@ -14,6 +15,7 @@ export function MayelImageWorkspace({ itemIds, titles = {}, saveDraft, owner = f
   const [error, setError] = useState("")
   const [reviewed, setReviewed] = useState<string[]>([])
   async function autosave(proposal: Proposal, requireReceipt = false, explicitPrepare = false) {
+    if (!itemIds.includes(proposal.itemId)) throw Error("VISUAL_ITEM_SCOPE_MISMATCH")
     if (!proposal.taskId || (!proposal.editable && !explicitPrepare)) return
     await saveDraft({ kind: "IMAGE_DRAFT", itemId: proposal.itemId, listingTitle: titles[proposal.itemId] ?? proposal.itemId,
       generationId: proposal.assetId, baseVersionHash: proposal.sourceImageSetDigest, baseObservedAt: proposal.generatedAt,
@@ -35,6 +37,7 @@ export function MayelImageWorkspace({ itemIds, titles = {}, saveDraft, owner = f
         signal: AbortSignal.timeout(65000), headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ ...body, mode: "IMAGE_WORKSPACE", action: mode }) })
       const result = await response.json()
       if (!response.ok || !result.success) throw Error(`${result.error ?? "REQUEST_FAILED"} · ${result.traceId ?? ""}`)
+      if (!Array.isArray(result.proposals) || result.proposals.some((row: Proposal) => !itemIds.includes(row.itemId))) throw Error("VISUAL_ITEM_SCOPE_MISMATCH")
       for (const row of result.proposals as Proposal[]) await autosave(row)
       setRows(old => mode === "READ" ? result.proposals : [...(old ?? []).filter(r => r.itemId !== proposal?.itemId), ...result.proposals])
       setReviewed([])
@@ -46,9 +49,9 @@ export function MayelImageWorkspace({ itemIds, titles = {}, saveDraft, owner = f
     <p className="text-sm">Puedes revisar propuestas y confirmar su envío aunque eBay esté temporalmente sin consultas disponibles. Las imágenes confirmadas se conservan y se enviarán cuando el sistema verifique de nuevo el listing.</p>
     <button className={button} disabled={busy || !itemIds.length} onClick={() => void act("READ")}>{busy ? "Guardando o consultando…" : rows ? "Actualizar propuestas" : "Abrir mejoras guardadas"}</button>
     {rows?.length === 0 && <p>No hay propuestas de imagen preparadas para esta selección. No se ha solicitado una nueva generación.</p>}
-    {rows?.map(row => <article key={row.assetId} className="space-y-3 rounded-xl border p-4">
+    {rows?.filter(row => itemIds.includes(row.itemId)).map(row => <article key={row.assetId} className="space-y-3 rounded-xl border p-4">
       <h4 className="font-semibold">{titles[row.itemId] ?? "Propuesta de imagen"}</h4>
-      <p>{row.status === "APPLIED" ? "SINCRONIZADO" : row.status === "QUEUED" ? "PENDIENTE_DE_SINCRONIZAR" : row.status === "REQUIRES_ATTENTION" ? "REQUIERE_ATENCION" : "GUARDADO"}</p>
+      <p>{friendlyVisualSyncV1(row.sync?.state ?? (row.status === "APPLIED" ? "SYNCED" : row.status === "QUEUED" ? "PENDING_EBAY_SYNC" : row.status)).label}</p>
       {row.sync?.state === "OWNER_APPROVAL_REQUIRED" && <p>Pendiente de aprobación OWNER. Esta imagen todavía no está autorizada para sincronizar.</p>}
       <p className="text-sm">Preparado: {row.generatedAt ? new Date(row.generatedAt).toLocaleString("es") : "Fecha por comprobar"}. Antes de enviarlo se comprobará el estado actual.</p>
       <div className="grid gap-3 sm:grid-cols-2">{[[row.beforeUrl, "Imagen anterior guardada"], [row.previewUrl, "Propuesta de imagen principal"]].map(([url, label]) => typeof url === "string" && <figure key={String(label)}>

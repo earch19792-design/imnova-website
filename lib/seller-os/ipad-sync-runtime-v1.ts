@@ -1,3 +1,4 @@
+import { approvedVisualReadbackMatchesV1 } from "./visual-sync-readback-v1"
 import { stableOutboxJsonV1 } from "./ipad-outbox-contract-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { IPAD_OUTBOX_TABLE, readOutboxImageAuthorityV1, type OutboxRow } from "./ipad-durable-outbox-v1"
@@ -14,6 +15,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
    const row = claim.data?.[0] as OutboxRow | undefined
    if (!row) break
    let manifestDigest: string | null = typeof row.binding.executionManifestDigest === "string" ? row.binding.executionManifestDigest : null
+   let expectedImages: string[] = [], ownerApproved = false
    const patch = async (values: Record<string, unknown>) => {
      const changed = await input.supabase.from(IPAD_OUTBOX_TABLE).update({ ...values, updated_at: new Date().toISOString() })
        .eq("id", row.id).eq("account_key", input.accountKey).eq("lease_token", row.lease_token).select("id").maybeSingle()
@@ -37,6 +39,8 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        if (manifestDigest && authority.approved && authority.manifestDigest !== manifestDigest)
          return { approved: false, reason: "OUTBOX_APPROVED_MANIFEST_CHANGED" }
        manifestDigest = authority.manifestDigest
+       ownerApproved = authority.approved
+       expectedImages = authority.expectedImages ?? []
        return authority
      },
      quota: async () => {
@@ -59,13 +63,16 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        const e = execution.data
        // A stored terminal claim alone is insufficient: current official digest
        // and the executor's protected-field verification must both agree.
-       const matchesIntent = official && Boolean(e && e.phase === "APPLIED_AND_OFFICIALLY_VERIFIED" &&
+       const alreadyApplied = approvedVisualReadbackMatchesV1({ official, ownerApproved, baseListingCompatible,
+         approvedManifestDigest: manifestDigest, currentManifestDigest: preview.visualManifestDigest,
+         expectedImages, currentImages: preview.currentImages })
+       const matchesIntent = alreadyApplied || official && baseListingCompatible && Boolean(e && e.phase === "APPLIED_AND_OFFICIALLY_VERIFIED" &&
          e.proposed_image_digest === preview.currentOfficialImageSetDigest && e.postwrite_snapshot?.nonAuthorizedFieldsUnchanged === true)
        return { official, baseHash: preview.currentOfficialImageSetDigest, matchesIntent,
          safetyPass: baseListingCompatible && preview.safeToExecuteVisualChange && preview.visualOnlyDiff && preview.unauthorizedFieldDiffCount === 0 && preview.visualManifestDigest === manifestDigest,
          reason: preview.applicationStatus === "WAITING_FOR_EBAY" ? "EBAY_RATE_LIMITED" :
            !baseListingCompatible ? "LISTING_ECONOMIC_OR_IDENTITY_DRIFT" : preview.blocker,
-         receipt: e ? { executionId: e.id, phase: e.phase, officialDigest: preview.currentOfficialImageSetDigest, observedAt: new Date().toISOString() } : null }
+         receipt: matchesIntent ? { executionId: e?.id ?? null, phase: e?.phase ?? "ALREADY_APPLIED_OFFICIALLY_VERIFIED", manifestDigest, officialDigest: preview.currentOfficialImageSetDigest, observedAt: new Date().toISOString(), writesThisReconciliation: 0 } : null }
      },
      markDispatch: async () => {
        if (!manifestDigest || row.dispatch_count !== 0) throw Error("OUTBOX_DUPLICATE_DISPATCH_BLOCKED")
@@ -80,7 +87,8 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        const due = retryAt && Date.parse(retryAt) > Date.now() ? retryAt : new Date(Date.now() + 15 * 60_000).toISOString()
        await patch({ state, reason_code: reason, next_attempt_at: due, lease_until: null, lease_token: null,
          official_readback: state === "SYNCED" && proof?.official === true && proof.matchesIntent,
-         ...(proof?.receipt ? { execution_receipt: proof.receipt } : {}) })
+         ...(proof?.receipt ? { execution_receipt: proof.receipt } : {}),
+         ...(state === "SYNCED" && manifestDigest ? { binding: { ...row.binding, executionManifestDigest: manifestDigest } } : {}) })
      },
    }
    const result = await executeOutboxOperationV1({ state: row.state, dispatchCount: row.dispatch_count,

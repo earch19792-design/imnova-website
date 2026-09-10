@@ -94,6 +94,7 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
   return { itemId, status: ready ? "OWNER_APPROVAL_REQUIRED" : "BLOCKED", preview, blockers: [...new Set(blockers)],
     treatment: "TEST", warmMetricsRequired: false, exactItemBinding: exact, inStock, supportedListingModel,
     recommendedRateSource: officialFresh && o!.recommendedRate !== null ? "OFFICIAL_EBAY_RECOMMENDATION" : "MAYEL_TECHNICAL_TEST_OWNER_MINIMUM",
+    otherVariableCostPolicyPresent: resolved.otherVariableCostPolicyPresent,
     economicsProven: !base.economicsUnproven && feeProven, ebayFeeAuthorityPass: feeProven,
     basePreSaleFeeProven: authority.basePreSaleFeeProven === true && fresh(authority,input.now) &&
       authority.contractVersion === "SELLER_OS_EBAY_FEE_AUTHORITY_V1" && authority.marketplaceAccountKey === input.accountKey &&

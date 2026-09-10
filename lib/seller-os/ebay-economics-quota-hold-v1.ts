@@ -33,7 +33,7 @@ export function classifyEconomicsBlockersV1(input: {accountKey:string;raw:unknow
   if(row.preview.OTHER_VARIABLE_COSTS===null) reasons.push(variableCosts.marketplaceAccountKey===input.accountKey && variableCosts.observedCurrentItemIds.includes(itemId)
     ? "OTHER_COSTS:EXPLICIT_OWNER_POLICY_WAITING_FOR_PROVEN_DEPENDENCIES" : "OTHER_COSTS:EXPLICIT_AUTHORITY_REQUIRED")
   if(row.economicsProven && row.preview.MAX_SAFE_AD_RATE_PCT===null) reasons.push("AD_BASIS:SAFE_BOUND_OR_OWNER_POLICY_REQUIRED")
-  return {itemId,economicsProven:row.economicsProven,status:row.economicsProven?"ECONOMICS_PROVEN":"PROMOTION_BLOCKED_EVIDENCE",
+  return {itemId,otherVariableCostPolicyPresent:row.otherVariableCostPolicyPresent,economicsProven:row.economicsProven,status:row.economicsProven?"ECONOMICS_PROVEN":"PROMOTION_BLOCKED_EVIDENCE",
     reasons:[...new Set(reasons)],contingentOrderState:a.contingentOrderComponents?"PENDING_ORDER_CONTEXT":null,
     pendingOrderContextIsError:false,feeEstimateMode:row.feeEstimateMode,preview:row.preview}
 }

@@ -5,6 +5,7 @@ import { Check, ChevronLeft, ChevronRight, Clipboard, ShieldCheck, Star,
   Trash2, Upload, X } from
   "lucide-react"
 
+import { scopedVisualTasksV1, friendlyVisualSyncV1 } from "@/lib/seller-os/mayel-visual-scope-v1"
 import { supabase } from "@/lib/supabase"
 import type { MayelCommercialIntelligenceV1 } from
   "@/lib/ebay/ebay-mayel-commercial-intelligence-v1"
@@ -34,6 +35,7 @@ type VisualOutput = {
 
 type VisualTask = {
   visualTaskId: string
+  visualStationState?: string
   ebayItemId: string
   sku: string
   productTitle: string
@@ -571,9 +573,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
       {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
     </div>}
     {output.sync && <div className="mt-4 rounded-xl bg-[#f4efe7] p-3 text-sm">
-      <p>{output.sync.state === "OWNER_APPROVAL_REQUIRED" ? "Guardado · pendiente de aprobación OWNER" :
-        output.sync.state === "SYNCED" ? "Sincronizado" : output.sync.state === "REQUIRES_ATTENTION" ? "Requiere atención" :
-        output.sync.approvedForEbaySync ? "Aprobado para enviar cuando eBay esté disponible" : "Guardado"}</p>
+      <p>{friendlyVisualSyncV1(output.sync.state).label}</p><p>{friendlyVisualSyncV1(output.sync.state).action}</p>
       {output.status === "approved" && output.sync.state === "OWNER_APPROVAL_REQUIRED" && owner &&
         <button type="button" disabled={busy || approvingSync} onClick={() => void approveSync()}
           className="mt-3 min-h-11 rounded-xl bg-[#1d5961] px-4 py-2 font-semibold text-white disabled:opacity-40">Aprobar esta imagen para sincronizar con eBay</button>}
@@ -881,6 +881,10 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
     delegation?.globalAccountIdentityProven === true
   const phase = phaseB?.execution?.phase
   const applied = phaseB?.execution?.appliedAndOfficiallyVerified === true
+  const syncState = task.outputs.some(o => o.sync?.state === "REQUIRES_ATTENTION") ? "REQUIRES_ATTENTION" :
+    task.outputs.every(o => o.sync?.state === "SYNCED") && task.outputs.length ? "SYNCED" :
+    task.outputs.some(o => o.sync?.approvedForEbaySync) ? "PENDING_EBAY_SYNC" : "OWNER_APPROVAL_REQUIRED"
+  const friendly = friendlyVisualSyncV1(syncState)
   return <section className="rounded-2xl border border-[#74866d]/35 bg-[#f4f7f1] p-5">
     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Vista previa del owner · publicación activa</p>
     <h4 className="mt-2 font-serif text-xl font-semibold">Imágenes actuales y propuesta</h4>
@@ -894,6 +898,8 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
           className="aspect-square w-full rounded-lg object-contain" />
         <figcaption className="mt-2 text-[10px] font-semibold text-[#617159]">{index === 0 ? "Principal propuesta" : `${index + 1} · Secundaria`}</figcaption>
       </figure>)}</div>
+    <p role="status" className="mt-4 font-semibold">{friendly.label}</p><p className="mt-2 text-sm">{friendly.action}</p>
+    <details className="mt-4"><summary>Ver detalles</summary>
     <div className="mt-4 grid gap-2 rounded-xl bg-white p-3 text-xs text-[#5f645e] sm:grid-cols-2">
       <p>Cuenta eBay: {accountIdentityCurrent ? "comprobada" : "por comprobar"}</p>
       <p>Marketplace: {phaseB?.marketplace ?? "EBAY_US"}</p>
@@ -941,7 +947,7 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
           <p>Grupo de variantes: {phaseB.managementDiagnostics?.groupedInventoryItem ? "sí" : "no"}</p>
         </div>
       </details>}
-    <p className="mt-4 break-all text-[10px] text-[#777a73]">Manifest: {phaseB?.visualManifestDigest ?? task.visualManifestDigest}</p>
+    <p className="mt-4 break-all text-[10px] text-[#777a73]">Manifest: {phaseB?.visualManifestDigest ?? task.visualManifestDigest}</p></details>
     <details className="mt-3 rounded-xl bg-white p-3 text-xs text-[#5f645e]">
       <summary className="cursor-pointer font-semibold">Verdad certificada del producto utilizada</summary>
       <ul className="mt-2 space-y-1">{factRows.map((entry) =>
@@ -953,13 +959,13 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
     {canOwnerAuthorize && !phase && <p className="mt-4 rounded-xl bg-white p-3 text-sm text-[#5f645e]">
       La delegación visual general se administra arriba. Seller OS ejecutará
       esta propuesta sólo cuando la validación específica del listing esté
-      completa; no necesitas aprobarla imagen por imagen.
+      completa y cada imagen tenga tu aprobación individual para sincronizar.
     </p>}
     {canOwnerAuthorize && !phase && phaseB?.mayelAssetPreserved &&
-      <p className="mt-2 text-xs text-[#617159]">La imagen aprobada por Mayel permanece conservada; no requiere volver a subirla ni aprobarla.</p>}
+      <p className="mt-2 text-xs text-[#617159]">La imagen aprobada por Mayel permanece conservada; no requiere volver a subirla. Su autorización de sincronización se comprueba por separado.</p>}
     {phase && <p className={`mt-4 rounded-xl p-3 text-sm font-semibold ${applied ? "bg-[#e3ebe1] text-[#425143]" : "bg-[#f7e9de] text-[#704d3c]"}`}>
       {applied ? "Imágenes aplicadas y verificadas oficialmente ✓" :
-        `Estado de la actualización: ${phase.replaceAll("_", " ")}`}
+        friendly.label}
     </p>}
     {canOwnerAuthorize && !phaseB?.ownerCtaAvailable && !phase &&
       !phaseB?.applicationReason &&
@@ -1377,11 +1383,14 @@ export function MayelVisualWorkstation({ canOperate,
   const [selectedVisualTaskId, setSelectedVisualTaskId] =
     useState<string | null>(null)
 
+  const loadGeneration = useRef(0)
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current
     const payload = await visualRequest(
       focusedItemId ? `/api/admin/ebay/mayel-visual-workstation?savedOnly=1&itemId=${encodeURIComponent(focusedItemId)}` : "/api/admin/ebay/mayel-visual-workstation")
     const workstation = payload.workstation as { tasks?: VisualTask[] } | undefined
-    const nextTasks = workstation?.tasks ?? []
+    if (generation !== loadGeneration.current) return
+    const nextTasks = scopedVisualTasksV1(workstation?.tasks ?? [], focusedItemId)
     setTasks(nextTasks)
     if (focusedItemId) setSelectedVisualTaskId(nextTasks.find(t => t.ebayItemId === focusedItemId)?.visualTaskId ?? null)
     setDelegation((payload.delegation as VisualDelegation | undefined) ?? null)
@@ -1437,11 +1446,11 @@ export function MayelVisualWorkstation({ canOperate,
         if (active) setBusy(false)
       }
     })()
-    return () => { active = false }
+    return () => { active = false; ++loadGeneration.current }
   }, [canOperate, load])
 
   async function openVisualListing(ebayItemId: string) {
-    if (!canOperate || busy) return
+    if (!canOperate || busy || (focusedItemId && ebayItemId !== focusedItemId)) return
     setBusy(true)
     setMessage("")
     try {
@@ -1478,8 +1487,7 @@ export function MayelVisualWorkstation({ canOperate,
     <p className="mt-2 max-w-3xl text-sm leading-6 text-[#64675f]">Seller OS prepara la evidencia y el prompt. Tú generas las imágenes manualmente en tu propia suscripción de ChatGPT y las devuelves aquí para revisión segura.</p>
     <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
       <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">ChatGPT manual</span>
-      <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">Cero API de imágenes</span>
-      <span className="rounded-full bg-[#f7e9de] px-3 py-2 text-[#704d3c]">eBay sólo con autoridad vigente y readback</span>
+      <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-[#425143]">Hasta seis propuestas por listing</span>
     </div>
     {!focusedItemId && <><FullVisualDelegationPanel delegation={delegation}
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
@@ -1491,7 +1499,7 @@ export function MayelVisualWorkstation({ canOperate,
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
     <PortfolioOverview listings={livePortfolio} canOperate={canOperate}
       busy={busy} onOpen={openVisualListing} /></>}
-    {message && <p className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]">{message}</p>}
+    {message && <div className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]"><p>Requiere atención. Revisa el estado de tu propuesta guardada.</p><details><summary>Ver detalles</summary><p>{message}</p></details></div>}
     {!busy && !tasks.length && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7">
       <h3 className="font-serif text-2xl font-semibold">No hay una oportunidad visual lista</h3>
       <p className="mt-2 text-sm leading-6 text-[#64675f]">Seller OS no fabricará una tarea. Aparecerá aquí cuando una publicación activa tenga identidad, verdad del producto, imágenes autorizadas y una oportunidad visual demostrada.</p>
@@ -1501,8 +1509,7 @@ export function MayelVisualWorkstation({ canOperate,
       {!focusedItemId && <button type="button" onClick={() => setSelectedVisualTaskId(null)}
         className="min-h-10 rounded-xl border border-[#82947d] bg-white px-3 text-xs font-semibold">Ver todas las tareas</button>}
     </div>}
-    <div className="mt-6 space-y-7">{tasks.filter((task) =>
-      !selectedVisualTaskId || task.visualTaskId === selectedVisualTaskId)
+    <div className="mt-6 space-y-7">{scopedVisualTasksV1(tasks, focusedItemId, selectedVisualTaskId)
       .map((task) => <article
       key={task.visualTaskId}
       id={`mayel-task-${task.visualTaskId}`}
@@ -1512,7 +1519,7 @@ export function MayelVisualWorkstation({ canOperate,
         <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#74866d]">Tarea visual · {task.sku}</p>
           <h3 className="mt-2 font-serif text-2xl font-semibold">{task.productTitle}</h3>
           <p className="mt-1 text-xs text-[#777a73]">Publicación eBay {task.ebayItemId}</p></div>
-        <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{portfolioTaskStatus(task,
+        <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{focusedItemId ? friendlyVisualSyncV1(task.visualStationState).label : portfolioTaskStatus(task,
           marketRevalidationByItemId[task.ebayItemId])}</span>
       </div>
       <div className="mt-6"><SourceGallery task={task} /></div>
@@ -1529,7 +1536,8 @@ export function MayelVisualWorkstation({ canOperate,
               <li>Copia y pega este prompt completo.</li>
               <li>Compara cada resultado contra las imágenes originales antes de aprobarlo.</li>
             </ol></div></div>
-        <pre className="mt-4 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-black/20 p-4 text-xs leading-5 text-white/85">{task.prompt}</pre>
+        <details className="mt-4"><summary>Ver detalles</summary>
+        <pre className="mt-4 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-black/20 p-4 text-xs leading-5 text-white/85">{task.prompt}</pre></details>
         <button type="button" onClick={() => void navigator.clipboard.writeText(task.prompt)}
           className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-[#26312d]"><Clipboard className="h-4 w-4" />Copiar prompt</button>
       </section>}
@@ -1557,7 +1565,7 @@ export function MayelVisualWorkstation({ canOperate,
       <div className="mt-6"><OwnerPreview task={task}
         canOwnerAuthorize={canOwnerAuthorize} delegation={delegation} /></div>
       <details className="mt-5 rounded-xl border border-[#e0d9ce] p-3 text-xs text-[#6f736c]">
-        <summary className="cursor-pointer py-2 font-semibold">Provenance técnica</summary>
+        <summary className="cursor-pointer py-2 font-semibold">Ver detalles</summary>
         <p className="mt-2 break-all">Visual Task ID: {task.visualTaskId}</p>
         <p className="mt-1 break-all">Product Truth: {task.productTruthDigest}</p>
         <p className="mt-1 break-all">Source set: {task.sourceImageSetDigest}</p>

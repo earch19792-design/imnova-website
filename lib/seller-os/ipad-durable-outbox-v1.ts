@@ -108,7 +108,7 @@ export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClie
      proposed.some(e => e.assetId && !assets.data?.some(a => a.id === e.assetId && a.output_sha256 === e.outputSha256 && visualAssetOwnerApprovedV1(a, t))) ||
      bound.some(b => !proposed.some(e => e.assetId === b.assetId) || !assets.data?.some(a => a.id === b.assetId && visualAssetOwnerApprovedV1(a, t))))
    return { approved: false, reason: "OWNER_VISUAL_REVIEW_REQUIRED", manifestDigest: null }
- if (row.kind === "IMAGE_SYNC" && row.intent.requestedChanges.manifestDigest !== t.visual_manifest_digest)
+ if ((row.kind === "IMAGE_SYNC" || row.intent.requestedChanges.manifestDigest != null) && row.intent.requestedChanges.manifestDigest !== t.visual_manifest_digest)
    return { approved: false, reason: "OUTBOX_APPROVED_MANIFEST_CHANGED", manifestDigest: null }
- return { approved: true, reason: null, manifestDigest: String(t.visual_manifest_digest) }
+ return { approved: true, reason: null, manifestDigest: String(t.visual_manifest_digest), expectedImages: proposed.map(e => typeof e.publicUrl === "string" ? e.publicUrl : "") }
 }

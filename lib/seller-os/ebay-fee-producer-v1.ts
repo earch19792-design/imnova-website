@@ -1,3 +1,4 @@
+import { SELLING_FEE_TAX_SOURCE } from "../ebay/ebay-selling-fee-tax-policy-v1"
 import contingentPolicy from "../../docs/ebay-official-contingent-fee-policy-v1.json" with { type: "json" }
 import { automaticFeeResolutionInputsV1 } from "./automatic-fee-inputs-v1"
 import { assessFeeBoundCoverageV1 } from "./ebay-fee-safe-bound-v1"
@@ -42,25 +43,38 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     feeRecordV1(service.evaluation).evaluationType==="CURRENT"&&matchingService.length===1&&
     ["LOW","AVERAGE","HIGH","NOT_APPLICABLE"].includes(String(matchingService[0].rating))
   const regulatoryNA=exact&&performance.registrationCountry==="US"&&identity.marketplace==="EBAY_US"
+  const contingentCurrent=exact && performance.registrationCountry===contingentPolicy.registeredCountry &&
+    Date.parse(contingentPolicy.observedAt)<=input.now.getTime() && Date.parse(contingentPolicy.freshUntil)>input.now.getTime()
+  const taxPolicy=feeRecordV1(c.feeTaxPolicy)
+  const validStates=new Set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(" "))
+  const taxNA=exact && performance.accountBindingExact===true && performance.registrationCountry==="US" &&
+    validStates.has(String(performance.registrationState)) && taxPolicy.source===SELLING_FEE_TAX_SOURCE &&
+    typeof taxPolicy.digest==="string" && /^[a-f0-9]{64}$/.test(taxPolicy.digest) &&
+    Date.parse(String(taxPolicy.observedAt))<=input.now.getTime() && Date.parse(String(taxPolicy.freshUntil))>input.now.getTime() &&
+    Array.isArray(taxPolicy.applicableStates) && taxPolicy.applicableStates.length===4 &&
+    !taxPolicy.applicableStates.includes(performance.registrationState)
   const component=(type:string,preSaleResolvable:boolean,source:string,basis:string,rateOrAmount:unknown,
     amount:number|null,pendingDependency:string|null)=>({type,preSaleResolvable,source,basis,rateOrAmount,amount,pendingDependency,
+      classification: !pendingDependency && amount===0 ? "NOT_APPLICABLE" : preSaleResolvable ? "PRE_SALE_RESOLVABLE" : "ORDER_CONTINGENT_UNBOUNDED",
+      applies: !pendingDependency && amount===0 ? false : amount!==null ? true : null,
+      boundIfAny: amount, officialAuthority: source,
       status:pendingDependency ? (pendingDependency.startsWith("ORDER_")?"PENDING_ORDER_CONTEXT":"PENDING_AUTHORITY") : amount===0?"NOT_APPLICABLE":"PROVEN"})
   const fixed=feeRecordV1(policy.perOrder)
   const components=[
-    component("FINAL_VALUE_PERCENT",true,feeSource,"ITEM_PRICE_PLUS_BUYER_SHIPPING_HANDLING_AND_TAX",policyKnown?policy.tiers:null,null,
+    component("FINAL_VALUE_PERCENT",false,feeSource,"ITEM_PRICE_PLUS_BUYER_SHIPPING_HANDLING_AND_TAX",policyKnown?policy.tiers:null,null,
       policyKnown?"ORDER_BUYER_TAX_AND_TOTAL_BASIS":"OFFICIAL_CATEGORY_POLICY"),
     component("PER_ORDER",true,feeSource,"SINGLE_ORDER",policyKnown?fixed:null,
       policyKnown&&knownPrice!==null&&knownPrice>Number(fixed.threshold)?Number(fixed.above):null,
       policyKnown&&knownPrice!==null&&knownPrice>Number(fixed.threshold)?null:"ORDER_TOTAL_THRESHOLD"),
     component("SELLER_PERFORMANCE",true,str(standards.source)??feeSource,"CURRENT_US_SELLER_PROFILE",noPerformance?0:null,noPerformance?0:null,
       noPerformance?null:"CURRENT_SELLER_SURCHARGE_AUTHORITY"),
-    component("SERVICE_METRICS",true,str(service.source)??feeSource,"CURRENT_EXACT_CATEGORY_SERVICE_PROFILE",noService?0:null,noService?0:null,
+    component("SERVICE_METRICS",true,str(service.source)??feeSource,"CURRENT_EXACT_CATEGORY_SERVICE_PROFILE",noService?0:contingentCurrent?{maximumRatePct:contingentPolicy.components.SERVICE_METRICS.maximumRatePct,monetaryBoundProven:false}:null,noService?0:null,
       noService?null:"CURRENT_EXACT_CATEGORY_SERVICE_AUTHORITY"),
-    component("INTERNATIONAL",false,feeSource,"BUYER_REGISTRATION_DELIVERY_AND_SHIPPING_PROGRAM",null,null,"ORDER_BUYER_COUNTRY_AND_PROGRAM"),
-    component("CURRENCY_CONVERSION",false,feeSource,"ACTUAL_TRANSACTION_AND_PAYOUT_CURRENCIES",null,null,"ORDER_CONVERSION"),
+    component("INTERNATIONAL",false,feeSource,"BUYER_REGISTRATION_DELIVERY_AND_SHIPPING_PROGRAM",contingentCurrent?{maximumRatePct:contingentPolicy.components.INTERNATIONAL.maximumRatePct,monetaryBoundProven:false}:null,null,"ORDER_BUYER_COUNTRY_AND_PROGRAM"),
+    component("CURRENCY_CONVERSION",true,"https://pages.ebay.com/payment/2.0/terms.html","ACTUAL_TRANSACTION_AND_PAYOUT_CURRENCIES",contingentCurrent?{chargeRatePct:contingentPolicy.components.CURRENCY_CONVERSION.chargeRatePct,exchangeRiskBounded:false}:null,null,"CURRENT_PAYOUT_CURRENCY_AUTHORITY"),
     component("REGULATORY_OPERATING",true,regulatorySource,"LISTING_MARKETPLACE_EBAY_US",regulatoryNA?0:null,regulatoryNA?0:null,
       regulatoryNA?null:"OFFICIAL_MARKETPLACE_SCOPE"),
-    component("TAX_ON_FEES",true,feeSource,"SELLER_REGISTRATION_JURISDICTION_AND_FEE_TAX_INVOICE",null,null,"CURRENT_ACCOUNT_FEE_TAX_AUTHORITY"),
+    component("TAX_ON_FEES",true,SELLING_FEE_TAX_SOURCE,"CURRENT_OFFICIAL_US_FEE_TAX_SCOPE_AND_SELLER_REGISTRATION",taxNA?0:null,taxNA?0:null,taxNA?null:"CURRENT_ACCOUNT_FEE_TAX_AUTHORITY"),
   ]
   const resolutionInputs = automaticFeeResolutionInputsV1({ context: input.context,
     packageData: c.packageData, previousMetadata: { feeResolutionInputsV1: input.resolutionInputs } })
@@ -92,7 +106,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     categoryId:str(listing.categoryId),categoryPath:str(listing.categoryPath),saleFormat:str(listing.saleFormat),
     storeContext:store,sellerContext:{standards,serviceMetrics:service},policyVersion:str(policy.sourceVersion),
     policyObservedAt:str(policy.observedAt),sourceEffectiveDate:policy.sourceEffectiveDate??null,
-    sourceObservedAt:str(c.observedAt),
+    sourceObservedAt:str(c.observedAt), feeTaxPolicy: taxPolicy,
     automaticFeeProducer: true, codexRuntimeDependency: false,
     state,economicsState:state==="PROVEN_PRE_SALE"?"ECONOMICS_PROVEN":components.some(c=>c.status==="PENDING_AUTHORITY") ? "PROMOTION_BLOCKED_EVIDENCE" : "PENDING_ORDER_CONTEXT",
     label:state==="CONFLICT"?"Economía: revisar identidad":state==="STALE"?"Economía: actualizando evidencia":

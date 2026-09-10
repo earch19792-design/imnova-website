@@ -255,7 +255,7 @@ export async function POST(req: Request) {
       ...(error instanceof QualityReportValidationError
         ? { diagnosis: error.diagnosis }
         : error instanceof LiveListingShippingEvidenceCaptureErrorV1
-          ? { diagnosis: { rateLimitEvidence: error.rateLimitEvidence } }
+          ? { diagnosis: { rateLimitEvidence: error.rateLimitEvidence, retryNotBefore: error.retryNotBefore, upstreamScope: error.rateLimitEvidence ? "LUNA_SCOPED_429" : null } }
           : {}) },
     { status: 400 })
   }

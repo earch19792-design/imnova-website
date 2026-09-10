@@ -24,10 +24,12 @@ export type LiveListingShippingCaptureTargetV1 = Readonly<Omit<
 export class LiveListingShippingEvidenceCaptureErrorV1 extends Error {
   readonly rateLimitEvidence: LunaRateLimitEvidenceV1 | null
 
-  constructor(message: string, rateLimitEvidence: LunaRateLimitEvidenceV1 | null) {
+  readonly retryNotBefore: string | null
+  constructor(message: string, rateLimitEvidence: LunaRateLimitEvidenceV1 | null, retryNotBefore: string | null = null) {
     super(message)
     this.name = "LiveListingShippingEvidenceCaptureErrorV1"
     this.rateLimitEvidence = rateLimitEvidence
+    this.retryNotBefore = retryNotBefore
   }
 }
 
@@ -181,6 +183,7 @@ export async function captureLiveListingShippingEvidenceV1(input: Readonly<{
     throw new LiveListingShippingEvidenceCaptureErrorV1(
       acquisition.blocker || "LIVE_LISTING_SHIPPING_LUNA_READER_UNAVAILABLE",
       acquisition.rateLimitEvidence,
+      "retryNotBefore" in acquisition ? acquisition.retryNotBefore ?? null : null,
     )
   }
   return persistLiveListingShippingQuoteV1({

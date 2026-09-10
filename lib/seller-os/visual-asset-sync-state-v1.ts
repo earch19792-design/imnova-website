@@ -23,14 +23,19 @@ export function visualAssetOwnerApprovedV1(asset: Record<string, unknown>, task:
 export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Record<string, unknown>, outbox: Record<string, unknown>[] = []) {
   const approved = visualAssetOwnerApprovedV1(asset, task)
   const rows = outbox.filter(row => {
-    const binding = record(row.binding)
+    const binding = record(row.binding), changes = record(record(row.intent).requestedChanges)
+    if (row.item_id != null && row.item_id !== task.ebay_item_id) return false
+    if (changes.taskId != null && changes.taskId !== task.id) return false
+    const manifest = binding.executionManifestDigest ?? changes.manifestDigest
+    if (manifest != null && manifest !== task.visual_manifest_digest) return false
     return (binding.assetId === asset.id && binding.sourceSha256 === asset.source_sha256) ||
       (Array.isArray(binding.assets) && binding.assets.some(a => record(a).assetId === asset.id && record(a).sourceSha256 === asset.source_sha256))
-  })
-  const attention = rows.some(r => ["ATTENTION", "REQUIRES_ATTENTION"].includes(String(r.state)))
-  const synced = rows.some(r => r.state === "SYNCED" && r.official_readback === true &&
+  }).sort((a,b) => Date.parse(String(b.received_at ?? "1970-01-01")) - Date.parse(String(a.received_at ?? "1970-01-01")))
+  const currentRows = rows.slice(0, 1)
+  const attention = currentRows.some(r => ["ATTENTION", "REQUIRES_ATTENTION"].includes(String(r.state)))
+  const synced = currentRows.some(r => r.state === "SYNCED" && r.official_readback === true &&
     record(r.binding).executionManifestDigest === task.visual_manifest_digest)
-  const active = rows.find(r => ["OFFICIAL_READBACK_REQUIRED", "UNKNOWN_COMMIT", "SYNCING", "REVALIDATING", "PENDING_EBAY_SYNC"].includes(String(r.state)))
+  const active = currentRows.find(r => ["OFFICIAL_READBACK_REQUIRED", "UNKNOWN_COMMIT", "SYNCING", "REVALIDATING", "PENDING_EBAY_SYNC"].includes(String(r.state)))
   const state = attention || asset.status === "rejected" ? "REQUIRES_ATTENTION" :
     !approved ? record(asset.qa_result).automaticStatus === "PASSED" ? "OWNER_APPROVAL_REQUIRED" : "DRAFT" :
     synced ? "SYNCED" : active ? active.state === "UNKNOWN_COMMIT" ? "OFFICIAL_READBACK_REQUIRED" : String(active.state) : "APPROVED_FOR_EBAY_SYNC"

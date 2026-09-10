@@ -1138,13 +1138,13 @@ export async function readMayelVisualWorkstationV1(input: {
     "id,mayel_visual_task_id,status,mayel_output_role,source_sha256,output_sha256,source_width,source_height,output_width,output_height,output_bytes,qa_result,mayel_approval_status,owner_approval_status,owner_sync_approval,source_image_references,source_image_set_digest,product_truth_digest,output_storage_path,public_url,created_at,approved_at"
   const assetRead = taskIds.length
     ? await input.supabase.from("ebay_listing_image_assets")
-      .select(assetColumns).in("mayel_visual_task_id", taskIds)
+      .select(assetColumns).eq("account_key", input.accountKey).in("mayel_visual_task_id", taskIds)
       .order("mayel_visual_task_id", { ascending: true })
       .order("position", { ascending: true })
     : { data: [], error: null }
   if (assetRead.error) throw new Error("MAYEL_VISUAL_OUTPUT_READ_FAILED")
   const outboxRead = taskIds.length ? await input.supabase.from("seller_os_ipad_outbox_v1")
-    .select("binding,state,official_readback").eq("account_key", input.accountKey)
+    .select("id,item_id,intent,binding,state,official_readback,received_at").eq("account_key", input.accountKey)
     .in("item_id", typedTaskRows.map(t => String(t.ebay_item_id))).in("kind", ["IMAGE_DRAFT", "IMAGE_UPLOAD", "IMAGE_SYNC"])
     .neq("state", "SUPERSEDED").limit(500) : { data: [], error: null }
   if (outboxRead.error || (outboxRead.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
