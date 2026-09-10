@@ -871,7 +871,7 @@ function completeOfferCollection(result: ReadResult) {
   if (!result.ok) {
     const errors = safeReadErrors(result)
     return result.status === 404 && result.body.offers === undefined && errors.length > 0 && errors.every(e =>
-      String(e.errorId) === "25713" && e.domain === "API_INVENTORY" && e.category === "REQUEST")
+      String(e.errorId) === "25713" && e.domain === "API_INVENTORY" && String(e.category).toUpperCase() === "REQUEST")
   }
   const total = Number(result.body.total)
   const size = Number(result.body.size)

@@ -1,4 +1,5 @@
-import type { GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
+import { visualAssetOwnerApprovedV1 } from "../seller-os/visual-asset-sync-state-v1"
+import { slotManifestMatchesGalleryV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
 import { createHash, randomUUID } from "node:crypto"
 import { resolveMayelVisualRegistryBindingV1 } from "./ebay-mayel-visual-registry-binding-v1"
 
@@ -268,7 +269,7 @@ async function loadContext(input: {
       .eq("account_key", input.accountKey)
       .maybeSingle(),
     input.supabase.from("ebay_listing_image_assets")
-      .select("id,status,mayel_approval_status,owner_approval_status,mayel_output_role,output_sha256,public_url,published_storage_path,product_truth_digest,source_image_set_digest")
+      .select("id,status,mayel_approval_status,owner_approval_status,mayel_output_role,output_sha256,source_sha256,qa_result,owner_sync_approval,public_url,published_storage_path,product_truth_digest,source_image_set_digest")
       .eq("mayel_visual_task_id", task.id).eq("account_key", input.accountKey)
       .eq("status", "approved").eq("mayel_approval_status", "APPROVED"),
     input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
@@ -531,6 +532,18 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
       durableReviseAttemptCount:
         Number(context.anyExecution?.marketplace_write_count) || 0,
     }) : null
+  const slotManifest = record(context.task.visual_manifest)
+  const slotScopedTrading = context.management.managementModel === "TRADING_MANAGED" &&
+    slotManifestMatchesGalleryV1(slotManifest, context.currentOfficialImageUrls)
+  const delegationRead = slotScopedTrading ? await input.supabase.from("ebay_mayel_visual_delegation_authorities_v1")
+    .select("id,main_image_authority,owner_per_image_approval,owner_per_listing_visual_approval")
+    .eq("marketplace_account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+    .eq("status", "ACTIVE").is("revoked_at", null).maybeSingle() : { data: null, error: null }
+  const galleryTradingReady = slotScopedTrading && !delegationRead.error &&
+    delegationRead.data?.main_image_authority === true && delegationRead.data.owner_per_image_approval === false &&
+    delegationRead.data.owner_per_listing_visual_approval === false && mediaPreparationAvailable && mediaPreparationAuthorized &&
+    context.officialReadStatus === "PASS" && !priorExecutionBlocksCurrentManifest(context) &&
+    proposedEntries.filter(e => e.assetId).every(e => context.assets.some(a => a.id === e.assetId && visualAssetOwnerApprovedV1(a, context.task)))
   const baseSafeToExecute = context.accountIdentityProven
     && context.listingIdentityProven
     && context.currentImageSetProven
@@ -539,7 +552,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     && unauthorizedFieldDiffCount === 0
     && !context.execution
   const safeToExecuteVisualChange = baseSafeToExecute
-    && (context.managementReady
+    && (galleryTradingReady || context.managementReady
       || tradingExecutorDryRun?.safeToExecuteVisualChange === true)
   const applicationStatus = context.tradingRateLimited
     ? "WAITING_FOR_EBAY" as const
@@ -548,7 +561,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     ? "eBay Trading alcanzó temporalmente su límite de llamadas. Tu trabajo está guardado y se aplicará cuando vuelva a estar disponible."
     : null
   const preview = {
-    approvedGalleryAlreadyOfficial,
+    approvedGalleryAlreadyOfficial, galleryTradingReady,
     contractVersion: "MAYEL_VISUAL_WORKSTATION_PHASE_B_V1",
     visualManifestId: uuid(context.task.visual_manifest_id),
     visualManifestDigest: context.plan.visualManifestDigest,
@@ -637,7 +650,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     blocker: !context.listingIdentityProven
       && context.officialReadFailureClass
       ? context.officialReadFailureClass
-      : context.plan.blocker ?? (tradingExecutorDryRun
+      : galleryTradingReady ? null : context.plan.blocker ?? (tradingExecutorDryRun
         ? tradingExecutorDryRun.blocker : context.managementBlocker),
     tradingExecutorExplicitlyGated:
       context.management.managementModel === "TRADING_MANAGED"
@@ -1524,6 +1537,8 @@ export async function applyMayelVisualManifestToEbayV1(input: {
  * it after a fresh official read and an atomic durable claim.
  */
 export async function executeMayelTradingVisualDelegatedManifestV1(input: {
+  outboxId?: string
+  outboxLeaseToken?: string
   supabase: SupabaseClient
   accountKey: string
   taskId: string
@@ -1558,6 +1573,17 @@ export async function executeMayelTradingVisualDelegatedManifestV1(input: {
       String(context.plan.visualManifestDigest ?? ""))) {
     throw new Error(context.plan.blocker
       ?? "MAYEL_TRADING_VISUAL_RUNTIME_PREFLIGHT_FAILED")
+  }
+  if (record(context.task.visual_manifest).galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY") {
+    if (!uuid(input.outboxId) || !uuid(input.outboxLeaseToken)) throw Error("OWNER_GALLERY_PREVIEW_REQUIRED")
+    const outbox = await input.supabase.from("seller_os_ipad_outbox_v1")
+      .select("id,account_key,actor_user_id,item_id,kind,intent,binding,idempotency_key,payload_hash,state,reason_code,received_at,lease_token,dispatch_count,official_readback")
+      .eq("id", input.outboxId).eq("account_key", input.accountKey).eq("item_id", String(context.task.ebay_item_id))
+      .eq("lease_token", input.outboxLeaseToken).eq("state", "SYNCING").eq("dispatch_count", 1).maybeSingle()
+    if (outbox.error || !outbox.data) throw Error("OWNER_GALLERY_PREVIEW_REQUIRED")
+    const { readOutboxImageAuthorityV1 } = await import("../seller-os/ipad-durable-outbox-v1")
+    const authority = await readOutboxImageAuthorityV1({ supabase: input.supabase, row: outbox.data })
+    if (!authority.approved || authority.manifestDigest !== context.task.visual_manifest_digest) throw Error("OWNER_GALLERY_PREVIEW_REQUIRED")
   }
   const delegation = await input.supabase.from(
     "ebay_mayel_visual_delegation_authorities_v1").select("*")

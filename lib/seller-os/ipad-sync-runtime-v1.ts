@@ -91,7 +91,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
      },
      execute: async () => {
        const { executeMayelTradingVisualDelegatedManifestV1 } = await import("../ebay/ebay-mayel-visual-phase-b-server-v1")
-       const result = await executeMayelTradingVisualDelegatedManifestV1({ ...input, taskId: row.intent.requestedChanges.taskId! })
+       const result = await executeMayelTradingVisualDelegatedManifestV1({ ...input, taskId: row.intent.requestedChanges.taskId!, outboxId: row.id, outboxLeaseToken: row.lease_token })
        return { writes: result.tradingListingWriteCount, mediaWrites: result.mediaApiWriteCount, ...(result.status === "GALLERY_CHANGED" ? { stoppedReason: "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED" } : {}) }
      },
      finish: async (state: string, reason: string | null, proof?: SyncReadback, retryAt?: string | null) => {

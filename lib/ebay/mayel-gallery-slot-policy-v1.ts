@@ -23,3 +23,15 @@ export function gallerySlotPreviewV1(currentImages: readonly string[], proposedI
     beforeImage, afterImage: proposedImages[targetImagePosition],
     action: beforeImage === proposedImages[targetImagePosition] ? "KEEP" as const : "REPLACE" as const }))
 }
+
+export function slotManifestMatchesGalleryV1(manifest: Record<string, unknown>, currentImages: readonly string[]) {
+  if (manifest.galleryPolicy !== "REPLACE_APPROVED_SLOTS_ONLY" || !Array.isArray(manifest.slotReplacements) ||
+      !Array.isArray(manifest.proposedOrderedImages)) return false
+  try {
+    const order = replacementSlotOrderV1(currentImages, manifest.slotReplacements)
+    const proposed = manifest.proposedOrderedImages as { assetId?: string; publicUrl?: string }[]
+    return order.length === proposed.length && order.every((entry, position) => entry.kind === "MAYEL_ASSET"
+      ? proposed[position]?.assetId === entry.assetId
+      : proposed[position]?.publicUrl === entry.publicUrl)
+  } catch { return false }
+}
