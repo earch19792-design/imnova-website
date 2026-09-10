@@ -1,0 +1,85 @@
+import { createHash } from "node:crypto"
+import type { SupabaseClient } from "@supabase/supabase-js"
+import { readKeywordDecisionHandoffV1, keywordRecord as record, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
+import { prepareSellOneLikeThisV1 } from "./sell-one-like-this-v1"
+import { LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS } from "../ebay/ebay-live-listing-shipping-evidence-v1"
+import { SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1 } from "../ebay/ebay-luna-authoritative-shipping-server-v1"
+import { readEbayFeeHandoffV1 } from "./ebay-fee-runtime-v1"
+import { createProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: boolean) => T }>(q: T) =>
+  q.abortSignal(AbortSignal.timeout(8000)).retry(false)
+
+// Explicit one-package reads; no monitor scans, imports from arbitrary URLs,
+// capture initiation or marketplace clients. HTTP callers supply identities only.
+export async function readSellOneLikeThisV1(input: {
+  supabase: SupabaseClient; accountKey: string; packageId: string; referenceItemId: string; now?: Date;
+}) {
+  if (!UUID.test(input.packageId) || !/^\d{9,19}$/.test(input.referenceItemId)) throw Error("REFERENCE_INPUT_INVALID")
+  const db = input.supabase, now = input.now ?? new Date()
+  const p = await bounded(db.from("ebay_listing_packages").select(
+    "id,opportunity_id,candidate_key,account_key,ownPrice:package_data->pricing->targetPrice,category:package_data->categoryResolverV1")
+    .eq("account_key", input.accountKey).eq("id", input.packageId).limit(1)).maybeSingle()
+  if (p.error || !p.data) throw Error("REFERENCE_OWN_PACKAGE_UNAVAILABLE")
+  const pkg = record(p.data)
+  const q = await bounded(db.from("ebay_luna_opportunity_queue").select(
+    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions")
+    .eq("id", pkg.opportunity_id).eq("candidate_key", pkg.candidate_key).limit(1)).maybeSingle()
+  if (q.error || !q.data) throw Error("REFERENCE_OWN_PRODUCT_UNAVAILABLE")
+  const own = record(q.data)
+  const binding: KeywordBindingV1 = { ACCOUNT_KEY: input.accountKey, PRODUCT_ID: String(own.supplier_product_id),
+    VARIANT_ID: String(own.supplier_variant_id), CANDIDATE_KEY: String(own.candidate_key), OPPORTUNITY_ID: String(own.id) }
+  const keyword = await readKeywordDecisionHandoffV1({ supabase: db, binding })
+  const planId = record(record(keyword).BINDING).PLAN_ID
+  // A missing/stale keyword decision is never replaced with legacy query terms.
+  const feeBudget = createProductCaseReadBudgetV1()
+  const feeRead = readEbayFeeHandoffV1({ supabase: db, accountKey: input.accountKey, itemId: null,
+    packageId: input.packageId, sku: String(own.supplier_sku), now, readBudget: feeBudget })
+    .catch(() => null).finally(() => feeBudget.close())
+  const [ref, frontier, fee] = await Promise.all([
+    typeof planId === "string" && UUID.test(planId) ? bounded(db.from("seller_os_product_research_canonical_evidence_v2")
+      .select("plan_id,marketplace_account_key,marketplace,item_id,bounded_title_evidence,source_observation_id,structural_classification,structural_compatibility,structural_evidence")
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US").eq("plan_id", planId)
+      .eq("item_id", input.referenceItemId).order("source_observation_id", { ascending: false }).limit(1)).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    bounded(db.from("seller_os_profitability_frontier_snapshots")
+      .select("frontier_id,family_id,account_key,marketplace_id,luna_product_id,luna_variant_id,luna_sku,shipping_status,shipping_value,shippingEvidence:frontier_payload->shippingCaptureEvidence")
+      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US").eq("luna_product_id", binding.PRODUCT_ID)
+      .eq("luna_variant_id", binding.VARIANT_ID).eq("luna_sku", own.supplier_sku)
+      .order("created_at", { ascending: false }).order("frontier_id", { ascending: false }).limit(1)).maybeSingle(),
+    feeRead,
+  ])
+  if (ref.error) throw Error("REFERENCE_EVIDENCE_UNAVAILABLE")
+  const f = record(frontier.error ? null : frontier.data), s = record(f.shippingEvidence)
+  const observed = Date.parse(String(s.observedAt)), freshUntil = observed + LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS * 1000
+  // Capture candidate IDs use the existing family/product/variant/SKU contract,
+  // which is distinct from the opportunity candidate key.
+  const captureCandidate = `sha256:${createHash("sha256").update(JSON.stringify({
+    familyId: f.family_id, productId: binding.PRODUCT_ID, variantId: binding.VARIANT_ID, sku: own.supplier_sku,
+  })).digest("hex")}`
+  const shippingProven = /^market-family-v1:sha256:[a-f0-9]{64}$/.test(String(f.family_id)) &&
+    f.shipping_status === "SHIPPING_DURABLY_PERSISTED" && s.candidateId === captureCandidate &&
+    s.lunaProductId === binding.PRODUCT_ID && s.lunaVariantId === binding.VARIANT_ID && s.supplierSku === own.supplier_sku &&
+    s.canonicalDestinationMatch === true && s.canonicalDestinationFingerprint === SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1.profileDigest &&
+    s.currency === "USD" && s.quantity === 1 && typeof s.shippingUsd === "number" && Number.isFinite(s.shippingUsd) && s.shippingUsd >= 0 &&
+    Number(f.shipping_value) === s.shippingUsd && s.noPurchase === true && s.noCredentials === true &&
+    ["LUNA_AUTHENTICATED_HTTP_CART_SHIPPING", "LUNA_PROTECTED_BROWSER_CHECKOUT_SHIPPING"].includes(String(s.acquisitionMethod)) &&
+    /^sha256:[a-f0-9]{64}$/.test(String(s.evidenceDigest)) && observed <= now.getTime() && freshUntil > now.getTime()
+  return prepareSellOneLikeThisV1({ binding, packageId: input.packageId, reference: record(ref.data),
+    truthFields: own.truthFields, requiredTruth: own.requiredTruth, aspectResolutions: own.aspectResolutions,
+    category: pkg.category, keywordRead: keyword, ownPrice: pkg.ownPrice, now, feeHandoff: fee,
+    shipping: shippingProven ? { status: "PROVEN", value: s.shippingUsd, reference: String(s.evidenceDigest),
+      source: "LUNA_PORTEX_SHIPPING_AUTHORITY", observedAt: String(s.observedAt), freshUntil: new Date(freshUntil).toISOString() }
+      : { status: "PENDING", value: null, reference: null, source: "LUNA_PORTEX_SHIPPING_AUTHORITY" } })
+}
+
+// UI discovery uses only the current bounded page of existing packages. Missing
+// keyword/reference evidence is an ordinary pending state, never a new research job.
+export async function readReferenceDraftChoicesV1(input: { supabase: SupabaseClient; accountKey: string }) {
+  const r = await bounded(input.supabase.from("ebay_listing_packages")
+    .select("id,title:package_data->>title").eq("account_key", input.accountKey)
+    .order("updated_at", { ascending: false }).order("id", { ascending: false }).limit(20))
+  if (r.error) throw Error("REFERENCE_DRAFT_CHOICES_UNAVAILABLE")
+  return r.data ?? []
+}

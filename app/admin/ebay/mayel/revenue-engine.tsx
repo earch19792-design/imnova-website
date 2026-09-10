@@ -9,6 +9,7 @@ import { OwnerListingQualityReportControl } from "@/app/admin/owner-listing-qual
 import { promotionShippingLabelV1, promotionMetricLabelV1, promotionDataLabelV1, promotionEconomicStatusV1 } from "@/lib/seller-os/mayel-promotion-ui-semantics-v1"
 import { MayelShippingStatus, MayelListingShippingStatus } from "./shipping-status"
 import { MayelImageWorkspace } from "./image-workspace"
+import { MayelReferencePreview } from "./reference-preview"
 import { MayelAdsActivationPreview } from "./ads-activation-preview"
 import { MayelVisualWorkstation } from "@/app/admin/mayel-visual-workstation"
 import { MayelLocalSaveStatus, useMayelLocalFirstV1 } from "./local-first"
@@ -30,6 +31,7 @@ async function request(body?: unknown, after?: string) {
 }
 export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const [menu, setMenu] = useState(0)
+  const [referenceOpen, setReferenceOpen] = useState(false)
   const [listings, setListings] = useState<ListingChoice[]>([])
   const [loadingListings, setLoadingListings] = useState(true)
   const [actionsAvailable, setActionsAvailable] = useState(false)
@@ -139,6 +141,8 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
         <p>Los cambios de imágenes de listings activos se revisan en Mejorar listings. Se sincronizan con su aprobación individual; conservan el listing existente.</p>
         <button className={button} onClick={() => setMenu(0)}>Revisar cambios de listings activos</button>
       </section>
+      {owner && <><button className={button} onClick={() => setReferenceOpen(open => !open)}>{referenceOpen ? "Cerrar referencia" : "Preparar con una referencia eBay"}</button>
+        {referenceOpen && <MayelReferencePreview />}</>}
       {owner ? <Link className="mt-3 inline-block underline" href="/admin/ebay/opportunity-queue">Abrir borradores</Link>
         : <p className="mt-3">La publicación necesita revisión y autorización del owner.</p>}</article> : <>
       <div className="rounded-2xl bg-white p-5">

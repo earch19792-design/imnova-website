@@ -43,6 +43,16 @@ export async function POST(request: Request) {
     const raw = await request.text()
     if (raw.length > 12000) return reply({ error: "REVENUE_INPUT_TOO_LARGE", traceId }, 413)
     const body = JSON.parse(raw)
+    if (body?.mode === "REFERENCE_IMPORT" || body?.mode === "REFERENCE_CHOICES") {
+      if (auth.accessRole !== SELLER_OS_ACCESS_ROLES.owner) return reply({ success: false, error: "REFERENCE_OWNER_REQUIRED", traceId }, 403)
+      if (Object.keys(body).some(k => !["mode", "packageId", "referenceItemId"].includes(k))) throw Error("REFERENCE_INPUT_INVALID")
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw Error("REVENUE_ACCOUNT_REQUIRED")
+      const { readSellOneLikeThisV1, readReferenceDraftChoicesV1 } = await import("@/lib/seller-os/sell-one-like-this-runtime-v1")
+      const scope = { supabase: getSupabaseAdminClient(), accountKey }
+      return body.mode === "REFERENCE_CHOICES" ? reply({ success: true, choices: await readReferenceDraftChoicesV1(scope), traceId })
+        : reply({ success: true, result: await readSellOneLikeThisV1({ ...scope, packageId: body.packageId, referenceItemId: body.referenceItemId }), traceId })
+    }
     if (["ADS_ACTIVATION", "ADS_ECONOMICS_HOLD"].includes(body?.mode)) {
       if (auth.accessRole !== SELLER_OS_ACCESS_ROLES.owner) return reply({ success: false, error: "ADS_OWNER_REQUIRED", traceId }, 403)
       if (Object.keys(body).some(k => !["mode", "itemIds", "policy"].includes(k))) throw Error("ADS_INPUT_INVALID")
