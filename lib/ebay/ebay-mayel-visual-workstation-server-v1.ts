@@ -1136,7 +1136,7 @@ export async function reviewMayelVisualOutputV1(input: {
   const transitionDecision = { contract: MAYEL_ASSET_TRANSITION_V1, taskId: task.id, assetId: asset.id,
     actorUserId: input.actorUserId, outputSha256: asset.output_sha256,
     sourceImageSetDigest: task.source_image_set_digest, productTruthDigest: task.product_truth_digest,
-    checks: input.humanQa, intent: input.visualIntent, currentImages,
+    checks: input.humanQa, intent: input.visualIntent, currentImages, baseManifestDigest: task.visual_manifest_digest ?? null,
     galleryDigest: savedOfficialGalleryV1(task.selection_signal)!.digest, writeAuthority: false }
   const decisionSave = await input.supabase.rpc("seller_os_record_visual_safe_decision_v1", {
     p_account_key: input.accountKey, p_actor_user_id: input.actorUserId, p_task_id: input.taskId,

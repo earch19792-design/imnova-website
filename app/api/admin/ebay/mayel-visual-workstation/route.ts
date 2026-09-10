@@ -364,7 +364,7 @@ export async function POST(request: Request) {
       if (body?.action === "RECOVER_APPROVED_ASSET_TRANSITION_V1") {
         const { recoverApprovedAssetTransitionV1 } = await import("@/lib/seller-os/mayel-approved-asset-transition-server-v1")
         const result = await recoverApprovedAssetTransitionV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
-          taskId: String(body.visualTaskId ?? ""), expectedItemId: String(body.expectedItemId ?? ""), assetId: String(body.assetId ?? "") })
+          taskId: String(body.visualTaskId ?? ""), itemId: String(body.expectedItemId ?? ""), assetId: String(body.assetId ?? "") })
         return json({ success: true, result, marketplaceWrites: 0 })
       }
       if (body?.action === "RUN_DELEGATED_VISUAL_SYNC_V1") {

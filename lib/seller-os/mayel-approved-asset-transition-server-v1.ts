@@ -2,15 +2,15 @@ import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readOptimizationGrantV1, enqueueDelegatedVisualV1 } from "./mayel-optimization-delegation-server-v1"
 import { optimizationGrantActiveV1 } from "./mayel-optimization-delegation-v1"
-import { savedSafeDecisionV1 } from "./mayel-approved-asset-transition-v1"
+import { savedSafeDecisionV1, recoverableVisualAssetV1 } from "./mayel-approved-asset-transition-v1"
 
 export async function recoverApprovedAssetTransitionV1(input: { supabase: SupabaseClient; accountKey: string;
-  taskId: string; expectedItemId: string; assetId?: string }) {
-  if (!/^[a-f0-9-]{36}$/i.test(input.taskId) || !/^\d{9,20}$/.test(input.expectedItemId) ||
+  taskId: string; itemId: string; assetId?: string }) {
+  if (!/^[a-f0-9-]{36}$/i.test(input.taskId) || !/^\d{9,20}$/.test(input.itemId) ||
     input.assetId && !/^[a-f0-9-]{36}$/i.test(input.assetId)) throw Error("MAYEL_TRANSITION_EXACT_SCOPE_REQUIRED")
   const t = await input.supabase.from("ebay_mayel_visual_tasks_v1")
     .select("id,ebay_item_id,marketplace_account_key,assigned_operator_user_id,status,visual_manifest_digest,selection_signal,product_truth_digest,source_image_set_digest")
-    .eq("id", input.taskId).eq("marketplace_account_key", input.accountKey).eq("ebay_item_id", input.expectedItemId).maybeSingle()
+    .eq("id", input.taskId).eq("marketplace_account_key", input.accountKey).eq("ebay_item_id", input.itemId).maybeSingle()
   if (t.error || !t.data) throw Error("MAYEL_TRANSITION_TASK_REQUIRED")
   const task = t.data
   const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
@@ -21,7 +21,7 @@ export async function recoverApprovedAssetTransitionV1(input: { supabase: Supaba
   query = input.assetId ? query.eq("id", input.assetId) : query.in("status", ["approved", "pending_review"])
   const assets = await query.order("created_at", { ascending: true }).limit(7)
   if (assets.error || !assets.data?.length || assets.data.length > 6) throw Error("MAYEL_TRANSITION_ASSET_SCOPE_REQUIRED")
-  const asset = assets.data[0]
+  const asset = recoverableVisualAssetV1(assets.data, task)
   const safe = savedSafeDecisionV1(asset, t.data)
   const blocked = async (reason: string) => {
     const truth = await input.supabase.rpc("seller_os_read_visual_current_product_truth_v1", { p_account_key: input.accountKey, p_task_id: input.taskId })

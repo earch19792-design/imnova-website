@@ -146,7 +146,7 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
         if (grant) {
           const { recoverApprovedAssetTransitionV1 } = await import("../seller-os/mayel-approved-asset-transition-server-v1")
           const queued = !task.visual_manifest_digest
-            ? await recoverApprovedAssetTransitionV1({ ...input, taskId, expectedItemId: itemId })
+            ? await recoverApprovedAssetTransitionV1({ ...input, taskId, itemId })
             : await enqueueDelegatedVisualV1({ ...input, taskId })
           outcomes.push({ taskId, itemId, manifestDigest: task.visual_manifest_digest, status: queued.status,
             failureClass: queued.reason, receipt: queued.receipt, listingWriteCount: 0, mediaWriteCount: 0 })

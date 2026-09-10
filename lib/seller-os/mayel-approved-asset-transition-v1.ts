@@ -34,3 +34,9 @@ export function savedSafeDecisionV1(asset: Record<string, unknown>, task: Record
 export function assertReviewIntentV1(current: string[], previous: readonly VisualIntentV1[], intent: VisualIntentV1) {
   return visualIntentOrderV1(current, [...previous.filter(i => i.assetId !== intent.assetId), intent])
 }
+
+/** Do not let an older unreviewed proposal starve a durable safe decision. */
+export function recoverableVisualAssetV1(assets: Record<string, unknown>[], task: Record<string, unknown>) {
+  return assets.find(a => a.status !== "approved" && savedSafeDecisionV1(a, task).safe) ??
+    assets.find(a => a.status === "approved" && a.mayel_approval_status === "APPROVED") ?? assets[0]
+}
