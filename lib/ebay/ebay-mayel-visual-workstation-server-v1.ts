@@ -1229,7 +1229,7 @@ export async function readMayelVisualWorkstationV1(input: {
   const { readOptimizationGrantV1, readDelegatedVisualAuthorityV1 } = await import("../seller-os/mayel-optimization-delegation-server-v1")
   const optimizationGrant = await readOptimizationGrantV1(input.supabase, input.accountKey)
   const contentStates = optimizationGrant && taskIds.length ? await input.supabase.from("seller_os_mayel_content_outbox_v1")
-    .select("task_id,item_id,state,official_readback,created_at").eq("account_key", input.accountKey).in("task_id", taskIds)
+    .select("task_id,item_id,state,official_readback,created_at,actions:audit->actions").eq("account_key", input.accountKey).in("task_id", taskIds)
     .order("created_at", { ascending: false }).limit(100) : { data: [], error: null }
   const outputsByTaskId = new Map<string, JsonRecord[]>()
   for (const output of (assetRead.data ?? []) as JsonRecord[]) {
@@ -1279,7 +1279,8 @@ export async function readMayelVisualWorkstationV1(input: {
         ? record(task.visual_manifest).currentSecondaryImages as unknown[] : [])]) !== JSON.stringify(gallery.images))
     const latestOptimization = contentStates.error ? null : contentStates.data?.find(row => row.task_id === task.id && row.item_id === task.ebay_item_id)
     tasks.push({ autonomousOptimization: Boolean(optimizationGrant), latestOptimization: latestOptimization ? {
-      state: latestOptimization.state, officialReadback: latestOptimization.official_readback === true } : null,
+      state: latestOptimization.state, officialReadback: latestOptimization.official_readback === true,
+      label: Array.isArray(latestOptimization.actions) && latestOptimization.actions.includes("IMAGE_REORDER") ? "Orden de imágenes" : "Texto del listing" } : null,
       currentGallerySynced, visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
       sku: String(evidence.sku ?? ""),
       productTitle: String(evidence.productTitle ?? ""),

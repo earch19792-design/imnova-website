@@ -485,8 +485,14 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     return fingerprint && classifyMayelTradingImageHostV1(String(media.epsImageUrl ?? "")) === "EBAY_EPS"
       ? String(media.epsImageUrl) : String(e.publicUrl)
   })
-  const approvedGalleryAlreadyOfficial = context.officialReadStatus === "PASS" && context.currentImageSetProven &&
+  let approvedGalleryAlreadyOfficial = context.officialReadStatus === "PASS" && context.currentImageSetProven &&
     expectedOfficialUrls.length > 0 && JSON.stringify(expectedOfficialUrls) === JSON.stringify(context.currentOfficialImageUrls)
+  if (approvedGalleryAlreadyOfficial && context.management.managementModel === "INVENTORY_API_MANAGED") {
+    // Inventory can acknowledge a replacement before the LIVE gallery catches
+    // up. Only a matching current GetItem gallery can close the outbox green.
+    approvedGalleryAlreadyOfficial = context.official !== null &&
+      (await verifyOfficialOrderedImageSetV1(context.official, expectedOfficialUrls, input.fetchImpl ?? fetch)).verified
+  }
   const safeRebaseAvailable = context.plan.blocker ===
     "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED"
     && context.rebase.safe

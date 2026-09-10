@@ -38,7 +38,7 @@ type VisualOutput = {
 type VisualTask = {
   visualTaskId: string
   autonomousOptimization?: boolean
-  latestOptimization?: { state: string; officialReadback: boolean } | null
+  latestOptimization?: { state: string; officialReadback: boolean; label: string } | null
   visualStationState?: string
   ebayItemId: string
   sku: string
@@ -1554,9 +1554,9 @@ export function MayelVisualWorkstation({ canOperate,
           <h3 className="mt-2 font-serif text-2xl font-semibold">{task.productTitle}</h3>
           {task.latestOptimization && <p className="mt-2 text-sm font-medium" role="status">
             {task.latestOptimization.state === "SYNCED" && task.latestOptimization.officialReadback
-              ? "🟢 Optimización sincronizada con eBay"
-              : task.latestOptimization.state === "REQUIRES_ATTENTION" ? "🔴 Optimización: requiere atención"
-              : "🟠 Optimización guardada · Sincronizando con eBay"}
+              ? `🟢 ${task.latestOptimization.label}: sincronizado con eBay`
+              : task.latestOptimization.state === "REQUIRES_ATTENTION" ? `🔴 ${task.latestOptimization.label}: requiere atención`
+              : `🟠 ${task.latestOptimization.label}: guardado · Sincronizando con eBay`}
           </p>}
           <p className="mt-1 text-xs text-[#777a73]">Publicación eBay {task.ebayItemId}</p></div>
         <span className="rounded-full bg-[#e3ebe1] px-3 py-2 text-xs font-semibold text-[#425143]">{focusedItemId ? friendlyVisualSyncV1(task.visualStationState).label : portfolioTaskStatus(task,

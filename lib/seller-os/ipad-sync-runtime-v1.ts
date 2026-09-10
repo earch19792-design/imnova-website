@@ -93,6 +93,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        // A stored terminal claim alone is insufficient: current official digest
        // and the executor's protected-field verification must both agree.
        const alreadyApplied = approvedVisualReadbackMatchesV1({ official, ownerApproved, baseListingCompatible,
+         liveGalleryVerified: managementModel !== "INVENTORY_API_MANAGED" || preview.approvedGalleryAlreadyOfficial === true,
          approvedManifestDigest: manifestDigest, currentManifestDigest: preview.visualManifestDigest,
          expectedImages, currentImages: preview.currentImages })
        const matchesIntent = alreadyApplied || official && ownerApproved && baseListingCompatible && preview.visualManifestDigest === manifestDigest && preview.approvedGalleryAlreadyOfficial || official && baseListingCompatible && Boolean(e && e.phase === "APPLIED_AND_OFFICIALLY_VERIFIED" &&
@@ -101,7 +102,10 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
          safetyPass: baseListingCompatible && preview.safeToExecuteVisualChange && preview.visualOnlyDiff && preview.unauthorizedFieldDiffCount === 0 && preview.visualManifestDigest === manifestDigest,
          reason: preview.applicationStatus === "WAITING_FOR_EBAY" ? "EBAY_RATE_LIMITED" :
            !baseListingCompatible ? "LISTING_ECONOMIC_OR_IDENTITY_DRIFT" : preview.blocker,
-         receipt: matchesIntent ? { executionId: e?.id ?? null, phase: e?.phase ?? "ALREADY_APPLIED_OFFICIALLY_VERIFIED", manifestDigest, officialDigest: preview.currentOfficialImageSetDigest, observedAt: new Date().toISOString(), writesThisReconciliation: 0 } : null }
+         receipt: matchesIntent ? { executionId: e?.id ?? null,
+           phase: e?.phase === "APPLIED_AND_OFFICIALLY_VERIFIED" ? e.phase : "ALREADY_APPLIED_OFFICIALLY_VERIFIED",
+           previousExecutionPhase: e?.phase ?? null, liveGalleryVerified: preview.approvedGalleryAlreadyOfficial,
+           manifestDigest, officialDigest: preview.currentOfficialImageSetDigest, observedAt: new Date().toISOString(), writesThisReconciliation: 0 } : null }
      },
      markDispatch: async () => {
        if (!manifestDigest || row.dispatch_count !== 0 && !preDispatchFailureProven) throw Error("OUTBOX_DUPLICATE_DISPATCH_BLOCKED")
