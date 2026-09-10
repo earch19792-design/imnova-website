@@ -32,11 +32,12 @@ type VisualOutput = {
   mayel_approval_status: string
   owner_approval_status: string
   previewUrl: string | null
-  sync?: { state: string; approvedForEbaySync: boolean; generation: string; idempotencyKey: string; serverReceiptPresent: boolean; officialReadback?: boolean; savedToSellerOS?: boolean }
+  sync?: { autonomousOptimization?: boolean; state: string; approvedForEbaySync: boolean; generation: string; idempotencyKey: string; serverReceiptPresent: boolean; officialReadback?: boolean; savedToSellerOS?: boolean }
 }
 
 type VisualTask = {
   visualTaskId: string
+  autonomousOptimization?: boolean
   visualStationState?: string
   ebayItemId: string
   sku: string
@@ -514,7 +515,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
   const beforePosition = appliedIntent?.targetImagePosition ?? (intent ? targetPosition : 0)
   const status = visualAssetStatusV1({ generated: Boolean(output.previewUrl),
     qaPassed: output.qa_result.automaticStatus === "PASSED" && output.mayel_approval_status === "APPROVED",
-    savedToSellerOS: output.sync?.savedToSellerOS === true, ownerApproved: output.sync?.approvedForEbaySync === true,
+    savedToSellerOS: output.sync?.savedToSellerOS === true, ownerApproved: output.sync?.approvedForEbaySync === true, autonomousOptimization: output.sync?.autonomousOptimization === true,
     serverReceiptPresent: output.sync?.serverReceiptPresent === true, officialReadback: output.sync?.officialReadback === true,
     state: output.sync?.state ?? (output.status === "rejected" ? "REQUIRES_ATTENTION" : "DRAFT") })
   async function saveIntent() {
@@ -617,10 +618,10 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
     </div>}
     {output.sync && <div className="mt-4 rounded-xl bg-[#f4efe7] p-3 text-sm">
 
-      {output.status === "approved" && output.sync.state === "OWNER_APPROVAL_REQUIRED" && owner &&
+      {output.status === "approved" && output.sync.state === "OWNER_APPROVAL_REQUIRED" && !output.sync.autonomousOptimization && owner &&
         <button type="button" disabled={busy || approvingSync} onClick={() => void approveSync()}
           className="mt-3 min-h-11 rounded-xl bg-[#1d5961] px-4 py-2 font-semibold text-white disabled:opacity-40">Aprobar esta imagen para sincronizar con eBay</button>}
-      <p className="mt-2 text-xs">Cada imagen necesita su propia aprobación. Las fuentes originales guardadas siguen disponibles para las otras propuestas.</p>
+      <p className="mt-2 text-xs">{output.sync.autonomousOptimization ? "Mayel sincroniza automáticamente las mejoras seguras dentro de tu delegación. Las fuentes originales siguen guardadas." : "Cada imagen necesita su propia aprobación. Las fuentes originales guardadas siguen disponibles para las otras propuestas."}</p>
       <details className="mt-2"><summary>Ver detalles</summary><pre className="overflow-auto text-xs">{JSON.stringify(output.sync, null, 2)}</pre></details>
     </div>}
 
@@ -824,7 +825,7 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
       <div className="mt-2 grid grid-cols-2 gap-2"><figure>{p.before ? <img src={p.before} alt="Antes" className="aspect-square w-full object-contain"/> : <p>Posición nueva</p>}<figcaption>Antes</figcaption></figure>
         <figure><img src={p.after} alt="Después" className="aspect-square w-full object-contain"/><figcaption>Después</figcaption></figure></div>
     </article>)}</div>
-    {owner && <button type="button" disabled={busy || saving || !task.currentGalleryProven || task.galleryRebaseRequired ||
+    {owner && !task.autonomousOptimization && <button type="button" disabled={busy || saving || !task.currentGalleryProven || task.galleryRebaseRequired ||
       explicitPreview.some(p => p.assetId && !task.outputs.find(o => o.id === p.assetId)?.sync?.approvedForEbaySync)}
       onClick={() => void confirmPreview()} className="mt-4 min-h-11 rounded-xl border px-4 disabled:opacity-40">Confirmar este Preview para sincronizar con eBay</button>}
     {message && <p role="status" className="mt-3">{message}</p>}
@@ -861,7 +862,7 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
     })}</div>
     <button type="button" disabled={busy || saving || !task.currentGalleryProven || !Object.values(selected).some(Boolean)}
       onClick={() => void save()} className="mt-4 min-h-11 rounded-xl bg-[#1d5961] px-4 text-sm font-semibold text-white disabled:opacity-40">Guardar Preview de estas posiciones</button>
-    {owner && manifestSlots.length > 0 && <button type="button" disabled={busy || saving || task.galleryRebaseRequired ||
+    {owner && !task.autonomousOptimization && manifestSlots.length > 0 && <button type="button" disabled={busy || saving || task.galleryRebaseRequired ||
       !task.currentGalleryProven || JSON.stringify(selected) !== JSON.stringify(Object.fromEntries(manifestSlots.map(r => [r.targetImagePosition,r.assetId])))}
       onClick={() => void confirmPreview()} className="ml-2 mt-4 min-h-11 rounded-xl border border-[#1d5961] px-4 text-sm font-semibold disabled:opacity-40">Confirmar este Preview para sincronizar</button>}
     {message && <p role="status" className="mt-3 text-sm">{message}</p>}
@@ -907,7 +908,7 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
     <h4 className="mt-2 font-serif text-xl font-semibold">Imágenes actuales y propuesta</h4>
     <p className="mt-2 text-sm text-[#5f645e]">Item {task.ebayItemId} · {task.productTitle}</p>
     <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. Mayel decide la principal y el orden exacto dentro de la delegación visual activa.</p>
-    <p className="mt-2 text-xs text-[#617159]">Calidad revisada: {task.outputs.filter((output) => output.status === "approved").length} · Aprobadas por OWNER para sincronizar: {task.outputs.filter(output => output.sync?.approvedForEbaySync).length}. Cada propuesta requiere aprobación individual.</p>
+    <p className="mt-2 text-xs text-[#617159]">Calidad revisada: {task.outputs.filter((output) => output.status === "approved").length} · Autorizadas para sincronizar: {task.outputs.filter(output => output.sync?.approvedForEbaySync).length}. {task.autonomousOptimization ? "Mayel trabaja con tu delegación permanente." : "Cada propuesta requiere aprobación individual."}</p>
     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{proposed.map((entry, index) =>
       <figure key={`${entry.assetId ?? "current"}-${index}`}
         className="rounded-xl border border-[#d6dfd1] bg-white p-2">

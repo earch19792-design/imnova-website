@@ -27,6 +27,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
    if (!row) break
    let manifestDigest: string | null = typeof row.binding.executionManifestDigest === "string" ? row.binding.executionManifestDigest : null
    let expectedImages: string[] = [], ownerApproved = false
+   let managementModel: string | null = null
    const patch = async (values: Record<string, unknown>) => {
      const changed = await input.supabase.from(IPAD_OUTBOX_TABLE).update({ ...values, updated_at: new Date().toISOString() })
        .eq("id", row.id).eq("account_key", input.accountKey).eq("lease_token", row.lease_token).select("id").maybeSingle()
@@ -62,6 +63,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
      readback: async (): Promise<SyncReadback> => {
        const { readMayelVisualPhaseBPreviewV1 } = await import("../ebay/ebay-mayel-visual-phase-b-server-v1")
        const preview = await readMayelVisualPhaseBPreviewV1({ ...input, taskId: row.intent.requestedChanges.taskId! })
+       managementModel = preview.managementModel
        const execution = manifestDigest ? await input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
          .select("id,phase,proposed_image_digest,postwrite_snapshot")
          .eq("marketplace_account_key", input.accountKey).eq("visual_task_id", row.intent.requestedChanges.taskId!)
@@ -90,6 +92,16 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        await patch({ state: "SYNCING", dispatch_count: 1, binding: { ...row.binding, executionManifestDigest: manifestDigest } })
      },
      execute: async () => {
+       if (managementModel === "INVENTORY_API_MANAGED" && row.binding.ownerDelegation) {
+         const { applyMayelVisualManifestToEbayV1 } = await import("../ebay/ebay-mayel-visual-phase-b-server-v1")
+         const { readOptimizationGrantV1 } = await import("./mayel-optimization-delegation-server-v1")
+         const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+         if (!grant || !manifestDigest) throw Error("OWNER_DELEGATION_REQUIRED")
+         const result = await applyMayelVisualManifestToEbayV1({ ...input, taskId: row.intent.requestedChanges.taskId!,
+           outboxId: row.id, outboxLeaseToken: row.lease_token, ownerUserId: grant.owner_user_id,
+           visualManifestDigest: manifestDigest, confirmation: "AUTO_AUTHORIZED_BY_OWNER_DELEGATION" })
+         return { writes: result?.marketplaceWriteCount ?? 0, mediaWrites: 0 }
+       }
        const { executeMayelTradingVisualDelegatedManifestV1 } = await import("../ebay/ebay-mayel-visual-phase-b-server-v1")
        const result = await executeMayelTradingVisualDelegatedManifestV1({ ...input, taskId: row.intent.requestedChanges.taskId!, outboxId: row.id, outboxLeaseToken: row.lease_token })
        return { writes: result.tradingListingWriteCount, mediaWrites: result.mediaApiWriteCount, ...(result.status === "GALLERY_CHANGED" ? { stoppedReason: "MAYEL_VISUAL_CURRENT_OFFICIAL_IMAGE_SET_CHANGED" } : {}) }

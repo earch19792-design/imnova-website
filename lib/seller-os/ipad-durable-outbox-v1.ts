@@ -13,7 +13,7 @@ export function publicOutboxReceiptV1(row: OutboxRow): DurableOutboxReceipt {
  return { id: row.id, idempotencyKey: row.idempotency_key, state: outboxFriendlyStateV1(row.state), internalState: row.state,
    receivedAt: row.received_at, reasonCode: row.reason_code, officialReadback: row.official_readback }
 }
-export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown; galleryPreviewDigest?: string }) {
+export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown; galleryPreviewDigest?: string; delegationId?: string }) {
  const intent = parseOutboxIntentV1(input.intent)
  const hash = `sha256:${createHash("sha256").update(stableOutboxJsonV1(intent)).digest("hex")}`
  const previous = await input.supabase.from(IPAD_OUTBOX_TABLE).select("*").eq("account_key", input.accountKey)
@@ -28,9 +28,10 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
    ...(input.owner === true && typeof input.galleryPreviewDigest === "string" && input.galleryPreviewDigest === intent.requestedChanges.manifestDigest
      ? { ownerGalleryPreview: { confirmation: "CONFIRM_FULL_GALLERY_PREVIEW_V1", ownerUserId: input.actorUserId,
        manifestDigest: input.galleryPreviewDigest } } : {}) }
+ if (input.delegationId && intent.kind !== "IMAGE_SYNC") throw Error("CHANGE_OUTSIDE_OWNER_DELEGATION")
  if (intent.kind.startsWith("IMAGE_")) {
    const task = await input.supabase.from("ebay_mayel_visual_tasks_v1")
-     .select("id,ebay_item_id,assigned_operator_user_id,current_image_set,source_image_set_digest,status,visual_manifest_digest,visual_manifest")
+     .select("id,ebay_item_id,assigned_operator_user_id,current_image_set,source_image_set_digest,status,visual_manifest_digest,visual_manifest,marketplace_account_key,product_truth_digest,selection_signal,source_image_references,evidence_pack")
      .eq("marketplace_account_key", input.accountKey).eq("id", intent.requestedChanges.taskId!).eq("ebay_item_id", intent.itemId).maybeSingle()
    if (task.error || !task.data || (!input.owner && task.data.assigned_operator_user_id !== input.actorUserId)) throw Error("OUTBOX_TASK_SCOPE_REQUIRED")
    const ownerGalleryHandoff = input.owner === true && intent.kind === "IMAGE_SYNC" &&
@@ -62,13 +63,25 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
      const ids = Array.isArray(proposed) ? proposed.map(record).flatMap(e => typeof e.assetId === "string" ? [e.assetId] : []) : []
      if (!ids.includes(intent.requestedChanges.assetId!) || !ids.length) throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
      const native = await input.supabase.from("ebay_listing_image_assets")
-       .select("id,source_sha256,source_image_set_digest,owner_sync_approval").eq("account_key", input.accountKey)
+       .select("id,status,mayel_approval_status,qa_result,source_sha256,output_sha256,public_url,product_truth_digest,source_image_set_digest,owner_sync_approval").eq("account_key", input.accountKey)
        .eq("mayel_visual_task_id", task.data.id).in("id", ids)
      const sourceDigest = task.data.source_image_set_digest
      if (native.error || native.data?.length !== ids.length ||
          native.data.some(a => a.source_image_set_digest !== sourceDigest ||
            (ownerGalleryHandoff && record(a.owner_sync_approval).ownerUserId !== input.actorUserId)))
        throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
+     if (input.delegationId) {
+       const { readDelegatedVisualAuthorityV1 } = await import("./mayel-optimization-delegation-server-v1")
+       const delegated = await readDelegatedVisualAuthorityV1({ ...input, task: task.data, assets: native.data })
+       if (!delegated.authorized || delegated.grant?.id !== input.delegationId) throw Error(delegated.reason ?? "OWNER_DELEGATION_REQUIRED")
+       binding.ownerDelegation = { authority: delegated.authority, grantId: delegated.grant.id,
+         authorityDigest: delegated.grant.authority_digest, manifestDigest: task.data.visual_manifest_digest }
+       binding.optimizationAudit = { before: task.data.current_image_set, after: delegated.proposed,
+         why: "Mejora visual aprobada por Mayel dentro de la delegación OWNER",
+         evidenceUsed: { productTruthDigest: task.data.product_truth_digest, sourceImageSetDigest: task.data.source_image_set_digest,
+           sourceReferences: task.data.source_image_references }, mayelDecision: task.data.visual_manifest,
+         qaResult: native.data.map(a => ({ assetId: a.id, qa: a.qa_result })) }
+     }
      binding = { ...binding, assets: native.data.map(a => ({ assetId: a.id, sourceSha256: a.source_sha256 })) }
    } else {
      const { readMayelGeneratedImageV1 } = await import("./mayel-generated-image-binding-v1")
@@ -109,9 +122,9 @@ export async function readDurableOutboxV1(input: OutboxScope & { keys: string[] 
 export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClient; row: OutboxRow }) {
  const { row } = input
  const [task, assets] = await Promise.all([
-   input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,status,assigned_operator_user_id,visual_manifest,visual_manifest_digest,source_image_set_digest,product_truth_digest")
+   input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,status,assigned_operator_user_id,visual_manifest,visual_manifest_digest,source_image_set_digest,product_truth_digest,marketplace_account_key,current_image_set,selection_signal,source_image_references,evidence_pack")
      .eq("marketplace_account_key", row.account_key).eq("id", row.intent.requestedChanges.taskId!).maybeSingle(),
-   input.supabase.from("ebay_listing_image_assets").select("id,status,approved_by,qa_result,source_sha256,output_sha256,mayel_approval_status,owner_sync_approval,source_image_set_digest,product_truth_digest")
+   input.supabase.from("ebay_listing_image_assets").select("id,status,approved_by,qa_result,public_url,source_sha256,output_sha256,mayel_approval_status,owner_sync_approval,source_image_set_digest,product_truth_digest")
      .eq("account_key", row.account_key).eq("mayel_visual_task_id", row.intent.requestedChanges.taskId!).in("status", ["pending_review", "approved"]),
  ])
  if (task.error || assets.error) throw Error("OUTBOX_AUTHORITY_READ_FAILED")
@@ -120,6 +133,18 @@ export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClie
  if (!t || t.ebay_item_id !== row.item_id || t.source_image_set_digest !== row.binding.sourceImageSetDigest ||
      !bound.length || bound.some(b => !assets.data?.some(a => a.id === b.assetId && a.source_sha256 === b.sourceSha256)))
    return { approved: false, reason: "OUTBOX_DRAFT_AUTHORITY_CHANGED", manifestDigest: null }
+ if (row.binding.ownerDelegation) {
+   const { readDelegatedVisualAuthorityV1 } = await import("./mayel-optimization-delegation-server-v1")
+   const authority = await readDelegatedVisualAuthorityV1({ supabase: input.supabase, accountKey: row.account_key,
+     task: t, assets: assets.data ?? [] })
+   const proof = record(row.binding.ownerDelegation)
+   const approved = authority.authorized && authority.grant?.id === proof.grantId &&
+     authority.grant?.authority_digest === proof.authorityDigest && row.kind === "IMAGE_SYNC" &&
+     proof.manifestDigest === t.visual_manifest_digest && row.intent.requestedChanges.manifestDigest === t.visual_manifest_digest
+   return { approved, reason: approved ? null : authority.reason ?? "OUTBOX_APPROVED_MANIFEST_CHANGED",
+     manifestDigest: approved ? String(t.visual_manifest_digest) : null,
+     expectedImages: approved ? authority.proposed.map(e => String(e.publicUrl)) : [] }
+ }
  const galleryPreview = record(row.binding.ownerGalleryPreview)
  if ((manifest.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" || manifest.ownerPreviewRequired === true) && (row.kind !== "IMAGE_SYNC" ||
      galleryPreview.confirmation !== "CONFIRM_FULL_GALLERY_PREVIEW_V1" || galleryPreview.ownerUserId !== row.actor_user_id ||

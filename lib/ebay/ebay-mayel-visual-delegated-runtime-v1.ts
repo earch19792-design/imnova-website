@@ -140,6 +140,17 @@ export async function runMayelVisualDelegatedRuntimeV1(input: Readonly<{
     const taskId = String(task.id)
     const itemId = String(task.ebay_item_id)
     try {
+      if (!dependencies) {
+        const { readOptimizationGrantV1, enqueueDelegatedVisualV1 } = await import("../seller-os/mayel-optimization-delegation-server-v1")
+        const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+        if (grant) {
+          const queued = await enqueueDelegatedVisualV1({ ...input, taskId })
+          outcomes.push({ taskId, itemId, manifestDigest: task.visual_manifest_digest, status: queued.status,
+            failureClass: queued.reason, receipt: queued.receipt, listingWriteCount: 0, mediaWriteCount: 0 })
+          // The existing iPad outbox executor owns the single write budget.
+          break
+        }
+      }
       const execute = dependencies?.execute ?? (await import("./ebay-mayel-visual-phase-b-server-v1")).executeMayelTradingVisualDelegatedManifestV1
       const execution = await execute({
         supabase: input.supabase, accountKey: input.accountKey, taskId,

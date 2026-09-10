@@ -20,8 +20,8 @@ export function visualAssetOwnerApprovedV1(asset: Record<string, unknown>, task:
     asset.source_image_set_digest === task.source_image_set_digest && asset.product_truth_digest === task.product_truth_digest &&
     approval.sourceImageSetDigest === task.source_image_set_digest && approval.productTruthDigest === task.product_truth_digest
 }
-export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Record<string, unknown>, outbox: Record<string, unknown>[] = []) {
-  const approved = visualAssetOwnerApprovedV1(asset, task)
+export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Record<string, unknown>, outbox: Record<string, unknown>[] = [], delegation: { active: boolean; authorized: boolean } = { active: false, authorized: false }) {
+  const approved = visualAssetOwnerApprovedV1(asset, task) || delegation.authorized
   const rows = outbox.filter(row => {
     const binding = record(row.binding), changes = record(record(row.intent).requestedChanges)
     if (row.item_id != null && row.item_id !== task.ebay_item_id) return false
@@ -36,10 +36,10 @@ export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Reco
   const synced = currentRows.some(r => r.state === "SYNCED" && r.official_readback === true &&
     record(r.binding).executionManifestDigest === task.visual_manifest_digest)
   const active = currentRows.find(r => ["OFFICIAL_READBACK_REQUIRED", "UNKNOWN_COMMIT", "SYNCING", "REVALIDATING", "PENDING_EBAY_SYNC"].includes(String(r.state)))
-  const state = attention || asset.status === "rejected" ? "REQUIRES_ATTENTION" :
+  const state = synced ? "SYNCED" : attention || asset.status === "rejected" || delegation.active && !delegation.authorized && asset.status === "approved" ? "REQUIRES_ATTENTION" :
     !approved ? record(asset.qa_result).automaticStatus === "PASSED" ? "OWNER_APPROVAL_REQUIRED" : "DRAFT" :
     synced ? "SYNCED" : active ? active.state === "UNKNOWN_COMMIT" ? "OFFICIAL_READBACK_REQUIRED" : String(active.state) : "APPROVED_FOR_EBAY_SYNC"
-  return { state, officialReadback: synced, savedToSellerOS: asset.status === "approved" && typeof asset.public_url === "string" && /^https:\/\//.test(asset.public_url), approvedForEbaySync: approved, generation: visualAssetGenerationV1(asset),
+  return { state, autonomousOptimization: delegation.active, officialReadback: synced, savedToSellerOS: asset.status === "approved" && typeof asset.public_url === "string" && /^https:\/\//.test(asset.public_url), approvedForEbaySync: approved || synced, generation: visualAssetGenerationV1(asset),
     idempotencyKey: visualAssetSyncKeyV1(asset), creativeSlot: asset.mayel_output_role,
     qaStatus: record(asset.qa_result).automaticStatus ?? "UNPROVEN", ownerApproval: asset.owner_sync_approval ?? null,
     sourceProvenance: { references: asset.source_image_references, sourceImageSetDigest: asset.source_image_set_digest,

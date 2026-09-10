@@ -539,11 +539,13 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     .select("id,main_image_authority,owner_per_image_approval,owner_per_listing_visual_approval")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
     .eq("status", "ACTIVE").is("revoked_at", null).maybeSingle() : { data: null, error: null }
+  const { readDelegatedVisualAuthorityV1 } = await import("../seller-os/mayel-optimization-delegation-server-v1")
+  const delegatedAuthority = await readDelegatedVisualAuthorityV1({ ...input, task: context.task, assets: context.assets })
   const galleryTradingReady = slotScopedTrading && !delegationRead.error &&
     delegationRead.data?.main_image_authority === true && delegationRead.data.owner_per_image_approval === false &&
     delegationRead.data.owner_per_listing_visual_approval === false && mediaPreparationAvailable && mediaPreparationAuthorized &&
     context.officialReadStatus === "PASS" && !priorExecutionBlocksCurrentManifest(context) &&
-    proposedEntries.filter(e => e.assetId).every(e => context.assets.some(a => a.id === e.assetId && visualAssetOwnerApprovedV1(a, context.task)))
+    proposedEntries.filter(e => e.assetId).every(e => context.assets.some(a => a.id === e.assetId && (visualAssetOwnerApprovedV1(a, context.task) || delegatedAuthority.authorized)))
   const baseSafeToExecute = context.accountIdentityProven
     && context.listingIdentityProven
     && context.currentImageSetProven
@@ -1310,6 +1312,8 @@ export async function executeMayelTradingVisualLiveCanaryV1(input: {
 export async function applyMayelVisualManifestToEbayV1(input: {
   supabase: SupabaseClient
   accountKey: string
+  outboxId?: string
+  outboxLeaseToken?: string
   ownerUserId: string
   taskId: string
   visualManifestDigest: string
@@ -1317,12 +1321,29 @@ export async function applyMayelVisualManifestToEbayV1(input: {
   fetchImpl?: FetchLike
 }) {
   if (!uuid(input.ownerUserId) || !uuid(input.taskId)
-    || input.confirmation !== MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION
+    || (!input.outboxId && input.confirmation !== MAYEL_VISUAL_PHASE_B_OWNER_CONFIRMATION)
     || !/^sha256:[0-9a-f]{64}$/.test(input.visualManifestDigest)) {
     throw new Error("MAYEL_VISUAL_PHASE_B_OWNER_AUTHORIZATION_INVALID")
   }
   const fetchImpl = input.fetchImpl ?? fetch
   let context = await loadContext({ ...input, fetchImpl })
+  const revalidateDelegation = async () => {
+    if (!input.outboxId) return null
+    if (!uuid(input.outboxLeaseToken)) throw Error("OUTBOX_LEASE_REQUIRED")
+    const row = await input.supabase.from("seller_os_ipad_outbox_v1")
+      .select("id,account_key,actor_user_id,item_id,kind,intent,binding,idempotency_key,payload_hash,state,reason_code,received_at,lease_token,dispatch_count,official_readback")
+      .eq("id", input.outboxId).eq("account_key", input.accountKey).eq("item_id", String(context.task.ebay_item_id))
+      .eq("lease_token", input.outboxLeaseToken).eq("state", "SYNCING").eq("dispatch_count", 1).maybeSingle()
+    if (row.error || !row.data?.binding?.ownerDelegation) throw Error("OWNER_DELEGATION_REQUIRED")
+    const { readOutboxImageAuthorityV1 } = await import("../seller-os/ipad-durable-outbox-v1")
+    const authority = await readOutboxImageAuthorityV1({ supabase: input.supabase, row: row.data })
+    const { readOptimizationGrantV1 } = await import("../seller-os/mayel-optimization-delegation-server-v1")
+    const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+    if (!authority.approved || grant?.owner_user_id !== input.ownerUserId || authority.manifestDigest !== input.visualManifestDigest)
+      throw Error("OWNER_DELEGATION_REQUIRED")
+    return grant
+  }
+  const optimizationGrant = await revalidateDelegation()
   if (!context.plan.ready
     || context.plan.ownerAuthorizationDigest !== input.visualManifestDigest) {
     throw new Error(context.plan.blocker
@@ -1341,7 +1362,7 @@ export async function applyMayelVisualManifestToEbayV1(input: {
   const executor = "EBAY_INVENTORY_CREATE_OR_REPLACE_INVENTORY_ITEM_IMAGE_ONLY_V1"
   const inserted = {
     id: executionId,
-    owner_approval_id: ownerApprovalId,
+    owner_approval_id: optimizationGrant?.id ?? ownerApprovalId,
     visual_task_id: context.task.id,
     visual_manifest_id: context.task.visual_manifest_id,
     active_listing_id: context.task.active_listing_id,
@@ -1410,6 +1431,7 @@ export async function applyMayelVisualManifestToEbayV1(input: {
       } })
     return publicExecution(execution)
   }
+  await revalidateDelegation()
   const claimToken = randomUUID()
   const { data: claimed, error: claimError } = await input.supabase
     .from("ebay_mayel_visual_phase_b_executions_v1")

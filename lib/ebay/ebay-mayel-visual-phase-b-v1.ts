@@ -140,7 +140,7 @@ export function buildMayelVisualPhaseBPlanV1(input: {
     && manifest.orderControlledByMayel === true
     && manifest.backendSilentReorder === false
     && manifest.mayelMainImageAuthority === true
-    && manifest.ownerPerImageApproval === false
+    && (manifest.ownerPerImageApproval === false || manifest.intentContract === "MAYEL_VISUAL_INTENT_V1" && manifest.ownerPerImageApproval === true)
     && manifest.ownerPerListingVisualApproval === false
     && JSON.stringify(manifest.fieldsToChange) === '["IMAGES_ONLY"]'
   const sharedContractValid = (v1ContractValid || v2ContractValid)

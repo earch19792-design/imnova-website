@@ -1226,6 +1226,8 @@ export async function readMayelVisualWorkstationV1(input: {
     .in("item_id", typedTaskRows.map(t => String(t.ebay_item_id))).in("kind", ["IMAGE_DRAFT", "IMAGE_UPLOAD", "IMAGE_SYNC"])
     .neq("state", "SUPERSEDED").limit(500) : { data: [], error: null }
   if (outboxRead.error || (outboxRead.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
+  const { readOptimizationGrantV1, readDelegatedVisualAuthorityV1 } = await import("../seller-os/mayel-optimization-delegation-server-v1")
+  const optimizationGrant = await readOptimizationGrantV1(input.supabase, input.accountKey)
   const outputsByTaskId = new Map<string, JsonRecord[]>()
   for (const output of (assetRead.data ?? []) as JsonRecord[]) {
     const taskId = String(output.mayel_visual_task_id ?? "")
@@ -1236,6 +1238,7 @@ export async function readMayelVisualWorkstationV1(input: {
   const tasks = []
   for (const task of typedTaskRows) {
     const outputRows = outputsByTaskId.get(String(task.id)) ?? []
+    const delegated = optimizationGrant ? await readDelegatedVisualAuthorityV1({ ...input, task, assets: outputRows, grant: optimizationGrant }) : null
     const outputs = []
     for (const output of outputRows) {
       let previewUrl = httpsUrl(output.public_url)
@@ -1249,7 +1252,7 @@ export async function readMayelVisualWorkstationV1(input: {
         previewExpiresInSeconds = previewUrl ? 300 : null
       }
       outputs.push({ ...output, previewUrl, previewExpiresInSeconds,
-        sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? []) })
+        sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? [], { active: Boolean(optimizationGrant), authorized: delegated?.authorized === true }) })
     }
     const { evidence, prompt: promptContract, storedMatchesCanonical } =
       canonicalPromptForTask(task)
@@ -1271,7 +1274,7 @@ export async function readMayelVisualWorkstationV1(input: {
     const galleryRebaseRequired = Boolean(!currentGallerySynced && task.visual_manifest_digest && gallery &&
       JSON.stringify([record(task.visual_manifest).currentMainImage, ...(Array.isArray(record(task.visual_manifest).currentSecondaryImages)
         ? record(task.visual_manifest).currentSecondaryImages as unknown[] : [])]) !== JSON.stringify(gallery.images))
-    tasks.push({ currentGallerySynced, visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
+    tasks.push({ autonomousOptimization: Boolean(optimizationGrant), currentGallerySynced, visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
       sku: String(evidence.sku ?? ""),
       productTitle: String(evidence.productTitle ?? ""),
       status: String(task.status), evidencePack: evidence,

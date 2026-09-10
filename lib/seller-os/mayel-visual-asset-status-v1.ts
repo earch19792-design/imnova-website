@@ -7,7 +7,7 @@ export const VISUAL_STATUS_DESIGN_V1 = {
   SYNCED_WITH_EBAY: { icon: "✓✓", label: "Sincronizada con eBay", color: "green", className: "border-green-300 bg-green-50 text-green-900" },
   REQUIRES_ATTENTION: { icon: "!", label: "Requiere atención", color: "red", className: "border-red-300 bg-red-50 text-red-900" },
 } as const
-export type VisualStatusEvidenceV1 = { generated: boolean; qaPassed: boolean; savedToSellerOS: boolean;
+export type VisualStatusEvidenceV1 = { autonomousOptimization?: boolean; generated: boolean; qaPassed: boolean; savedToSellerOS: boolean;
   ownerApproved: boolean; serverReceiptPresent: boolean; officialReadback: boolean; state: string }
 export function visualAssetStatusV1(e: VisualStatusEvidenceV1) {
   const synced = e.generated && e.qaPassed && e.savedToSellerOS && e.ownerApproved && e.serverReceiptPresent &&
@@ -23,7 +23,9 @@ export function visualAssetStatusV1(e: VisualStatusEvidenceV1) {
     { key: "saved", label: "Seller OS", complete: e.savedToSellerOS },
     { key: "ebay", label: "eBay", complete: synced },
   ]
-  return { status, ...VISUAL_STATUS_DESIGN_V1[status], steps, synced,
+  return { status, ...VISUAL_STATUS_DESIGN_V1[status],
+    ...(e.autonomousOptimization && status === "MEJORA_GENERADA" ? { label: "Mejora detectada" } : {}),
+    ...(e.autonomousOptimization && pending ? { label: "Sincronizando con eBay" } : {}), steps, synced,
     action: status === "OWNER_APPROVAL_REQUIRED" ? "Revisa el cambio y aprueba esta imagen. Después confirma el Preview completo." :
       pending ? "Seller OS conserva el trabajo y verificará eBay al sincronizar." : synced ? "eBay confirmó esta imagen." :
       status === "REQUIRES_ATTENTION" ? "Revisa el Preview antes de continuar." : "La propuesta permanece guardada para revisión." }
