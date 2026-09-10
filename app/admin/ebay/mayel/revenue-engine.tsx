@@ -247,6 +247,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
       </div>}
       {menu === 0 && visualStationItemId &&
         <MayelVisualWorkstation key={`visual-station:${visualStationItemId}`} focusedItemId={visualStationItemId} localOutbox={local} canOperate canOwnerAuthorize={owner} />}
+      {menu === 0 && owner && <h2 className="text-xl font-semibold">Listing Quality de eBay</h2>}
       {menu === 0 && owner && <OwnerListingQualityReportControl />}
     </>}
     {message && <p role="status">{message}</p>}
