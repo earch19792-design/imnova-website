@@ -42,8 +42,9 @@ export function listingPublicationE2eGateV1(g: ReturnType<typeof listingPipeline
   const irreversible = ["PUBLISH_REQUESTED", "UNKNOWN_COMMIT_STATE", "READBACK_REQUIRED", "PUBLISHED_CONFIRMED"].includes(ledgerState)
   return Object.freeze({ contractVersion: "SELLER_OS_LISTING_PUBLICATION_E2E_GATE_V1", operation: "NEW_LISTING_PUBLICATION",
     stages: PUBLICATION_STAGES_V1, PACKAGE_CERTIFIED: g.PACKAGE_CONSISTENT && g.IMMUTABLE && g.PACKAGE_HASH_PRESENT,
-    PACKAGE_CONSISTENT: g.PACKAGE_CONSISTENT, PACKAGE_HASH: g.PACKAGE_HASH, READY_TO_PUBLISH: materialReady,
-    status: !identity ? "REQUIRES_REVIEW" : irreversible ? ledgerState : !g.PACKAGE_CONSISTENT ? "DRAFT" :
+    PACKAGE_CONSISTENT: g.PACKAGE_CONSISTENT, PACKAGE_HASH: g.PACKAGE_HASH,
+    READY_TO_PUBLISH: materialReady && (!present || ledgerState === "OFFER_READY"),
+    status: !identity ? "REQUIRES_REVIEW" : irreversible && generationMatches ? ledgerState : !g.PACKAGE_CONSISTENT ? "DRAFT" :
       !materialReady ? "PACKAGE_CERTIFIED" : ledgerState === "OFFER_READY" ? "OFFER_READY" : "PACKAGE_CERTIFIED",
     existingLedgerState: present ? ledgerState : null, existingPublicationGenerationMatches: generationMatches,
     publicationIdempotencyKey: publicationKey, PUBLICATION_IDEMPOTENCY_KEY_PRESENT: Boolean(publicationKey),
