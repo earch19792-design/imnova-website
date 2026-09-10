@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from "react"
 
+import { createLunaShippingPortLeadershipGateV1, createLunaCaptureProbeRecorderV1 } from
+  "@/lib/ebay/luna-shipping-port-lifecycle-v1"
+
 import { supabase } from "@/lib/supabase"
 import type { LunaChromeShippingJobV1 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
@@ -536,6 +539,10 @@ export function LunaShippingCaptureControlPlane({
     useState<BindingStorageDiagnostic | null>(null)
   const [liveTraceEvents, setLiveTraceEvents] =
     useState<LunaShippingRuntimeTraceEventV1[]>([])
+  const [historicalTraceEvents, setHistoricalTraceEvents] =
+    useState<LunaShippingRuntimeTraceEventV1[]>([])
+  const [captureAvailable, setCaptureAvailable] = useState(false)
+  const [probeRecordedAt, setProbeRecordedAt] = useState<string | null>(null)
   const [traceDurable, setTraceDurable] = useState(false)
   const [liveTarget, setLiveTarget] = useState<LiveCaptureTarget | null>(null)
   const [liveCaptureAttempts, setLiveCaptureAttempts] = useState(0)
@@ -571,6 +578,7 @@ export function LunaShippingCaptureControlPlane({
   const serverClaimLeaderRef = useRef(false)
   const serverLeaderLeaseExpiresAtRef = useRef<number | null>(null)
   const heartbeatV2FreshUntilRef = useRef<number | null>(null)
+  const flushCaptureProbeRef = useRef<(() => Promise<boolean>) | null>(null)
   const heartbeatNowRef = useRef<(() => void) | null>(null)
   const workerRunningRef = useRef(running)
   const workloadControllerRef = useRef<ReturnType<
@@ -588,6 +596,7 @@ export function LunaShippingCaptureControlPlane({
 
   useEffect(() => {
     let active = true
+    const runtimeSessionStartedAt = Date.now()
     let jobs: LunaChromeShippingJobV1[] = []
     let index = 0
     let mode: "CANARY" | "AUTO" | "LIVE" | "RECOVERY" = "CANARY"
@@ -632,6 +641,24 @@ export function LunaShippingCaptureControlPlane({
       })
     workloadControllerRef.current = workloadController
     const leadershipAbort = new AbortController()
+    const portLeadership = createLunaShippingPortLeadershipGateV1(leadershipAbort.signal)
+    const probeRecorder = createLunaCaptureProbeRecorderV1({
+      canPersist: () => active && readyPortGeneration > 0 &&
+        browserClaimLeaderRef.current && serverClaimLeaderRef.current,
+      retryDelayMs: () => workloadController.nextDelayMs(),
+      persist: async (probe) => {
+        const payload = await adminPost("capture_capability_state", {
+          runtimeInstanceId, leaderSessionId: claimAuthoritySessionId, probe,
+        })
+        if (payload.capability?.reasonCode ||
+            !["AVAILABLE", "UNAVAILABLE"].includes(payload.capability?.state)) return false
+        const next = Date.parse(payload.capability?.nextAttemptAt ?? "")
+        if (Number.isFinite(next)) captureNextAttemptAt = Math.max(captureNextAttemptAt, next)
+        if (active) setProbeRecordedAt(String(probe.observedAt))
+        return true
+      },
+    })
+    flushCaptureProbeRef.current = () => probeRecorder.flush()
     let discoveryInFlight = false
     let discoveryRetryTimer: number | null = null
     let port: ExternalPort | null = null
@@ -752,6 +779,14 @@ export function LunaShippingCaptureControlPlane({
           .test(event.traceId) || !Number.isInteger(event.sequence) ||
           event.sequence < 1 || event.sequence > 100 ||
           event.purchaseBoundaryEnforced !== true) return
+      // A service-worker reconnect may replay an old certified trace. It must
+      // never become this page's current execution state or be persisted anew.
+      if (Date.parse(event.timestamp) < runtimeSessionStartedAt) {
+        setHistoricalTraceEvents((previous) => [...previous.filter((old) =>
+          old.traceId !== event.traceId || old.sequence !== event.sequence), event]
+          .slice(-100))
+        return
+      }
       if (hasExactLiveTarget &&
           (!exactLiveCandidateId || event.candidateId !== exactLiveCandidateId)) {
         ignoreOutOfScope("TRACE_EVENT_CANDIDATE_MISMATCH")
@@ -1021,12 +1056,7 @@ export function LunaShippingCaptureControlPlane({
         throw new Error("LUNA_EXACT_LIVE_TARGET_GLOBAL_QUEUE_FORBIDDEN")
       }
       if (nextMode === "AUTO") {
-        const capability = await adminPost("capture_capability_state", {
-          runtimeInstanceId, leaderSessionId: claimAuthoritySessionId,
-          probe: captureProbe,
-        })
-        const next = Date.parse(capability.capability?.nextAttemptAt ?? "")
-        if (Number.isFinite(next)) captureNextAttemptAt = Math.max(captureNextAttemptAt, next)
+        await probeRecorder.flush()
       }
       const payload = await adminPost("resolve_jobs", { candidateIds,
         ...(nextMode === "AUTO" ? { runtimeInstanceId,
@@ -1263,6 +1293,7 @@ export function LunaShippingCaptureControlPlane({
         workloadController.setLeaderState(leaderState)
         browserClaimLeaderRef.current = leaderState === "BROWSER_LEADER" ||
           leaderState === "SERVER_LEASE_ONLY"
+        portLeadership.setLeader(browserClaimLeaderRef.current)
         setBrowserClaimLeader(browserClaimLeaderRef.current)
         if (browserClaimLeaderRef.current) heartbeatNowRef.current?.()
       },
@@ -1451,6 +1482,8 @@ export function LunaShippingCaptureControlPlane({
           readyPortGeneration = sourceGeneration
           extensionReady = true
           setConnected(true)
+          captureProbeInFlight = true
+          sourcePort.postMessage({ type: "SELLER_OS_GET_LUNA_CAPTURE_CAPABILITY_V1" })
           sourcePort.postMessage({ type: GET_BINDING_STORAGE_DIAGNOSTIC })
           sourcePort.postMessage({
             type: "SELLER_OS_GET_LUNA_CANONICAL_DESTINATION_STATUS",
@@ -1464,7 +1497,10 @@ export function LunaShippingCaptureControlPlane({
         if (message?.type === "LUNA_CAPTURE_CAPABILITY_STATE_V1") {
           captureProbeInFlight = false
           if (message.probe?.contract !== "LUNA_CAPTURE_READ_ONLY_PROBE_V1") return
+          if (!probeRecorder.receive(message.probe)) return
           captureProbe = message.probe
+          setCaptureAvailable(captureProbe?.captureAvailable === true)
+          void probeRecorder.flush()
           if (captureProbe?.captureAvailable === true && !busy) {
             if (discoveryRetryTimer !== null) {
               window.clearTimeout(discoveryRetryTimer)
@@ -2172,9 +2208,7 @@ export function LunaShippingCaptureControlPlane({
           const recovered = Array.isArray(persisted.result?.events)
             ? persisted.result.events as LunaShippingRuntimeTraceEventV1[] : []
           if (recovered.length) {
-            traceEvents = recovered.slice(0, 100)
-            setLiveTraceEvents([...traceEvents])
-            setTraceDurable(persisted.result?.traceDurable === true)
+            setHistoricalTraceEvents(recovered.slice(0, 100))
           }
         } catch {
           // A missing historical trace must not block the extension connection.
@@ -2182,6 +2216,8 @@ export function LunaShippingCaptureControlPlane({
       }
       const wait = (milliseconds: number) => new Promise<void>((resolve) =>
         window.setTimeout(resolve, milliseconds))
+      setStatus("WAITING_FOR_BROWSER_LEADER")
+      if (!await portLeadership.wait() || !active) return
       const runtime = await detectAndWakeLunaShippingExtensionV1({
         readRuntime: () => window.chrome?.runtime,
         pingRuntime: pingExtensionOnce,
@@ -2277,7 +2313,7 @@ export function LunaShippingCaptureControlPlane({
         }
       }
       acquireCurrentPort = async (jobToResume) => {
-        if (!active || pageHidden) return
+        if (!await portLeadership.wait() || !active || pageHidden) return
         const reconnectToken = ++reconnectGeneration
         const stalePort = port
         readyPortGeneration = 0
@@ -2393,6 +2429,7 @@ export function LunaShippingCaptureControlPlane({
         window.clearTimeout(discoveryRetryTimer)
       }
       leadershipAbort.abort()
+      flushCaptureProbeRef.current = null
       triggerRef.current = null
       liveTriggerRef.current = null
       legacyRecoveryTriggerRef.current = null
@@ -2448,6 +2485,8 @@ export function LunaShippingCaptureControlPlane({
         if (!serverClaimLeaderRef.current) {
           controller?.suppressDuplicatePoll()
         }
+        // Flush only an unrecorded read-only receipt, never emit a probe or claim.
+        if (serverClaimLeaderRef.current) void flushCaptureProbeRef.current?.()
         controller?.recordProbeSuccess(
           Number(payload.backgroundRequestLatencyMs ?? 0))
       }).catch((heartbeatError) => {
@@ -2503,6 +2542,8 @@ export function LunaShippingCaptureControlPlane({
     canonicalDestinationMismatch, connected, eligiblePendingJobCount, error,
     autoClaimEnabled, onWorkerSnapshot, running, status])
 
+  const historicalCapture = [...historicalTraceEvents].reverse()
+    .find((event) => event.state === "PASS" && event.success) ?? null
   const newestTrace = liveTraceEvents.at(-1) ?? null
   const lastSuccessfulTrace = [...liveTraceEvents].reverse()
     .find((event) => event.success) ?? null
@@ -2538,6 +2579,19 @@ export function LunaShippingCaptureControlPlane({
       <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100">Seller OS · Luna shipping</p>
       <h1 className="mt-3 text-2xl font-black">Captura automática de envío</h1>
       <p className="mt-2 text-sm text-white/65">La extensión usa la sesión normal ya autenticada de Chrome. No lee cookies ni credenciales y nunca completa una compra.</p>
+      <div className="mt-5 space-y-2 text-sm" aria-live="polite">
+        <p>Extensión: {connected ? "conectada" : "no conectada"}</p>
+        <p>Captura: {connected && serverLeaderLeaseActive && captureAvailable && probeRecordedAt &&
+          Date.parse(probeRecordedAt) > Date.now() - 300_000 ? "disponible" : "limitada temporalmente"}</p>
+        <p>Shipping: {running ? "actualizando" : "esperando actualización"}</p>
+        {!connected ? <p>{status === "WAITING_FOR_BROWSER_LEADER"
+          ? "Otra pestaña controla la conexión. Esta página espera su turno automáticamente."
+          : "Estado actual: conexión de captura no disponible."}</p> : null}
+        <p>El trabajo pendiente permanece guardado.</p>
+        {historicalCapture ? <p>Última captura certificada: PASS · {historicalCapture.timestamp.slice(0, 10)}</p> : null}
+      </div>
+      <details className="mt-5">
+        <summary className="cursor-pointer text-sm font-bold">Ver detalles</summary>
       {!liveTarget ? <button type="button" disabled={!canStartFinalCanary}
         onClick={() => triggerRef.current?.()}
         className="mt-6 w-full rounded-2xl bg-cyan-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
@@ -2799,6 +2853,7 @@ export function LunaShippingCaptureControlPlane({
         <div><dt className="text-white/50">Contribución</dt><dd>{result.contributionProfitUsd === null ? "N/D" : `$${result.contributionProfitUsd.toFixed(2)}`}</dd></div>
         <div><dt className="text-white/50">Margen</dt><dd>{result.contributionMarginPercent === null ? "N/D" : `${result.contributionMarginPercent.toFixed(2)}%`}</dd></div>
       </dl>)}
+      </details>
     </section>
   </main>
 }
