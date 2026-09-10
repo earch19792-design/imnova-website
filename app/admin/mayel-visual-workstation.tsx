@@ -1696,7 +1696,7 @@ export function MayelVisualWorkstation({ canOperate,
       {canOperate && <div className="mt-6"><UploadPanel key={task.visualTaskId} task={task} busy={busy} localOutbox={localOutbox}
         onDone={refresh} /></div>}
       </details>
-      {task.outputs.some(o => !o.discarded) && <details open={task.outputs.some(o => !o.discarded && o.status === "pending_review")} className="mt-5 rounded-2xl border border-violet-200 bg-white p-4">
+      {task.outputs.some(o => !o.discarded) && <details className="mt-5 rounded-2xl border border-violet-200 bg-white p-4">
         <summary className="min-h-11 cursor-pointer py-2 font-semibold text-violet-900"><ShieldCheck className="mr-2 inline h-5 w-5" />Control de calidad y revisión de Mayel</summary>
         <div className="mt-4 space-y-4">{task.outputs.filter(o => !o.discarded).map((output) =>
           <HumanQa key={output.id} task={task} output={output} busy={busy} owner={canOwnerAuthorize}
