@@ -9,6 +9,19 @@ export const ADS_REVENUE_ACTIVATION_V1 = "SELLER_OS_EBAY_ADS_REVENUE_ACTIVATION_
 const arr = (v: unknown) => Array.isArray(v) ? v.map(record) : []
 const amount = (v: unknown): number | null => (typeof v === "number" || typeof v === "string" && /^\d+(\.\d+)?$/.test(v)) && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null
 const fresh = (v: Record<string, unknown>, now: Date) => Date.parse(String(v.observedAt)) <= now.getTime() && Date.parse(String(v.freshUntil)) > now.getTime()
+/** Current presence plus an older exact GetItem observation is one listing.
+ * Reject all other multiplicity, mismatched identities and unordered evidence. */
+function currentListing(rows: Record<string, unknown>[], itemId: string, now: Date) {
+  if (rows.length === 1) return rows[0]
+  const current = rows.filter(r => r.source === "EBAY_TRADING_GET_MY_EBAY_SELLING")
+  const historical = rows.filter(r => r.source === "EBAY_TRADING_GET_ITEM_READONLY")
+  if (rows.length !== 2 || current.length !== 1 || historical.length !== 1) return {}
+  const live = current[0], old = historical[0]
+  return rows.every(r => r.ebay_item_id === itemId && typeof r.ebay_sku === "string" &&
+    r.ebay_sku.length > 0 && r.ebay_sku === live.ebay_sku && r.currency === live.currency) &&
+    Date.parse(String(old.last_ebay_sync_at)) < Date.parse(String(live.last_ebay_sync_at)) &&
+    Date.parse(String(live.last_ebay_sync_at)) <= now.getTime() ? live : {}
+}
 export function adsOfficialContractV1(now: Date) {
   const operations = ["getAdvertisingEligibility", "getCampaigns", "getCampaign", "getAds", "getAd", "createAdByListingId", "updateBid", "deleteAd", "findCampaignByAdReference", "suggestItems"]
   const pass = fresh({ observedAt: contract.reviewedAt, freshUntil: contract.reviewDueAt }, now) &&
@@ -29,7 +42,7 @@ export type AdsOfficialObservationV1 = {
 export function buildAdsActivationListingV1(input: { accountKey: string; raw: unknown; currentItemIds: readonly string[];
   currentLiveFresh: boolean; policyOverride?: PromotionPolicy; official?: AdsOfficialObservationV1 | null; now: Date }) {
   const raw = record(input.raw), itemId = String(raw.itemId), listings = arr(raw.listings), evidence = arr(raw.evidence)
-  const listing = listings.length === 1 ? listings[0] : {}, heads = arr(raw.feeHeads)
+  const listing = currentListing(listings, itemId, input.now), heads = arr(raw.feeHeads)
   const head = heads.length === 1 ? heads[0] : {}, authority = record(head.authority)
   const blockers: string[] = []
   const listingRecent = Date.parse(String(listing.last_ebay_sync_at)) <= input.now.getTime() &&
@@ -82,7 +95,10 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
     treatment: "TEST", warmMetricsRequired: false, exactItemBinding: exact, inStock, supportedListingModel,
     recommendedRateSource: officialFresh && o!.recommendedRate !== null ? "OFFICIAL_EBAY_RECOMMENDATION" : "MAYEL_TECHNICAL_TEST_OWNER_MINIMUM",
     economicsProven: !base.economicsUnproven && feeProven, ebayFeeAuthorityPass: feeProven,
-    basePreSaleFeeProven: authority.basePreSaleFeeProven === true,
+    basePreSaleFeeProven: authority.basePreSaleFeeProven === true && fresh(authority,input.now) &&
+      authority.contractVersion === "SELLER_OS_EBAY_FEE_AUTHORITY_V1" && authority.marketplaceAccountKey === input.accountKey &&
+      authority.itemId === itemId && authority.sku === listing.ebay_sku && head.sku === listing.ebay_sku &&
+      record(authority.knownPreSaleBasis).salePrice === e.salePrice.value,
     contingentOrderComponents: authority.contingentOrderComponents ?? null,
     postSaleLearning: adsPostSaleLearningV1({accountKey:input.accountKey,itemId,feeReconciliation:raw.latestFeeReconciliation,report:raw.latestAdsReport}),
     feeEstimateMode: authority.feeEstimateMode ?? null, economicsAutoResolution: true, codexRequiredForListingEconomics: false,
