@@ -1283,6 +1283,7 @@ export async function readMayelVisualWorkstationV1(input: {
       outputs.push({ ...output, discarded: discardedProposalIdsV1(task.selection_signal).includes(String(output.id)), previewUrl, previewExpiresInSeconds,
         sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? [], { active: Boolean(optimizationGrant), authorized: delegated?.authorized === true && output.status === "approved" && delegated.proposed.some(p => p.assetId === output.id) }) })
     }
+    const activeOutputs = outputs.filter(o => !o.discarded)
     const { evidence, prompt: promptContract, storedMatchesCanonical } =
       canonicalPromptForTask(task)
     const sourceImages = []
@@ -1312,13 +1313,13 @@ export async function readMayelVisualWorkstationV1(input: {
       sku: String(evidence.sku ?? ""),
       productTitle: String(evidence.productTitle ?? ""),
       status: String(task.status), evidencePack: evidence,
-      visualStationState: galleryRebaseRequired || outputs.some(o => o.sync.state === "REQUIRES_ATTENTION") ? "REQUIRES_ATTENTION" :
-        outputs.some(o => o.sync.state === "OWNER_APPROVAL_REQUIRED") ? "OWNER_APPROVAL_REQUIRED" :
-        outputs.length && outputs.every(o => o.sync.state === "SYNCED") ? "SYNCED" :
-        outputs.find(o => o.sync.approvedForEbaySync)?.sync.state ?? "DRAFT",
-      syncCounts: { approved: outputs.filter(o => o.sync.approvedForEbaySync).length,
-        pendingApproval: outputs.filter(o => o.sync.state === "OWNER_APPROVAL_REQUIRED").length,
-        pendingEbaySync: outputs.filter(o => o.sync.state === "PENDING_EBAY_SYNC").length,
+      visualStationState: galleryRebaseRequired || activeOutputs.some(o => o.sync.state === "REQUIRES_ATTENTION") ? "REQUIRES_ATTENTION" :
+        activeOutputs.some(o => o.sync.state === "OWNER_APPROVAL_REQUIRED") ? "OWNER_APPROVAL_REQUIRED" :
+        activeOutputs.length && activeOutputs.every(o => o.sync.state === "SYNCED") ? "SYNCED" :
+        activeOutputs.find(o => o.sync.approvedForEbaySync)?.sync.state ?? "DRAFT",
+      syncCounts: { approved: activeOutputs.filter(o => o.sync.approvedForEbaySync).length,
+        pendingApproval: activeOutputs.filter(o => o.sync.state === "OWNER_APPROVAL_REQUIRED").length,
+        pendingEbaySync: activeOutputs.filter(o => o.sync.state === "PENDING_EBAY_SYNC").length,
         availableSlots: Math.max(0, 6 - outputRows.filter(o => !discardedProposalIdsV1(task.selection_signal).includes(String(o.id)) && ["pending_review", "approved"].includes(String(o.status))).length) },
       prompt: promptContract.text,
       promptSlots: promptContract.slots,

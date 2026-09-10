@@ -947,9 +947,11 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation, canOperate, busy, o
     delegation?.globalAccountIdentityProven === true
   const phase = phaseB?.execution?.phase
   const applied = phaseB?.execution?.appliedAndOfficiallyVerified === true
-  const syncState = task.outputs.some(o => o.sync?.state === "REQUIRES_ATTENTION") ? "REQUIRES_ATTENTION" :
-    task.outputs.every(o => o.sync?.state === "SYNCED") && task.outputs.length ? "SYNCED" :
-    task.outputs.some(o => o.sync?.approvedForEbaySync) ? "PENDING_EBAY_SYNC" : "OWNER_APPROVAL_REQUIRED"
+  const activeProposals = task.outputs.filter(o => !o.discarded && proposed.some(e => e.assetId === o.id))
+  const syncState = task.currentGallerySynced ? "SYNCED" : !activeProposals.length ? "DRAFT" :
+    activeProposals.some(o => o.sync?.state === "REQUIRES_ATTENTION") ? "REQUIRES_ATTENTION" :
+    activeProposals.every(o => o.sync?.state === "SYNCED" && o.sync?.officialReadback === true) ? "SYNCED" :
+    activeProposals.some(o => o.sync?.approvedForEbaySync) ? "PENDING_EBAY_SYNC" : task.autonomousOptimization ? "DRAFT" : "OWNER_APPROVAL_REQUIRED"
   const friendly = friendlyVisualSyncV1(syncState)
   return <section className="rounded-2xl border border-[#74866d]/35 bg-[#f4f7f1] p-5">
     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Listing existente · cambios de imágenes</p>
@@ -958,8 +960,8 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation, canOperate, busy, o
     <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. Mayel decide la principal y el orden exacto dentro de la delegación visual activa.</p>
     <p className="mt-2 text-xs text-[#617159]">Calidad revisada: {task.outputs.filter((output) => !output.discarded && output.status === "approved").length} · Autorizadas para sincronizar: {task.outputs.filter(output => output.sync?.approvedForEbaySync).length}. {task.autonomousOptimization ? "Mayel trabaja con tu delegación permanente." : "Cada propuesta requiere aprobación individual."}</p>
     <section className="mt-5 rounded-xl border bg-white p-3" aria-label="Última galería verificada de eBay">
-      <h5 className="font-semibold">ANTES · Última galería verificada de eBay · {task.currentImages.length} fotos</h5>
-      <p className="mt-1 text-sm">Es la última lectura guardada. Se comprobará otra vez antes de sincronizar.</p>
+      <h5 className="font-semibold">{task.currentGalleryProven ? "ANTES · Última galería verificada de eBay" : "ANTES · Imágenes guardadas, galería eBay por verificar"} · {task.currentImages.length} fotos</h5>
+      <p className="mt-1 text-sm">{task.currentGalleryProven ? "Es la última lectura guardada." : "Todavía no hay una lectura oficial completa confirmada."} Se comprobará otra vez antes de sincronizar.</p>
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{task.currentImages.map((url,p) => <figure key={`${p}:${url}`}>
         <img src={url} alt={`Foto de eBay ${p+1}`} className="aspect-square w-full rounded-lg object-contain" />
         <figcaption className="text-sm font-semibold">{p === 0 ? "Principal" : `Imagen ${p+1}`} · eBay</figcaption>
