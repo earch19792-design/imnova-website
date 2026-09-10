@@ -1,5 +1,7 @@
 import { saveMayelVisualAssetIntentV1 } from "@/lib/ebay/ebay-mayel-visual-workstation-server-v1"
 import type { VisualIntentV1 } from "@/lib/seller-os/mayel-visual-intent-v1"
+import { enqueueDelegatedVisualV1, readOptimizationGrantV1 } from "@/lib/seller-os/mayel-optimization-delegation-server-v1"
+import { optimizationGrantActiveV1 } from "@/lib/seller-os/mayel-optimization-delegation-v1"
 import { refreshMayelStationGalleryV1 } from "../../../../../lib/ebay/mayel-current-gallery-server-v1"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -685,7 +687,9 @@ export async function POST(request: Request) {
       const result = await saveMayelVisualAssetIntentV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
         actorUserId: auth.userId, owner: ownerRole, taskId, expectedVisualManifestDigest: typeof body.expectedVisualManifestDigest === "string" ? body.expectedVisualManifestDigest : null,
         intent: { assetId, visualIntent: body.visualIntent as VisualIntentV1["visualIntent"], targetImagePosition: body.targetImagePosition } })
-      return json({ success: true, ...result, ownerApprovalRequired: true })
+      const delegated = optimizationGrantActiveV1(await readOptimizationGrantV1(getSupabaseAdminClient(), accountKey()), accountKey())
+      const handoff = delegated ? await enqueueDelegatedVisualV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(), taskId }) : null
+      return json({ success: true, ...result, handoff, ownerApprovalRequired: !delegated })
     }
     if (action === "SAVE_GALLERY_SLOTS") {
       const taskId = uuid(body?.visualTaskId)
@@ -696,7 +700,9 @@ export async function POST(request: Request) {
         actorUserId: auth.userId, taskId, finalOrder: [], slotReplacements,
         expectedCurrentImages: body.expectedCurrentImages,
         expectedVisualManifestDigest: typeof body.expectedVisualManifestDigest === "string" ? body.expectedVisualManifestDigest : null })
-      return json({ success: true, ...result, marketplaceWrites: 0 })
+      const delegated = optimizationGrantActiveV1(await readOptimizationGrantV1(getSupabaseAdminClient(), accountKey()), accountKey())
+      const handoff = delegated ? await enqueueDelegatedVisualV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(), taskId }) : null
+      return json({ success: true, ...result, handoff, ownerApprovalRequired: !delegated, marketplaceWrites: 0 })
     }
     if (action === "SAVE_ORDERED_GALLERY") {
       const taskId = uuid(body?.visualTaskId)
@@ -721,6 +727,14 @@ export async function POST(request: Request) {
           parsedOrder.length < 1 || parsedOrder.length > 24) {
         return json({ success: false,
           error: "MAYEL_VISUAL_ORDER_CONTRACT_INVALID" }, 400)
+      }
+      if (parsedOrder.every(e => e.kind === "CURRENT_OFFICIAL") &&
+          optimizationGrantActiveV1(await readOptimizationGrantV1(getSupabaseAdminClient(), accountKey()), accountKey())) {
+        const { enqueueMayelGalleryReorderV1 } = await import("@/lib/seller-os/mayel-autonomous-content-server-v1")
+        const handoff = await enqueueMayelGalleryReorderV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(), taskId,
+          actorUserId: auth.userId, expectedManifestDigest: String(body?.expectedVisualManifestDigest ?? ""),
+          after: parsedOrder.map(e => e.kind === "CURRENT_OFFICIAL" ? e.publicUrl : "") })
+        return json({ success: true, handoff, ownerApprovalRequired: false, marketplaceWrites: 0 })
       }
       const result = await saveMayelOrderedGalleryIntentV2({
         supabase: getSupabaseAdminClient(), accountKey: accountKey(),

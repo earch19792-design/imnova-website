@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { validateMayelContentPatchV1 } from "../seller-os/mayel-autonomous-content-v1"
+import { validateMayelContentPatchV1 } from "../seller-os/mayel-content-patch-v1"
 
 import type { JsonRecord } from "./ebay-draft-only-readiness"
 import {

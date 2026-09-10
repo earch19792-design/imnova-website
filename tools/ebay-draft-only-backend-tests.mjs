@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import ts from "typescript"
 
+const contentPatchSource = readFileSync(new URL("../lib/seller-os/mayel-content-patch-v1.ts", import.meta.url), "utf8")
+
 const snapshotSource = readFileSync(
   new URL("../lib/ebay/ebay-draft-only-preflight-snapshot.ts", import.meta.url),
   "utf8",
@@ -40,6 +42,7 @@ const publisherSemanticReadbackSource = readFileSync(
 
 function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) {
   const withoutImport = source
+    .replace('import { validateMayelContentPatchV1 } from "../seller-os/mayel-content-patch-v1"\n', "")
     .replace(/import \{[^}\n]*\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
     .replace(/import \{\n(?:\s+[A-Za-z0-9_]+,?\n)+\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
     .replace(/import \{\n  calculateEbayUnitEconomics,\n  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,\n  normalizeEbayUnitEconomicsConfig,\n  type EbayUnitEconomicsConfig,\n\} from "\.\/ebay-unit-economics"\n/, "")
@@ -52,7 +55,7 @@ function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) 
   const categorySource = includeCategoryProductIdentifiers
     ? `${categoryProductIdentifierSource}\n`
     : ""
-  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${publisherSemanticReadbackSource}\n${categorySource}${withoutImport}`
+  return `${contentPatchSource}\n${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${publisherSemanticReadbackSource}\n${categorySource}${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(

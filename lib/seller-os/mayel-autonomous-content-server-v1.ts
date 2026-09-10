@@ -6,9 +6,45 @@ import { readOptimizationGrantV1 } from "./mayel-optimization-delegation-server-
 import { authorizeOptimizationV1, optimizationGrantActiveV1 } from "./mayel-optimization-delegation-v1"
 import { executeOutboxOperationV1 } from "./ipad-sync-engine-v1"
 import { getEbayProRuntimeBoundary } from "../ebay/environment-boundaries"
+import { galleryReorderDecisionV1 } from "./mayel-gallery-reorder-v1"
 
 const TABLE = "seller_os_mayel_content_outbox_v1"
 type Input = { supabase: SupabaseClient; accountKey: string; taskId: string }
+export async function enqueueMayelGalleryReorderV1(input: Input & { actorUserId: string; expectedManifestDigest: string; after: string[] }) {
+  const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+  if (!grant || !optimizationGrantActiveV1(grant, input.accountKey) || !grant.allowed_actions.includes("IMAGE_REORDER")) throw Error("OWNER_DELEGATION_REQUIRED")
+  const t = await input.supabase.from("ebay_mayel_visual_tasks_v1").select("id,ebay_item_id,assigned_operator_user_id,visual_manifest_digest")
+    .eq("id", input.taskId).eq("marketplace_account_key", input.accountKey).maybeSingle()
+  if (t.error || !t.data || t.data.visual_manifest_digest !== input.expectedManifestDigest ||
+      ![t.data.assigned_operator_user_id, grant.owner_user_id].includes(input.actorUserId)) throw Error("DELEGATED_VISUAL_SCOPE_CHANGED")
+  const pr = await input.supabase.rpc("seller_os_read_visual_current_product_truth_v1", { p_account_key: input.accountKey, p_task_id: input.taskId })
+  const proof = record(pr.data)
+  if (pr.error || proof.taskId !== input.taskId || proof.accountKey !== input.accountKey || proof.itemId !== t.data.ebay_item_id ||
+      proof.authority !== "EXACT_LIVE_LINKED_PRODUCT_TRUTH_V1") throw Error("PRODUCT_TRUTH_REQUIRED")
+  const { collectSellerOsEbayTradingRateLimitStatusV1 } = await import("../ebay/ebay-trading-rate-limit-observability-v1")
+  if ((await collectSellerOsEbayTradingRateLimitStatusV1()).gateState !== "OPEN") return { status: "WAITING_FOR_EBAY", id: null }
+  const { readMayelContentLiveV1 } = await import("../ebay/ebay-mayel-content-executor-v1")
+  const current = await readMayelContentLiveV1({ accountKey: input.accountKey, itemId: t.data.ebay_item_id, sku: String(proof.sku) })
+  const decision = galleryReorderDecisionV1(current.galleryUrls, input.after)
+  if (!decision.changed) return { status: "ALREADY_OPTIMIZED", id: null }
+  const sourceDigest = digest({ proof, beforeGallery: decision.beforeGallery, afterGallery: decision.afterGallery })
+  const key = digest({ accountKey: input.accountKey, itemId: proof.itemId, sourceDigest, kind: "GALLERY_REORDER" })
+  const prior = await input.supabase.from(TABLE).select("id,state").eq("account_key", input.accountKey).eq("idempotency_key", key).maybeSingle()
+  if (prior.error) throw Error("CONTENT_OUTBOX_READ_FAILED")
+  if (prior.data) return { status: prior.data.state, id: prior.data.id }
+  const audit = { ...decision, proof, categoryId: current.categoryId, before: current.content, after: current.content, patch: {},
+    protectedBefore: current.protectedFields, inventoryBefore: current.inventoryPreserved, currentLiveReadbackAt: current.observedAt,
+    managementModel: current.management.managementModel, mayelDecision: "AUTO_AUTHORIZED_BY_OWNER_DELEGATION", grantDigest: grant.authority_digest,
+    evidenceUsed: { authority: "CURRENT_OFFICIAL_ORDERED_IMAGE_SET", observedAt: current.observedAt, productTruth: proof } }
+  const saved = await input.supabase.from(TABLE).insert({ account_key: input.accountKey, item_id: proof.itemId, task_id: input.taskId,
+    grant_id: grant.id, idempotency_key: key, source_digest: sourceDigest, base_hash: current.baseHash, audit }).select("id,state").maybeSingle()
+  if (saved.error || !saved.data) {
+    const raced = await input.supabase.from(TABLE).select("id,state").eq("account_key", input.accountKey).eq("idempotency_key", key).maybeSingle()
+    if (raced.error || !raced.data) throw Error("CONTENT_OUTBOX_HANDOFF_FAILED")
+    return { status: raced.data.state, id: raced.data.id }
+  }
+  return { status: saved.data.state, id: saved.data.id }
+}
 export async function readMayelOwnContentEvidenceV1(input: Input) {
   const proofRead = await input.supabase.rpc("seller_os_read_visual_current_product_truth_v1", { p_account_key: input.accountKey, p_task_id: input.taskId })
   if (proofRead.error) throw Error("OPTIMIZATION_PRODUCT_TRUTH_READ_FAILED")
@@ -83,7 +119,8 @@ export async function runMayelContentOutboxV1(input: { supabase: SupabaseClient;
   const row = claim.data?.[0]
   if (!row) return { status: "NO_DUE_WORK", writes: 0, dispatchAttempts: 0 }
   const audit = record(row.audit), proof = record(audit.proof), patch = record(audit.patch)
-  const { readMayelContentLiveV1, executeMayelContentMutationV1, contentReadbackMatchesV1 } = await import("../ebay/ebay-mayel-content-executor-v1")
+  const reorder = digest(audit.actions) === digest(["IMAGE_REORDER"])
+  const { readMayelContentLiveV1, executeMayelContentMutationV1, contentReadbackMatchesV1, galleryReorderReadbackMatchesV1, executeGalleryReorderMutationV1 } = await import("../ebay/ebay-mayel-content-executor-v1")
   let current: Awaited<ReturnType<typeof readMayelContentLiveV1>> | null = null
   const save = async (values: Record<string, unknown>) => {
     const r = await input.supabase.from(TABLE).update({ ...values, updated_at: new Date().toISOString() })
@@ -93,6 +130,15 @@ export async function runMayelContentOutboxV1(input: { supabase: SupabaseClient;
   const result = await executeOutboxOperationV1({ state: row.state, dispatchCount: row.dispatch_count, baseHash: row.base_hash, kind: "LISTING_OPTIMIZATION" }, {
     authority: async () => {
       const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+      if (reorder) {
+        const p = await input.supabase.rpc("seller_os_read_visual_current_product_truth_v1", { p_account_key: input.accountKey, p_task_id: row.task_id })
+        const before = Array.isArray(audit.beforeGallery) ? audit.beforeGallery.map(String) : [], after = Array.isArray(audit.afterGallery) ? audit.afterGallery.map(String) : []
+        const qa = galleryReorderDecisionV1(before, after)
+        return { approved: !p.error && digest(p.data) === digest(proof) && proof.itemId === row.item_id && proof.accountKey === input.accountKey &&
+          digest({ proof, beforeGallery: before, afterGallery: after }) === row.source_digest && qa.changed &&
+          optimizationGrantActiveV1(grant, input.accountKey) && grant?.id === row.grant_id && grant?.authority_digest === audit.grantDigest && grant?.allowed_actions.includes("IMAGE_REORDER") === true,
+          reason: "GALLERY_REORDER_AUTHORITY_REVALIDATION" }
+      }
       const proposal = await readMayelOwnContentEvidenceV1({ ...input, taskId: row.task_id })
       const expected = proposal ? mayelContentDiffV1(record(audit.before) as MayelLiveContentV1, proposal) : null
       const patchProven = Boolean(expected && digest(expected.patch) === digest(audit.patch) &&
@@ -113,16 +159,18 @@ export async function runMayelContentOutboxV1(input: { supabase: SupabaseClient;
     transition: async state => save({ state }),
     readback: async () => {
       current = await readMayelContentLiveV1({ accountKey: input.accountKey, itemId: row.item_id, sku: String(proof.sku) })
-      const matches = contentReadbackMatchesV1(current, audit)
+      const matches = reorder ? await galleryReorderReadbackMatchesV1(current, audit) : contentReadbackMatchesV1(current, audit)
       return { official: true, baseHash: current.baseHash, matchesIntent: matches,
         safetyPass: current.categoryId === audit.categoryId && current.management.managementModel === audit.managementModel && current.baseHash === row.base_hash,
         reason: matches ? null : "CONTENT_CURRENT_GENERATION_CHANGED", receipt: matches ? { authority: "OFFICIAL_EBAY_CONTENT_READBACK_V1",
-          itemId: row.item_id, observedAt: current.observedAt, after: current.content, protectedFields: current.protectedFields,
+          itemId: row.item_id, observedAt: current.observedAt, after: current.content, ...(reorder ? { afterGallery: current.galleryUrls } : {}), protectedFields: current.protectedFields,
           sourceDigest: row.source_digest, idempotencyKey: row.idempotency_key } : null }
     },
     markDispatch: async () => save({ state: "SYNCING", dispatch_count: 1 }),
     execute: async () => {
       if (!current) throw Error("CURRENT_LIVE_READBACK_REQUIRED")
+      if (reorder) return executeGalleryReorderMutationV1({ accountKey: input.accountKey, itemId: row.item_id, sku: String(proof.sku), current,
+        after: Array.isArray(audit.afterGallery) ? audit.afterGallery.map(String) : [], claimToken: row.lease_token, idempotencyKey: row.idempotency_key })
       // Last exact read is immediately before dispatch. The executor preserves
       // all unrequested fields and never retries a mutation.
       return executeMayelContentMutationV1({ accountKey: input.accountKey, itemId: row.item_id, sku: String(proof.sku),

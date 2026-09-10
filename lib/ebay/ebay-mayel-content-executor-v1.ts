@@ -2,8 +2,9 @@ import "server-only"
 import { keywordRecord as record, keywordWireDigestV1 as digest } from "../seller-os/keyword-intelligence-handoff-v1"
 import { protectedContentFieldsV1, validateMayelContentPatchV1, type MayelLiveContentV1 } from "../seller-os/mayel-autonomous-content-v1"
 import { getEbayTradingReadOnlyAccessToken, tradingXmlTagValue } from "./ebay-manual-listing-trading-readonly"
-import { readOfficialActiveListingImageSnapshotV1 } from "./ebay-active-listing-image-revision-service"
-import { prepareEbayActiveListingManagementExecutorV1, executeEbayInventoryManagedContentMutationV1 } from "./ebay-draft-only-gateway"
+import { readOfficialActiveListingImageSnapshotV1, verifyOfficialOrderedImageSetV1 } from "./ebay-active-listing-image-revision-service"
+import { prepareEbayActiveListingManagementExecutorV1, executeEbayInventoryManagedContentMutationV1, executeEbayInventoryManagedImageMutationV1 } from "./ebay-draft-only-gateway"
+import { galleryReorderDecisionV1 } from "../seller-os/mayel-gallery-reorder-v1"
 import { getEbayProRuntimeBoundary } from "./environment-boundaries"
 
 export function contentInventoryProtectedV1(value: unknown, keys: string[]) {
@@ -22,9 +23,37 @@ export async function readMayelContentLiveV1(input: { accountKey: string; itemId
   const content = { title: official.content.title, description: official.content.description, aspects: official.content.aspects }
   const protectedFields = { ...official.protectedFields, orderedGallery: official.pictureUrls }
   const inventoryPreserved = management.inventoryItemPayload
-  return { content, protectedFields, inventoryPreserved, management, observedAt: official.observedAt,
+  const inventoryImages = record(record(inventoryPreserved).product).imageUrls
+  const galleryUrls = management.managementModel === "INVENTORY_API_MANAGED" && Array.isArray(inventoryImages) ? inventoryImages.map(String) : official.pictureUrls
+  return { content, protectedFields, inventoryPreserved, management, galleryUrls, official, observedAt: official.observedAt,
     categoryId: official.protectedFields.categoryId,
     baseHash: digest({ content, protectedFields, inventory: management.inventoryEvidenceDigest, management: management.managementModel }) }
+}
+export async function galleryReorderReadbackMatchesV1(current: Awaited<ReturnType<typeof readMayelContentLiveV1>>, audit: Record<string, unknown>) {
+  const desired = Array.isArray(audit.afterGallery) ? audit.afterGallery.map(String) : []
+  const before = { ...record(audit.protectedBefore) }, after = { ...current.protectedFields }
+  delete before.orderedGallery; delete (after as Record<string, unknown>).orderedGallery
+  return desired.length > 0 && digest(current.galleryUrls) === digest(desired) && digest(before) === digest(after) &&
+    digest(contentInventoryProtectedV1(current.inventoryPreserved, ["imageUrls"])) === digest(contentInventoryProtectedV1(audit.inventoryBefore, ["imageUrls"])) &&
+    (await verifyOfficialOrderedImageSetV1(current.official, desired, fetch)).verified
+}
+export async function executeGalleryReorderMutationV1(input: { accountKey: string; itemId: string; sku: string;
+  current: Awaited<ReturnType<typeof readMayelContentLiveV1>>; after: string[]; claimToken: string; idempotencyKey: string }) {
+  if (getEbayProRuntimeBoundary({ pathname: "/api/runtime/operational-integrity", method: "POST" }).runtime !== "seller_os_dedicated_preprod") throw Error("CONTENT_PREPROD_ONLY")
+  galleryReorderDecisionV1(input.current.galleryUrls, input.after)
+  const m = input.current.management
+  if (m.managementModel === "INVENTORY_API_MANAGED") {
+    const result = await executeEbayInventoryManagedImageMutationV1({ ...input, targetImageUrls: input.after,
+      inventoryItemPayload: m.inventoryItemPayload ?? {}, inventoryEvidenceDigest: m.inventoryEvidenceDigest ?? "" })
+    if (!result.ok) throw Error("GALLERY_REORDER_OFFICIAL_READBACK_REQUIRED")
+  } else if (m.managementModel === "TRADING_MANAGED") {
+    const { reviseMayelTradingPicturesOnceV1 } = await import("./ebay-mayel-trading-visual-executor-v1")
+    const result = await reviseMayelTradingPicturesOnceV1({ accessToken: await getEbayTradingReadOnlyAccessToken(),
+      itemId: input.itemId, pictureUrls: input.after, durableReviseAttemptCount: 0, idempotencyBindingDigest: input.idempotencyKey,
+      durableSingleWriteClaim: { claimed: true, claimToken: input.claimToken, idempotencyBindingDigest: input.idempotencyKey, reviseCallOrdinal: 1 } })
+    if (result.status !== "ACCEPTED") throw Error("GALLERY_REORDER_OFFICIAL_READBACK_REQUIRED")
+  } else throw Error("CONTENT_MANAGEMENT_AUTHORITY_REQUIRED")
+  return { writes: 1, mediaWrites: 0 }
 }
 const normalized = (value: unknown) => {
   const c = record(value), aspects = record(c.aspects)

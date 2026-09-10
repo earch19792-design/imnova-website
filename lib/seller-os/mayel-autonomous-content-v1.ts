@@ -31,20 +31,7 @@ export function prepareMayelOwnContentV1(input: Omit<Parameters<typeof prepareSe
     qa: { pass: true, unsupportedClaimCount: 0, competitorContaminationCount: 0 } } }
 }
 
-export function validateMayelContentPatchV1(value: unknown): Partial<MayelLiveContentV1> {
-  const p = record(value), keys = Object.keys(p)
-  if (!keys.length || keys.some(k => !["title", "description", "aspects"].includes(k)) ||
-      (p.title !== undefined && (typeof p.title !== "string" || !p.title.trim() || p.title.length > 80)) ||
-      (p.description !== undefined && (typeof p.description !== "string" || !p.description.trim() || p.description.length > 50_000 || /<(?!br\s*\/?>)/i.test(p.description))))
-    throw Error("OPTIMIZATION_CONTENT_SCOPE_INVALID")
-  if (p.aspects !== undefined) {
-    const aspects = record(p.aspects)
-    if (Object.keys(aspects).length < 1 || Object.keys(aspects).length > 45 || Object.entries(aspects).some(([k, v]) =>
-      !k.trim() || k.length > 65 || !Array.isArray(v) || !v.length || v.some(x => typeof x !== "string" || !x.trim() || x.length > 800)))
-      throw Error("OPTIMIZATION_SPECIFICS_INVALID")
-  }
-  return p as Partial<MayelLiveContentV1>
-}
+export { validateMayelContentPatchV1 } from "./mayel-content-patch-v1"
 
 export function mayelContentDiffV1(before: MayelLiveContentV1, proposal: MayelContentProposalV1) {
   const after: MayelLiveContentV1 = { ...before, ...proposal.content,
