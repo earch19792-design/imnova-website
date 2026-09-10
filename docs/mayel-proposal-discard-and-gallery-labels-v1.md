@@ -1,0 +1,9 @@
+# Current gallery vs proposed gallery
+
+The 9492 station had six saved official images and a seven-position proposed manifest. Position 7 was a PACKAGE_CONTENTS addition; proposed position 4 replaced the original with DIMENSIONS. The UI numbered both as secondary images without making the proposed state obvious, and offered no action to withdraw an approved proposal.
+
+The station now separates the last verified eBay gallery (explicitly a saved observation) from the proposed final gallery. Every proposed slot names its source, role and intended action. A 44px **Descartar propuesta** control withdraws a proposed asset, restores the original image for a replacement, or drops the new slot for an addition. Discarded files and QA remain in history. This is not an eBay removal, and the button cannot conceal an already dispatched or unknown operation.
+
+One private atomic RPC checks actor/account/task/item and the exact manifest generation, locks the task and bounded related outboxes, supersedes unstarted image intents, saves before/after history, and installs the new draft. A trigger prohibits discarded assets from reappearing in later manifests. Replays reuse the same receipt; mismatched generations fail closed. Existing semantic QA and product truth are unchanged. No marketplace write, quota read, worker or poller is added. The screen refreshes only the saved task after discard and does not jump to the top or repeat market reads on draft changes.
+
+The 9492 correction removes approved proposal assets 87349be7-7be9-476e-bf83-20d70eb0fdef (DIMENSIONS, proposed position 4) and a398b195-79b4-4c35-ae09-1a144bcf8fb4 (PACKAGE_CONTENTS, proposed position 7) from the draft. It preserves the original fourth image and does not make any claim about current eBay state while Trading is blocked. This does not alter the unresolved Product Truth/QA guards on any other asset.

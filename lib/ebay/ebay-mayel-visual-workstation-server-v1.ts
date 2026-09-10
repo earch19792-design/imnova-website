@@ -1,4 +1,5 @@
 import { contentGalleryReceiptMatchesV1 } from "../seller-os/mayel-full-gallery-mutation-v1"
+import { discardedProposalIdsV1, excludeDiscardedProposalsV1 } from "../seller-os/mayel-proposal-discard-v1"
 import { decideMayelAssetPositionV1 } from "../seller-os/mayel-visual-intent-v1"
 import { approvalGalleryV1, assertReviewIntentV1, MAYEL_ASSET_TRANSITION_V1 } from "../seller-os/mayel-approved-asset-transition-v1"
 import { buildVisualIntentManifestV1, type VisualIntentV1 } from "../seller-os/mayel-visual-intent-v1"
@@ -629,9 +630,9 @@ export async function uploadMayelVisualOutputV1(input: {
     input.file.fill(0)
     throw new Error("MAYEL_VISUAL_SLOT_CREATIVE_WORK_NOT_ALLOWED")
   }
-  const { data: existingOutputs, error: countError } = await input.supabase
+  const { data: existingOutputs, error: countError } = await excludeDiscardedProposalsV1(input.supabase
     .from("ebay_listing_image_assets").select("id").eq("mayel_visual_task_id", input.taskId)
-    .in("status", ["pending_review", "approved"]).limit(6)
+    .in("status", ["pending_review", "approved"]).limit(6), task.selection_signal)
   if (countError) throw new Error("MAYEL_VISUAL_OUTPUT_COUNT_FAILED")
   if ((existingOutputs?.length ?? 0) >= 6) {
     input.file.fill(0)
@@ -757,7 +758,7 @@ export async function uploadMayelVisualOutputBatchV1(input: {
     input.files.forEach((entry) => entry.file.fill(0))
     throw new Error("MAYEL_VISUAL_BATCH_UPLOAD_CONTRACT_INVALID")
   }
-  await taskForActor(input)
+  const task = await taskForActor(input)
   const results: Record<string, unknown>[] = []
   const seen = new Set<string>()
   for (let index = 0; index < input.files.length; index += 1) {
@@ -768,10 +769,10 @@ export async function uploadMayelVisualOutputBatchV1(input: {
       seen.add(sourceHash)
       // Re-read after every file: a partial/lost response can resume the same
       // batch without reserving another role or creating another asset.
-      const current = await input.supabase.from("ebay_listing_image_assets")
+      const current = await excludeDiscardedProposalsV1(input.supabase.from("ebay_listing_image_assets")
         .select("id,mayel_output_role,source_sha256,output_sha256,uploaded_by,source_type")
         .eq("account_key", input.accountKey).eq("mayel_visual_task_id", input.taskId)
-        .in("status", ["pending_review", "approved"])
+        .in("status", ["pending_review", "approved"]), task.selection_signal)
       if (current.error) throw Error("MAYEL_VISUAL_OUTPUT_COUNT_FAILED")
       const duplicate = current.data?.find(row => row.source_sha256 === sourceHash &&
         row.uploaded_by === input.actorUserId && row.source_type === "CHATGPT_SUBSCRIPTION_MAYEL")
@@ -815,10 +816,10 @@ export async function saveMayelOrderedGalleryIntentV2(input: {
     throw Error("MAYEL_VISUAL_SLOT_BINDING_REQUIRED")
   if (input.slotReplacements && (input.expectedVisualManifestDigest ?? null) !== (task.visual_manifest_digest ?? null))
     throw Error("MAYEL_VISUAL_REBASE_STALE_PREVIEW")
-  const assetsRead = await input.supabase.from("ebay_listing_image_assets")
+  const assetsRead = await excludeDiscardedProposalsV1(input.supabase.from("ebay_listing_image_assets")
     .select("id,mayel_output_role,output_sha256,public_url")
     .eq("mayel_visual_task_id", input.taskId).eq("status", "approved")
-    .eq("mayel_approval_status", "APPROVED")
+    .eq("mayel_approval_status", "APPROVED"), task.selection_signal)
   if (assetsRead.error) throw new Error(
     "MAYEL_VISUAL_MANIFEST_ASSET_READ_FAILED")
   const assets = (assetsRead.data ?? []).flatMap((row) => {
@@ -961,10 +962,10 @@ export async function saveMayelVisualAssetIntentV1(input: { supabase: SupabaseCl
   if (taskRead.error || !taskRead.data || taskRead.data.status === "CANCELLED") throw Error("MAYEL_VISUAL_TASK_NOT_AVAILABLE")
   const task = taskRead.data
   if ((task.visual_manifest_digest ?? null) !== input.expectedVisualManifestDigest) throw Error("MAYEL_VISUAL_REBASE_STALE_PREVIEW")
-  const read = await input.supabase.from("ebay_listing_image_assets")
+  const read = await excludeDiscardedProposalsV1(input.supabase.from("ebay_listing_image_assets")
     .select("id,mayel_output_role,output_sha256,public_url")
     .eq("account_key", input.accountKey).eq("mayel_visual_task_id", input.taskId)
-    .eq("status", "approved").eq("mayel_approval_status", "APPROVED").limit(6)
+    .eq("status", "approved").eq("mayel_approval_status", "APPROVED").limit(6), task.selection_signal)
   if (read.error || !read.data?.some(a => a.id === input.intent.assetId)) throw Error("MAYEL_VISUAL_APPROVED_ASSET_REQUIRED")
   const assets = read.data.map(a => ({ assetId: a.id, role: a.mayel_output_role as MayelVisualOutputRole,
     outputSha256: a.output_sha256, publicUrl: a.public_url }))
@@ -988,11 +989,11 @@ export async function saveMayelVisualAssetIntentV1(input: { supabase: SupabaseCl
 async function refreshManifest(input: { supabase: SupabaseClient
   task: JsonRecord }) {
   if (record(input.task.visual_manifest).intentContract === "MAYEL_VISUAL_INTENT_V1") return input.task.visual_manifest
-  const { data: rows, error } = await input.supabase
+  const { data: rows, error } = await excludeDiscardedProposalsV1(input.supabase
     .from("ebay_listing_image_assets")
     .select("id,mayel_output_role,output_sha256,public_url")
     .eq("mayel_visual_task_id", input.task.id).eq("status", "approved")
-    .eq("mayel_approval_status", "APPROVED")
+    .eq("mayel_approval_status", "APPROVED"), input.task.selection_signal)
   if (error) throw new Error("MAYEL_VISUAL_MANIFEST_ASSET_READ_FAILED")
   const assets = (rows ?? []).flatMap((row) => {
     const role = text(row.mayel_output_role, 40) as MayelVisualOutputRole | null
@@ -1279,7 +1280,7 @@ export async function readMayelVisualWorkstationV1(input: {
         previewUrl = signed.error ? null : signed.data.signedUrl
         previewExpiresInSeconds = previewUrl ? 300 : null
       }
-      outputs.push({ ...output, previewUrl, previewExpiresInSeconds,
+      outputs.push({ ...output, discarded: discardedProposalIdsV1(task.selection_signal).includes(String(output.id)), previewUrl, previewExpiresInSeconds,
         sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? [], { active: Boolean(optimizationGrant), authorized: delegated?.authorized === true && output.status === "approved" && delegated.proposed.some(p => p.assetId === output.id) }) })
     }
     const { evidence, prompt: promptContract, storedMatchesCanonical } =
@@ -1318,7 +1319,7 @@ export async function readMayelVisualWorkstationV1(input: {
       syncCounts: { approved: outputs.filter(o => o.sync.approvedForEbaySync).length,
         pendingApproval: outputs.filter(o => o.sync.state === "OWNER_APPROVAL_REQUIRED").length,
         pendingEbaySync: outputs.filter(o => o.sync.state === "PENDING_EBAY_SYNC").length,
-        availableSlots: Math.max(0, 6 - outputRows.filter(o => ["pending_review", "approved"].includes(String(o.status))).length) },
+        availableSlots: Math.max(0, 6 - outputRows.filter(o => !discardedProposalIdsV1(task.selection_signal).includes(String(o.id)) && ["pending_review", "approved"].includes(String(o.status))).length) },
       prompt: promptContract.text,
       promptSlots: promptContract.slots,
       promptReconciliationRequired: !storedMatchesCanonical,

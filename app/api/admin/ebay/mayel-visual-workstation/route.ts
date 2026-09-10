@@ -361,6 +361,15 @@ export async function POST(request: Request) {
         error: "MAYEL_TRADING_VISUAL_CANARY_REQUEST_INVALID" }, 400)
       const body = await request.json().catch(() => null) as
         Record<string, unknown> | null
+      if (body?.action === "DISCARD_PROPOSALS_V1") {
+        const { discardMayelProposalsV1 } = await import("@/lib/seller-os/mayel-proposal-discard-server-v1")
+        const taskId = uuid(body.visualTaskId), actorId = uuid(body.actorUserId)
+        const ids = Array.isArray(body.assetIds) ? body.assetIds.map(uuid) : []
+        if (!taskId || !actorId || !ids.length || ids.length > 6 || ids.some(id => !id) || typeof body.expectedVisualManifestDigest !== "string")
+          throw Error("PROPOSAL_DISCARD_BINDING_INVALID")
+        return json({ success: true, ...await discardMayelProposalsV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+          actorUserId: actorId, taskId, itemId: String(body.expectedItemId ?? ""), expectedManifestDigest: body.expectedVisualManifestDigest, assetIds: ids as string[] }) })
+      }
       if (body?.action === "RECOVER_APPROVED_ASSET_TRANSITION_V1") {
         const { recoverApprovedAssetTransitionV1 } = await import("@/lib/seller-os/mayel-approved-asset-transition-server-v1")
         const result = await recoverApprovedAssetTransitionV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
@@ -712,6 +721,14 @@ export async function POST(request: Request) {
         taskId, expectedManifestDigest: typeof body.expectedVisualManifestDigest === "string" ? body.expectedVisualManifestDigest : null,
         expectedCurrentImages: body.expectedCurrentImages, decisions: body.decisions })
       return json({ success: true, ...result, ownerApprovalRequired: false, marketplaceWrites: 0 })
+    }
+    if (action === "DISCARD_PROPOSALS_V1") {
+      const taskId = uuid(body?.visualTaskId), ids = Array.isArray(body?.assetIds) ? body.assetIds.map(uuid) : []
+      if (!taskId || !ids.length || ids.length > 6 || ids.some(id => !id) || typeof body?.expectedVisualManifestDigest !== "string")
+        throw Error("PROPOSAL_DISCARD_BINDING_INVALID")
+      const { discardMayelProposalsV1 } = await import("@/lib/seller-os/mayel-proposal-discard-server-v1")
+      return json({ success: true, ...await discardMayelProposalsV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        actorUserId: auth.userId, taskId, itemId: String(body.expectedItemId ?? ""), expectedManifestDigest: body.expectedVisualManifestDigest, assetIds: ids as string[] }) })
     }
     if (action === "SAVE_ASSET_INTENT") {
       const taskId = uuid(body?.visualTaskId), assetId = uuid(body?.assetId)

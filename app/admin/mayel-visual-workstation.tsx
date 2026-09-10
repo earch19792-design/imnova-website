@@ -7,6 +7,7 @@ import { Check, Clipboard, ShieldCheck,
 
 import { MayelVisualAssetProgress } from "./ebay/mayel/visual-asset-progress"
 import { visualAssetStatusV1 } from "@/lib/seller-os/mayel-visual-asset-status-v1"
+import { proposalSlotLabelV1 } from "@/lib/seller-os/mayel-gallery-presentation-v1"
 import { scopedVisualTasksV1, friendlyVisualSyncV1 } from "@/lib/seller-os/mayel-visual-scope-v1"
 import { supabase } from "@/lib/supabase"
 import type { MayelCommercialIntelligenceV1 } from
@@ -23,6 +24,7 @@ type VisualRole = "DETAIL" | "PACKAGE_CONTENTS" | "DIMENSIONS" |
 
 type VisualOutput = {
   id: string
+  discarded?: boolean
   status: string
   mayel_output_role: VisualRole
   output_sha256: string
@@ -790,7 +792,7 @@ type OrderedGalleryEntry = {
 
 function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
   owner: boolean; busy: boolean; onDone: () => Promise<void> }) {
-  const approved = task.outputs.filter(o => o.status === "approved" && o.previewUrl)
+  const approved = task.outputs.filter(o => !o.discarded && o.status === "approved" && o.previewUrl)
   const [selected, setSelected] = useState<Record<number, string>>({})
   const [message, setMessage] = useState("")
   const [saving, setSaving] = useState(false)
@@ -896,11 +898,30 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
   </section>
 }
 
-function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
+function OwnerPreview({ task, canOwnerAuthorize, delegation, canOperate, busy, onDone }: {
   task: VisualTask
   canOwnerAuthorize: boolean
   delegation: VisualDelegation | null
+  canOperate: boolean
+  busy: boolean
+  onDone: () => Promise<void>
 }) {
+  const [discarding, setDiscarding] = useState<string | null>(null)
+  const [discardMessage, setDiscardMessage] = useState("")
+  async function discard(assetId: string) {
+    if (discarding || busy || !canOperate) return
+    setDiscarding(assetId); setDiscardMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "DISCARD_PROPOSALS_V1", visualTaskId: task.visualTaskId, expectedItemId: task.ebayItemId,
+          expectedVisualManifestDigest: task.visualManifestDigest, assetIds: [assetId] }) })
+      await onDone(); setDiscardMessage("Propuesta descartada. Las fotos de eBay no cambiaron.")
+    } catch (error) {
+      setDiscardMessage(error instanceof Error && /RECONCILIATION|IN_PROGRESS/.test(error.message)
+        ? "Esta propuesta tiene un envío en curso. Primero hay que confirmar su estado en eBay."
+        : "No se descartó la propuesta. La vista pudo cambiar; actualiza y vuelve a intentarlo.")
+    } finally { setDiscarding(null) }
+  }
   if (!task.visualManifest) return null
   const phaseB = task.phaseB
   const proposed = Array.isArray(task.visualManifest.proposedOrderedImages)
@@ -931,18 +952,39 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation }: {
     task.outputs.some(o => o.sync?.approvedForEbaySync) ? "PENDING_EBAY_SYNC" : "OWNER_APPROVAL_REQUIRED"
   const friendly = friendlyVisualSyncV1(syncState)
   return <section className="rounded-2xl border border-[#74866d]/35 bg-[#f4f7f1] p-5">
-    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Vista previa del owner · publicación activa</p>
-    <h4 className="mt-2 font-serif text-xl font-semibold">Imágenes actuales y propuesta</h4>
+    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#617159]">Listing existente · cambios de imágenes</p>
+    <h4 className="mt-2 font-serif text-xl font-semibold">Galería de eBay y propuesta de Mayel</h4>
     <p className="mt-2 text-sm text-[#5f645e]">Item {task.ebayItemId} · {task.productTitle}</p>
     <p className="mt-2 text-sm text-[#5f645e]">Campos que cambiarían: imágenes solamente. Mayel decide la principal y el orden exacto dentro de la delegación visual activa.</p>
-    <p className="mt-2 text-xs text-[#617159]">Calidad revisada: {task.outputs.filter((output) => output.status === "approved").length} · Autorizadas para sincronizar: {task.outputs.filter(output => output.sync?.approvedForEbaySync).length}. {task.autonomousOptimization ? "Mayel trabaja con tu delegación permanente." : "Cada propuesta requiere aprobación individual."}</p>
-    <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{proposed.map((entry, index) =>
-      <figure key={`${entry.assetId ?? "current"}-${index}`}
+    <p className="mt-2 text-xs text-[#617159]">Calidad revisada: {task.outputs.filter((output) => !output.discarded && output.status === "approved").length} · Autorizadas para sincronizar: {task.outputs.filter(output => output.sync?.approvedForEbaySync).length}. {task.autonomousOptimization ? "Mayel trabaja con tu delegación permanente." : "Cada propuesta requiere aprobación individual."}</p>
+    <section className="mt-5 rounded-xl border bg-white p-3" aria-label="Última galería verificada de eBay">
+      <h5 className="font-semibold">ANTES · Última galería verificada de eBay · {task.currentImages.length} fotos</h5>
+      <p className="mt-1 text-sm">Es la última lectura guardada. Se comprobará otra vez antes de sincronizar.</p>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{task.currentImages.map((url,p) => <figure key={`${p}:${url}`}>
+        <img src={url} alt={`Foto de eBay ${p+1}`} className="aspect-square w-full rounded-lg object-contain" />
+        <figcaption className="text-sm font-semibold">{p === 0 ? "Principal" : `Imagen ${p+1}`} · eBay</figcaption>
+      </figure>)}</div>
+    </section>
+    <h5 className="mt-6 font-semibold">DESPUÉS · Preview de Mayel · {proposed.length} posiciones</h5>
+    <p className="mt-1 text-sm">Esta numeración pertenece a la propuesta. No confirma que las imágenes ya estén en eBay.</p>
+    <p className="mt-1 text-sm">Descartar una propuesta cancela su cambio y conserva la foto original; no elimina fotos publicadas.</p>
+    <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">{proposed.map((entry, index) => {
+      const output = task.outputs.find(o => o.id === entry.assetId)
+      const slot = (Array.isArray(task.visualManifest?.slotPreview) ? task.visualManifest.slotPreview as Record<string,unknown>[] : [])
+        .find(p => p.targetImagePosition === index || p.targetPosition === index)
+      const action = String(slot?.action ?? (entry.assetId ? index >= task.currentImages.length ? "ADD" : "REPLACE" : "KEEP"))
+      const label = proposalSlotLabelV1(index, typeof slot?.sourcePosition === "number" ? slot.sourcePosition : index < task.currentImages.length ? index : null, action)
+      return <figure key={`${entry.assetId ?? "current"}-${index}`}
         className="rounded-xl border border-[#d6dfd1] bg-white p-2">
         <img src={String(entry.publicUrl ?? "")} alt="Imagen propuesta para revisión del owner"
           className="aspect-square w-full rounded-lg object-contain" />
-        <figcaption className="mt-2 text-[10px] font-semibold text-[#617159]">{index === 0 ? "Principal propuesta" : `${index + 1} · Secundaria`}</figcaption>
-      </figure>)}</div>
+        <figcaption className="mt-2 text-sm font-semibold text-[#617159]">{label.slot} · {entry.assetId ? "Propuesta Mayel" : "Foto original"}</figcaption>
+        <p className="mt-1 text-sm">{output ? labels[output.mayel_output_role] : "Imagen actual"} · {label.action}</p>
+        {Boolean(entry.assetId) && canOperate && !output?.discarded && <button type="button" disabled={busy || Boolean(discarding) || applied || output?.sync?.officialReadback === true}
+          onClick={() => void discard(String(entry.assetId))} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#a65742] px-2 py-2 text-sm text-[#893c2b] disabled:opacity-50"
+          aria-label={`Descartar propuesta ${index+1}`}><Trash2 className="h-4 w-4" />{discarding === entry.assetId ? "Descartando…" : "Descartar propuesta"}</button>}
+      </figure>})}</div>
+    {discardMessage && <p role="status" className="mt-3 rounded-lg bg-white p-3 text-sm">{discardMessage}</p>}
     <p role="status" className="mt-4 font-semibold">{friendly.label}</p><p className="mt-2 text-sm">{friendly.action}</p>
     <details className="mt-4"><summary>Ver detalles</summary>
     <div className="mt-4 grid gap-2 rounded-xl bg-white p-3 text-xs text-[#5f645e] sm:grid-cols-2">
@@ -1462,27 +1504,25 @@ export function MayelVisualWorkstation({ canOperate,
     return () => { active = false; document.removeEventListener("visibilitychange", refreshGallery) }
   }, [selectedVisualTaskId, load])
 
+  const selectedMarketItemId = tasks.find(task => task.visualTaskId === selectedVisualTaskId)?.ebayItemId
   useEffect(() => {
-    if (focusedItemId || !selectedVisualTaskId) return
-    const selectedTask = tasks.find((task) =>
-      task.visualTaskId === selectedVisualTaskId)
-    if (!selectedTask) return
+    if (focusedItemId || !selectedMarketItemId) return
     let active = true
     void visualRequest("/api/admin/ebay/live-optimization-operator", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "READ_MARKET_REVALIDATION_STATUS",
-        ebayItemId: selectedTask.ebayItemId }),
+        ebayItemId: selectedMarketItemId }),
     }).then((payload) => {
       const status = payload.result as MarketRevalidationStatus | undefined
       if (active && status?.connectorAvailable === true) {
         setMarketRevalidationByItemId((current) => ({ ...current,
-          [selectedTask.ebayItemId]: status }))
+          [selectedMarketItemId]: status }))
       }
     }).catch(() => {
       // Commercial intelligence is best-effort and never blocks visual work.
     })
     return () => { active = false }
-  }, [selectedVisualTaskId, tasks, focusedItemId])
+  }, [selectedMarketItemId, focusedItemId])
 
   useEffect(() => {
     if (!selectedVisualTaskId) return
@@ -1491,7 +1531,7 @@ export function MayelVisualWorkstation({ canOperate,
         ?.scrollIntoView({ behavior: "smooth", block: "start" })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [selectedVisualTaskId, tasks])
+  }, [selectedVisualTaskId])
 
   useEffect(() => {
     let active = true
@@ -1539,6 +1579,14 @@ export function MayelVisualWorkstation({ canOperate,
     catch (error) { setMessage(error instanceof Error ? error.message :
       "No pudimos actualizar.") }
     finally { setBusy(false) }
+  }
+
+  async function refreshSavedTask(task: VisualTask) {
+    const payload = await visualRequest(`/api/admin/ebay/mayel-visual-workstation?savedOnly=1&itemId=${encodeURIComponent(task.ebayItemId)}`)
+    const saved = (payload.workstation as { tasks?: VisualTask[] } | undefined)?.tasks?.find(t => t.visualTaskId === task.visualTaskId && t.ebayItemId === task.ebayItemId)
+    if (!saved) throw Error("No pudimos recuperar la propuesta guardada.")
+    ++loadGeneration.current
+    setTasks(current => current.map(t => t.visualTaskId === task.visualTaskId ? saved : t))
   }
 
   return <section aria-labelledby="visual-workstation-heading">
@@ -1622,14 +1670,20 @@ export function MayelVisualWorkstation({ canOperate,
       {task.outputs.length > 0 && <section className="mt-7">
         <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-[#1d5961]" />
           <h4 className="font-semibold">Control de calidad y revisión de Mayel</h4></div>
-        <div className="mt-4 space-y-4">{task.outputs.map((output) =>
+        <div className="mt-4 space-y-4">{task.outputs.filter(o => !o.discarded).map((output) =>
           <HumanQa key={output.id} task={task} output={output} busy={busy} owner={canOwnerAuthorize}
             onDone={refresh} />)}</div>
       </section>}
-      {canOperate && <OrderedGalleryManager task={task} owner={canOwnerAuthorize} busy={busy}
-        onDone={refresh} />}
+      {canOperate && <details className="mt-5 rounded-xl border p-3"><summary className="cursor-pointer min-h-11 py-2 font-semibold">Ajustar posiciones de las propuestas</summary>
+        <OrderedGalleryManager task={task} owner={canOwnerAuthorize} busy={busy} onDone={refresh} /></details>}
       <div className="mt-6"><OwnerPreview task={task}
-        canOwnerAuthorize={canOwnerAuthorize} delegation={delegation} /></div>
+        canOwnerAuthorize={canOwnerAuthorize} delegation={delegation} canOperate={canOperate} busy={busy} onDone={() => refreshSavedTask(task)} /></div>
+      {task.outputs.some(o => o.discarded) && <details className="mt-5 rounded-xl border p-3"><summary className="cursor-pointer min-h-11 py-2 font-semibold">Propuestas descartadas · historial</summary>
+        <p className="text-sm">Se conservan como historial y no se enviarán a eBay.</p>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{task.outputs.filter(o => o.discarded).map(o => <figure key={o.id}>
+          {o.previewUrl && <img src={o.previewUrl} alt={`Propuesta descartada: ${labels[o.mayel_output_role]}`} className="aspect-square w-full object-contain" />}
+          <figcaption className="text-sm">{labels[o.mayel_output_role]} · Descartada</figcaption></figure>)}</div>
+      </details>}
       <details className="mt-5 rounded-xl border border-[#e0d9ce] p-3 text-xs text-[#6f736c]">
         <summary className="cursor-pointer py-2 font-semibold">Ver detalles</summary>
         <p className="mt-2 break-all">Visual Task ID: {task.visualTaskId}</p>

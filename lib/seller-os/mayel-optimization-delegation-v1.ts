@@ -37,6 +37,8 @@ export function authorizeOptimizationV1(input: { grant: OptimizationGrantV1 | nu
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 export function delegatedVisualQaV1(asset: Record<string, unknown>, task: Record<string, unknown>) {
   const qa = record(asset.qa_result), review = record(qa.humanReview), checks = record(review.checks)
+  const discarded = record(task.selection_signal).discardedVisualAssetIds
+  if (Array.isArray(discarded) && discarded.includes(asset.id)) return false
   return asset.status === "approved" && asset.mayel_approval_status === "APPROVED" && qa.automaticStatus === "PASSED" &&
     review.decision === "APPROVE" && checks.productIdentityPreserved === true && checks.noUnsupportedClaims === true &&
     checks.noInventedAccessories === true && checks.noUnauthorizedText === true &&

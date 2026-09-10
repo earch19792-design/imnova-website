@@ -1,3 +1,4 @@
+import { excludeDiscardedProposalsV1 } from "./mayel-proposal-discard-v1"
 import { validateMayelHumanQaV1, type MayelVisualOutputRole } from "../ebay/ebay-mayel-visual-workstation-v1"
 import "server-only"
 import { createHash } from "node:crypto"
@@ -115,9 +116,9 @@ export async function enqueueDelegatedVisualV1(input: { supabase: SupabaseClient
       galleryMutation: pendingManifest })
     return { status: handoff.status, reason: null, receipt: null }
   }
-  const a = await input.supabase.from("ebay_listing_image_assets")
+  const a = await excludeDiscardedProposalsV1(input.supabase.from("ebay_listing_image_assets")
     .select("id,status,mayel_output_role,mayel_approval_status,qa_result,source_sha256,output_sha256,public_url,source_image_set_digest,product_truth_digest")
-    .eq("account_key", input.accountKey).eq("mayel_visual_task_id", task.id).eq("status", "approved").limit(7)
+    .eq("account_key", input.accountKey).eq("mayel_visual_task_id", task.id).eq("status", "approved").limit(7), task.selection_signal)
   if (a.error || !a.data?.length || a.data.length > 6) throw Error("MAYEL_OPTIMIZATION_ASSETS_REQUIRED")
   let authority = await readDelegatedVisualAuthorityV1({ ...input, task, assets: a.data })
   if (authority.grant && authority.reason === "CURRENT_LIVE_READBACK_REQUIRED") {
