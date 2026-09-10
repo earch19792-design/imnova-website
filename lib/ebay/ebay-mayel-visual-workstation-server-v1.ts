@@ -1,4 +1,4 @@
-import { replacementSlotOrderV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
+import { galleryMatchesSyncReceiptV1, replacementSlotOrderV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
 import { readCurrentMayelGalleryV1, savedOfficialGalleryV1 } from "./mayel-current-gallery-server-v1"
 import "server-only"
 
@@ -1166,7 +1166,7 @@ export async function readMayelVisualWorkstationV1(input: {
     : { data: [], error: null }
   if (assetRead.error) throw new Error("MAYEL_VISUAL_OUTPUT_READ_FAILED")
   const outboxRead = taskIds.length ? await input.supabase.from("seller_os_ipad_outbox_v1")
-    .select("id,item_id,intent,binding,state,official_readback,received_at").eq("account_key", input.accountKey)
+    .select("id,item_id,intent,binding,state,official_readback,received_at,execution_receipt").eq("account_key", input.accountKey)
     .in("item_id", typedTaskRows.map(t => String(t.ebay_item_id))).in("kind", ["IMAGE_DRAFT", "IMAGE_UPLOAD", "IMAGE_SYNC"])
     .neq("state", "SUPERSEDED").limit(500) : { data: [], error: null }
   if (outboxRead.error || (outboxRead.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
@@ -1209,11 +1209,17 @@ export async function readMayelVisualWorkstationV1(input: {
       }
       sourceImages.push({ ...source, url })
     }
-    tasks.push({ visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
+    const gallery = savedOfficialGalleryV1(task.selection_signal)
+    const currentGallerySynced = Boolean(gallery && galleryMatchesSyncReceiptV1({ taskId: String(task.id),
+      manifestDigest: String(task.visual_manifest_digest), currentGalleryDigest: gallery.digest, receipts: outboxRead.data ?? [] }))
+    const galleryRebaseRequired = Boolean(!currentGallerySynced && task.visual_manifest_digest && gallery &&
+      JSON.stringify([record(task.visual_manifest).currentMainImage, ...(Array.isArray(record(task.visual_manifest).currentSecondaryImages)
+        ? record(task.visual_manifest).currentSecondaryImages as unknown[] : [])]) !== JSON.stringify(gallery.images))
+    tasks.push({ currentGallerySynced, visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
       sku: String(evidence.sku ?? ""),
       productTitle: String(evidence.productTitle ?? ""),
       status: String(task.status), evidencePack: evidence,
-      visualStationState: outputs.some(o => o.sync.state === "REQUIRES_ATTENTION") ? "REQUIRES_ATTENTION" :
+      visualStationState: galleryRebaseRequired || outputs.some(o => o.sync.state === "REQUIRES_ATTENTION") ? "REQUIRES_ATTENTION" :
         outputs.some(o => o.sync.state === "OWNER_APPROVAL_REQUIRED") ? "OWNER_APPROVAL_REQUIRED" :
         outputs.length && outputs.every(o => o.sync.state === "SYNCED") ? "SYNCED" :
         outputs.find(o => o.sync.approvedForEbaySync)?.sync.state ?? "DRAFT",
@@ -1232,9 +1238,7 @@ export async function readMayelVisualWorkstationV1(input: {
       currentImages: savedOfficialGalleryV1(task.selection_signal)?.images ?? task.current_image_set as string[],
       currentGalleryProven: Boolean(savedOfficialGalleryV1(task.selection_signal)),
       currentGalleryObservedAt: savedOfficialGalleryV1(task.selection_signal)?.observedAt ?? null,
-      galleryRebaseRequired: Boolean(task.visual_manifest_digest && savedOfficialGalleryV1(task.selection_signal) &&
-        JSON.stringify([record(task.visual_manifest).currentMainImage, ...(Array.isArray(record(task.visual_manifest).currentSecondaryImages) ? record(task.visual_manifest).currentSecondaryImages as unknown[] : [])]) !==
-          JSON.stringify(savedOfficialGalleryV1(task.selection_signal)?.images)), outputs,
+      galleryRebaseRequired, outputs,
       visualManifest: task.visual_manifest ? record(task.visual_manifest) : null,
       visualManifestDigest: text(task.visual_manifest_digest, 100),
       marketplaceWriteCapability: false as const })

@@ -35,3 +35,13 @@ export function slotManifestMatchesGalleryV1(manifest: Record<string, unknown>, 
       : proposed[position]?.publicUrl === entry.publicUrl)
   } catch { return false }
 }
+
+export function galleryMatchesSyncReceiptV1(input: { taskId: string; manifestDigest: string;
+  currentGalleryDigest: string; receipts: readonly Record<string, unknown>[] }) {
+  const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
+  return input.receipts.some(row => row.state === "SYNCED" && row.official_readback === true &&
+    record(record(row.intent).requestedChanges).taskId === input.taskId &&
+    record(row.binding).executionManifestDigest === input.manifestDigest &&
+    record(row.execution_receipt).manifestDigest === input.manifestDigest &&
+    record(row.execution_receipt).officialDigest === input.currentGalleryDigest)
+}

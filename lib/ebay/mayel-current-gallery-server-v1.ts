@@ -1,3 +1,4 @@
+import { galleryMatchesSyncReceiptV1 } from "./mayel-gallery-slot-policy-v1"
 import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getEbayTradingReadOnlyAccessToken } from "./ebay-manual-listing-trading-readonly"
@@ -54,6 +55,17 @@ export async function refreshMayelStationGalleryV1(input: { supabase: SupabaseCl
   const manifest = record(task.data.visual_manifest)
   const base = [manifest.currentMainImage, ...(Array.isArray(manifest.currentSecondaryImages) ? manifest.currentSecondaryImages : [])]
   const drift = Boolean(task.data.visual_manifest_digest && JSON.stringify(base) !== JSON.stringify(gallery.images))
+  if (drift) {
+    const receipts = await input.supabase.from("seller_os_ipad_outbox_v1")
+      .select("intent,binding,state,official_readback,execution_receipt")
+      .eq("account_key", input.accountKey).eq("item_id", task.data.ebay_item_id)
+      .eq("state", "SYNCED").eq("official_readback", true)
+      .eq("binding->>executionManifestDigest", task.data.visual_manifest_digest).limit(5)
+    if (receipts.error) throw Error("MAYEL_GALLERY_SYNC_RECEIPT_READ_FAILED")
+    if (galleryMatchesSyncReceiptV1({ taskId: input.taskId, manifestDigest: task.data.visual_manifest_digest,
+      currentGalleryDigest: gallery.digest, receipts: receipts.data ?? [] }))
+      return { gallery, status: "SYNCED", marketplaceWrites: 0 }
+  }
   if (drift && manifest.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" && Array.isArray(manifest.slotReplacements) &&
       manifest.slotReplacements.every((r: { targetImagePosition: number }) => base[r.targetImagePosition] === gallery.images[r.targetImagePosition])) {
     const { rebaseMayelVisualPhaseBPreviewV1 } = await import("./ebay-mayel-visual-phase-b-server-v1")

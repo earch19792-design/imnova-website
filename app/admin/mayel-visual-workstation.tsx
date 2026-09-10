@@ -52,6 +52,7 @@ type VisualTask = {
   sourceImages: { referenceId: string; sha256: string; url: string | null;
     storagePath: string | null; authority: string; position: number }[]
   currentImages: string[]
+  currentGallerySynced?: boolean
   currentGalleryProven?: boolean
   currentGalleryObservedAt?: string | null
   galleryRebaseRequired?: boolean
@@ -743,7 +744,7 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
   const [selected, setSelected] = useState<Record<number, string>>({})
   const [message, setMessage] = useState("")
   const [saving, setSaving] = useState(false)
-  const manifestSlots = task.visualManifest?.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" &&
+  const manifestSlots = !task.currentGallerySynced && task.visualManifest?.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" &&
     Array.isArray(task.visualManifest.slotReplacements) ? task.visualManifest.slotReplacements as
       { targetImagePosition: number; assetId: string }[] : []
   const slotKey = JSON.stringify(manifestSlots)
@@ -778,6 +779,7 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
     <h4 className="font-serif text-xl font-semibold">Galería actual de eBay</h4>
     <p className="mt-2 text-sm">{task.currentGalleryProven ? `${task.currentImages.length} imágenes en su orden oficial.` :
       "Esperando la galería oficial completa. Tus propuestas siguen guardadas."} Sólo cambia la posición que selecciones.</p>
+    {task.currentGallerySynced && <p role="status" className="mt-2 text-sm">Sincronizado. eBay confirma estas seis posiciones.</p>}
     {task.galleryRebaseRequired && <p role="status" className="mt-2 text-sm">La galería cambió. Revisa el nuevo Preview; la sincronización está detenida.</p>}
     <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{task.currentImages.map((before, position) => {
       const asset = approved.find(o => o.id === selected[position])
