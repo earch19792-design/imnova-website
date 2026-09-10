@@ -1,4 +1,5 @@
 import { listingPipelineConsistencyV1 } from "./listing-pipeline-consistency-v1"
+import { listingPublicationE2eGateV1 } from "./listing-publication-e2e-gate-v1"
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readKeywordDecisionHandoffV1, keywordRecord as record, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
@@ -38,7 +39,7 @@ export async function readSellOneLikeThisV1(input: {
   const feeRead = readEbayFeeHandoffV1({ supabase: db, accountKey: input.accountKey, itemId: null,
     packageId: input.packageId, sku: String(own.supplier_sku), now, readBudget: feeBudget })
     .catch(() => null).finally(() => feeBudget.close())
-  const [ref, frontier, fee, policies] = await Promise.all([
+  const [ref, frontier, fee, policies, publication] = await Promise.all([
     typeof planId === "string" && UUID.test(planId) ? bounded(db.from("seller_os_product_research_canonical_evidence_v2")
       .select("plan_id,marketplace_account_key,marketplace,item_id,bounded_title_evidence,source_observation_id,structural_classification,structural_compatibility,structural_evidence")
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US").eq("plan_id", planId)
@@ -52,6 +53,10 @@ export async function readSellOneLikeThisV1(input: {
     feeRead,
     bounded(db.from("ebay_account_policy_profiles").select("account_key,marketplace_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,verified_at,expires_at")
       .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US").limit(1)).maybeSingle(),
+    bounded(db.from("ebay_authorized_listing_publications")
+      .select("id,listing_package_id,marketplace_account_key,account_fingerprint,sku,phase,preview,publication_idempotency_key,listing_id,active_listing_id,manual_registration_id,verified_active_at,monitor_registered_at")
+      .eq("marketplace_account_key", input.accountKey).eq("listing_package_id", input.packageId)
+      .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1)).maybeSingle(),
   ])
   if (ref.error) throw Error("REFERENCE_EVIDENCE_UNAVAILABLE")
   const f = record(frontier.error ? null : frontier.data), s = record(f.shippingEvidence)
@@ -80,7 +85,9 @@ export async function readSellOneLikeThisV1(input: {
   // Normal reference preparation uses the same gate on its existing read path.
   const result = input.existingPackagePreview ?? prepareSellOneLikeThisV1(authority)
   const consistency = listingPipelineConsistencyV1(result, authority)
-  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency }
+  const publicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : publication.data, !publication.error)
+  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate,
+    publicationEvidenceStatus: publication.error ? "WAITING_FOR_DATA" : "READ" }
 
 }
 

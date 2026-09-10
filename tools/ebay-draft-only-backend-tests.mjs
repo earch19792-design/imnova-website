@@ -2725,6 +2725,86 @@ test("an uncertain publish response is reconciled with GET and never repeats POS
   }
 })
 
+for (const scenario of ["STILL_UNPUBLISHED", "READBACK_UNAVAILABLE", "WRONG_SKU", "MISSING_RESPONSE_ID"]) test(`publication ambiguity remains fail-closed: ${scenario}`, async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "production-client-publish-timeout",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "production-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "production-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "production-user-1",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH: "feature/draft-production",
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "feature/draft-production",
+    EBAY_PRO_RUNTIME: "staging",
+  })
+  const calls = []
+  let offerReads = 0
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url)
+    const method = init.method ?? "GET"
+    calls.push({ pathname: parsed.pathname, method })
+    if (parsed.pathname.endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+    }
+    if (parsed.pathname === "/commerce/identity/v1/user/") {
+      return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
+    }
+    if (parsed.pathname.endsWith("/get_category_policies")) {
+      return new Response(JSON.stringify(OPTIONAL_GTIN_CATEGORY_POLICY), { status: 200 })
+    }
+    if (parsed.pathname.includes("/inventory_item/") && method === "GET") {
+      return new Response(JSON.stringify(PUBLISH_INVENTORY_PAYLOAD), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-456" && method === "GET") {
+      offerReads += 1
+      if (offerReads > 1 && scenario === "READBACK_UNAVAILABLE") return new Response("{}", { status: 503 })
+      return new Response(JSON.stringify({
+        ...PUBLISH_OFFER_PAYLOAD,
+        offerId: "offer-456",
+        sku: offerReads > 1 && scenario === "WRONG_SKU" ? "IMNOVA22222222222242228222222222222222" : RESERVED_SKU,
+        marketplaceId: "EBAY_US",
+        status: offerReads === 1 || ["STILL_UNPUBLISHED", "MISSING_RESPONSE_ID"].includes(scenario) ? "UNPUBLISHED" : "PUBLISHED",
+        ...(offerReads === 1 || ["STILL_UNPUBLISHED", "MISSING_RESPONSE_ID"].includes(scenario) ? {} : { listing: { listingId: "987654321098" } }),
+      }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-456/publish" && method === "POST") {
+      if (scenario === "MISSING_RESPONSE_ID") return new Response("{}", { status: 200 })
+      throw new Error("simulated connection timeout after dispatch")
+    }
+    throw new Error(`unexpected ${method} ${parsed.pathname}`)
+  }
+  try {
+    const result = await module.publishEbayOfferOnce({
+      offerId: "offer-456",
+      expectedSku: RESERVED_SKU,
+      expectedInventoryItemPayload: PUBLISH_INVENTORY_PAYLOAD,
+      expectedOfferPayload: PUBLISH_OFFER_PAYLOAD,
+      previewHash: "b".repeat(64),
+      publicationControlId: "66666666-6666-4666-8666-666666666666",
+      confirmPublish: "PUBLICAR LISTING EN EBAY",
+    }, fetchImpl)
+    assert.equal(result.ok, false)
+    assert.equal(result.outcomeKnown, false)
+    assert.equal(result.listingId, null)
+    assert.equal(result.blocker, "EBAY_PUBLISH_OUTCOME_UNKNOWN")
+    assert.equal(result.body.retrySafety, "GET_ONLY_RECONCILIATION_REQUIRED")
+    // A separate runtime reconciliation also performs only official GETs.
+    const reconciled = await module.verifyEbayPublishedOffer("offer-456", RESERVED_SKU, PUBLISH_OFFER_PAYLOAD, fetchImpl)
+    assert.equal(reconciled.safe, false)
+    assert.equal(calls.filter((call) => call.method === "POST"
+      && call.pathname.endsWith("/publish")).length, 1)
+    assert.ok(calls.filter((call) => call.method === "GET"
+      && call.pathname.endsWith("/offer/offer-456")).length >= 2)
+  } finally {
+    process.env = original
+  }
+})
+
 test("Production draft and final publication use separate account-bound one-shot ledgers", async () => {
   const module = await importTypeScript(readinessSource)
   const input = validInput()
