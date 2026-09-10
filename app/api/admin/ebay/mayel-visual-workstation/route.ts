@@ -358,6 +358,16 @@ export async function POST(request: Request) {
         error: "MAYEL_TRADING_VISUAL_CANARY_REQUEST_INVALID" }, 400)
       const body = await request.json().catch(() => null) as
         Record<string, unknown> | null
+      if (body?.action === "RUN_DELEGATED_VISUAL_SYNC_V1") {
+        const { runDelegatedVisualScopedV1 } = await import("@/lib/seller-os/mayel-delegated-visual-scoped-run-v1")
+        const result = await runDelegatedVisualScopedV1({
+          supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+          taskId: String(body.visualTaskId ?? ""),
+          expectedItemId: String(body.expectedItemId ?? ""),
+          expectedManifestDigest: String(body.expectedManifestDigest ?? ""),
+        })
+        return json({ success: true, result })
+      }
       if (body?.action !== "EXECUTE_TRADING_VISUAL_CANARY_V1"
         || body?.confirmation !==
           MAYEL_TRADING_VISUAL_LIVE_CANARY_CONFIRMATION) {
