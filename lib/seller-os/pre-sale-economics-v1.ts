@@ -3,6 +3,7 @@ import variableCosts from "../../docs/owner-variable-cost-policy-v1.json" with {
 import { consumeListingFeeAuthorityV1 } from "./listing-fee-authority-v1"
 import { EBAY_FEE_AUTHORITY_V1, feeRecordV1 as record } from "./ebay-fee-producer-v1"
 import { listingEconomicsV1, validatePromotionPolicyV1, type Economics, type PromotionPolicy } from "./listing-treatment-engine-v1"
+import { safeAdCapacityV1 } from "./ad-rate-economics-v1"
 const down = (n: number) => Math.floor(n * 100 + 1e-9) / 100
 const ceil = (n: number) => Math.ceil(n * 100 - 1e-9) / 100
 export const economicAmountV1 = (v: unknown): number | null => (typeof v === "number" || typeof v === "string" && /^\d+(\.\d+)?$/.test(v)) && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null
@@ -20,7 +21,7 @@ export function adsCanaryEconomicsV1(e: Economics, policy: PromotionPolicy, reco
   if (result.economicsUnproven || !e.adFeeBasis.fresh || !e.adFeeBasis.reference || e.adFeeBasis.value === null || e.adFeeBasis.value < e.salePrice.value!) return empty
   // A cent of reserved profit cannot be spent by rounding the fee up.
   const room = down(result.profitBeforeAds! - Math.max(policy.minProfit, e.salePrice.value! * policy.minMargin / 100))
-  const maxSafeAdRatePct = Math.max(0, Math.min(100, down(room / e.adFeeBasis.value * 100)))
+  const maxSafeAdRatePct = safeAdCapacityV1(e, policy).maxSafeAdRatePct!
   const cap = recommendedRate === null || !Number.isFinite(recommendedRate) || recommendedRate < 0 || recommendedRate > 100 ? null :
     Math.min(recommendedRate, policy.maxRate, maxSafeAdRatePct)
   const rate = cap === null ? null : Math.floor(cap * 10 + 1e-9) / 10
@@ -53,14 +54,14 @@ export function consumeFeeLifecycleV1(input: {accountKey:string; itemId:string; 
 }
 export function otherVariableCostPolicyPresentV1(accountKey: string, itemId: string) {
   return variableCosts.OWNER_VARIABLE_COST_POLICY_CONFIRMED && variableCosts.marketplaceAccountKey === accountKey &&
-    variableCosts.observedCurrentItemIds.includes(itemId)
+    /^\d{9,20}$/.test(itemId)
 }
 export function explicitOtherCostV1(input: {accountKey:string;itemId:string;economics:Omit<Economics,"adFeeBasis">}) {
   const e=input.economics
   // A newly observed material cost always overrides the older zero policy.
   if (e.otherCosts.value!==null) return e.otherCosts
   const applies=variableCosts.OWNER_VARIABLE_COST_POLICY_CONFIRMED && variableCosts.marketplaceAccountKey===input.accountKey &&
-    variableCosts.observedCurrentItemIds.includes(input.itemId) && [e.productCost,e.shippingCost,e.ebayFees].every(c=>c.fresh && c.reference && c.value!==null)
+    otherVariableCostPolicyPresentV1(input.accountKey, input.itemId)
   return applies ? {value:variableCosts.OTHER_PROVEN_VARIABLE_COSTS,reference:`${variableCosts.contractVersion}:${variableCosts.recordedAt}`,fresh:true} : e.otherCosts
 }
 export function resolvePreSaleEconomicsV1(input: {accountKey:string;itemId:string;listing:unknown;evidence:unknown;feeHead:unknown;now:Date}) {

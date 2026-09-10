@@ -1,3 +1,5 @@
+import { simulateOwnerRateLevelsV1 } from "./ad-rate-economics-v1"
+import { diagnoseListingTreatmentV1, type FunnelEvidence } from "./listing-treatment-engine-v1"
 import { adsPostSaleLearningV1 } from "./ads-post-sale-report-ingestion-v1"
 import contract from "../../docs/ebay-ads-revenue-official-contract-v1.json" with { type: "json" }
 import { adsCanaryEconomicsV1, resolvePreSaleEconomicsV1 } from "./pre-sale-economics-v1"
@@ -40,7 +42,7 @@ export type AdsOfficialObservationV1 = {
 }
 
 export function buildAdsActivationListingV1(input: { accountKey: string; raw: unknown; currentItemIds: readonly string[];
-  currentLiveFresh: boolean; policyOverride?: PromotionPolicy; official?: AdsOfficialObservationV1 | null; now: Date }) {
+  currentLiveFresh: boolean; comparison?: FunnelEvidence | null; qualityReferences?: string[]; metricsStatus?: string; policyOverride?: PromotionPolicy; official?: AdsOfficialObservationV1 | null; now: Date }) {
   const raw = record(input.raw), itemId = String(raw.itemId), listings = arr(raw.listings), evidence = arr(raw.evidence)
   const listing = currentListing(listings, itemId, input.now), heads = arr(raw.feeHeads)
   const head = heads.length === 1 ? heads[0] : {}, authority = record(head.authority)
@@ -75,10 +77,18 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
     [officialFresh && !!o?.campaignId && o.campaignRunning && o.fundingModel === "CPS" && o.adRateStrategy === "FIXED", "EXISTING_RUNNING_FIXED_CPS_CAMPAIGN_REQUIRED"],
     [officialFresh && (o?.currentAdState === "INACTIVE" || o?.currentAdState === "ACTIVE" && !!o.adId && amount(o.currentAdRate) !== null), "CURRENT_AD_READBACK_REQUIRED"],
   ] as const) if (!condition) blockers.push(code)
-  // The smallest representable OWNER rate is Mayel's technical TEST proposal;
-  // an official recommendation, when present, retains its own independent cap.
-  const recommendedRate = policyValid ? (officialFresh ? o!.recommendedRate : null) ?? Math.ceil(policy!.minRate * 10 - 1e-9) / 10 : null
+  const decision = policyValid ? diagnoseListingTreatmentV1({ itemId, window: "7D", comparison: input.comparison ?? null,
+    economics: e, policy: policy!, stock: inStock ? "AVAILABLE" : exact ? "LOW" : "UNKNOWN",
+    stockReference: exact ? `${listing.source}:${listing.last_ebay_sync_at}` : null,
+    protected: false, qualityNeedsImprovement: !!input.qualityReferences?.length, qualityReferences: input.qualityReferences ?? [], keywordReferences: [] }) : null
+  const treatment = decision?.treatment ?? "TEST"
+  // A measured healthy funnel may use the official recommendation. A cold-start
+  // TEST starts at the representable OWNER minimum, never at an assumed ceiling.
+  const recommendedRate = policyValid && ["SCALE", "TEST"].includes(treatment)
+    ? treatment === "SCALE" && officialFresh && o!.recommendedRate !== null ? o!.recommendedRate
+      : Math.ceil(Math.max(policy!.minRate, contract.adRate.apiMinPct) * 10 - 1e-9) / 10 : null
   const promotion = policyValid ? adsCanaryEconomicsV1(economics, policy!, recommendedRate) : null
+  if (!["SCALE", "TEST"].includes(treatment)) blockers.push(`TREATMENT_REQUIRES:${treatment}`)
   if (promotion?.status !== "PREVIEW_READY") blockers.push(promotion?.status ?? "OWNER_POLICY_INVALID")
   if (o?.currentAdState === "ACTIVE" && promotion?.proposedAdRatePct === o.currentAdRate) blockers.push("ALREADY_AT_REQUESTED_RATE_NO_ACTION")
   const ready = blockers.length === 0
@@ -90,10 +100,24 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
     MAX_SAFE_AD_RATE_PCT: promotion?.maxSafeAdRatePct ?? null, PROPOSED_AD_RATE_PCT: promotion?.proposedAdRatePct ?? null,
     PROJECTED_AD_COST: promotion?.projectedAdCost ?? null, PROJECTED_PROFIT_AFTER_ADS: promotion?.projectedProfitAfterAds ?? null,
     PROJECTED_MARGIN_AFTER_ADS: promotion?.projectedMarginAfterAds ?? null,
+    EBAY_AD_FEE_BASIS: e.adFeeBasis.fresh ? e.adFeeBasis.value : null,
+    OWNER_MIN_AD_RATE_PCT: policyValid ? policy!.minRate : null, OWNER_MAX_AD_RATE_PCT: policyValid ? policy!.maxRate : null,
+    MAYEL_RECOMMENDED_RATE: recommendedRate, WHY_MAYEL_RECOMMENDS_PROMOTION: decision?.why ?? "Esperando evidencia económica.",
     OWNER_APPROVAL_REQUIRED: true, projectionUnit: "ONE_ATTRIBUTED_SALE_NOT_A_SALES_FORECAST" }
-  return { itemId, status: ready ? "OWNER_APPROVAL_REQUIRED" : "BLOCKED", preview, blockers: [...new Set(blockers)],
-    treatment: "TEST", warmMetricsRequired: false, exactItemBinding: exact, inStock, supportedListingModel,
-    recommendedRateSource: officialFresh && o!.recommendedRate !== null ? "OFFICIAL_EBAY_RECOMMENDATION" : "MAYEL_TECHNICAL_TEST_OWNER_MINIMUM",
+  return { itemId, status: ready ? "OWNER_APPROVAL_REQUIRED" : "WAITING_FOR_DATA", preview, blockers: [...new Set(blockers)],
+    treatment, treatmentLabel: decision?.label ?? "🧪 Obtener más datos",
+    metricsStatus: input.metricsStatus ?? (input.comparison ? "COMPARABLE_SAMPLE" : "INSUFFICIENT_METRICS"),
+    simulations: policyValid ? simulateOwnerRateLevelsV1(e, policy!) : [],
+    economicUncertaintyCount: base.missing.length + (feeProven ? 0 : 1) + (inStock ? 0 : 1),
+    warmMetricsRequired: false, exactItemBinding: exact, inStock, supportedListingModel,
+    recommendedRateSource: treatment === "SCALE" && officialFresh && o!.recommendedRate !== null ? "OFFICIAL_EBAY_RECOMMENDATION" : "MAYEL_TECHNICAL_TEST_OWNER_MINIMUM",
+    commercialEnvelope: { itemId, accountKey:input.accountKey, salePrice:e.salePrice, productCost:e.productCost,
+      portexShippingAuthority:raw.shippingAuthority ?? null, shipping:e.shippingCost, categoryFeeAuthority:authority,
+      otherVariableCostPolicyPresent:resolved.otherVariableCostPolicyPresent, otherVariableCosts:e.otherCosts,
+      profitBeforeAds:base.profitBeforeAds, marginBeforeAds:base.marginBeforeAds, maxSafeAdRatePct:promotion?.maxSafeAdRatePct ?? null,
+      status:base.economicsUnproven ? "WAITING_FOR_DATA" : "ECONOMICS_PROVEN", reevaluation:"ON_EXISTING_RUNTIME_READ",
+      newListingEconomicsAutoReady:true, codexRuntimeDependency:false },
+    shippingAuthority: raw.shippingAuthority ?? null,
     otherVariableCostPolicyPresent: resolved.otherVariableCostPolicyPresent,
     economicsProven: !base.economicsUnproven && feeProven, ebayFeeAuthorityPass: feeProven,
     basePreSaleFeeProven: authority.basePreSaleFeeProven === true && fresh(authority,input.now) &&
@@ -113,5 +137,5 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
 /** Select one technical TEST canary; warm metrics are never an eligibility proxy. */
 export function selectAdsCanaryV1(rows: ReturnType<typeof buildAdsActivationListingV1>[]) {
   if (rows.length > 20 || new Set(rows.map(r => r.itemId)).size !== rows.length) throw Error("ADS_BOUNDED_UNIQUE_LISTINGS_REQUIRED")
-  return rows.filter(r => r.singleListingAdsCanaryReady).sort((a,b) => a.itemId.localeCompare(b.itemId))[0] ?? null
+  return rows.filter(r => r.singleListingAdsCanaryReady).sort((a,b) => a.economicUncertaintyCount - b.economicUncertaintyCount || a.itemId.localeCompare(b.itemId))[0] ?? null
 }

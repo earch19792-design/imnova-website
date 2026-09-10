@@ -2,7 +2,7 @@ import "server-only"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-import { acquireCanonicalLunaShippingV1 } from
+import { acquireCanonicalLunaShippingV1, SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1 } from
   "./ebay-luna-authoritative-shipping-server-v1"
 import type { LunaRateLimitEvidenceV1 } from
   "./ebay-luna-authoritative-shipping-v1"
@@ -170,6 +170,26 @@ export async function captureLiveListingShippingEvidenceV1(input: Readonly<{
 }>) {
   const resolved = await resolveExactCurrentLiveIdentityV1(input)
   const identity = resolved.identity
+  // Portex's durable, exact destination quote precedes any auxiliary checkout.
+  // The source timestamp is retained; reuse never extends the quote's lifetime.
+  const retained = await readLatestLiveListingShippingEvidenceV1({ supabase: input.supabase, identity, now: input.now })
+  const row = retained.evidence
+  if (retained.freshness === "FRESH" && row &&
+    Date.parse(row.observed_at) <= (input.now ?? Date.now()) &&
+    row.destination_fingerprint === SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1.profileDigest &&
+    row.supplier_currency === "USD" && row.shipping_currency === "USD" &&
+    row.purchase_performed === false && row.payment_performed === false &&
+    row.shipping_cost != null && Number.isFinite(Number(row.shipping_cost)) && Number(row.shipping_cost) >= 0 &&
+    row.supplier_subtotal != null && Number.isFinite(Number(row.supplier_subtotal)) && Number(row.supplier_subtotal) >= 0 &&
+    ["LUNA_AUTHENTICATED_HTTP_CART_SHIPPING", "LUNA_PROTECTED_BROWSER_CHECKOUT_SHIPPING"].includes(row.source_authority)) {
+    return persistLiveListingShippingQuoteV1({ ...input, resolved, lunaReaderExecuted: false, quote: {
+      status: "AVAILABLE", subtotalUsd: Number(row.supplier_subtotal), shippingAmountUsd: Number(row.shipping_cost),
+      currency: "USD", acquisitionMethod: row.source_authority, observedAt: row.observed_at,
+      evidenceDigest: row.source_evidence_digest, exactLunaIdentity: true,
+      destinationProfileId: SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1.profileId,
+      destinationProfileDigest: row.destination_fingerprint, noPurchase: true, noPayment: true,
+    } })
+  }
   const acquire = input.acquire ?? acquireCanonicalLunaShippingV1
   const acquisition = await acquire({
     readerScopeId: liveListingShippingReaderScopeIdV1(identity),
@@ -233,6 +253,9 @@ export async function persistLiveListingShippingQuoteV1(input: Readonly<{
     supplierLinkage: "CERTIFIED" as const,
     lunaReaderExecuted: input.lunaReaderExecuted === true,
     acquisitionMethod: evidence.source_authority,
+    shippingAuthority: "LUNA_PORTEX_SHIPPING_AUTHORITY" as const,
+    portexUsedWhenValid: input.lunaReaderExecuted !== true,
+    observedAt: evidence.observed_at,
     purchaseBoundaryEnforced: evidence.purchase_performed === false &&
       evidence.payment_performed === false,
     shippingCostStatus: "AVAILABLE" as const,

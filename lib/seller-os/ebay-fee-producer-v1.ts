@@ -1,6 +1,7 @@
+import { preSaleFeeBreakdownV1 } from "./pre-sale-fee-breakdown-v1"
 import { SELLING_FEE_TAX_SOURCE } from "../ebay/ebay-selling-fee-tax-policy-v1"
 import contingentPolicy from "../../docs/ebay-official-contingent-fee-policy-v1.json" with { type: "json" }
-import { automaticFeeResolutionInputsV1 } from "./automatic-fee-inputs-v1"
+import { automaticFeeResolutionInputsV1, completeAutomaticFeeAdjustmentsV1 } from "./automatic-fee-inputs-v1"
 import { assessFeeBoundCoverageV1 } from "./ebay-fee-safe-bound-v1"
 import { createHash } from "node:crypto"
 import { resolveListingPreSaleFeesV1 } from "./listing-fee-resolver-v1"
@@ -76,8 +77,8 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
       regulatoryNA?null:"OFFICIAL_MARKETPLACE_SCOPE"),
     component("TAX_ON_FEES",true,SELLING_FEE_TAX_SOURCE,"CURRENT_OFFICIAL_US_FEE_TAX_SCOPE_AND_SELLER_REGISTRATION",taxNA?0:null,taxNA?0:null,taxNA?null:"CURRENT_ACCOUNT_FEE_TAX_AUTHORITY"),
   ]
-  const resolutionInputs = automaticFeeResolutionInputsV1({ context: input.context,
-    packageData: c.packageData, previousMetadata: { feeResolutionInputsV1: input.resolutionInputs } })
+  const resolutionInputs = completeAutomaticFeeAdjustmentsV1({ components, now: input.now, bundle: automaticFeeResolutionInputsV1({ context: input.context,
+    packageData: c.packageData, previousMetadata: { feeResolutionInputsV1: input.resolutionInputs } }) })
   const coverage=assessFeeBoundCoverageV1(resolutionInputs,input.now)
   const resolutionContext=feeRecordV1(feeRecordV1(resolutionInputs).context)
   const supplied=feeRecordV1(resolutionInputs)
@@ -101,6 +102,11 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
   const preSaleScopeProven=resolved?.authority?.feeBasis.method==="PROVEN_UPPER_BOUND"
   const state:FeeLifecycleState = input.itemId && !exact ? "CONFLICT" : input.itemId && (!sourceFresh || Date.parse(freshUntil)<=input.now.getTime()) ? "STALE" :
     resolved?.status==="PROVEN" && preSaleScopeProven ? "PROVEN_PRE_SALE" : "PENDING_ORDER_CONTEXT"
+  const knownBasis = policyKnown && knownPrice !== null && listing.buyerShippingChargeStatus === "AVAILABLE" &&
+    typeof listing.buyerShippingCharge === "number" && listing.buyerShippingCharge >= 0
+    ? knownPrice + listing.buyerShippingCharge : null
+  const taxTreatment = preSaleFeeBreakdownV1({ policy, knownBasis,
+    fullBasis: resolved?.authority?.feeBasis.amount as number | undefined, boundProven: state === "PROVEN_PRE_SALE" })
   const body={contractVersion:EBAY_FEE_AUTHORITY_V1,producerVersion:EBAY_FEE_PRODUCER_V1,
     marketplaceAccountKey:input.accountKey,marketplace:"EBAY_US",itemId:input.itemId,sku:input.sku,packageId:input.packageId,
     categoryId:str(listing.categoryId),categoryPath:str(listing.categoryPath),saleFormat:str(listing.saleFormat),
@@ -108,6 +114,9 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     policyObservedAt:str(policy.observedAt),sourceEffectiveDate:policy.sourceEffectiveDate??null,
     sourceObservedAt:str(c.observedAt), feeTaxPolicy: taxPolicy,
     automaticFeeProducer: true, codexRuntimeDependency: false,
+    taxTreatment, normalPreSaleCategoryFee: taxTreatment.normalCategoryFeeBeforeBuyerTax,
+    categorySpecificFeeResolution: true, globalFlatFeeRate: false,
+    buyerTaxTreatedAsSellerCost: false, buyerTaxTreatedAsSellerRevenue: false, feeOnTaxModeledSeparately: true,
     state,economicsState:state==="PROVEN_PRE_SALE"?"ECONOMICS_PROVEN":components.some(c=>c.status==="PENDING_AUTHORITY") ? "PROMOTION_BLOCKED_EVIDENCE" : "PENDING_ORDER_CONTEXT",
     label:state==="CONFLICT"?"Economía: revisar identidad":state==="STALE"?"Economía: actualizando evidencia":
       state==="PROVEN_PRE_SALE"?"Economía: datos completos":components.some(c=>c.status==="PENDING_AUTHORITY") ? "Economía: esperando evidencia de fees" : "Economía: esperando datos de la orden",
@@ -119,7 +128,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
       ? contingentPolicy : null,
     components:state==="PROVEN_PRE_SALE" ? resolved?.authority?.components ?? components : components,
     unknownMaterialFeeComponentCount:state==="PROVEN_PRE_SALE"?0:components.filter(x=>x.amount===null).length,
-    buyerDependentComponents:["BUYER_TAX","INTERNATIONAL_APPLICABILITY","CURRENCY_CONVERSION"],
+    buyerDependentComponents:["CONTINGENT_FEE_ON_TAX","INTERNATIONAL_APPLICABILITY"],
     accountAuthorityDependencies:components.filter(x=>x.status==="PENDING_AUTHORITY").map(x=>x.pendingDependency),
     knownPreSaleBasis:{salePrice:knownPrice,buyerShipping:listing.buyerShippingChargeStatus==="AVAILABLE"?listing.buyerShippingCharge:null},
     basePreSaleFeeProven:policyKnown,

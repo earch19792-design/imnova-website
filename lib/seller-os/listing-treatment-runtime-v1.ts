@@ -90,7 +90,10 @@ export async function readListingTreatmentsV1(input: { supabase: SupabaseClient;
     rows.push({ ...treatment, title: listing!.identity.title, metrics, metricAssessment, feeAuthority,
       feeResolution: {status:feeAuthority.status,blockers:feeAuthority.blockers}, feeHandoff,
       commercialEnvelope:{...commercialEnvelope,preSaleEconomics:{productCost:economics.productCost,shipping:economics.shippingCost,feeAuthority,
-        profitBeforeAds:preSalePromotion.profitBeforeAds,marginBeforeAds:preSalePromotion.marginBeforeAds,maxSafeAdRatePct:preSalePromotion.maxSafeAdRatePct}},
+        profitBeforeAds:preSalePromotion.profitBeforeAds,marginBeforeAds:preSalePromotion.marginBeforeAds,maxSafeAdRatePct:preSalePromotion.maxSafeAdRatePct, salePrice:economics.salePrice,
+        otherVariableCostPolicyPresent:resolved.otherVariableCostPolicyPresent, otherVariableCosts:economics.otherCosts,
+        status:resolved.base.economicsUnproven ? "WAITING_FOR_DATA" : "ECONOMICS_PROVEN",
+        newListingEconomicsAutoReady:true, codexRuntimeDependency:false}},
       safeEconomics: feeHandoff?.authority.feeEstimateMode === "CONSERVATIVE_SAFE_BOUND" ? {
         profitSafeBeforeAds: treatment.economics.profitBeforeAds, marginSafeBeforeAds: treatment.economics.marginBeforeAds,
         maxSafeAdRatePct: preSalePromotion.maxSafeAdRatePct } : null,

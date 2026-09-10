@@ -494,8 +494,9 @@ export async function runSellerOsEconomicEvidenceRefreshV1(input: Readonly<{
         accountKey: input.accountKey, job, workerId,
         value: captured.shippingCost,
         sourceAuthority: captured.acquisitionMethod,
-        sourceEntityId: captured.evidenceId, status: "FRESH", now,
-        metadata: { destinationFingerprint: captured.destinationFingerprint,
+        sourceEntityId: captured.evidenceId, status: "FRESH", now: new Date(captured.observedAt),
+        metadata: { shippingAuthority: captured.shippingAuthority, portexUsedWhenValid: captured.portexUsedWhenValid,
+          sourceObservedAt: captured.observedAt, destinationFingerprint: captured.destinationFingerprint,
           supplierSubtotal: captured.supplierSubtotal,
           purchaseBoundaryEnforced: captured.purchaseBoundaryEnforced } })
       sourceResults.push({ itemId: job.ebay_item_id,

@@ -1,3 +1,5 @@
+import { attachPortexShippingEvidenceV1 } from "./portex-shipping-authority-v1"
+import { readAdsDecisionEvidenceV1 } from "./ads-decision-evidence-v1"
 import { quotaHoldEconomicsReportV1, postQuotaResetResumeV1 } from "./ebay-economics-quota-hold-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readCurrentLiveAuthorityV1 } from "../ebay/ebay-current-live-authority-v1"
@@ -19,16 +21,20 @@ export async function readAdsRevenueActivationV1(input: { supabase: SupabaseClie
     p_account_key: input.accountKey, p_item_ids: input.itemIds, p_actor_id: input.actorId,
   })
   if (data.error || !Array.isArray(data.data) || data.data.length !== input.itemIds.length) throw Error("ADS_DURABLE_INPUT_READ_FAILED")
-  const economicsAudit = quotaHoldEconomicsReportV1({accountKey:input.accountKey,rawRows:data.data,now})
-  const rows = data.data.map(raw => buildAdsActivationListingV1({ accountKey: input.accountKey, raw,
+  const economicRows = await attachPortexShippingEvidenceV1({ ...input, rawRows: data.data, now })
+  const economicsAudit = quotaHoldEconomicsReportV1({accountKey:input.accountKey,rawRows:economicRows,now})
+  const decisionEvidence = await readAdsDecisionEvidenceV1({ ...input, now, listings: economicRows.map(raw => ({
+    itemId: String(raw.itemId), sku: Array.isArray(raw.listings) ? raw.listings[0]?.ebay_sku ?? null : null })) })
+  const rows = economicRows.map(raw => buildAdsActivationListingV1({ accountKey: input.accountKey, raw,
     currentItemIds: authority.currentItemIds, currentLiveFresh: authority.currentState === "CURRENT_FRESH",
-    policyOverride: input.policy, now }))
+    policyOverride: input.policy, ...decisionEvidence.get(String(raw.itemId)), now }))
   let officialApiCalls = 0
   let officialReadBlocker: string | null = null
   // Resolve economics for all selected listings first. Only economically sound,
   // current candidates consume official reads, and only one is ever selected.
   const candidates = rows.map((row,index) => ({row,index})).filter(({row}) => row.exactItemBinding && row.inStock && row.supportedListingModel && row.economicsProven && row.ownerPolicyValid &&
     !row.promotionBlockedMargin && row.preview.PROPOSED_AD_RATE_PCT !== null && !row.blockers.includes("OWNER_POLICY_WINDOW_NOT_ACTIVE"))
+    .sort((a,b) => a.row.economicUncertaintyCount - b.row.economicUncertaintyCount || a.row.itemId.localeCompare(b.row.itemId))
   const deadline = Date.now() + 40000
   let officialCandidatesExamined = 0
   for (const {index} of input.durableOnly ? [] : candidates) {
@@ -36,19 +42,21 @@ export async function readAdsRevenueActivationV1(input: { supabase: SupabaseClie
     const read = await readAdsActivationOfficialV1({ accountKey: input.accountKey, itemId: rows[index].itemId,
       currentLiveFresh: authority.currentState === "CURRENT_FRESH", now })
     officialCandidatesExamined++; officialApiCalls += read.officialApiCalls; officialReadBlocker = read.error
-    rows[index] = buildAdsActivationListingV1({ accountKey: input.accountKey, raw: data.data[index], currentItemIds: authority.currentItemIds,
-      currentLiveFresh: authority.currentState === "CURRENT_FRESH", policyOverride: input.policy, official: read.observation, now })
+    rows[index] = buildAdsActivationListingV1({ accountKey: input.accountKey, raw: economicRows[index], currentItemIds: authority.currentItemIds,
+      currentLiveFresh: authority.currentState === "CURRENT_FRESH", policyOverride: input.policy, official: read.observation, ...decisionEvidence.get(rows[index].itemId), now })
     if (rows[index].singleListingAdsCanaryReady || read.error) break
   }
   const candidate = selectAdsCanaryV1(rows)
   return { contractVersion: ADS_REVENUE_ACTIVATION_V1, observedAt: now.toISOString(),
-    status: candidate ? "OWNER_APPROVAL_REQUIRED" : input.durableOnly ? "EBAY_QUOTA_HOLD" : "BLOCKED", economicsAudit, rows, proposedCanary: candidate?.preview ?? null,
+    status: candidate ? "OWNER_APPROVAL_REQUIRED" : input.durableOnly ? "EBAY_QUOTA_HOLD" : "WAITING_FOR_DATA", economicsAudit, rows, proposedCanary: candidate?.preview ?? null,
     officialContract: adsOfficialContractV1(now), currentLiveState: authority.currentState,
     sourceFailureCode: authority.sourceFailureCode, nextAutomaticLiveRetryAt: authority.nextRetryAt,
     summary: { examined: rows.length, economicsProven: rows.filter(r => r.economicsProven).length,
       ready: rows.filter(r => r.singleListingAdsCanaryReady).length, selectedCanaryCount: candidate ? 1 : 0 },
     resume:postQuotaResetResumeV1({quotaHeld:input.durableOnly===true || authority.currentState!=="CURRENT_FRESH",currentEvidenceFresh:authority.currentState==="CURRENT_FRESH",
       economicsProven:rows.some(r=>r.economicsProven),eligibilityProven:!!candidate,canaryItemId:candidate?.itemId??null}),
+    candidateSelection: "LOWEST_ECONOMIC_UNCERTAINTY", newListingEconomicsAutoReady: true,
+    ownerManualEconomicsRepairRequired: false, stopForOwnerApproval: true,
     ownerApprovalRequired: true, ebayAdsWriteEnabled: false, multiListingAdsWriteEnabled: false,
     marketplaceWrites: 0, ebayAdsWrites: 0, officialApiCalls, officialCandidatesExamined, officialReadBlocker, codexRuntimeDependency: false }
 }

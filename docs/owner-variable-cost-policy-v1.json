@@ -10,7 +10,7 @@
   "OTHER_PROVEN_VARIABLE_COSTS": 0,
   "currency": "USD",
   "ZERO_IS_EXPLICIT_POLICY_NOT_ASSUMPTION": true,
-  "scope": "CURRENTLY_OPERATED_SELLER_OS_LISTINGS",
+  "scope": "CURRENT_AND_FUTURE_OPERATED_SELLER_OS_LISTINGS_IN_EXACT_ACCOUNT",
   "observedCurrentItemIds": [
     "366574069492",
     "366581718546",
@@ -37,12 +37,12 @@
     "366650121192"
   ],
   "requiresAll": [
-    "PRODUCT_COST_PROVEN",
-    "SHIPPING_COST_PROVEN",
-    "EBAY_FEES_PROVEN"
+    "EXACT_ACCOUNT_LISTING_BINDING",
+    "NO_NEW_MATERIAL_VARIABLE_COST_EVIDENCE"
   ],
   "overheadAllocated": false,
   "futureMaterialVariableCostRequires": "EXPLICIT_NEW_COMPONENT_AND_POLICY_VERSION_AND_RECALCULATION",
   "listingEconomicEvidenceWritten": false,
-  "activationStatus": "RECORDED_CONDITIONAL_POLICY_NO_QUALIFIED_CANARY_YET"
+  "activationStatus": "RECORDED_CONDITIONAL_POLICY_NO_QUALIFIED_CANARY_YET",
+  "scopeClarification": "SELLER_OS_MAYEL_ADS_ECONOMICS_AND_SAFE_RATE_FINAL_V1: reuse saved policy automatically for new listings; any explicit material component overrides this policy."
 }

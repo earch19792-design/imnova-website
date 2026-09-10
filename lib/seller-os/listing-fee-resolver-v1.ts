@@ -1,3 +1,4 @@
+import { preSaleFeeBreakdownV1 } from "./pre-sale-fee-breakdown-v1"
 import { consumeListingFeeAuthorityV1, LISTING_FEE_AUTHORITY_V1,
   REQUIRED_FEE_COMPONENTS_V1 } from "./listing-fee-authority-v1"
 
@@ -134,6 +135,7 @@ export function resolveListingPreSaleFeesV1(input: { accountKey: string; itemId:
       context, policy, basis, ...records(bundle.adjustments),
     ].flatMap(e => [Date.parse(String(e.freshUntil)), ...(e.effectiveUntil ? [Date.parse(String(e.effectiveUntil))] : [])])
       .filter(Number.isFinite), now + 86400000)).toISOString(),
+    taxTreatment: preSaleFeeBreakdownV1({policy, knownBasis: basisValid ? Number(basis.itemPrice) + Number(basis.buyerShipping) + Number(basis.handling) : null, fullBasis: basisValid ? Number(basis.amount) : null, boundProven: basis.method === "PROVEN_UPPER_BOUND"}),
     amount: cents(components.reduce((s, c) => s + Number(c.amount), 0)), components,
     feeBasis: { status: "PROVEN", reference: basis.reference, amount: basis.amount, salePrice: input.salePrice,
       method: basis.method, scenarioReference: basis.scenarioReference,

@@ -1,3 +1,5 @@
+import adsContract from "../../docs/ebay-ads-revenue-official-contract-v1.json" with { type: "json" }
+import { safeAdCapacityV1 } from "./ad-rate-economics-v1"
 import type { CommercialListingReadModel, Observation } from "../ebay/commercial-monitor-readonly-contract"
 
 export const LISTING_TREATMENT_ENGINE_V1 = "SELLER_OS_ASSISTANT_LISTING_TREATMENT_ENGINE_V1"
@@ -10,7 +12,7 @@ export const METRIC_WINDOWS = ["24H", "7D", "30D"] as const
 export type MetricWindow = typeof METRIC_WINDOWS[number]
 export const FRIENDLY_ACTIONS = ["✨ Mejorar listings", "🚀 Impulsar ventas", "📦 Publicar", "📊 Oportunidades"] as const
 export type Treatment = "SCALE" | "OPTIMIZE" | "TEST" | "RESTOCK" | "HOLD" | "PROFIT_PROTECT"
-export const TREATMENT_LABELS: Record<Treatment, string> = { SCALE: "🚀 Impulsar", OPTIMIZE: "✨ Mejorar", TEST: "🧪 Obtener más datos", RESTOCK: "📦 Reponer", HOLD: "⏸ Esperar", PROFIT_PROTECT: "💰 Proteger margen" }
+export const TREATMENT_LABELS: Record<Treatment, string> = { SCALE: "🚀 Impulsar", OPTIMIZE: "✨ Mejorar primero", TEST: "🧪 Obtener más datos", RESTOCK: "📦 Reponer", HOLD: "⏸ Esperar", PROFIT_PROTECT: "💰 Proteger margen" }
 export type ProvenAmount = { value: number | null; reference: string | null; fresh: boolean }
 export type Economics = Record<"salePrice" | "productCost" | "shippingCost" | "ebayFees" | "otherCosts" | "adFeeBasis", ProvenAmount>
 export type PromotionPolicy = { mode: "OFF" | "MANUAL" | "AUTO"; minRate: number; maxRate: number; minProfit: number; minMargin: number;
@@ -66,7 +68,7 @@ export function listingEconomicsV1(e: Economics) {
     profitBeforeAds, marginBeforeAds: profitBeforeAds !== null && e.salePrice.value! > 0 ? profitBeforeAds / e.salePrice.value! * 100 : null }
 }
 
-export function promotionProfitGuardV1(e: Economics, policy: PromotionPolicy) {
+export function promotionProfitGuardV1(e: Economics, policy: PromotionPolicy, mayelRecommendedRate = policy.maxRate) {
   validatePromotionPolicyV1(policy)
   const economics = listingEconomicsV1(e)
   const base = { contractVersion: PROMOTION_PROFIT_GUARD_V1, ...economics,
@@ -77,13 +79,13 @@ export function promotionProfitGuardV1(e: Economics, policy: PromotionPolicy) {
     return { ...base, status: "BLOCKED_EVIDENCE" as const }
   const floor = Math.max(policy.minProfit, e.salePrice.value! * policy.minMargin / 100)
   const room = economics.profitBeforeAds! - floor
-  const maxSafeAdRate = Math.max(0, Math.min(100, down(room / e.adFeeBasis.value! * 100)))
-  const rate = Math.min(policy.maxRate, maxSafeAdRate)
+  const maxSafeAdRate = safeAdCapacityV1(e, policy).maxSafeAdRatePct!
+  const rate = Math.floor(Math.min(mayelRecommendedRate, policy.maxRate, maxSafeAdRate) * 10 + 1e-9) / 10
   // Round cost upwards and recheck the actual cents charged; never round a rate up.
   const projectedAdCost = Math.ceil((e.adFeeBasis.value! * rate / 100 - 1e-9) * 100) / 100
   const projectedProfitAfterAds = cents(economics.profitBeforeAds! - projectedAdCost)
   const projectedMarginAfterAds = projectedProfitAfterAds / e.salePrice.value! * 100
-  const blocked = room < 0 || maxSafeAdRate < policy.minRate || projectedProfitAfterAds + 1e-9 < policy.minProfit || projectedMarginAfterAds + 1e-9 < policy.minMargin
+  const blocked = !Number.isFinite(rate) || rate < policy.minRate || room < 0 || maxSafeAdRate < policy.minRate || projectedProfitAfterAds + 1e-9 < policy.minProfit || projectedMarginAfterAds + 1e-9 < policy.minMargin
   return { ...base, maxSafeAdRate, recommendedAdRate: blocked ? null : rate,
     projectedAdCost: blocked ? null : projectedAdCost,
     projectedProfitAfterAds: blocked ? null : projectedProfitAfterAds,
@@ -130,16 +132,19 @@ export type FunnelEvidence = { itemId: string; window: MetricWindow;
 export function diagnoseListingTreatmentV1(input: { itemId: string; window: MetricWindow;
   comparison: FunnelEvidence | null; economics: Economics; policy: PromotionPolicy;
   stock: "LOW" | "AVAILABLE" | "UNKNOWN"; stockReference: string | null;
-  protected: boolean; qualityReferences: string[]; keywordReferences: string[] }) {
+  protected: boolean; qualityNeedsImprovement?: boolean; qualityReferences: string[]; keywordReferences: string[] }) {
   const e = listingEconomicsV1(input.economics)
+  const capacity = safeAdCapacityV1(input.economics, input.policy)
   const c = input.comparison
   const enough = c?.itemId === input.itemId && c.window === input.window && c.sufficient && c.fresh && c.reference && c.sampleRuleReference
   let treatment: Treatment = "TEST", why = "Faltan datos comparables para decidir con confianza.", primaryMetricSignal = "INSUFFICIENT_EVIDENCE"
   let priorities: string[] = []
   if (input.protected) { treatment = "HOLD"; why = "Hay una prueba protegida en curso. Espera su revisión."; primaryMetricSignal = "EXPERIMENT_PROTECTED" }
   else if (input.stock === "LOW" && input.stockReference) { treatment = "RESTOCK"; why = "El stock comprobado no permite impulsar ventas."; primaryMetricSignal = "LOW_INVENTORY" }
-  else if (!e.economicsUnproven && (e.profitBeforeAds! < input.policy.minProfit || e.marginBeforeAds! < input.policy.minMargin)) {
+  else if (!e.economicsUnproven && (e.profitBeforeAds! < input.policy.minProfit || e.marginBeforeAds! < input.policy.minMargin || capacity.proven && capacity.maxSafeAdRatePct! < input.policy.minRate)) {
     treatment = "PROFIT_PROTECT"; why = "El beneficio actual no alcanza los límites de tu política."; primaryMetricSignal = "INSUFFICIENT_MARGIN"
+  } else if (input.qualityNeedsImprovement === true && input.qualityReferences.length) {
+    treatment = "OPTIMIZE"; why = "Listing Quality tiene una mejora pendiente respaldada por evidencia."; primaryMetricSignal = "QUALITY_IMPROVEMENT_REQUIRED"
   } else if (enough) {
     if (["HEALTHY", "HIGH"].includes(c!.traffic) && c!.ctr === "LOW") {
       treatment = "OPTIMIZE"; primaryMetricSignal = "TRAFFIC_WITH_LOW_CTR"; why = "Recibe exposición, pero consigue menos interés que su referencia.";
@@ -153,11 +158,12 @@ export function diagnoseListingTreatmentV1(input: { itemId: string; window: Metr
     }
   }
   const actions: Record<Treatment, string> = { SCALE: "Simular promoción", OPTIMIZE: "Revisar la mejora propuesta", TEST: "Reunir evidencia comparable", RESTOCK: "Reponer antes de impulsar", HOLD: "Esperar la revisión", PROFIT_PROTECT: "Revisar costes y precio" }
-  const economicSimulation = promotionProfitGuardV1(input.economics, input.policy)
-  // Keep the unit-economics simulation visible, but never present a cold-start
-  // listing as ready for promotion solely because its costs are complete.
-  const promotion = treatment === "TEST" ? { ...economicSimulation, status: "BLOCKED_EVIDENCE" as const,
-    economicSimulationStatus: economicSimulation.status, blocker: "METRIC_EVIDENCE_REQUIRED" } : economicSimulation
+  const economicSimulation = promotionProfitGuardV1(input.economics, input.policy, Math.ceil(Math.max(adsContract.adRate.apiMinPct, input.policy.minRate) * 10 - 1e-9) / 10)
+  if (treatment === "TEST" && economicSimulation.status === "SIMULATION_READY") why = "Aún faltan métricas comparables. Mayel propone una prueba limitada dentro de tu política y del margen comprobado."
+  // Cold start is a legitimate technical TEST; economics remains independently
+  // proven or pending. Every actual spend still requires subsequent OWNER approval.
+  const promotion = { ...economicSimulation, economicSimulationStatus: economicSimulation.status,
+    metricsStatus: enough ? "COMPARABLE_SAMPLE" : "INSUFFICIENT_METRICS", ownerApprovalRequired: true }
   return { contractVersion: LISTING_TREATMENT_ENGINE_V1, itemId: input.itemId, treatment,
     label: TREATMENT_LABELS[treatment], why, primaryMetricSignal, diagnosticPriorities: priorities,
     supportingEvidence: [...(enough ? [c!.reference, c!.sampleRuleReference] : []), ...(input.stockReference ? [input.stockReference] : []),
@@ -173,7 +179,8 @@ export function promotionPortfolioPreviewV1(rows: ReturnType<typeof diagnoseList
   const ready = rows.filter(r => r.treatment === "SCALE" && r.promotion.status === "SIMULATION_READY")
   return { contractVersion: PROMOTION_CONTROL_V1, selected: rows.length, ready: ready.length, optimizeFirst: rows.filter(r => r.treatment === "OPTIMIZE").length,
     blockedMargin: rows.filter(r => r.treatment === "PROFIT_PROTECT" || r.promotion.status === "BLOCKED_MARGIN").length,
-    blockedEvidence: rows.filter(r => r.treatment === "TEST" || r.promotion.status === "BLOCKED_EVIDENCE").length,
+    testCandidates: rows.filter(r => r.treatment === "TEST" && r.promotion.status === "SIMULATION_READY").length,
+    blockedEvidence: rows.filter(r => r.promotion.status === "BLOCKED_EVIDENCE").length,
     blockedStock: rows.filter(r => r.treatment === "RESTOCK").length,
     projectedAdCost: ready.length ? cents(ready.reduce((sum, r) => sum + r.promotion.projectedAdCost!, 0)) : null,
     projectedProfitAfterAds: ready.length ? cents(ready.reduce((sum, r) => sum + r.promotion.projectedProfitAfterAds!, 0)) : null,
