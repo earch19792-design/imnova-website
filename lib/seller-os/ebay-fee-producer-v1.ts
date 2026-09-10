@@ -1,3 +1,4 @@
+import { classifyFeeComponentsV1 } from "./fee-component-applicability-v1"
 import { preSaleFeeBreakdownV1 } from "./pre-sale-fee-breakdown-v1"
 import { SELLING_FEE_TAX_SOURCE } from "../ebay/ebay-selling-fee-tax-policy-v1"
 import contingentPolicy from "../../docs/ebay-official-contingent-fee-policy-v1.json" with { type: "json" }
@@ -114,7 +115,10 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     policyObservedAt:str(policy.observedAt),sourceEffectiveDate:policy.sourceEffectiveDate??null,
     sourceObservedAt:str(c.observedAt), feeTaxPolicy: taxPolicy,
     automaticFeeProducer: true, codexRuntimeDependency: false,
-    taxTreatment, normalPreSaleCategoryFee: taxTreatment.normalCategoryFeeBeforeBuyerTax,
+    taxTreatment, componentApplicability: classifyFeeComponentsV1({ components: state === "PROVEN_PRE_SALE" ? resolved?.authority?.components ?? components : components,
+      normalCategoryFee: taxTreatment.normalCategoryFeeBeforeBuyerTax, contingentFeeOnTax: taxTreatment.contingentFeeOnTax,
+      sourceFresh: sourceFresh && state !== "STALE" && state !== "CONFLICT", completeBoundProven: state === "PROVEN_PRE_SALE" }),
+    normalPreSaleCategoryFee: taxTreatment.normalCategoryFeeBeforeBuyerTax,
     categorySpecificFeeResolution: true, globalFlatFeeRate: false,
     buyerTaxTreatedAsSellerCost: false, buyerTaxTreatedAsSellerRevenue: false, feeOnTaxModeledSeparately: true,
     state,economicsState:state==="PROVEN_PRE_SALE"?"ECONOMICS_PROVEN":components.some(c=>c.status==="PENDING_AUTHORITY") ? "PROMOTION_BLOCKED_EVIDENCE" : "PENDING_ORDER_CONTEXT",

@@ -29,6 +29,13 @@
       "roots": ["Home & Garden", "Health & Beauty", "Pet Supplies", "Computers/Tablets & Networking"],
       "tierMethod": "MARGINAL",
       "tiers": [{"upTo": 7500, "ratePct": 13.6}, {"upTo": null, "ratePct": 2.35}]
+    },
+    {
+      "id": "BUSINESS_OFFICE_GENERAL",
+      "root": "Business & Industrial",
+      "requiredBranch": "Office",
+      "tierMethod": "MARGINAL",
+      "tiers": [{"upTo": 7500, "ratePct": 13.6}, {"upTo": null, "ratePct": 2.35}]
     }
   ],
   "unsupportedCategoryBehavior": "NEEDS_EVIDENCE_NO_DEFAULT_RATE",

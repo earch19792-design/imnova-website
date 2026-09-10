@@ -38,6 +38,7 @@ type HomeAuthority = Readonly<{
   productResearchVersion: string | null
   productResearchPlan: string | null
   lunaCompactState: SellerOsCompactCapabilityStateV1
+  lunaCaptureStatus: "CAPTURA DISPONIBLE" | "LIMITADA TEMPORALMENTE"
   lunaCause: string
   lunaConnection: "CONECTADA" | "DESCONECTADA" | "DESCONOCIDA"
   lunaObservedAt: string | null
@@ -76,6 +77,7 @@ const EMPTY_AUTHORITY: HomeAuthority = Object.freeze({
   productResearchVersion: null,
   productResearchPlan: null,
   lunaCompactState: "UNKNOWN",
+  lunaCaptureStatus: "LIMITADA TEMPORALMENTE",
   lunaCause: "OPERATIONAL_SNAPSHOT_NOT_LOADED",
   lunaConnection: "DESCONOCIDA",
   lunaObservedAt: null,
@@ -214,7 +216,8 @@ export function SellerOsHomeDashboardV1() {
           "string" ? researchCapability.queuePlanState : null,
         lunaCompactState: sellerOsCompactCapabilityStateV1(
           lunaCapability.compactState),
-        lunaCause: String(lunaCapability.presentationCause
+        lunaCaptureStatus: lunaCapability.captureCapabilityProven === true ? "CAPTURA DISPONIBLE" : "LIMITADA TEMPORALMENTE",
+        lunaCause: String(lunaCapability.captureReason ?? lunaCapability.presentationCause
           ?? "LUNA_PRESENTATION_CAUSE_UNAVAILABLE"),
         lunaConnection: connectionState(lunaCapability.connectionState),
         lunaObservedAt: safeIso(lunaCapability.capabilityObservedAt),
@@ -390,6 +393,7 @@ export function SellerOsHomeDashboardV1() {
         <dl className="mt-4 space-y-2">
           <ExtensionCapability label="Luna Shipping Capture"
             connection={authority.lunaConnection} state={lunaState}
+            captureStatus={authority.lunaCaptureStatus}
             observedAt={authority.lunaObservedAt}
             version={authority.lunaVersion}
             queue={authority.lunaPending === null ? "DESCONOCIDA"
@@ -469,14 +473,16 @@ export function SellerOsHomeDashboardV1() {
 function ExtensionCapability(props: Readonly<{ label: string;
   connection: "CONECTADA" | "DESCONECTADA" | "DESCONOCIDA";
   state: SellerOsCompactCapabilityStateV1; observedAt: string | null;
-  version: string | null; queue: string; cause: string }>) {
+  version: string | null; queue: string; cause: string;
+  captureStatus?: "CAPTURA DISPONIBLE" | "LIMITADA TEMPORALMENTE" }>) {
   return <div className="rounded-xl bg-black/20 px-3 py-2.5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <dt className="text-sm font-black">{props.label}</dt>
-      <dd className="flex items-center gap-2"><span className="text-[10px] font-black tracking-wide text-white/65">{props.connection}</span><CompactStatus state={props.state} /></dd>
+      <dd className="flex items-center gap-2"><span className="text-[10px] font-black tracking-wide text-white/65">{props.connection}</span>{props.captureStatus ? <span className="text-[10px] font-black tracking-wide text-amber-100">{props.captureStatus}</span> : <CompactStatus state={props.state} />}</dd>
     </div>
     <p className="mt-1 text-[11px] text-white/45">Handshake: {ownerTime(props.observedAt)} · versión: {props.version ?? "—"} · cola/plan: {props.queue}</p>
-    <p className="mt-1 text-[10px] text-white/30">{props.cause}</p>
+    {props.captureStatus && <p className="mt-1 text-xs text-white/65">{props.captureStatus === "CAPTURA DISPONIBLE" ? "Captura reciente comprobada. Cada listing requiere su cotización vigente." : "La conexión no confirma una captura. El shipping pendiente conserva su trabajo guardado."}</p>}
+    <details className="mt-1 text-[10px] text-white/40"><summary>Ver detalles</summary><p>{props.cause}</p></details>
   </div>
 }
 

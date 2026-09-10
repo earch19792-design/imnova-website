@@ -40,6 +40,7 @@ export function MayelAdsActivationPreview({ itemIds }: { itemIds: string[] }) {
           ["Techo Ads seguro", pct(row.preview.MAX_SAFE_AD_RATE_PCT)], ["Ads recomendada", pct(row.preview.PROPOSED_AD_RATE_PCT)],
           ["Ganancia después Ads", money(row.preview.PROJECTED_PROFIT_AFTER_ADS)],
         ].map(([label, value]) => <div key={label}><dt className="text-sm">{label}</dt><dd className="font-semibold">{value}</dd></div>)}</dl>
+        <p className="mt-2 text-sm">{row.shippingStatus === "SHIPPING_PROVEN" ? "Shipping vigente y comprobado para este listing." : "Shipping pendiente de una cotización vigente. La conexión con Luna no confirma el costo."}</p>
         <p className="mt-2 text-sm">{row.preview.WHY_MAYEL_RECOMMENDS_PROMOTION}</p>
         {!row.ownerPolicyValid && <p>Revisa las fechas y los límites de tu política de publicidad.</p>}
         <details><summary>Ver detalles</summary><pre className="overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ itemId:row.itemId, blockers:row.blockers, preview:row.preview, feeEstimateMode:row.feeEstimateMode, metricsStatus:row.metricsStatus, simulations:row.simulations },null,2)}</pre></details>

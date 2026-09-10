@@ -118,6 +118,8 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
       status:base.economicsUnproven ? "WAITING_FOR_DATA" : "ECONOMICS_PROVEN", reevaluation:"ON_EXISTING_RUNTIME_READ",
       newListingEconomicsAutoReady:true, codexRuntimeDependency:false },
     shippingAuthority: raw.shippingAuthority ?? null,
+    shippingStatus: e.shippingCost.fresh && e.shippingCost.value !== null && e.shippingCost.reference
+      ? "SHIPPING_PROVEN" : "WAITING_FOR_CURRENT_SHIPPING_AUTHORITY",
     otherVariableCostPolicyPresent: resolved.otherVariableCostPolicyPresent,
     economicsProven: !base.economicsUnproven && feeProven, ebayFeeAuthorityPass: feeProven,
     basePreSaleFeeProven: authority.basePreSaleFeeProven === true && fresh(authority,input.now) &&

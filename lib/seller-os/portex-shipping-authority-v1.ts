@@ -14,7 +14,7 @@ export function resolvePortexShippingAuthorityV1(input: { accountKey: string; it
     q.linkage_id === l.linkage_id && q.luna_product_id === l.luna_product_id && q.luna_variant_id === l.luna_variant_id &&
     q.source_sku === l.luna_sku && typeof q.luna_product_id === "string" && typeof q.luna_variant_id === "string" && typeof q.source_sku === "string" &&
     q.destination_fingerprint === input.destinationFingerprint && q.shipping_currency === "USD" && q.supplier_currency === "USD" &&
-    q.shipping_cost !== null && q.shipping_cost !== undefined && Number.isFinite(Number(q.shipping_cost)) && Number(q.shipping_cost) >= 0 &&
+    (typeof q.shipping_cost === "number" || typeof q.shipping_cost === "string" && /^\d+(?:\.\d+)?$/.test(q.shipping_cost)) && Number.isFinite(Number(q.shipping_cost)) && Number(q.shipping_cost) >= 0 &&
     q.purchase_performed === false && q.payment_performed === false && q.raw_address_persisted === false && q.credentials_persisted === false &&
     typeof q.evidence_id === "string" && typeof q.source_evidence_digest === "string" && /^sha256:[a-f0-9]{64}$/.test(q.source_evidence_digest) &&
     ["LUNA_AUTHENTICATED_HTTP_CART_SHIPPING", "LUNA_PROTECTED_BROWSER_CHECKOUT_SHIPPING"].includes(String(q.source_authority))
@@ -28,7 +28,7 @@ export function resolvePortexShippingAuthorityV1(input: { accountKey: string; it
 
 /** Projection of existing immutable Portex quotes: no supplier calls, writes,
  * timestamp renewal or fallback to an older quote after a newer invalid one. */
-export async function attachPortexShippingEvidenceV1(input: { supabase: SupabaseClient; accountKey: string; rawRows: unknown[]; now: Date }) {
+export async function attachPortexShippingEvidenceV1(input: { supabase: SupabaseClient; accountKey: string; rawRows: unknown[]; now: Date }): Promise<R[]> {
   if (!input.rawRows.length || input.rawRows.length > 20) throw Error("PORTEX_BOUNDED_SCOPE_REQUIRED")
   const rawRows = input.rawRows.map(record), ids = rawRows.map(r => String(r.itemId))
   const [links, quotes] = await Promise.all([

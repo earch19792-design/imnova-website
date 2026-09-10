@@ -21,3 +21,23 @@ The implementation does not claim that tests prove a real listing's economics. A
 Source: [eBay selling fees](https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822), current page checked September 10. The existing certified Ads contract was reused. Its API minimum is representation authority, not the economic ceiling. Historical actual fees never substitute for current pre-sale authority.
 
 Validation and deployed SHA are recorded in the external closeout receipt. Production app, images, Keyword V2.1 and Quality workflows remain unchanged.
+
+## WAITING_FOR_DATA exit follow-up
+
+The bounded recovery selected item 366643555454 (ScanReader Pen) from the same 23 candidates. Its official current price is USD 56.99; the current supplier evidence showed USD 24.35. No shipping amount was substituted from the expired USD 6.99 quote. One normal Portex recovery returned HTTP 429 at LUNA_CART_ADD, no Retry-After, followed by LUNA_PROTECTED_BROWSER_UNAVAILABLE. No second attempt, eligibility read, Ads write or publication followed.
+
+The category reader recognized the official path Business & Industrial:Office:Office Equipment:Electronic Dictionaries & Translators (94861), but its supported fee map omitted Office. The common binding now supports that branch; the current public document parser excludes it if the Business exceptions cannot be verified or introduce Office. Industrial special categories remain outside this general rule. The existing fee context preserves secondaryCategoryId; absence is never inferred.
+
+Independent applicability is projected even while buyer tax is unresolved: current Above Standard status, US regulatory scope and Florida seller fee-tax scope do not remain universally pending. International buyer registration, current payout currency, exact-category service metrics and a monetary fee-on-tax bound require their own evidence. Domestic delivery alone does not exclude the international fee: eBay also considers buyer registration country. Invoice currency is not silently substituted for payout currency. No missing component becomes zero.
+
+The connected worker heartbeat is separate from successful capture evidence. The accessed browser did not expose the connected shipping extension; the last durable shipping trace preceded this recovery. Consequently the physical economic exit is not certified, despite passing directed arithmetic and guard tests. A completed Portex receipt and complete applicable fee evidence remain required.
+
+## Portex authority recovery (read-only)
+
+The exact 5454 durable quote is USD 6.99, captured 2026-09-08T22:51:48.077Z, expired 2026-09-09T04:51:48.077Z. Product 9220840456416, variant 48809652158688, supplier SKU, canonical US destination and EBAY_US/account linkage match. The same product's profitability frontier contains an older September 1 capture, not a current alternative. No lifetime was extended.
+
+The runtime has authenticated HTTP cart acquisition and protected checkout capture. There is no independent non-cart shipping refresh in the existing Portex authority path. HTTP returned 429 in the preceding work; its protected-browser fallback was unavailable. The recovery work performs zero Luna requests and zero captures. It does not claim that Portex always requires a browser: the browser is the fallback while HTTP is unavailable.
+
+Connection and capture capability now have separate projections. CONECTADA is derived only from the worker heartbeat. CAPTURA DISPONIBLE requires a current complete successful same-trace capture, destination match and durable readback, plus connection. Missing, expired, future, cross-trace or failed capture evidence displays LIMITADA TEMPORALMENTE. Mayel separately reports whether each listing has current shipping; a heartbeat never proves its cost. All diagnostics remain under Ver detalles. No poller or worker was added.
+
+The 5454 job retains its existing stale state and completed legacy recovery marker; no historical row was deleted or reset. That marker is excluded by normal economic shipping discovery and remains a separate resume limitation. No automatic physical exit is certified here. Ads eligibility is not called while economics remains unproven.

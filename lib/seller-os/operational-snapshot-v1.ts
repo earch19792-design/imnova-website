@@ -1,3 +1,4 @@
+import { projectLunaShippingCaptureCapabilityV1 } from "./luna-shipping-capture-capability-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getProductResearchBrowserCaptureStatus } from
@@ -290,7 +291,9 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   const lunaEvents = lunaTrace.available ? lunaTrace.value.events : []
   const lunaReceipt = browserWorkers.available
     ? browserWorkers.value.byId.get("LUNA_SHIPPING") : null
-  const lunaCapabilityProven = lunaReceipt?.fresh === true
+  const lunaCapture = projectLunaShippingCaptureCapabilityV1({ connected: lunaReceipt?.fresh === true,
+    traceAvailable: lunaTrace.available, events: lunaEvents, now })
+  const lunaCapabilityProven = lunaCapture.captureCapable
   const eligiblePendingJobCount = lunaJobs.available
     ? lunaJobs.value.length : null
   const lunaState: SellerOsOperationalStateV1 =
@@ -420,7 +423,12 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
         connectionState: lunaReceipt?.fresh
           ? "CONECTADA" as const : "DESCONOCIDA" as const,
         authorityAvailable: browserWorkers.available && lunaJobs.available,
-        connected: lunaCapabilityProven,
+        connected: lunaReceipt?.fresh === true,
+        connectionProven: lunaReceipt?.fresh === true,
+        captureCapabilityProven: lunaCapture.captureCapable,
+        captureStatus: lunaCapture.label,
+        captureReason: lunaCapture.reason,
+        connectionAndCapabilitySeparated: true,
         capabilityProven: lunaCapabilityProven,
         capabilityFresh: lunaReceipt?.fresh === true,
         capabilityObservedAt: lunaReceipt?.observedAt ?? null,

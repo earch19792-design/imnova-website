@@ -17,6 +17,14 @@ export function parseCurrentOfficialFeePolicyV1(html: string, now: Date): typeof
     const found = rows.filter(r => r.length >= 2 && match(r[0]))
     return found.length === 1 ? found[0].at(-1)! : ""
   }
+  // Office belongs to Most categories; validate the exceptional Business
+  // branches before extending the current-document authority to that branch.
+  const businessExceptions = rows.filter(r => r[0]?.startsWith("Select Business & Industrial categories:"))
+  const businessOfficeSupported = businessExceptions.length === 1 &&
+      businessExceptions[0][0].includes("Heavy Equipment") &&
+      businessExceptions[0][0].includes("Commercial Printing Presses") &&
+      businessExceptions[0][0].includes("Food Trucks, Trailers & Carts") &&
+      !businessExceptions[0][0].includes("Office")
   const general = one(s => s.startsWith("Most categories"))
     .match(/^([\d.]+)% on total amount of the sale up to \$([\d,.]+) calculated per item ([\d.]+)% on the portion of the sale over \$([\d,.]+)$/)
   const jewelry = one(s => s === "Jewelry & Watches (except Watches, Parts & Accessories)")
@@ -29,6 +37,7 @@ export function parseCurrentOfficialFeePolicyV1(html: string, now: Date): typeof
   const values = [general, jewelry, watches, fixed].flatMap(m => m.slice(1).map(n))
   if (values.some(v => !Number.isFinite(v) || v < 0)) return null
   const data = structuredClone(template)
+  if (!businessOfficeSupported) data.rules = data.rules.filter(r => r.id !== "BUSINESS_OFFICE_GENERAL")
   data.perOrder = { threshold: n(fixed[1]), atOrBelow: n(fixed[2]), above: n(fixed[4]) }
   for (const rule of data.rules) {
     rule.tiers = rule.id === "JEWELRY_EXCLUDING_WATCHES" ? [{ upTo: n(jewelry[2]), ratePct: n(jewelry[1]) }, { upTo: null, ratePct: n(jewelry[3]) }] :

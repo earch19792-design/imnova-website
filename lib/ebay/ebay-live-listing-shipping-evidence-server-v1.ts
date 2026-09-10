@@ -179,8 +179,8 @@ export async function captureLiveListingShippingEvidenceV1(input: Readonly<{
     row.destination_fingerprint === SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1.profileDigest &&
     row.supplier_currency === "USD" && row.shipping_currency === "USD" &&
     row.purchase_performed === false && row.payment_performed === false &&
-    row.shipping_cost != null && Number.isFinite(Number(row.shipping_cost)) && Number(row.shipping_cost) >= 0 &&
-    row.supplier_subtotal != null && Number.isFinite(Number(row.supplier_subtotal)) && Number(row.supplier_subtotal) >= 0 &&
+    (typeof row.shipping_cost === "number" || typeof row.shipping_cost === "string" && /^\d+(?:\.\d+)?$/.test(row.shipping_cost)) && Number.isFinite(Number(row.shipping_cost)) && Number(row.shipping_cost) >= 0 &&
+    (typeof row.supplier_subtotal === "number" || typeof row.supplier_subtotal === "string" && /^\d+(?:\.\d+)?$/.test(row.supplier_subtotal)) && Number.isFinite(Number(row.supplier_subtotal)) && Number(row.supplier_subtotal) >= 0 &&
     ["LUNA_AUTHENTICATED_HTTP_CART_SHIPPING", "LUNA_PROTECTED_BROWSER_CHECKOUT_SHIPPING"].includes(row.source_authority)) {
     return persistLiveListingShippingQuoteV1({ ...input, resolved, lunaReaderExecuted: false, quote: {
       status: "AVAILABLE", subtotalUsd: Number(row.supplier_subtotal), shippingAmountUsd: Number(row.shipping_cost),
