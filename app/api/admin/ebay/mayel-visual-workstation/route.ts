@@ -1,3 +1,5 @@
+import { saveMayelVisualAssetIntentV1 } from "@/lib/ebay/ebay-mayel-visual-workstation-server-v1"
+import type { VisualIntentV1 } from "@/lib/seller-os/mayel-visual-intent-v1"
 import { refreshMayelStationGalleryV1 } from "../../../../../lib/ebay/mayel-current-gallery-server-v1"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -666,6 +668,15 @@ export async function POST(request: Request) {
       visualEligibility: result.canaryAvailable ? "ELIGIBLE" :
         "BLOCKED_IDENTITY", marketplaceWrites: 0 })
     }
+    if (action === "SAVE_ASSET_INTENT") {
+      const taskId = uuid(body?.visualTaskId), assetId = uuid(body?.assetId)
+      if (!body || !taskId || !assetId || typeof body.visualIntent !== "string" || !["REPLACE_MAIN", "ADD_SECONDARY"].includes(body.visualIntent) ||
+          typeof body.targetImagePosition !== "number" || !Number.isInteger(body.targetImagePosition)) return json({ success: false, error: "VISUAL_INTENT_REQUIRED" }, 400)
+      const result = await saveMayelVisualAssetIntentV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+        actorUserId: auth.userId, owner: ownerRole, taskId, expectedVisualManifestDigest: typeof body.expectedVisualManifestDigest === "string" ? body.expectedVisualManifestDigest : null,
+        intent: { assetId, visualIntent: body.visualIntent as VisualIntentV1["visualIntent"], targetImagePosition: body.targetImagePosition } })
+      return json({ success: true, ...result, ownerApprovalRequired: true })
+    }
     if (action === "SAVE_GALLERY_SLOTS") {
       const taskId = uuid(body?.visualTaskId)
       const slotReplacements = Array.isArray(body?.slotReplacements) ? body.slotReplacements : []
@@ -728,10 +739,13 @@ export async function POST(request: Request) {
         body?.decision === "REJECT" ? body.decision : null
       if (!taskId || !assetId || !decision) return json({ success: false,
         error: "MAYEL_VISUAL_REVIEW_CONTRACT_INVALID" }, 400)
+      if (decision === "APPROVE" && (typeof body?.visualIntent !== "string" || !["REPLACE_MAIN", "ADD_SECONDARY"].includes(body.visualIntent) ||
+          typeof body.targetImagePosition !== "number" || !Number.isInteger(body.targetImagePosition))) return json({ success: false, error: "VISUAL_INTENT_REQUIRED" }, 400)
       const result = await reviewMayelVisualOutputV1({
         supabase: getSupabaseAdminClient(), accountKey: accountKey(),
         actorUserId: auth.userId, taskId, assetId, decision,
         humanQa: body?.humanQa,
+        visualIntent: decision === "APPROVE" ? { assetId, visualIntent: body?.visualIntent as VisualIntentV1["visualIntent"], targetImagePosition: body?.targetImagePosition as number } : undefined,
         rejectionReason: typeof body?.rejectionReason === "string"
           ? body.rejectionReason : null })
       return json({ success: true, outcome: decision === "APPROVE"

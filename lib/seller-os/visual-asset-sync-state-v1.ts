@@ -39,7 +39,7 @@ export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Reco
   const state = attention || asset.status === "rejected" ? "REQUIRES_ATTENTION" :
     !approved ? record(asset.qa_result).automaticStatus === "PASSED" ? "OWNER_APPROVAL_REQUIRED" : "DRAFT" :
     synced ? "SYNCED" : active ? active.state === "UNKNOWN_COMMIT" ? "OFFICIAL_READBACK_REQUIRED" : String(active.state) : "APPROVED_FOR_EBAY_SYNC"
-  return { state, approvedForEbaySync: approved, generation: visualAssetGenerationV1(asset),
+  return { state, officialReadback: synced, savedToSellerOS: asset.status === "approved" && typeof asset.public_url === "string" && /^https:\/\//.test(asset.public_url), approvedForEbaySync: approved, generation: visualAssetGenerationV1(asset),
     idempotencyKey: visualAssetSyncKeyV1(asset), creativeSlot: asset.mayel_output_role,
     qaStatus: record(asset.qa_result).automaticStatus ?? "UNPROVEN", ownerApproval: asset.owner_sync_approval ?? null,
     sourceProvenance: { references: asset.source_image_references, sourceImageSetDigest: asset.source_image_set_digest,

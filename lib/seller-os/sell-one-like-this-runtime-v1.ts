@@ -1,3 +1,4 @@
+import { listingPipelineConsistencyV1 } from "./listing-pipeline-consistency-v1"
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readKeywordDecisionHandoffV1, keywordRecord as record, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
@@ -14,7 +15,7 @@ const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: bool
 // Explicit one-package reads; no monitor scans, imports from arbitrary URLs,
 // capture initiation or marketplace clients. HTTP callers supply identities only.
 export async function readSellOneLikeThisV1(input: {
-  supabase: SupabaseClient; accountKey: string; packageId: string; referenceItemId: string; now?: Date;
+  supabase: SupabaseClient; accountKey: string; packageId: string; referenceItemId: string; now?: Date; existingPackagePreview?: unknown;
 }) {
   if (!UUID.test(input.packageId) || !/^\d{9,19}$/.test(input.referenceItemId)) throw Error("REFERENCE_INPUT_INVALID")
   const db = input.supabase, now = input.now ?? new Date()
@@ -37,7 +38,7 @@ export async function readSellOneLikeThisV1(input: {
   const feeRead = readEbayFeeHandoffV1({ supabase: db, accountKey: input.accountKey, itemId: null,
     packageId: input.packageId, sku: String(own.supplier_sku), now, readBudget: feeBudget })
     .catch(() => null).finally(() => feeBudget.close())
-  const [ref, frontier, fee] = await Promise.all([
+  const [ref, frontier, fee, policies] = await Promise.all([
     typeof planId === "string" && UUID.test(planId) ? bounded(db.from("seller_os_product_research_canonical_evidence_v2")
       .select("plan_id,marketplace_account_key,marketplace,item_id,bounded_title_evidence,source_observation_id,structural_classification,structural_compatibility,structural_evidence")
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US").eq("plan_id", planId)
@@ -49,6 +50,8 @@ export async function readSellOneLikeThisV1(input: {
       .eq("luna_variant_id", binding.VARIANT_ID).eq("luna_sku", own.supplier_sku)
       .order("created_at", { ascending: false }).order("frontier_id", { ascending: false }).limit(1)).maybeSingle(),
     feeRead,
+    bounded(db.from("ebay_account_policy_profiles").select("account_key,marketplace_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,verified_at,expires_at")
+      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US").limit(1)).maybeSingle(),
   ])
   if (ref.error) throw Error("REFERENCE_EVIDENCE_UNAVAILABLE")
   const f = record(frontier.error ? null : frontier.data), s = record(f.shippingEvidence)
@@ -66,12 +69,19 @@ export async function readSellOneLikeThisV1(input: {
     Number(f.shipping_value) === s.shippingUsd && s.noPurchase === true && s.noCredentials === true &&
     ["LUNA_AUTHENTICATED_HTTP_CART_SHIPPING", "LUNA_PROTECTED_BROWSER_CHECKOUT_SHIPPING"].includes(String(s.acquisitionMethod)) &&
     /^sha256:[a-f0-9]{64}$/.test(String(s.evidenceDigest)) && observed <= now.getTime() && freshUntil > now.getTime()
-  return prepareSellOneLikeThisV1({ binding, packageId: input.packageId, reference: record(ref.data),
-    truthFields: own.truthFields, requiredTruth: own.requiredTruth, aspectResolutions: own.aspectResolutions,
-    category: pkg.category, keywordRead: keyword, ownPrice: pkg.ownPrice, now, feeHandoff: fee,
-    shipping: shippingProven ? { status: "PROVEN", value: s.shippingUsd, reference: String(s.evidenceDigest),
-      source: "LUNA_PORTEX_SHIPPING_AUTHORITY", observedAt: String(s.observedAt), freshUntil: new Date(freshUntil).toISOString() }
-      : { status: "PENDING", value: null, reference: null, source: "LUNA_PORTEX_SHIPPING_AUTHORITY" } })
+  const shipping = shippingProven ? { status: "PROVEN" as const, value: s.shippingUsd, reference: String(s.evidenceDigest),
+    source: "LUNA_PORTEX_SHIPPING_AUTHORITY", observedAt: String(s.observedAt), freshUntil: new Date(freshUntil).toISOString() }
+    : { status: "PENDING" as const, value: null, reference: null, source: "LUNA_PORTEX_SHIPPING_AUTHORITY" }
+  const authority = { binding, accountKey: input.accountKey, sku: String(own.supplier_sku), packageId: input.packageId,
+    reference: record(ref.data), truthFields: own.truthFields, requiredTruth: own.requiredTruth, aspectResolutions: own.aspectResolutions,
+    category: pkg.category, keywordRead: keyword, ownPrice: pkg.ownPrice, now, feeHandoff: fee, shipping,
+    sellerPolicies: policies.error ? null : policies.data }
+  // Audit the supplied server-side generation without recreating its content.
+  // Normal reference preparation uses the same gate on its existing read path.
+  const result = input.existingPackagePreview ?? prepareSellOneLikeThisV1(authority)
+  const consistency = listingPipelineConsistencyV1(result, authority)
+  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency }
+
 }
 
 // UI discovery uses only the current bounded page of existing packages. Missing

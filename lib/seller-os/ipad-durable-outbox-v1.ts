@@ -33,7 +33,9 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
      .select("id,ebay_item_id,assigned_operator_user_id,current_image_set,source_image_set_digest,status,visual_manifest_digest,visual_manifest")
      .eq("marketplace_account_key", input.accountKey).eq("id", intent.requestedChanges.taskId!).eq("ebay_item_id", intent.itemId).maybeSingle()
    if (task.error || !task.data || (!input.owner && task.data.assigned_operator_user_id !== input.actorUserId)) throw Error("OUTBOX_TASK_SCOPE_REQUIRED")
-   if (task.data.assigned_operator_user_id !== input.actorUserId) {
+   const ownerGalleryHandoff = input.owner === true && intent.kind === "IMAGE_SYNC" &&
+     input.galleryPreviewDigest === task.data.visual_manifest_digest && Boolean(record(binding.ownerGalleryPreview).confirmation)
+   if (task.data.assigned_operator_user_id !== input.actorUserId && !ownerGalleryHandoff) {
      if (task.data.status !== "PROMPT_READY" || task.data.visual_manifest_digest) throw Error("OUTBOX_TASK_ASSIGNEE_CONFLICT")
      const assets = await input.supabase.from("ebay_listing_image_assets").select("id")
        .eq("account_key", input.accountKey).eq("mayel_visual_task_id", task.data.id).limit(1)
@@ -60,11 +62,12 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
      const ids = Array.isArray(proposed) ? proposed.map(record).flatMap(e => typeof e.assetId === "string" ? [e.assetId] : []) : []
      if (!ids.includes(intent.requestedChanges.assetId!) || !ids.length) throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
      const native = await input.supabase.from("ebay_listing_image_assets")
-       .select("id,source_sha256,source_image_set_digest").eq("account_key", input.accountKey)
+       .select("id,source_sha256,source_image_set_digest,owner_sync_approval").eq("account_key", input.accountKey)
        .eq("mayel_visual_task_id", task.data.id).in("id", ids)
      const sourceDigest = task.data.source_image_set_digest
      if (native.error || native.data?.length !== ids.length ||
-         native.data.some(a => a.source_image_set_digest !== sourceDigest))
+         native.data.some(a => a.source_image_set_digest !== sourceDigest ||
+           (ownerGalleryHandoff && record(a.owner_sync_approval).ownerUserId !== input.actorUserId)))
        throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
      binding = { ...binding, assets: native.data.map(a => ({ assetId: a.id, sourceSha256: a.source_sha256 })) }
    } else {
@@ -118,12 +121,15 @@ export async function readOutboxImageAuthorityV1(input: { supabase: SupabaseClie
      !bound.length || bound.some(b => !assets.data?.some(a => a.id === b.assetId && a.source_sha256 === b.sourceSha256)))
    return { approved: false, reason: "OUTBOX_DRAFT_AUTHORITY_CHANGED", manifestDigest: null }
  const galleryPreview = record(row.binding.ownerGalleryPreview)
- if (manifest.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" && (row.kind !== "IMAGE_SYNC" ||
+ if ((manifest.galleryPolicy === "REPLACE_APPROVED_SLOTS_ONLY" || manifest.ownerPreviewRequired === true) && (row.kind !== "IMAGE_SYNC" ||
      galleryPreview.confirmation !== "CONFIRM_FULL_GALLERY_PREVIEW_V1" || galleryPreview.ownerUserId !== row.actor_user_id ||
      galleryPreview.manifestDigest !== t.visual_manifest_digest))
    return { approved: false, reason: "OWNER_VISUAL_REVIEW_REQUIRED", manifestDigest: null }
  const proposed = Array.isArray(manifest.proposedOrderedImages) ? manifest.proposedOrderedImages.map(record) : []
- if (t.assigned_operator_user_id !== row.actor_user_id || t.status !== "OWNER_PREVIEW_READY" || !t.visual_manifest_digest ||
+ const ownerConfirmed = galleryPreview.confirmation === "CONFIRM_FULL_GALLERY_PREVIEW_V1" && galleryPreview.ownerUserId === row.actor_user_id &&
+   galleryPreview.manifestDigest === t.visual_manifest_digest && proposed.some(e => e.assetId) &&
+   proposed.every(e => !e.assetId || assets.data?.some(a => a.id === e.assetId && record(a.owner_sync_approval).ownerUserId === row.actor_user_id))
+ if ((!ownerConfirmed && t.assigned_operator_user_id !== row.actor_user_id) || t.status !== "OWNER_PREVIEW_READY" || !t.visual_manifest_digest ||
      !assets.data?.length || !proposed.some(e => e.assetId) ||
      proposed.some(e => e.assetId && !assets.data?.some(a => a.id === e.assetId && a.output_sha256 === e.outputSha256 && visualAssetOwnerApprovedV1(a, t))) ||
      bound.some(b => !proposed.some(e => e.assetId === b.assetId) || !assets.data?.some(a => a.id === b.assetId && visualAssetOwnerApprovedV1(a, t))))

@@ -73,7 +73,9 @@ function ReferencePreview() {
     {result && <>
       <p role="status">{result.previewPass ? "Borrador preparado para revisar" : "Esperando datos del producto o de su referencia"}</p>
       <p>Envío: {result.shippingStatus === "SHIPPING_PROVEN" ? `$${Number(result.commercialEnvelope.components.shipping.value).toFixed(2)} · Vigente` : "Esperando actualización. Puedes revisar el borrador mientras llega."}</p>
-      <p>Esta preparación no autoriza una publicación.</p>
+      <p role="status">{result.consistency.PACKAGE_CONSISTENT ? "✓ Los datos pertenecen al mismo producto y borrador." : "Revisa los datos del producto antes de continuar."}</p>
+      <p>{result.consistency.READY_TO_PUBLISH ? "Datos completos para revisión OWNER." : "Esperando datos de publicación. Puedes revisar el borrador."}</p>
+      <p>Esta preparación no autoriza una publicación. Los cambios de imágenes de listings activos se revisan en la Estación visual.</p>
       {preview && <article className="space-y-4 rounded border p-5" aria-label="Preview del producto propio">
         <h2 className="text-xl font-semibold">{preview.title}</h2>
         <p className="whitespace-pre-wrap">{preview.description}</p>

@@ -5,6 +5,8 @@ import { Check, Clipboard, ShieldCheck,
   Trash2, Upload, X } from
   "lucide-react"
 
+import { MayelVisualAssetProgress } from "./ebay/mayel/visual-asset-progress"
+import { visualAssetStatusV1 } from "@/lib/seller-os/mayel-visual-asset-status-v1"
 import { scopedVisualTasksV1, friendlyVisualSyncV1 } from "@/lib/seller-os/mayel-visual-scope-v1"
 import { supabase } from "@/lib/supabase"
 import type { MayelCommercialIntelligenceV1 } from
@@ -30,7 +32,7 @@ type VisualOutput = {
   mayel_approval_status: string
   owner_approval_status: string
   previewUrl: string | null
-  sync?: { state: string; approvedForEbaySync: boolean; generation: string; idempotencyKey: string; serverReceiptPresent: boolean }
+  sync?: { state: string; approvedForEbaySync: boolean; generation: string; idempotencyKey: string; serverReceiptPresent: boolean; officialReadback?: boolean; savedToSellerOS?: boolean }
 }
 
 type VisualTask = {
@@ -502,6 +504,30 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
   const [reason, setReason] = useState("")
   const [message, setMessage] = useState("")
   const [approvingSync, setApprovingSync] = useState(false)
+  const [intent, setIntent] = useState<"" | "REPLACE_MAIN" | "ADD_SECONDARY">("")
+  const [savingIntent, setSavingIntent] = useState(false)
+  const intents = Array.isArray(task.visualManifest?.visualIntents) ? task.visualManifest.visualIntents as
+    { assetId: string; visualIntent: string; targetImagePosition: number }[] : []
+  const appliedIntent = intents.find(i => i.assetId === output.id)
+  const addPosition = task.currentImages.length + intents.filter(i => i.visualIntent === "ADD_SECONDARY" && i.assetId !== output.id).length
+  const targetPosition = intent === "REPLACE_MAIN" ? 0 : addPosition
+  const beforePosition = appliedIntent?.targetImagePosition ?? (intent ? targetPosition : 0)
+  const status = visualAssetStatusV1({ generated: Boolean(output.previewUrl),
+    qaPassed: output.qa_result.automaticStatus === "PASSED" && output.mayel_approval_status === "APPROVED",
+    savedToSellerOS: output.sync?.savedToSellerOS === true, ownerApproved: output.sync?.approvedForEbaySync === true,
+    serverReceiptPresent: output.sync?.serverReceiptPresent === true, officialReadback: output.sync?.officialReadback === true,
+    state: output.sync?.state ?? (output.status === "rejected" ? "REQUIRES_ATTENTION" : "DRAFT") })
+  async function saveIntent() {
+    if (!intent || savingIntent) return
+    setSavingIntent(true); setMessage("")
+    try {
+      await visualRequest("/api/admin/ebay/mayel-visual-workstation", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "SAVE_ASSET_INTENT", visualTaskId: task.visualTaskId, assetId: output.id,
+          visualIntent: intent, targetImagePosition: targetPosition, expectedVisualManifestDigest: task.visualManifestDigest }) })
+      await onDone(); setMessage("Intención guardada. Revisa el Preview antes de aprobar.")
+    } catch { setMessage("No pudimos guardar el cambio. Revisa que la posición esté disponible.") }
+    finally { setSavingIntent(false) }
+  }
   const complete = baseChecks.every(([key]) => checks[key] === true)
 
   async function submit(decision: "APPROVE" | "REJECT") {
@@ -511,6 +537,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "REVIEW_OUTPUT",
           visualTaskId: task.visualTaskId, assetId: output.id, decision,
+          visualIntent: intent, targetImagePosition: targetPosition,
           humanQa: decision === "APPROVE" ? checks : undefined,
           rejectionReason: decision === "REJECT" ? reason : undefined }),
       })
@@ -535,10 +562,12 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
   }
 
   return <article className="rounded-2xl border border-[#ddd5ca] bg-white p-4">
+    <MayelVisualAssetProgress status={status} />
+    {appliedIntent && <p className="mb-3 text-sm">{appliedIntent.visualIntent === "ADD_SECONDARY" ? "Añadir secundaria" : "Reemplazar"} · Posición {appliedIntent.targetImagePosition + 1}{appliedIntent.targetImagePosition === 0 ? " · Principal" : ""}</p>}
     <div className="grid gap-4 md:grid-cols-2">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#74866d]">Original</p>
-        <img src={task.currentImages[0] ?? ""}
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#74866d]">Antes{beforePosition >= task.currentImages.length ? " · posición nueva" : ""}</p>
+        <img src={task.currentImages[beforePosition] ?? ""}
           alt="Imagen fuente original del producto"
           className="mt-2 aspect-square w-full rounded-xl bg-[#f4efe7] object-contain" />
       </div>
@@ -548,6 +577,16 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
           className="mt-2 aspect-square w-full rounded-xl bg-[#f4efe7] object-contain" />
       </div>
     </div>
+    {!status.synced && output.status !== "rejected" && <div className="mt-4">
+      <label className="block text-sm font-semibold">¿Qué cambio quieres preparar?
+        <select value={intent} onChange={e => setIntent(e.target.value as typeof intent)} className="mt-2 min-h-11 w-full rounded-xl border p-3">
+          <option value="">Selecciona la intención</option><option value="REPLACE_MAIN">Reemplazar sólo la imagen principal</option>
+          <option value="ADD_SECONDARY" disabled={addPosition >= 24}>Añadir secundaria · posición {addPosition + 1}</option>
+        </select></label>
+      {output.status === "approved" && <button type="button" disabled={busy || savingIntent || !intent} onClick={() => void saveIntent()}
+        className="mt-2 min-h-11 rounded-xl border px-4 disabled:opacity-40">Guardar intención y Preview</button>}
+      <p className="mt-2 text-sm">Conserva las demás posiciones. Guardar la intención no autoriza sincronizar.</p>
+    </div>}
     {output.status === "pending_review" && <div className="mt-4">
       <p className="text-sm font-semibold">Comparación humana obligatoria</p>
       <div className="mt-2 grid gap-2 sm:grid-cols-2">{baseChecks.map(([key, label]) =>
@@ -569,7 +608,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
           <button type="button" disabled={busy || !reason}
             onClick={() => void submit("REJECT")}
             className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-[#b75d43] px-3 text-sm font-semibold text-[#8b4937] disabled:opacity-40"><X className="h-4 w-4" />Rechazar</button>
-          <button type="button" disabled={busy || !complete}
+          <button type="button" disabled={busy || !complete || !intent}
             onClick={() => void submit("APPROVE")}
             className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1d5961] px-3 text-sm font-semibold text-white disabled:opacity-40"><Check className="h-4 w-4" />Aprobar</button>
         </div>
@@ -577,14 +616,14 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
       {message && <p className="mt-3 text-sm text-[#8b4937]">{message}</p>}
     </div>}
     {output.sync && <div className="mt-4 rounded-xl bg-[#f4efe7] p-3 text-sm">
-      <p>{friendlyVisualSyncV1(output.sync.state).label}</p><p>{friendlyVisualSyncV1(output.sync.state).action}</p>
+
       {output.status === "approved" && output.sync.state === "OWNER_APPROVAL_REQUIRED" && owner &&
         <button type="button" disabled={busy || approvingSync} onClick={() => void approveSync()}
           className="mt-3 min-h-11 rounded-xl bg-[#1d5961] px-4 py-2 font-semibold text-white disabled:opacity-40">Aprobar esta imagen para sincronizar con eBay</button>}
       <p className="mt-2 text-xs">Cada imagen necesita su propia aprobación. Las fuentes originales guardadas siguen disponibles para las otras propuestas.</p>
       <details className="mt-2"><summary>Ver detalles</summary><pre className="overflow-auto text-xs">{JSON.stringify(output.sync, null, 2)}</pre></details>
     </div>}
-    {output.status === "approved" && <p className="mt-4 rounded-xl bg-[#e3ebe1] p-3 text-sm font-semibold text-[#425143]">Control de calidad aprobado por Mayel · recurso canónico creado ✓</p>}
+
     {output.status !== "pending_review" && message && <p role="alert">{message}</p>}
     {output.status === "rejected" && <p className="mt-4 rounded-xl bg-[#f7e9de] p-3 text-sm font-semibold text-[#704d3c]">Resultado rechazado</p>}
   </article>
@@ -774,12 +813,28 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
     } catch (error) { setMessage(error instanceof Error ? error.message : "No pudimos confirmar el Preview.") }
     finally { setSaving(false) }
   }
+  const explicitPreview = task.visualManifest?.intentContract === "MAYEL_VISUAL_INTENT_V1" && Array.isArray(task.visualManifest.slotPreview)
+    ? task.visualManifest.slotPreview as { targetImagePosition: number; before: string | null; after: string; action: string; assetId: string | null }[] : []
+  if (explicitPreview.some(p => p.action === "ADD")) return <section className="mt-7 rounded-2xl border p-5" aria-label="Preview completo de la galería">
+    <h4 className="text-xl font-semibold">Preview completo de la galería</h4>
+    <p className="mt-2">Se conservan las imágenes actuales en su orden. Sólo se añaden o reemplazan las posiciones indicadas.</p>
+    {!task.currentGalleryProven && <p>Esperando la galería oficial completa. La propuesta sigue guardada.</p>}
+    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{explicitPreview.map(p => <article key={p.targetImagePosition} className="rounded-xl border p-3">
+      <p>Posición {p.targetImagePosition + 1}{p.targetImagePosition === 0 ? " · Principal" : ""} · {p.action === "ADD" ? "Añadir" : p.action === "REPLACE" ? "Reemplazar" : "Conservar"}</p>
+      <div className="mt-2 grid grid-cols-2 gap-2"><figure>{p.before ? <img src={p.before} alt="Antes" className="aspect-square w-full object-contain"/> : <p>Posición nueva</p>}<figcaption>Antes</figcaption></figure>
+        <figure><img src={p.after} alt="Después" className="aspect-square w-full object-contain"/><figcaption>Después</figcaption></figure></div>
+    </article>)}</div>
+    {owner && <button type="button" disabled={busy || saving || !task.currentGalleryProven || task.galleryRebaseRequired ||
+      explicitPreview.some(p => p.assetId && !task.outputs.find(o => o.id === p.assetId)?.sync?.approvedForEbaySync)}
+      onClick={() => void confirmPreview()} className="mt-4 min-h-11 rounded-xl border px-4 disabled:opacity-40">Confirmar este Preview para sincronizar con eBay</button>}
+    {message && <p role="status" className="mt-3">{message}</p>}
+  </section>
   return <section className="mt-7 rounded-2xl border border-[#cbd9d4] bg-[#f8fbf9] p-5"
     data-mayel-ordered-six-image-workflow data-full-official-gallery>
     <h4 className="font-serif text-xl font-semibold">Galería actual de eBay</h4>
     <p className="mt-2 text-sm">{task.currentGalleryProven ? `${task.currentImages.length} imágenes en su orden oficial.` :
       "Esperando la galería oficial completa. Tus propuestas siguen guardadas."} Sólo cambia la posición que selecciones.</p>
-    {task.currentGallerySynced && <p role="status" className="mt-2 text-sm">Sincronizado. eBay confirma estas seis posiciones.</p>}
+    {task.currentGallerySynced && <p role="status" className="mt-2 text-sm">Sincronizado. eBay confirma estas {task.currentImages.length} posiciones.</p>}
     {task.galleryRebaseRequired && <p role="status" className="mt-2 text-sm">La galería cambió. Revisa el nuevo Preview; la sincronización está detenida.</p>}
     <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{task.currentImages.map((before, position) => {
       const asset = approved.find(o => o.id === selected[position])
