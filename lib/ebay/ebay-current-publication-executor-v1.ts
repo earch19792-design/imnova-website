@@ -65,11 +65,40 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
   p_idempotency_key:input.idempotencyKey,p_preview_hash:p.preview_hash,p_confirm_publish:input.confirmation,p_claim_token:claimToken})
   .abortSignal(AbortSignal.timeout(8000)).retry(false).single()
  // An ambiguous claim is not permission to publish. Leave it for readback.
- if(claim.error || !claim.data || claim.data.phase!=='publish_in_flight' || claim.data.claim_token!==claimToken)
+ if(claim.error || !claim.data || record(claim.data).phase!=='publish_in_flight' || record(claim.data).claim_token!==claimToken)
   return {pass:false,publicationWrites:0,blocker:claim.error?.message??'CURRENT_CLAIM_NOT_OWNED'}
  const inventory=record(record(revision.preview).inventoryItemPayload),offer=record(record(revision.preview).offerPayload)
- const result=await deps.publish({offerId:input.offerId,expectedSku:input.sku,expectedInventoryItemPayload:inventory,
-  expectedOfferPayload:offer,previewHash:p.preview_hash,publicationControlId:p.id,confirmPublish:input.confirmation})
+ let dispatched=0
+ const singlePublishFetch:typeof fetch=async(resource,init)=>{
+  const url=new URL(resource instanceof Request?resource.url:String(resource)),method=init?.method??'GET'
+  if(!['GET','HEAD'].includes(method) && url.pathname!=='/identity/v1/oauth2/token') {
+   if(method!=='POST' || url.pathname!==`/sell/inventory/v1/offer/${input.offerId}/publish` || dispatched!==0)
+    throw Error('ONE_EXACT_PUBLICATION_WRITE_ONLY')
+   dispatched++
+  }
+  return fetch(resource,init)
+ }
+ let result:Awaited<ReturnType<typeof publishEbayOfferOnce>>
+ try {
+  result=await deps.publish({offerId:input.offerId,expectedSku:input.sku,expectedInventoryItemPayload:inventory,
+   expectedOfferPayload:offer,previewHash:p.preview_hash,publicationControlId:p.id,confirmPublish:input.confirmation,deferAmbiguousReadback:true},singlePublishFetch)
+ } catch {
+  if(dispatched===0) {
+   const released=await db.rpc('release_current_publication_before_dispatch_v1',{p_publication_id:p.id,p_actor:input.actor,p_claim_token:claimToken})
+    .abortSignal(AbortSignal.timeout(8000)).retry(false)
+   const actual=await read()
+   return {pass:false,publicationWrites:0,blocker:'CURRENT_PREWRITE_TRANSPORT_OR_GUARD_FAILURE',
+    idempotencyPreserved:!actual.publication_idempotency_key,durableReleaseConfirmed:!released.error,phase:actual.phase}
+  }
+  result={ok:false,status:0,listingId:null,outcomeKnown:false,reconciled:false,publishRequestSent:true,blocker:'EBAY_PUBLISH_OUTCOME_UNKNOWN'}
+ }
+ if(!result.ok && !result.publishRequestSent && dispatched===0) {
+  const released=await db.rpc('release_current_publication_before_dispatch_v1',{p_publication_id:p.id,p_actor:input.actor,p_claim_token:claimToken})
+    .abortSignal(AbortSignal.timeout(8000)).retry(false)
+  const actual=await read()
+  return {pass:false,publicationWrites:0,result,blocker:result.blocker,idempotencyPreserved:!actual.publication_idempotency_key,
+    durableReleaseConfirmed:!released.error,phase:actual.phase}
+ }
  const writes=result.publishRequestSent?1:0
  if(!result.ok || !result.listingId) {
   const failed=await db.rpc('fail_ebay_authorized_listing_publication',{p_publication_id:p.id,p_actor_user_id:input.actor,p_claim_token:claimToken,

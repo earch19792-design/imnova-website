@@ -43,6 +43,8 @@ begin
  or x->'historicalExecutionReused' is distinct from 'false'::jsonb
  or e.id::text=r->>'priorDraftExecutionId' or e.approval_id is distinct from a.id
  or e.phase is distinct from 'completed' or e.offer_id is distinct from p.offer_id or e.sku is distinct from p.sku
+ or e.opportunity_id is distinct from p.opportunity_id or a.opportunity_id is distinct from p.opportunity_id
+ or p.target is distinct from e.target
  or e.actor_user_id is distinct from p.actor_user_id or e.listing_package_id is distinct from k.id
  or e.account_fingerprint is distinct from p.account_fingerprint or e.target is distinct from 'PRODUCTION'
  or a.actor_user_id is distinct from p.actor_user_id or a.listing_package_id is distinct from k.id
@@ -52,6 +54,8 @@ begin
  or a.approved_payload->'offerPayload' is distinct from p.preview->'offerPayload'
  or a.approved_payload#>'{economics,historicalStateInherited}' is distinct from 'false'::jsonb
  then errors:=array_append(errors,'CURRENT_EXECUTION_HISTORICAL_OR_PAYLOAD_MISMATCH'); end if;
+ if public.assess_publication_revision_images_v1(p.id,p.actor_user_id,p.marketplace_account_key)->>'pass' is distinct from 'true' then
+  errors:=array_append(errors,'CURRENT_EXECUTION_IMAGE_AUTHORITY_UNPROVEN'); end if;
  select jsonb_agg(product_url) into urls from (select product_url from public.market_radar_latest_variants
  where source_key='lunaportex' and supplier_product_id=o.supplier_product_id and supplier_variant_id=o.supplier_variant_id
  and sku=o.supplier_sku limit 2) exact_catalog;
@@ -932,5 +936,61 @@ begin
   where id = p_publication_id
   returning * into v_publication;
   return next v_publication;
+end;
+$function$;
+
+-- Release only a claim owned by this invocation before dispatch. Transport
+-- instrumentation, not an eBay timeout, supplies this internal authority.
+create or replace function public.release_current_publication_before_dispatch_v1(p_publication_id uuid,p_actor uuid,p_claim_token uuid)
+returns boolean language plpgsql security definer set search_path=public,pg_temp as $$
+begin
+ if not public.is_seller_os_service_role_request_v1() then raise exception 'SERVICE_ROLE_REQUIRED'; end if;
+ update public.ebay_authorized_listing_publications set phase='preview_ready',publication_idempotency_key=null,
+  publish_attempt_count=0,claim_token=null,lease_expires_at=null,publish_started_at=null,
+  last_error_code='CURRENT_PREWRITE_TRANSPORT_OR_GUARD_FAILURE',
+  sanitized_result=jsonb_set(sanitized_result,'{currentPublicationExecutionV1,state}','"PREWRITE_ABORTED"'),updated_at=clock_timestamp()
+ where id=p_publication_id and actor_user_id=p_actor and phase='publish_in_flight' and claim_token=p_claim_token and listing_id is null
+ and sanitized_result#>>'{currentPublicationExecutionV1,state}'='PUBLISH_REQUESTED';
+ return found;
+end;$$;
+revoke all on function public.release_current_publication_before_dispatch_v1(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.release_current_publication_before_dispatch_v1(uuid,uuid,uuid) to service_role;
+
+CREATE OR REPLACE FUNCTION public.fail_ebay_authorized_listing_publication(p_publication_id uuid, p_actor_user_id uuid, p_claim_token uuid, p_http_status integer, p_error_code text, p_outcome_unknown boolean, p_error_details jsonb)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if coalesce(p_error_code, '') !~ '^[A-Z0-9_]{3,120}$'
+    or jsonb_typeof(coalesce(p_error_details, '{}'::jsonb)) <> 'object' then
+    raise exception 'EBAY_AUTHORIZED_PUBLICATION_ERROR_INVALID';
+  end if;
+  update public.ebay_authorized_listing_publications
+  set phase = case
+        when p_outcome_unknown then 'outcome_unknown'
+        else 'terminal_failure'
+      end,
+      publish_http_status = p_http_status,
+      last_error_code = p_error_code,
+      sanitized_result = (case when sanitized_result->'currentPublicationExecutionV1' is not null then
+        jsonb_set(jsonb_set(sanitized_result,'{currentPublicationExecutionV1,state}',
+          to_jsonb(case when p_outcome_unknown then 'UNKNOWN_COMMIT_STATE' else 'PUBLISH_REJECTED' end)),
+          '{currentPublicationExecutionV1,transitions}',coalesce(sanitized_result#>'{currentPublicationExecutionV1,transitions}','[]')||
+          to_jsonb(case when p_outcome_unknown then 'UNKNOWN_COMMIT_STATE' else 'PUBLISH_REJECTED' end))
+        else '{}'::jsonb end) || jsonb_build_object(
+        'httpStatus', p_http_status,
+        'errorCode', p_error_code,
+        'details', coalesce(p_error_details, '{}'::jsonb)
+      ),
+      claim_token = null,
+      lease_expires_at = null,
+      updated_at = clock_timestamp()
+  where id = p_publication_id
+    and actor_user_id = p_actor_user_id
+    and phase = 'publish_in_flight'
+    and claim_token = p_claim_token;
+  return found;
 end;
 $function$;

@@ -2222,6 +2222,7 @@ export async function publishEbayOfferOnce(input: {
   previewHash: string
   publicationControlId: string
   confirmPublish: string
+  deferAmbiguousReadback?: boolean
 }, fetchImpl: typeof fetch = fetch) {
   const config = getEbayDraftOnlyGatewayConfig()
   const offerId = sanitizeEbayOfferId(input.offerId)
@@ -2436,6 +2437,12 @@ export async function publishEbayOfferOnce(input: {
       publishRequestSent: true,
       blocker: "",
     }
+  }
+
+  // CURRENT persists UNKNOWN_COMMIT_STATE before its readback coordinator.
+  if(input.deferAmbiguousReadback===true)return {
+    ok:false,status:responseStatus,listingId:null,outcomeKnown:false,reconciled:false,
+    publishRequestSent:true,blocker:'EBAY_PUBLISH_OUTCOME_UNKNOWN',body:safeBody(responseBody),
   }
 
   let verification = await verifyPublishedOfferWithToken(
