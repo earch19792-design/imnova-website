@@ -8,7 +8,8 @@ export type GalleryDecisionV1 = {
   assetId: string | null
   visualRole: string
   intentReason: string
-  removalEvidence?: { productTruthDigest: string; evidenceReferences: string[]; noRequiredEvidenceLost: true; semanticQaPassed: true }
+  removalEvidence?: { productTruthDigest: string; evidenceReferences: string[]; noRequiredEvidenceLost: true; semanticQaPassed: true;
+    reviewId?: string; baseManifestDigest?: string; reason?: string }
 }
 type GalleryInput = { visualTaskId: string; ebayItemId: string; accountKey: string; generation: string;
   currentImages: readonly string[]; assets: readonly MayelApprovedVisualAssetV1[];

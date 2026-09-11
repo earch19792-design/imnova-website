@@ -1,4 +1,5 @@
 import { excludeDiscardedProposalsV1 } from "./mayel-proposal-discard-v1"
+import { semanticRemovalReviewMatchesV1, type RemovalReviewV1 } from "./mayel-semantic-removal-v1"
 import { cachedTradingNextSafeProbeAtV1 } from "../ebay/ebay-trading-rate-limit-observability-v1"
 import { nextOutboxAttemptAtV1, outboxTransientFailureV1 } from "./ipad-outbox-contract-v1"
 import "server-only"
@@ -12,12 +13,15 @@ import { mayelVisualDigestV1, type MayelVisualOutputRole } from "../ebay/ebay-ma
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 
-/** Removal is currently auto-proven only for byte-identical redundant evidence
- * retained elsewhere in the final gallery. No caller-supplied QA flag proves it. */
-export function provenGalleryRemovalsV1(task: Record<string, unknown>, decisions: readonly GalleryDecisionV1[], current: readonly string[]) {
+/** A semantic review is loaded from the private durable authority, never from
+ * request flags. The existing identical-evidence proof remains supported. */
+export function provenGalleryRemovalsV1(task: Record<string, unknown>, decisions: readonly GalleryDecisionV1[], current: readonly string[],
+  reviews: readonly RemovalReviewV1[] = [], finalImages: readonly string[] = []) {
   const refs = Array.isArray(task.source_image_references) ? task.source_image_references.map(record) : []
   const shaFor = (url: string) => refs.find(r => r.url === url && typeof r.sha256 === "string" && /^[a-f0-9]{64}$/.test(r.sha256))?.sha256
   return decisions.filter(d => d.action === "REMOVE").every(d => {
+    if (d.removalEvidence?.reviewId) return reviews.some(review => semanticRemovalReviewMatchesV1({
+      review, task, decision: d, currentImages: current, finalImages }))
     const sha = shaFor(current[d.sourcePosition!])
     return Boolean(sha && d.removalEvidence?.productTruthDigest === task.product_truth_digest &&
       d.removalEvidence?.evidenceReferences.some(url => shaFor(url) === sha && decisions.some(k =>
@@ -58,13 +62,21 @@ export async function saveFullMayelGalleryV1(input: { supabase: SupabaseClient; 
     const asset = assets.find(a => a.id === d.assetId)
     if (!asset || !delegatedVisualQaV1(asset, task)) throw Error("PRODUCT_TRUTH_SEMANTIC_QA_REQUIRED")
   }
-  if (!provenGalleryRemovalsV1(task, input.decisions, input.expectedCurrentImages)) throw Error("REMOVAL_PRODUCT_EVIDENCE_UNPROVEN")
   if (input.decisions.some(d => d.action === "REMOVE")) grant = await withGalleryRemovalGrantV1(input.supabase, grant)
   // Validate shape and asset binding before persisting a resumable decision.
   const planned = buildFullGalleryMutationV1({ visualTaskId: task.id, ebayItemId: task.ebay_item_id, accountKey: input.accountKey,
     generation: replayGeneration, currentImages: input.expectedCurrentImages, decisions: input.decisions,
     assets: assets.map(a => ({ assetId: a.id, role: a.mayel_output_role as MayelVisualOutputRole, outputSha256: a.output_sha256, publicUrl: a.public_url })),
     productTruthDigest: task.product_truth_digest, sourceImageSetDigest: task.source_image_set_digest })
+  const reviewIds = [...new Set(input.decisions.filter(d => d.action === "REMOVE")
+    .flatMap(d => d.removalEvidence?.reviewId ? [d.removalEvidence.reviewId] : []))]
+  const reviews = reviewIds.length ? await input.supabase.from("seller_os_mayel_removal_reviews_v1")
+    .select("id,account_key,task_id,item_id,product_truth_digest,source_image_set_digest,base_manifest_digest,current_images,final_images,source_position,reason,evidence_references,checks,revoked_at")
+    .eq("account_key", input.accountKey).eq("task_id", input.taskId).in("id", reviewIds).limit(24)
+    : { data: [], error: null }
+  if (reviews.error || !provenGalleryRemovalsV1(task, input.decisions, input.expectedCurrentImages,
+    (reviews.data ?? []) as RemovalReviewV1[], planned.proposedOrderedImages.map(e => e.publicUrl)))
+    throw Error("REMOVAL_PRODUCT_EVIDENCE_UNPROVEN")
   if (JSON.stringify(planned.proposedOrderedImages.map(e => e.publicUrl)) === JSON.stringify(input.expectedCurrentImages))
     return { status: "NO_GALLERY_CHANGE", marketplaceWrites: 0 }
   const pendingDecision = { contract: "MAYEL_PENDING_FULL_GALLERY_DECISION_V1", state: "WAITING_FOR_CURRENT_GALLERY",

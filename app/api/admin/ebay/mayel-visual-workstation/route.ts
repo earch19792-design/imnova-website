@@ -379,6 +379,13 @@ export async function POST(request: Request) {
           taskId: String(body.visualTaskId ?? ""), itemId: String(body.expectedItemId ?? ""), assetId: String(body.assetId ?? "") })
         return json({ success: true, result, marketplaceWrites: 0 })
       }
+      if (body?.action === "RECORD_REMOVAL_SEMANTIC_REVIEW_V1") {
+        const taskId = uuid(body.visualTaskId), actorId = uuid(body.actorUserId)
+        if (!taskId || !actorId) throw Error("EXACT_VISUAL_TASK_REQUIRED")
+        const { recordMayelRemovalReviewV1 } = await import("@/lib/seller-os/mayel-semantic-removal-server-v1")
+        return json({ success: true, ...await recordMayelRemovalReviewV1({ supabase: getSupabaseAdminClient(),
+          accountKey: accountKey(), actorUserId: actorId, taskId, review: body.review }) })
+      }
       if (body?.action === "PREPARE_FULL_GALLERY_DECISION_V1") {
         const taskId = uuid(body.visualTaskId)
         if (!taskId || !Array.isArray(body.decisions) || body.decisions.length > 48 || !Array.isArray(body.expectedCurrentImages))
@@ -714,6 +721,13 @@ export async function POST(request: Request) {
       visualTaskId: result.task?.id ?? null,
       visualEligibility: result.canaryAvailable ? "ELIGIBLE" :
         "BLOCKED_IDENTITY", marketplaceWrites: 0 })
+    }
+    if (action === "RECORD_REMOVAL_SEMANTIC_REVIEW_V1") {
+      const taskId = uuid(body?.visualTaskId)
+      if (!taskId) throw Error("EXACT_VISUAL_TASK_REQUIRED")
+      const { recordMayelRemovalReviewV1 } = await import("@/lib/seller-os/mayel-semantic-removal-server-v1")
+      return json({ success: true, ...await recordMayelRemovalReviewV1({ supabase: getSupabaseAdminClient(),
+        accountKey: accountKey(), actorUserId: auth.userId, taskId, review: body?.review }) })
     }
     if (action === "SAVE_FULL_GALLERY_DECISION") {
       const taskId = uuid(body?.visualTaskId)
