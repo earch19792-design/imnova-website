@@ -69,7 +69,8 @@ export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Reco
     synced ? "SYNCED" : active ? active.state === "UNKNOWN_COMMIT" ? "OFFICIAL_READBACK_REQUIRED" : String(active.state) : "APPROVED_FOR_EBAY_SYNC"
   const latest = currentRows[0]
   const receiptOwnerAction = record(latest?.execution_receipt).ownerAction as MayelOwnerActionEvidenceV1["ownerAction"]
-  const ownerEvidenceBound = latest?.account_key === task.marketplace_account_key && latest?.item_id === task.ebay_item_id &&
+  const ownerEvidenceBound = typeof task.visual_manifest_digest === "string" && task.visual_manifest_digest.length > 0 &&
+    record(record(latest?.intent).requestedChanges).taskId === task.id && latest?.account_key === task.marketplace_account_key && latest?.item_id === task.ebay_item_id &&
     record(record(latest?.intent).requestedChanges).manifestDigest === task.visual_manifest_digest
   const manualApprovalRequired = !delegation.active && boundAsset && state === "OWNER_APPROVAL_REQUIRED"
   const ownerAction = manualApprovalRequired ? { required: true, humanOnly: true, proven: true,
