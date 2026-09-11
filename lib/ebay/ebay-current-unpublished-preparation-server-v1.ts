@@ -26,7 +26,7 @@ export async function executeCurrentUnpublishedPreparationV1(input: {
   const r=record(authority.revision),p=record(r.preview)
   const readPub=async()=>{
     const result=await db.from("ebay_authorized_listing_publications")
-      .select("id,sanitized_result,offer_id,phase,publish_attempt_count,publication_idempotency_key,claim_token,listing_id")
+      .select("id,updated_at,sanitized_result,offer_id,phase,publish_attempt_count,publication_idempotency_key,claim_token,listing_id")
       .eq("id",String(r.publicationId)).eq("marketplace_account_key",input.accountKey)
       .eq("actor_user_id",input.actor).eq("listing_package_id",input.packageId).single()
     const row=record(result.data),current=record(record(record(row.sanitized_result).publicationPreparationV1).current)
@@ -44,10 +44,14 @@ export async function executeCurrentUnpublishedPreparationV1(input: {
   const cas=async(next:Record<string,unknown>)=>{
     const old=record(pub.sanitized_result)
     const result=await db.from("ebay_authorized_listing_publications")
-      .update({sanitized_result:{...old,currentUnpublishedPreparationV1:next}})
-      .eq("id",String(pub.id)).eq("sanitized_result",JSON.stringify(old))
+      .update({sanitized_result:{...old,currentUnpublishedPreparationV1:next},updated_at:new Date().toISOString()})
+      .eq("id",String(pub.id)).eq("updated_at",String(pub.updated_at))
+      .eq("offer_id",offerId).is("claim_token",null).is("listing_id",null).is("publication_idempotency_key",null)
+      .eq("sanitized_result->publicationPreparationV1->current->>packageHash",String(r.packageHash))
+      .eq("sanitized_result->publicationPreparationV1->current->>packageGeneration",String(r.packageGeneration))
+      .eq("sanitized_result->publicationPreparationV1->current->>previewHash",String(r.previewHash))
       .eq("phase","preview_ready").eq("publish_attempt_count",0)
-      .select("id,sanitized_result,offer_id,phase,publish_attempt_count,publication_idempotency_key,claim_token,listing_id").maybeSingle()
+      .select("id,updated_at,sanitized_result,offer_id,phase,publish_attempt_count,publication_idempotency_key,claim_token,listing_id").maybeSingle()
     if(result.error || !result.data)throw Error("CURRENT_PREPARATION_RESERVATION_CONFLICT")
     pub=record(result.data)
   }

@@ -3088,3 +3088,17 @@ test("CURRENT unpublished update replaces same Offer, readbacks after timeout, a
   }
  }finally{process.env=original}
 })
+
+test("CURRENT preparation stays on existing authenticated PREPROD route and reserves exact revision",()=>{
+ const action=routeSource.slice(routeSource.indexOf('if (action === "prepare_current_unpublished")'),routeSource.indexOf('if (action === "batch_runtime")'))
+ assert.match(action,/validateAdminApiRequest/)
+ assert.match(action,/productionDedicatedPreprodBound/)
+ assert.match(action,/OWNER_BINDING_MISMATCH/)
+ assert.match(action,/ONE_EXISTING_INTENT_REQUIRED/)
+ const source=readFileSync(new URL('../lib/ebay/ebay-current-unpublished-preparation-server-v1.ts',import.meta.url),'utf8')
+ for(const field of ['packageHash','packageGeneration','previewHash'])assert.ok(source.includes('current->>'+field))
+ assert.match(source,/\.eq\("updated_at",String\(pub.updated_at\)\)/)
+ assert.match(source,/\.is\("publication_idempotency_key",null\)/)
+ assert.match(source,/if\(attempts\[operation\]\)return false/)
+ assert.doesNotMatch(source,/\.eq\("sanitized_result",JSON.stringify/)
+})

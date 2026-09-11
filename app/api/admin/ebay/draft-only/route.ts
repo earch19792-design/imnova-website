@@ -1,3 +1,4 @@
+import { getEbayDraftWriteEnvironmentBoundary } from "@/lib/ebay/environment-boundaries"
 import { executeCurrentUnpublishedPreparationV1 } from "@/lib/ebay/ebay-current-unpublished-preparation-server-v1"
 import { readCurrentDraftPreparationV1 } from "@/lib/ebay/ebay-current-package-preparation-server-v1"
 import { projectCurrentPreparationPackageV1, currentPreparationBindingValidV1, currentPreparationApprovalMatchesV1, currentPreparationVisualGateV1 } from "@/lib/ebay/ebay-current-package-preparation-v1"
@@ -3167,6 +3168,30 @@ async function handlePost(req: Request) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
   }
   const action = text(body.action)
+  if (action === "prepare_current_unpublished") {
+ const auth=await validateAdminApiRequest(req)
+ if(!auth.ok)return NextResponse.json({error:"ADMIN_REQUIRED"},{status:403})
+ const boundary=getEbayDraftWriteEnvironmentBoundary()
+ if(!boundary.productionDedicatedPreprodBound || !boundary.writeAllowed)
+  return NextResponse.json({error:"CERTIFIED_PREPROD_ONLY"},{status:403})
+ try{
+  const packageId=String(body.packageId??"")
+  if(!/^[a-f0-9-]{36}$/.test(packageId) || Object.keys(body).some(k=>k!=="packageId"&&k!=="action"))throw Error("EXACT_PACKAGE_ONLY")
+  const accountKey=getEbaySellerAccountScopeConfiguration().accountKey
+  if(!accountKey)throw Error("EXACT_ACCOUNT_REQUIRED")
+  const db=getSupabaseAdminClient()
+  const read=await db.from("ebay_authorized_listing_publications").select("actor_user_id")
+    .eq("listing_package_id",packageId).eq("marketplace_account_key",accountKey).limit(2)
+  if(read.error||read.data?.length!==1)throw Error("ONE_EXISTING_INTENT_REQUIRED")
+  const actor=read.data[0].actor_user_id
+  if(auth.authenticationMode!=="service_role"&&auth.userId!==actor)throw Error("OWNER_BINDING_MISMATCH")
+  const result=await executeCurrentUnpublishedPreparationV1({supabase:db,accountKey,packageId,actor})
+  return NextResponse.json({success:result.pass,result,publicationWrites:0},{status:result.pass?200:409})
+ }catch(error){
+  const message=error instanceof Error?error.message:"PREPARATION_FAILED"
+  return NextResponse.json({error:/^[A-Z0-9_]+$/.test(message)?message:"PREPARATION_FAILED",publicationWrites:0},{status:409})
+ }
+  }
   if (action === "batch_runtime") {
     try {
       const supabase = getSupabaseAdminClient()
