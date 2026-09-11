@@ -1,3 +1,4 @@
+import { BUYER_TAX_FEE_CLASSIFICATION_V1 } from './publication-fee-structure-v1'
 import { feeSubjectMatchesV1, feeSubjectFieldsV1 } from "./fee-subject-v1"
 import { classifyFeeComponentsV1 } from "./fee-component-applicability-v1"
 import { preSaleFeeBreakdownV1 } from "./pre-sale-fee-breakdown-v1"
@@ -138,6 +139,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
       "accountPerformance", "officialFeePolicySnapshot", "feeTaxPolicy", "categoryAuthority", "categoryFeePolicy", "payoutCurrencyAuthority", "currentCategoryServiceAuthority",
     ].filter(k=>c[k] !== undefined).map(k=>[k,c[k]])) } : {}),
     automaticFeeProducer: true, codexRuntimeDependency: false,
+    buyerTaxFeeClassification: BUYER_TAX_FEE_CLASSIFICATION_V1,
     taxTreatment, componentApplicability: classifyFeeComponentsV1({ components: state === "PROVEN_PRE_SALE" ? resolved?.authority?.components ?? components : components,
       normalCategoryFee: taxTreatment.normalCategoryFeeBeforeBuyerTax, contingentFeeOnTax: taxTreatment.contingentFeeOnTax,
       sourceFresh: sourceFresh && state !== "STALE" && state !== "CONFLICT", completeBoundProven: state === "PROVEN_PRE_SALE" }),

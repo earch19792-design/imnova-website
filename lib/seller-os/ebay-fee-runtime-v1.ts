@@ -138,7 +138,7 @@ export async function readEbayFeeHandoffV1(input: Scope & { itemId: string | nul
   const mayUse = h.state === "PROVEN_PRE_SALE" && authority.state === "PROVEN_PRE_SALE"
   // Pending evidence cannot authorize money; no extra package read is needed
   // just to display that wait. A successful handoff must check the current revision.
-  const pkg = mayUse && !input.itemId && input.packageId ? await readPackageFeeInputV1({ ...input, packageId: input.packageId }) : null
+  const pkg = !input.itemId && input.packageId ? await readPackageFeeInputV1({ ...input, packageId: input.packageId }) : null
   const packageMatches = input.itemId !== null || Boolean(pkg && h.package_id === input.packageId &&
     authority.packageId === input.packageId && authority.packageRevision === pkg.revision && authority.sku === pkg.sku)
   if (mayUse && !packageMatches) return unavailable("STALE")
@@ -156,7 +156,7 @@ export async function readEbayFeeHandoffV1(input: Scope & { itemId: string | nul
     label: usable ? "Economía: estimación disponible" : !fresh ? "Economía: actualizando evidencia" : authority.economicsState === "PROMOTION_BLOCKED_EVIDENCE" ? "Economía: esperando evidencia de fees" : "Economía: esperando datos de la orden",
     resolvedAuthority: usable ? authority.resolvedAuthority : null,
     actualPostSaleFee: actual?.error ? null : actual?.data?.receipt ?? null,
-    reference: h.authority_id, status: usable ? "PROVEN" : !fresh ? "STALE" : "PENDING" }
+    publicationSubjectMatched: packageMatches, reference: h.authority_id, status: usable ? "PROVEN" : !fresh ? "STALE" : "PENDING" }
 }
 
 export async function reconcileEbayOrderFeesV1(input: Scope & { order: SafeMarketplaceOrder; observedAt: string }) {

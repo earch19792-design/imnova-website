@@ -1,3 +1,6 @@
+import { PREPUBLICATION_VALIDATION_V1, knownPublicationPayloadErrorsV1 } from '../seller-os/publication-prevalidation-boundary-v1'
+import { getEbayTaxonomyListingIntelligence } from './ebay-seller-keyword-demand-gateway'
+import { validateEbayTaxonomyAspectValues } from './ebay-draft-only-readiness'
 import { currentUnpublishedPayloadAcceptedV1 } from "./ebay-current-package-preparation-v1"
 import { getSupabaseAdminClient } from '../supabase-admin'
 import { getEbaySellerAccountScopeConfiguration } from './ebay-seller-account-scope'
@@ -61,7 +64,35 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
  const currentDependencies=validationValues[0]??null,currentListingFeePrevalidation=validationValues[1]??null
  if(active && record(currentDependencies).safe!==true)preflightErrors.push(String(record(currentDependencies).blocker??'CURRENT_DEPENDENCY_VALIDATION_NOT_PROVEN'))
  if(active && record(currentListingFeePrevalidation).ok!==true)preflightErrors.push('CURRENT_LISTING_FEE_PREVALIDATION_FAILED')
- const warnings=(Array.isArray(mobile.warnings)?mobile.warnings:[]).map(code=>({code,classification:'BLOCKING'}))
+ const taxonomy=await getEbayTaxonomyListingIntelligence(String(record(record(p.inventoryItemPayload).product).title),String(offer.categoryId),{allowTitleSuggestionFallback:false})
+ const aspects=record(record(p.inventoryItemPayload).product).aspects
+ const aspectValues=record(aspects) as Record<string,string[]>
+ const taxonomyErrors=taxonomy.status==='AVAILABLE' && taxonomy.categoryId===offer.categoryId && taxonomy.categoryResolution==='KNOWN_CATEGORY'
+  ? [...validateEbayTaxonomyAspectValues(aspectValues,{source:taxonomy.source,constraintSnapshotStatus:'AVAILABLE',categoryTreeId:taxonomy.categoryTreeId,
+     categoryTreeVersion:taxonomy.categoryTreeVersion,aspectConstraints:taxonomy.aspects}),
+     ...taxonomy.requiredAspects.filter(a=>!Array.isArray(aspectValues[a.name]) || !aspectValues[a.name].length).map(a=>`REQUIRED_ASPECT_MISSING:${a.name}`)]
+  : ['CURRENT_OFFICIAL_ASPECT_CONSTRAINTS_UNAVAILABLE']
+ const localErrors=[...knownPublicationPayloadErrorsV1(p),...taxonomyErrors]
+ const summaries=Array.isArray(record(currentListingFeePrevalidation).feeSummaries)?record(currentListingFeePrevalidation).feeSummaries as unknown[]:[]
+ const fees=summaries.map(record).filter(s=>s.marketplaceId==='EBAY_US').flatMap(s=>Array.isArray(s.fees)?s.fees.map(record):[])
+ const listingFee=fees.filter(f=>f.feeType==='ListingFee')
+ const listingFeeReserve=listingFee.length===1 && record(listingFee[0].amount).currency==='USD' &&
+  Number.isFinite(Number(record(listingFee[0].amount).value)) && Number(record(listingFee[0].amount).value)>=0 ? Number(record(listingFee[0].amount).value):null
+ if(listingFeeReserve===null)localErrors.push('CURRENT_LISTING_FEE_RESERVE_UNPROVEN')
+ const warnings=[...(Array.isArray(mobile.warnings)?mobile.warnings:[]),
+  ...summaries.map(record).flatMap(s=>Array.isArray(s.warnings)?s.warnings:[])].map(code=>({code,classification:'BLOCKING'}))
+ const prepublicationEvidence={version:PREPUBLICATION_VALIDATION_V1,binding:{publicationId:pub.id,packageId,accountKey,
+  sku:p.sku,offerId:pub.offer_id,draftExecutionId:pub.draft_execution_id,packageHash:revision.packageHash,packageGeneration:revision.packageGeneration,
+  previewHash:digest(p),previewGeneration:revision.packageGeneration},observedAt:new Date().toISOString(),
+  checks:{currentOfferReadbackPass:record(currentOfferReadback).safe===true,currentInventoryReadbackPass:record(currentInventoryReadback).safe===true,
+   currentPolicyReadbackPass:record(currentDependencies).safe===true,currentFeesRequestPass:record(currentListingFeePrevalidation).ok===true,
+   prepublicationContractValidationPass:localErrors.length===0 && active,currentTaxonomyPass:taxonomyErrors.length===0,
+   currentAccountPass:mobile.snapshotStatus==='READY' && selectionExact,currentImageAuthorityPass:record(imageAuthority).pass===true},
+  fullOfficialDryRunAvailable:false,publishTimeOnlyValidationRequired:true,ebayPrevalidationPass:false,publicationAuthorized:false,
+  blockingErrors:[...preflightErrors,...localErrors],warnings,fulfillmentFeeBasis:mobile.fulfillmentFeeBasis,listingFeeReserve,
+  taxonomy:{categoryId:taxonomy.categoryId,observedAt:taxonomy.observedAt,source:taxonomy.source,requiredAspects:taxonomy.requiredAspects.map(a=>a.name)},
+  listingFees:currentListingFeePrevalidation}
+ const evaluated=await readSellOneLikeThisV1({supabase:db,accountKey,packageId,referenceItemId:String(referenceId),prepublicationEvidence})
  return {contractVersion:'SELLER_OS_CURRENT_REVISION_PREFLIGHT_READONLY_V1',packageId,publicationId:pub.id,
   packageHash:revision.packageHash,packageGeneration:revision.packageGeneration,previewHash:digest(p),observedAt:new Date().toISOString(),
   brandAuthority:current.brandAuthority,imageAuthority,publisherRevision:publicationRevisionPublisherViewV1(pub,imageAuthority,child.error?null:child.data?.error_class),
@@ -76,6 +107,8 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
   preparationReceiptBinding:accepted?record(record(record(pub.sanitized_result).currentUnpublishedPreparationV1).binding):null,
   currentPayloadAcceptance:accepted?'CURRENT_UNPUBLISHED_PAYLOAD_ACCEPTED':'NOT_PROVEN',ebayPrevalidationPass:false,
   fullPublishValidation:false,fullPublishValidationLimitation:'INVENTORY_API_UNPUBLISHED_ACCEPTANCE_AND_GET_LISTING_FEES_DO_NOT_VALIDATE_ALL_PUBLISH_REQUIRED_FIELDS',
-  blockers:[...current.publicationGate.blockingEvidence,...preflightErrors,...warnings.map(w=>String(w.code)),...(accepted?[...(current.publicationGate.blockingEvidence.includes('CURRENT_PREVIEW_EBAY_PREPARATION_PENDING')?['CURRENT_PREPARATION_LEDGER_HANDOFF_PENDING']:[]),'FULL_PUBLISH_VALIDATION_NOT_PROVEN']:['CURRENT_DRAFT_PAYLOAD_NOT_ACCEPTED'])],
+  prepublicationEvidence,prepublicationContractValidationPass:evaluated.publicationGate.prepublicationContractValidationPass,
+  feeStructure:evaluated.feeStructure,economics:evaluated.publicationEconomics,publicationGate:evaluated.publicationGate,
+  blockers:[...evaluated.publicationGate.blockingEvidence,...preflightErrors,...localErrors,...warnings.map(w=>String(w.code)),...(!accepted?['CURRENT_DRAFT_PAYLOAD_NOT_ACCEPTED']:[])],
   safety:{readOnly:true,marketplaceWrites:0,publicationWrites:0,adsWrites:0,databaseWrites:0}}
 }

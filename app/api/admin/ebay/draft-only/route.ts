@@ -1,3 +1,4 @@
+import { certifyCurrentPrepublicationV1 } from '@/lib/ebay/ebay-current-prepublication-server-v1'
 import { activateCurrentPreparationV1 } from "@/lib/ebay/ebay-current-preparation-activation-server-v1"
 import { getEbayDraftWriteEnvironmentBoundary } from "@/lib/ebay/environment-boundaries"
 import { executeCurrentUnpublishedPreparationV1 } from "@/lib/ebay/ebay-current-unpublished-preparation-server-v1"
@@ -3169,7 +3170,7 @@ async function handlePost(req: Request) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
   }
   const action = text(body.action)
-  if (action === "prepare_current_unpublished" || action === "activate_current_preparation") {
+  if (action === "prepare_current_unpublished" || action === "activate_current_preparation" || action === "certify_current_prepublication") {
  const auth=await validateAdminApiRequest(req)
  if(!auth.ok)return NextResponse.json({error:"ADMIN_REQUIRED"},{status:403})
  const boundary=getEbayDraftWriteEnvironmentBoundary()
@@ -3186,13 +3187,18 @@ async function handlePost(req: Request) {
   if(read.error||read.data?.length!==1)throw Error("ONE_EXISTING_INTENT_REQUIRED")
   const actor=read.data[0].actor_user_id
   if(auth.authenticationMode!=="service_role"&&auth.userId!==actor)throw Error("OWNER_BINDING_MISMATCH")
+  if(action === "certify_current_prepublication") {
+   const result=await certifyCurrentPrepublicationV1({supabase:db,accountKey,packageId,actor})
+   return NextResponse.json({success:result.pass,...result},{status:result.pass?200:409})
+  }
   if(action === "activate_current_preparation") {
    const result=await activateCurrentPreparationV1({supabase:db,accountKey,packageId,actor})
    return NextResponse.json({success:true,...result})
   }
   const result=await executeCurrentUnpublishedPreparationV1({supabase:db,accountKey,packageId,actor})
   const activation=result.pass ? await activateCurrentPreparationV1({supabase:db,accountKey,packageId,actor}) : null
-  return NextResponse.json({success:result.pass,result,activation,publicationWrites:0},{status:result.pass?200:409})
+  const certification=activation?.durableReadbackPass ? await certifyCurrentPrepublicationV1({supabase:db,accountKey,packageId,actor}) : null
+  return NextResponse.json({success:result.pass,result,activation,certification,publicationWrites:0},{status:result.pass?200:409})
  }catch(error){
   const message=error instanceof Error?error.message:"PREPARATION_FAILED"
   return NextResponse.json({error:/^[A-Z0-9_]+$/.test(message)?message:"PREPARATION_FAILED",publicationWrites:0},{status:409})

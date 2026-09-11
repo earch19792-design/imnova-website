@@ -1,3 +1,6 @@
+import { currentPrepublicationProofV1, knownBuyerShippingV1 } from './publication-prevalidation-boundary-v1'
+import { publicationFeeStructureV1, publicationEconomicsV1 } from './publication-fee-structure-v1'
+import variableCosts from '../../docs/owner-variable-cost-policy-v1.json' with { type: 'json' }
 import { readPublicationBrandAuthorityV1 } from "./publication-brand-authority-v1"
 import { listingPipelineConsistencyV1 } from "./listing-pipeline-consistency-v1"
 import { listingPublicationE2eGateV1 } from "./listing-publication-e2e-gate-v1"
@@ -18,7 +21,7 @@ const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: bool
 // Explicit one-package reads; no monitor scans, imports from arbitrary URLs,
 // capture initiation or marketplace clients. HTTP callers supply identities only.
 export async function readSellOneLikeThisV1(input: {
-  supabase: SupabaseClient; accountKey: string; packageId: string; referenceItemId: string; now?: Date; existingPackagePreview?: unknown;
+  supabase: SupabaseClient; accountKey: string; packageId: string; referenceItemId: string; now?: Date; existingPackagePreview?: unknown; prepublicationEvidence?: unknown;
 }) {
   if (!UUID.test(input.packageId) || !/^\d{9,19}$/.test(input.referenceItemId)) throw Error("REFERENCE_INPUT_INVALID")
   const db = input.supabase, now = input.now ?? new Date()
@@ -56,7 +59,7 @@ export async function readSellOneLikeThisV1(input: {
     bounded(db.from("ebay_account_policy_profiles").select("account_key,marketplace_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,verified_at,expires_at")
       .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US").limit(1)).maybeSingle(),
     bounded(db.from("ebay_authorized_listing_publications")
-      .select("id,listing_package_id,marketplace_account_key,account_fingerprint,sku,phase,preview,preview_hash,draft_execution_id,publication_idempotency_key,listing_id,active_listing_id,manual_registration_id,verified_active_at,monitor_registered_at,preparation:sanitized_result->publicationPreparationV1")
+      .select("id,listing_package_id,marketplace_account_key,account_fingerprint,sku,phase,preview,preview_hash,draft_execution_id,offer_id,publication_idempotency_key,listing_id,active_listing_id,manual_registration_id,verified_active_at,monitor_registered_at,preparation:sanitized_result->publicationPreparationV1")
       .eq("marketplace_account_key", input.accountKey).eq("listing_package_id", input.packageId)
       .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1)).maybeSingle(),
   ])
@@ -120,22 +123,33 @@ export async function readSellOneLikeThisV1(input: {
   }
   const brandAuthority = await readPublicationBrandAuthorityV1({supabase:db,accountKey:input.accountKey,now,aspects:content.itemSpecifics,
     opportunity:{...own,assessment:{ownerLunaUnbrandedPolicyApplicationV1:own.brandApplication,canonicalMarketplaceReadinessV1:{requiredItemSpecificsTruth:own.requiredTruth}}}})
+  const proof=input.prepublicationEvidence ?? prep.prepublicationEvidenceV1
+  const prepublicationValid=currentPrepublicationProofV1(publication.data,proof,now)
+  const feeStructure=publicationFeeStructureV1({authority:record(fee).authority,subjectMatched:record(fee).publicationSubjectMatched===true,
+    accountKey:input.accountKey,packageId:input.packageId,sku:String(own.supplier_sku),categoryId:String(content.categoryId),
+    salePrice:Number(content.price),buyerShipping:prepublicationValid?knownBuyerShippingV1(record(proof).fulfillmentFeeBasis):null,now})
   const consistency = listingPipelineConsistencyV1(result, { ...authority, quantityReview, currentQuantityMaterial,
-    exposurePolicy: prep.exposurePolicy, productTruthDigest: String(own.productTruthDigest ?? ""),
+    publicationFeeStructure:feeStructure, exposurePolicy: prep.exposurePolicy, productTruthDigest: String(own.productTruthDigest ?? ""),
     pinnedSnapshot:record(prep.current).snapshot,pinnedPackageHash:record(prep.current).packageHash })
   const revision = currentPackagePreviewRevisionV1(prep.current, consistency, publication.data, prep.activation)
   const basePublicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : revision.publication, !publication.error)
   const revisionNeedsPreparation = revision.valid && revision.publication.phase === "draft"
-  // Reconciliation activates CURRENT non-LIVE preparation, not publish-time
-  // validation or economic authority. Do not turn that handoff into READY.
-  const currentNonliveOnly = record(prep.activation).scope === "PREPARE_UNPUBLISHED_ONLY"
   const brandBlocked = record(content.itemSpecifics).Brand === "Unbranded" && !brandAuthority.supported
-  const publicationGate = { ...basePublicationGate, READY_TO_PUBLISH:basePublicationGate.READY_TO_PUBLISH && !brandBlocked && !currentNonliveOnly, blockingEvidence: [...basePublicationGate.blockingEvidence, ...(brandBlocked ? ["UNSUPPORTED_DOWNSTREAM_BRAND"] : []),
-    ...(currentNonliveOnly ? ["CURRENT_FULL_PUBLISH_PREVALIDATION_REQUIRED"] : []),
-    ...(revisionNeedsPreparation ? ["CURRENT_PREVIEW_EBAY_PREPARATION_PENDING"] : [])] }
-  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate, brandAuthority,
+  const costPolicy=variableCosts.OWNER_VARIABLE_COST_POLICY_CONFIRMED && variableCosts.marketplaceAccountKey===input.accountKey
+  const publicationEconomics=publicationEconomicsV1({fee:feeStructure,salePrice:content.price,
+    productCost:consistency.evidence.productCost.value,shipping:shipping.value,
+    otherCosts:costPolicy?variableCosts.OTHER_PROVEN_VARIABLE_COSTS:null,listingFees:record(proof).listingFeeReserve,
+    materialCostsProven:consistency.evidence.productCost.status==='PROVEN' && shippingProven && costPolicy})
+  const publicationGate = { ...basePublicationGate,
+    READY_TO_PUBLISH:basePublicationGate.READY_TO_PUBLISH && !brandBlocked && prepublicationValid && publicationEconomics.positivePreSaleContribution,
+    prepublicationContractValidationPass:prepublicationValid,fullOfficialDryRunAvailable:false,publishTimeOnlyValidationRequired:true,
+    blockingEvidence:[...basePublicationGate.blockingEvidence,...(brandBlocked?['UNSUPPORTED_DOWNSTREAM_BRAND']:[]),
+      ...(!prepublicationValid?['CURRENT_PREPUBLICATION_EVIDENCE_REQUIRED']:[]),
+      ...(!publicationEconomics.economicsProven?['CURRENT_PRE_SALE_ECONOMICS_REQUIRED']:publicationEconomics.positivePreSaleContribution?[]:['NONPOSITIVE_PRE_SALE_CONTRIBUTION']),
+      ...(revisionNeedsPreparation?['CURRENT_PREVIEW_EBAY_PREPARATION_PENDING']:[])] }
+  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate, brandAuthority, feeStructure, publicationEconomics,
     previewRevision: { valid: revision.valid, revision: revision.revision,
-      ebayPrevalidated: revision.valid && !revisionNeedsPreparation && !currentNonliveOnly && basePublicationGate.existingLedgerState === "OFFER_READY" },
+      ebayPrevalidated: false, prepublicationContractValidationPass:prepublicationValid },
     publicationEvidenceStatus: publication.error ? "WAITING_FOR_DATA" : "READ" }
 
 }

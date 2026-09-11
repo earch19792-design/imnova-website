@@ -35,6 +35,9 @@ export function reconcileObservedEbayFeesV1(input: { accountKey: string; order: 
     preSaleAuthorityId: original?.authorityId ?? null, preSaleEstimate: estimate,
     delta, comparisonStatus: basisExceeded ? "ORDER_OUTSIDE_PROVEN_BOUND" : !comparable ? "INSUFFICIENT_COMPARABLE_EVIDENCE" :
       basis.method === "PROVEN_UPPER_BOUND" ? delta! > 0 ? "BOUND_EXCEEDED" : "WITHIN_BOUND" : "ESTIMATE_ACTUAL_DELTA",
+    postOrderFeeReconciliationRequired: original?.buyerTaxFeeClassification != null,
+    buyerTaxFeeClassification: original?.buyerTaxFeeClassification ?? null,
+    contingentFeeActualObserved: original?.buyerTaxFeeClassification != null && money(fee.totalMarketplaceFee),
     preSaleEvidenceOverwritten: false, actualSubstitutedForPreSale: false,
     marketplaceWrites: 0, ebayAdsWrites: 0 }
   // Repeated observations of the same official revision create no extra receipt.

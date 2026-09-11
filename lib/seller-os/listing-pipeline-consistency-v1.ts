@@ -14,7 +14,7 @@ export type PipelineCurrentAuthorityV1 = { binding: KeywordBindingV1; accountKey
   truthFields: unknown; requiredTruth: unknown; aspectResolutions: unknown; category: unknown; keywordRead: unknown;
   reference: Record<string, unknown>; ownPrice: unknown; shipping?: Partial<CommercialComponent>; feeHandoff?: unknown;
   sellerPolicies?: unknown; quantityReview?: unknown; currentQuantityMaterial?: unknown;
-  exposurePolicy?: unknown; productTruthDigest?: string; pinnedSnapshot?: unknown; pinnedPackageHash?: unknown; now: Date }
+  publicationFeeStructure?: { feeAuthorityReady: boolean; freshUntil: unknown }; exposurePolicy?: unknown; productTruthDigest?: string; pinnedSnapshot?: unknown; pinnedPackageHash?: unknown; now: Date }
 
 // Audit an existing generation. This never rebuilds its content or mutates it.
 // Fresh commercial observations form a new evaluation, not a new package.
@@ -98,7 +98,7 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
     salePrice: commercialComponentV1({ status: typeof a.ownPrice === "number" && a.ownPrice > 0 && content.price === a.ownPrice ? "PROVEN" : "PENDING",
       value: a.ownPrice, reference: a.packageId, source: "OWN_LISTING_PACKAGE_PRICE" }, a.now),
     shipping: commercialComponentV1(a.shipping ?? {}, a.now),
-    feeAuthority: commercialComponentV1({ status: fee.status === "PROVEN" ? "PROVEN" : "PENDING", value: fee.resolvedAuthority ?? null,
+    feeAuthority: commercialComponentV1({ status: fee.status === "PROVEN" || a.publicationFeeStructure?.feeAuthorityReady === true ? "PROVEN" : "PENDING", value: fee.resolvedAuthority ?? a.publicationFeeStructure ?? null,
       reference: typeof fee.reference === "string" ? fee.reference : null, source: "SELLER_OS_EBAY_FEE_AUTHORITY_V1",
       freshUntil: typeof feeAuthority.freshUntil === "string" ? feeAuthority.freshUntil : null }, a.now),
     // Presence alone is not evidence of exact account/category policy authority.
