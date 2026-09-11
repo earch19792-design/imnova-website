@@ -1,6 +1,7 @@
 import { getEbayDraftOnlyGatewayConfig } from './ebay-draft-only-gateway'
 import { ebayProductionAccountFingerprint } from './ebay-seller-account-scope'
 import { keywordRecord as record } from '../seller-os/keyword-intelligence-handoff-v1'
+import { readEbayTradingUserIdWithAccessToken } from './ebay-trading-identity-proof'
 
 export const PAYOUT_REQUIRED_SCOPE_V1='https://api.ebay.com/oauth/api_scope/sell.finances'
 export const PAYOUT_GRANT_DIAGNOSTIC_V2='PAYOUT_EXISTING_ACCESS_GRANT_V3'
@@ -28,13 +29,20 @@ export async function inspectPublicationPayoutGrantV1(fetchImpl:typeof fetch=fet
   const token=refreshed.access_token
   const userRead=await fetchImpl(new URL('/commerce/identity/v1/user/',c.identityOrigin),{headers:{Authorization:`Bearer ${token}`},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
   const user=record(await userRead.json().catch(()=>({})))
-  const identityMatch=userRead.ok&&typeof user.userId==='string'&&ebayProductionAccountFingerprint(user.userId.trim())===c.accountFingerprint
+  let identityMatch=userRead.ok&&typeof user.userId==='string'&&ebayProductionAccountFingerprint(user.userId.trim())===c.accountFingerprint
+  let tradingIdentityReadAttempted=false
+  // Reuse the installed gateway's exact REST/Trading identity reconciliation.
+  // A successful REST read with a different identifier is not missing consent.
+  if(userRead.ok&&typeof user.userId==='string'&&user.userId.trim()&&!identityMatch){
+   tradingIdentityReadAttempted=true
+   try{identityMatch=ebayProductionAccountFingerprint(await readEbayTradingUserIdWithAccessToken(token,fetchImpl))===c.accountFingerprint}catch{/* Account remains unproven. */}
+  }
   const r=await fetchImpl(endpoint,{method:'POST',headers:basic,
    body:new URLSearchParams({token,token_type_hint:'access_token'}),cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
   if(!r.ok)return {status:'UNPROVEN',reason:'OFFICIAL_TOKEN_INTROSPECTION_UNAVAILABLE',httpStatus:r.status,endpoint,observedAt}
   const result=payoutGrantEvidenceV1(await r.json())
   if(!identityMatch)return {...result,version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:'UNPROVEN',reason:'EXISTING_GRANT_IDENTITY_NOT_PROVEN',observedAt,
-   existingGrantRefreshPass:true,identityHttpStatus:userRead.status,identityValuePresent:typeof user.userId==='string',accountBindingExact:false,
+   existingGrantRefreshPass:true,identityHttpStatus:userRead.status,identityValuePresent:typeof user.userId==='string',accountBindingExact:false,tradingIdentityReadAttempted,
    identityErrors:Array.isArray(user.errors)?user.errors.map(e=>{const x=record(e);return {errorId:typeof x.errorId==='number'?x.errorId:null,domain:typeof x.domain==='string'?x.domain:null,category:typeof x.category==='string'?x.category:null}}):[],
    refreshReturnedScopes:payoutGrantEvidenceV1({active:true,scope:refreshed.scope}).grantedScopes,
    scopeExpansionRequested:false,fundsReadAttempted:false,ownerReauthRequired:null}
@@ -43,7 +51,7 @@ export async function inspectPublicationPayoutGrantV1(fetchImpl:typeof fetch=fet
   const payout=funds.ok?payoutCurrencyEvidenceV1(fundsBody,true,observedAt):null
   const errors=Array.isArray(fundsBody.errors)?fundsBody.errors.map(e=>{const x=record(e);return {errorId:typeof x.errorId==='number'?x.errorId:null,domain:typeof x.domain==='string'?x.domain:null,category:typeof x.category==='string'?x.category:null}}):[]
   return {...result,version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:result.requiredScopePresent===null?'UNPROVEN':'PROVEN',httpStatus:r.status,endpoint,observedAt,
-   existingGrantRefreshPass:true,accountBindingExact:true,refreshReturnedScopes:payoutGrantEvidenceV1({active:true,scope:refreshed.scope}).grantedScopes,
+   existingGrantRefreshPass:true,accountBindingExact:true,tradingIdentityReadAttempted,refreshReturnedScopes:payoutGrantEvidenceV1({active:true,scope:refreshed.scope}).grantedScopes,
    inactiveIntrospectionProvesInvalidToken:false,scopeExpansionRequested:false,fundsHttpStatus:funds.status,fundsErrors:errors,payout}
  }catch{return {status:'UNPROVEN',reason:'OFFICIAL_TOKEN_INTROSPECTION_UNAVAILABLE',endpoint,observedAt}}
 }
