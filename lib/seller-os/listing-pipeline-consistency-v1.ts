@@ -82,7 +82,10 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
     Date.parse(String(policies.expires_at)) > a.now.getTime() &&
     ["fulfillment_policy_id", "payment_policy_id", "return_policy_id", "merchant_location_key"].every(k => typeof policies[k] === "string" && Boolean(policies[k]))
   const quantityMaterial = record(a.currentQuantityMaterial)
-  const quantityContentMatches = quantityMaterial.title === content.title && quantityMaterial.description === content.description &&
+  const quantityContentMatches = typeof content.title === "string" && typeof content.description === "string" &&
+    content.itemSpecifics !== undefined && quantityMaterial.itemSpecifics !== undefined &&
+    Array.isArray(content.imageUrls) && Array.isArray(quantityMaterial.imageUrls) &&
+    quantityMaterial.title === content.title && quantityMaterial.description === content.description &&
     quantityMaterial.categoryId === content.categoryId && quantityMaterial.price === content.price &&
     digest(quantityMaterial.itemSpecifics) === digest(content.itemSpecifics) && digest(quantityMaterial.imageUrls) === digest(content.imageUrls)
   const inventory = publicationInventoryAuthorityV1({ availability: fact("SUPPLIER_AVAILABILITY").length === 1 ? fact("SUPPLIER_AVAILABILITY")[0] : null,
