@@ -17,10 +17,10 @@ const columns='id,actor_user_id,listing_package_id,opportunity_id,marketplace_ac
  * evidence, never the OWNER grant; this request supplies the separate grant. */
 async function refreshExpiredCurrentFeeEvidenceV1(input:Input,revision:Record<string,unknown>) {
  const head=await input.supabase.from('seller_os_ebay_fee_bindings_v1').select('authority_id')
-  .eq('binding_key',`${input.accountKey}:package:${input.packageId}`).single().abortSignal(AbortSignal.timeout(8000)).retry(false)
+  .eq('binding_key',`${input.accountKey}:package:${input.packageId}`).abortSignal(AbortSignal.timeout(8000)).retry(false).single()
  if(head.error)throw Error('CURRENT_FEE_HEAD_UNAVAILABLE')
  const authority=await input.supabase.from('seller_os_ebay_fee_authorities_v1').select('authority')
-  .eq('marketplace_account_key',input.accountKey).eq('authority_id',head.data.authority_id).single().abortSignal(AbortSignal.timeout(8000)).retry(false)
+  .eq('marketplace_account_key',input.accountKey).eq('authority_id',head.data.authority_id).abortSignal(AbortSignal.timeout(8000)).retry(false).single()
  if(authority.error)throw Error('CURRENT_FEE_AUTHORITY_UNAVAILABLE')
  if(Date.parse(String(record(authority.data.authority).freshUntil))>Date.now())return
  const context=await readEbayPackageFeeContextReadonlyV1(input.packageId)
@@ -35,7 +35,7 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
  if(input.confirmation!==EBAY_FINAL_PUBLISH_CONFIRMATION || input.idempotencyKey!==`publish:${input.publicationId}`)throw Error('CURRENT_PUBLISH_EXPLICIT_AUTHORIZATION_REQUIRED')
  const read=async()=>{
   const r=await db.from('ebay_authorized_listing_publications').select(columns).eq('id',input.publicationId)
-   .eq('actor_user_id',input.actor).eq('marketplace_account_key',input.accountKey).single().abortSignal(AbortSignal.timeout(8000)).retry(false)
+   .eq('actor_user_id',input.actor).eq('marketplace_account_key',input.accountKey).abortSignal(AbortSignal.timeout(8000)).retry(false).single()
   if(r.error)throw Error('CURRENT_PUBLICATION_READ_FAILED');return r.data
  }
  let p=await read()
@@ -63,7 +63,7 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
  const claimToken=randomUUID()
  const claim=await db.rpc('claim_ebay_authorized_listing_publication',{p_publication_id:p.id,p_actor_user_id:input.actor,
   p_idempotency_key:input.idempotencyKey,p_preview_hash:p.preview_hash,p_confirm_publish:input.confirmation,p_claim_token:claimToken})
-  .single().abortSignal(AbortSignal.timeout(8000)).retry(false)
+  .abortSignal(AbortSignal.timeout(8000)).retry(false).single()
  // An ambiguous claim is not permission to publish. Leave it for readback.
  if(claim.error || !claim.data || claim.data.phase!=='publish_in_flight' || claim.data.claim_token!==claimToken)
   return {pass:false,publicationWrites:0,blocker:claim.error?.message??'CURRENT_CLAIM_NOT_OWNED'}
@@ -85,7 +85,7 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
 
  async function complete(listingId:string,httpStatus:number,reconciled:boolean,writes:number):Promise<Record<string,unknown>> {
   const recorded=await db.rpc('record_ebay_authorized_listing_published',{p_publication_id:p.id,p_actor_user_id:input.actor,
-   p_listing_id:listingId,p_http_status:httpStatus,p_reconciled:reconciled}).single().abortSignal(AbortSignal.timeout(8000)).retry(false)
+   p_listing_id:listingId,p_http_status:httpStatus,p_reconciled:reconciled}).abortSignal(AbortSignal.timeout(8000)).retry(false).single()
   if(recorded.error)return {pass:false,publicationWrites:writes,listingId,blocker:'PUBLISH_RESULT_PERSISTENCE_READBACK_REQUIRED'}
   // No compensating marketplace write is hidden in registration failure.
   try {
@@ -121,7 +121,7 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
    if(digest(record(record(receiptRead.sanitized_result).currentPublicationExecutionV1).readback)!==digest(officialReceipt))
     throw Error(receipt.error?'CURRENT_OFFICIAL_RECEIPT_PERSISTENCE_UNCONFIRMED':'CURRENT_OFFICIAL_RECEIPT_CONCURRENT_CHANGE')
    const completed=await db.rpc('complete_ebay_authorized_listing_monitor_registration',{p_publication_id:p.id,p_actor_user_id:input.actor,
-    p_listing_id:listingId,p_active_listing_id:v.connectorListingId,p_manual_registration_id:record(registration.registration).id}).single().abortSignal(AbortSignal.timeout(8000)).retry(false)
+    p_listing_id:listingId,p_active_listing_id:v.connectorListingId,p_manual_registration_id:record(registration.registration).id}).abortSignal(AbortSignal.timeout(8000)).retry(false).single()
    const final=await read()
    if(completed.error || final.phase!=='monitor_registered' || final.listing_id!==listingId)throw Error('CURRENT_PUBLICATION_COMPLETION_READBACK_REQUIRED')
    return {pass:true,publicationWrites:writes,listingId,LISTING_STATUS:'ACTIVE',...matches,OFFICIAL_READBACK_PASS:true,
