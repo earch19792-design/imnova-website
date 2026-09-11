@@ -5,8 +5,32 @@ export function canonicalDestinationMatchStatusV1(comparison: unknown): Canonica
 }
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const MARKERS = ['shipToMarker', 'shippingMarker', 'subtotalMarker', 'totalMarker', 'payNowMarker']
+const FACTS = ['checkoutTabFound', 'checkoutHostMatch', 'checkoutInjectionRequested',
+  'checkoutInjectionApiSucceeded', 'checkoutScriptBootstrapAck',
+  'checkoutContentScriptResponded', 'checkoutPageDetected', 'shopPayMarkersEvaluated',
+  'shopPayRequiredMarkersReady', 'checkoutDomReady']
+// Compact diagnostic transport fits the existing lease's <1024-byte constraint.
+// It changes neither the schema nor the capability authority.
+export function compactCheckoutObservationV1(value: unknown) {
+  const d = checkoutObservationV1(value)
+  if (!d) return null
+  return { version: d.version, encoding: 'BOOLEAN_VECTOR_V1',
+    facts: FACTS.map(key => record(d)[key]),
+    markers: MARKERS.map(key => d.observedMarkers.includes(key)),
+    runtimeFailure: d.checkoutNotReadyReason === 'PROBE_RUNTIME_FAILURE' }
+}
 export function checkoutObservationV1(value: unknown) {
-  const v = record(value)
+  let v = record(value)
+  if (v.encoding === 'BOOLEAN_VECTOR_V1') {
+    if (!Array.isArray(v.facts) || v.facts.length !== FACTS.length ||
+        !Array.isArray(v.markers) || v.markers.length !== MARKERS.length ||
+        v.facts.some(x => x !== null && typeof x !== 'boolean') ||
+        v.markers.some(x => typeof x !== 'boolean')) return null
+    const facts = v.facts, markers = v.markers
+    v = { version: v.version, ...Object.fromEntries(FACTS.map((key,i) => [key,facts[i]])),
+      observedMarkers: MARKERS.filter((_,i) => markers[i]),
+      checkoutNotReadyReason: v.runtimeFailure === true ? 'PROBE_RUNTIME_FAILURE' : null }
+  }
   if (v.version !== 'LUNA_CHECKOUT_OBSERVATION_V1') return null
   const bool = (key: string) => v[key] === true
   const nullable = (key: string) => typeof v[key] === 'boolean' ? v[key] as boolean : null
