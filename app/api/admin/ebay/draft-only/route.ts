@@ -1,3 +1,4 @@
+import {publishCurrentRevisionV1} from '@/lib/ebay/ebay-current-publication-executor-v1'
 import { certifyCurrentPrepublicationV1 } from '@/lib/ebay/ebay-current-prepublication-server-v1'
 import { activateCurrentPreparationV1 } from "@/lib/ebay/ebay-current-preparation-activation-server-v1"
 import { getEbayDraftWriteEnvironmentBoundary } from "@/lib/ebay/environment-boundaries"
@@ -3170,6 +3171,24 @@ async function handlePost(req: Request) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
   }
   const action = text(body.action)
+  if(action==='publish_current') {
+    const auth=await validateAdminApiRequest(req),boundary=getEbayDraftWriteEnvironmentBoundary()
+    if(!auth.ok || !boundary.productionDedicatedPreprodBound || !boundary.writeAllowed)
+      return NextResponse.json({error:'CURRENT_PUBLISH_AUTH_OR_PREPROD_REQUIRED'},{status:403})
+    const db=getSupabaseAdminClient(),accountKey=getEbaySellerAccountScopeConfiguration().accountKey
+    if(!accountKey)return jsonError(new Error('EXACT_ACCOUNT_REQUIRED'),409)
+    const identity=await db.from('ebay_authorized_listing_publications').select('actor_user_id')
+      .eq('id',String(body.publicationId??'')).eq('marketplace_account_key',accountKey).single()
+    if(identity.error || auth.authenticationMode!=='service_role' && auth.userId!==identity.data.actor_user_id)
+      return jsonError(new Error('CURRENT_PUBLISH_OWNER_BINDING_REQUIRED'),403)
+    try {
+      const result=await publishCurrentRevisionV1({supabase:db,actor:identity.data.actor_user_id,accountKey,
+        publicationId:text(body.publicationId),packageId:text(body.packageId),offerId:text(body.offerId),sku:text(body.sku),
+        packageHash:text(body.packageHash),packageGeneration:text(body.packageGeneration),previewHash:text(body.previewHash),
+        idempotencyKey:text(body.idempotencyKey),confirmation:text(body.confirmation)})
+      return NextResponse.json(result,{status:result.pass?200:409})
+    }catch(error){return jsonError(error,409)}
+  }
   if (action === "prepare_current_unpublished" || action === "activate_current_preparation" || action === "certify_current_prepublication") {
  const auth=await validateAdminApiRequest(req)
  if(!auth.ok)return NextResponse.json({error:"ADMIN_REQUIRED"},{status:403})
@@ -6147,6 +6166,16 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     .eq("actor_user_id", actor)
     .maybeSingle()
   if (currentError || !current) return jsonError(new Error("EBAY_FINAL_PUBLICATION_NOT_FOUND"), 404)
+  const currentRevision=record(record(record(current.sanitized_result).publicationPreparationV1).current)
+  if(currentRevision.version==='SELLER_OS_PACKAGE_PREVIEW_REVISION_V1') {
+    if(body.confirmPublish!==EBAY_FINAL_PUBLISH_CONFIRMATION || body.confirmFinalPreview!==true || body.confirmProductionAccount!==true)
+      return jsonError(new Error('CURRENT_PUBLISH_EXPLICIT_AUTHORIZATION_REQUIRED'),409)
+    const result=await publishCurrentRevisionV1({supabase,actor,accountKey:current.marketplace_account_key,
+      publicationId,packageId:current.listing_package_id,offerId:current.offer_id,sku:current.sku,
+      packageHash:text(currentRevision.packageHash),packageGeneration:text(currentRevision.packageGeneration),previewHash:text(currentRevision.previewHash),
+      idempotencyKey:executionKey,confirmation:EBAY_FINAL_PUBLISH_CONFIRMATION})
+    return NextResponse.json(result,{status:result.pass?200:409})
+  }
   const visualPublicationGate = await loadFinalListingReviewPublicationGate({
     supabase,
     listingPackageId: text(current.listing_package_id),

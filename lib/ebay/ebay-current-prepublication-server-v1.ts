@@ -15,7 +15,7 @@ export async function certifyCurrentPrepublicationV1(input:{supabase:SupabaseCli
  if(before.error || before.data?.length!==1)throw Error('ONE_CURRENT_PUBLICATION_REQUIRED')
  const pub=before.data[0]
  const preflight=await readPreflight(input.packageId)
- const proof={...preflight.prepublicationEvidence,feeStructure:preflight.feeStructure,economics:preflight.economics}
+ const proof={...preflight.prepublicationEvidence,feeStructure:preflight.feeStructure,economics:preflight.economics,executionReadiness:preflight.executionReadiness}
  if(!currentPrepublicationBindingV1(pub,proof))return {pass:false,preflight,durableReadbackPass:false,publicationWrites:0}
  const sanitized=record(pub.sanitized_result),prep=record(sanitized.publicationPreparationV1)
  const next={...sanitized,publicationPreparationV1:{...prep,prepublicationEvidenceV1:proof}}

@@ -112,6 +112,9 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
   fullPublishValidation:false,fullPublishValidationLimitation:'INVENTORY_API_UNPUBLISHED_ACCEPTANCE_AND_GET_LISTING_FEES_DO_NOT_VALIDATE_ALL_PUBLISH_REQUIRED_FIELDS',
   prepublicationEvidence,prepublicationContractValidationPass:evaluated.publicationGate.prepublicationContractValidationPass,
   feeStructure:evaluated.feeStructure,economics:evaluated.publicationEconomics,publicationGate:evaluated.publicationGate,
+  executionReadiness:{ready:evaluated.validationReady,contractBinding:evaluated.currentExecution.binding,stockguard:evaluated.currentExecution.stockguard,
+    validUntil:new Date(Math.min(Date.now()+10*60*1000,...[evaluated.consistency.evidence.inventory.freshUntil,
+      evaluated.consistency.evidence.shipping.freshUntil,record(evaluated.feeStructure).freshUntil].map(v=>Date.parse(String(v))).filter(Number.isFinite))).toISOString()},
   blockers:[...evaluated.publicationGate.blockingEvidence,...preflightErrors,...localErrors,...warnings.map(w=>String(w.code)),...(!accepted?['CURRENT_DRAFT_PAYLOAD_NOT_ACCEPTED']:[])],
   safety:{readOnly:true,marketplaceWrites:0,publicationWrites:0,adsWrites:0,databaseWrites:0}}
 }

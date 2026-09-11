@@ -1,3 +1,5 @@
+import {keywordWireDigestV1 as executionDigest} from './keyword-intelligence-handoff-v1'
+import {currentPublicationExecutionContractV1,applyCurrentExecutionParityV1} from './current-publication-execution-contract-v1'
 import { currentPrepublicationProofV1, knownBuyerShippingV1 } from './publication-prevalidation-boundary-v1'
 import { publicationFeeStructureV1, publicationEconomicsV1 } from './publication-fee-structure-v1'
 import variableCosts from '../../docs/owner-variable-cost-policy-v1.json' with { type: 'json' }
@@ -59,7 +61,7 @@ export async function readSellOneLikeThisV1(input: {
     bounded(db.from("ebay_account_policy_profiles").select("account_key,marketplace_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,verified_at,expires_at")
       .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US").limit(1)).maybeSingle(),
     bounded(db.from("ebay_authorized_listing_publications")
-      .select("id,listing_package_id,marketplace_account_key,account_fingerprint,sku,phase,preview,preview_hash,draft_execution_id,offer_id,publication_idempotency_key,listing_id,active_listing_id,manual_registration_id,verified_active_at,monitor_registered_at,preparation:sanitized_result->publicationPreparationV1")
+      .select("id,actor_user_id,listing_package_id,marketplace_account_key,account_fingerprint,sku,phase,preview,preview_hash,draft_execution_id,offer_id,publication_idempotency_key,listing_id,active_listing_id,manual_registration_id,verified_active_at,monitor_registered_at,preparation:sanitized_result->publicationPreparationV1")
       .eq("marketplace_account_key", input.accountKey).eq("listing_package_id", input.packageId)
       .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1)).maybeSingle(),
   ])
@@ -140,14 +142,31 @@ export async function readSellOneLikeThisV1(input: {
     productCost:consistency.evidence.productCost.value,shipping:shipping.value,
     otherCosts:costPolicy?variableCosts.OTHER_PROVEN_VARIABLE_COSTS:null,listingFees:record(proof).listingFeeReserve,
     materialCostsProven:consistency.evidence.productCost.status==='PROVEN' && shippingProven && costPolicy})
-  const publicationGate = { ...basePublicationGate,
+  const preliminaryPublicationGate = { ...basePublicationGate,
     READY_TO_PUBLISH:basePublicationGate.READY_TO_PUBLISH && !brandBlocked && prepublicationValid && publicationEconomics.positivePreSaleContribution,
     prepublicationContractValidationPass:prepublicationValid,fullOfficialDryRunAvailable:false,publishTimeOnlyValidationRequired:true,
     blockingEvidence:[...basePublicationGate.blockingEvidence,...(brandBlocked?['UNSUPPORTED_DOWNSTREAM_BRAND']:[]),
       ...(!prepublicationValid?['CURRENT_PREPUBLICATION_EVIDENCE_REQUIRED']:[]),
       ...(!publicationEconomics.economicsProven?['CURRENT_PRE_SALE_ECONOMICS_REQUIRED']:publicationEconomics.positivePreSaleContribution?[]:['NONPOSITIVE_PRE_SALE_CONTRIBUTION']),
       ...(revisionNeedsPreparation?['CURRENT_PREVIEW_EBAY_PREPARATION_PENDING']:[])] }
-  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate, brandAuthority, feeStructure, publicationEconomics,
+  const executionRead = publication.data && record(prep.current).publicationId ? await bounded(db.rpc(
+    'read_current_publication_execution_contract_v1',{p_publication_id:publication.data.id,
+      p_actor_user_id:publication.data.actor_user_id,p_account_key:input.accountKey})) : null
+  const currentExecution = currentPublicationExecutionContractV1({authority:executionRead?.error?null:executionRead?.data,
+    revision:revision.revision,inventory:consistency.evidence.inventory,economicsReady:publicationEconomics.positivePreSaleContribution,
+    materialReady:basePublicationGate.READY_TO_PUBLISH&&!brandBlocked,prepublicationValid,now})
+  const validationReady=preliminaryPublicationGate.READY_TO_PUBLISH && currentExecution.EXECUTOR_CLAIMABLE
+  const committedReadiness=record(record(prep.prepublicationEvidenceV1).executionReadiness)
+  const committed=committedReadiness.ready===true &&
+    executionDigest(committedReadiness.stockguard)===executionDigest(currentExecution.stockguard) &&
+    executionDigest(committedReadiness.contractBinding)===executionDigest(currentExecution.binding) &&
+    executionDigest(record(prep.prepublicationEvidenceV1).binding)===executionDigest(record(proof).binding) &&
+    Date.parse(String(committedReadiness.validUntil))>now.getTime()
+  const executionProjection=committed?currentExecution:{...currentExecution,EXECUTOR_CLAIMABLE:false,
+    INTERNAL_EXECUTION_BLOCKER_COUNT:currentExecution.INTERNAL_EXECUTION_BLOCKER_COUNT+1,
+    blockers:[...currentExecution.blockers,'CURRENT_EXECUTION_VALIDATION_RECEIPT_REQUIRED']}
+  const publicationGate=applyCurrentExecutionParityV1(preliminaryPublicationGate,executionProjection)
+  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate, currentExecution, validationReady, brandAuthority, feeStructure, publicationEconomics,
     previewRevision: { valid: revision.valid, revision: revision.revision,
       ebayPrevalidated: false, prepublicationContractValidationPass:prepublicationValid },
     publicationEvidenceStatus: publication.error ? "WAITING_FOR_DATA" : "READ" }
