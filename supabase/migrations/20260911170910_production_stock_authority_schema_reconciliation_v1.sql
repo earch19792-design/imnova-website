@@ -52,7 +52,7 @@ begin
     );
     alter table public.ebay_active_listing_sync_state enable row level security;
     alter table public.ebay_active_listing_sync_state force row level security;
-    revoke all on public.ebay_active_listing_sync_state from public, anon, authenticated, service_role;
+    revoke all on table public.ebay_active_listing_sync_state from public, anon, authenticated, service_role;
     grant select on public.ebay_active_listing_sync_state to service_role;
     create policy production_stock_live_service_read_v1 on public.ebay_active_listing_sync_state
       for select to service_role using (true);
@@ -82,7 +82,7 @@ begin
     );
     alter table public.seller_os_luna_linkage_decisions enable row level security;
     alter table public.seller_os_luna_linkage_decisions force row level security;
-    revoke all on public.seller_os_luna_linkage_decisions from public, anon, authenticated, service_role;
+    revoke all on table public.seller_os_luna_linkage_decisions from public, anon, authenticated, service_role;
     grant select on public.seller_os_luna_linkage_decisions to service_role;
     create policy production_stock_linkage_service_read_v1 on public.seller_os_luna_linkage_decisions
       for select to service_role using (true);
@@ -109,7 +109,7 @@ begin
       (account_key, ebay_item_id, observation_window_end desc);
     alter table public.seller_os_luna_stock_check_jobs enable row level security;
     alter table public.seller_os_luna_stock_check_jobs force row level security;
-    revoke all on public.seller_os_luna_stock_check_jobs from public, anon, authenticated, service_role;
+    revoke all on table public.seller_os_luna_stock_check_jobs from public, anon, authenticated, service_role;
     grant select on public.seller_os_luna_stock_check_jobs to service_role;
     create policy production_stock_jobs_service_read_v1 on public.seller_os_luna_stock_check_jobs
       for select to service_role using (true);
@@ -154,7 +154,7 @@ begin
       (account_key, ebay_item_id, observed_at desc);
     alter table public.seller_os_luna_stock_observations enable row level security;
     alter table public.seller_os_luna_stock_observations force row level security;
-    revoke all on public.seller_os_luna_stock_observations from public, anon, authenticated, service_role;
+    revoke all on table public.seller_os_luna_stock_observations from public, anon, authenticated, service_role;
     grant select on public.seller_os_luna_stock_observations to service_role;
     create policy production_stock_observations_service_read_v1 on public.seller_os_luna_stock_observations
       for select to service_role using (true);
