@@ -15,20 +15,22 @@ for(const item of ['366643126310','366662788140',null]){
  const response=await fetch(url,{method:'GET',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(15000),
   headers:{'x-seller-os-caller':'SELLER_OS_STOCKGUARD_MONITOR_V1','x-seller-os-service-assertion':assertion}})
  const body=await response.json()
- // Whitelist structured fields, never echo arbitrary upstream messages.
- results.push({itemId:item,status:response.status,
-  error:typeof body.error==='string'&&/^[A-Z_]+(?::[a-z_]+)?$/.test(body.error)?body.error:null,
-  authenticated:body.authority?.serviceAuthenticated===true,
-  canonicalBinding:body.authority?.productionAccountBindingCanonical===true,
-  reads:(body.reads??[]).map(r=>({table:r.table,method:r.method,httpStatus:r.httpStatus,
+ for(const r of body.reads??[])console.log('PRODUCTION_STOCK_AUTH_READ='+JSON.stringify({itemId:item,table:r.table,method:r.method,httpStatus:r.httpStatus,
    requestAuthMode:r.requestAuthMode,authorizationHeaderPresent:r.authorizationHeaderPresent,
    apiKeyHeaderPresent:r.apiKeyHeaderPresent,authorizationMatchesApiKey:r.authorizationMatchesApiKey,
    authHeadersMatchFirstRequest:r.authHeadersMatchFirstRequest,jwtRole:r.jwtRole,
    jwtIssuerMatch:r.jwtIssuerMatch,jwtAudienceMatch:r.jwtAudienceMatch,jwtProjectMatch:r.jwtProjectMatch,
    upstreamErrorCode:r.upstreamErrorCode,permissionDeniedOnRequestedTable:r.permissionDeniedOnRequestedTable,
-   http401Origin:r.http401Origin})),
+   http401Origin:r.http401Origin}))
+ // Whitelist structured fields, never echo arbitrary upstream messages.
+ results.push({itemId:item,status:response.status,
+  error:typeof body.error==='string'&&/^[A-Z_]+(?::[a-z_]+)?$/.test(body.error)?body.error:null,
+  authenticated:body.authority?.serviceAuthenticated===true,
+  canonicalBinding:body.authority?.productionAccountBindingCanonical===true,
   cohortComplete:body.cohortComplete===true,
-  listings:(body.listings??[]).map(r=>({itemId:r.itemId,liveStatus:r.liveStatus,supplierLinkage:r.supplierLinkage,
+  listingCount:(body.listings??[]).length,
+  freshInStockCount:(body.listings??[]).filter(r=>r.supplierAvailability==='IN_STOCK'&&r.stockFreshness==='FRESH').length,
+  listings:(body.listings??[]).filter(r=>['366643126310','366662788140'].includes(r.itemId)).slice(0,2).map(r=>({itemId:r.itemId,liveStatus:r.liveStatus,supplierLinkage:r.supplierLinkage,
    components:r.components,supplierAvailability:r.supplierAvailability,stockFreshness:r.stockFreshness,
    stockGuardState:r.stockGuardState,limitationCode:r.limitationCode})),
   marketplaceWrites:0})
