@@ -54,3 +54,18 @@ export function currentPreparationVisualGateV1(authority: unknown): FinalListing
     visualPhase:allowed?"CURRENT_CERTIFIED_FULL_SOURCE_GALLERY":null,providerCallsSnapshot:0,
     selectedAssets:count,passedAssets:allowed?count:0,source:"APPROVED_LUNA_SUPPLIER_IMAGE_AUTOMATED_QA"}
 }
+
+// A matched durable write/readback receipt proves only CURRENT non-LIVE payload
+// acceptance. It does not activate the publication ledger or authorize publish.
+export function currentUnpublishedPayloadAcceptedV1(publication: unknown, revision: unknown, now=new Date()) {
+ const p=record(publication),r=record(revision),receipt=record(record(p.sanitized_result).currentUnpublishedPreparationV1)
+ const b=record(receipt.binding),result=record(receipt.result),offer=record(result.offerReadback),inventory=record(result.inventoryReadback)
+ return receipt.version==='CURRENT_UNPUBLISHED_PREPARATION_V1' && receipt.key===digest(b) &&
+  receipt.state==='READBACK_CONFIRMED' && receipt.publicationAuthorized===false &&
+  Number.isFinite(Date.parse(String(receipt.observedAt))) && Date.parse(String(receipt.observedAt))<=now.getTime() &&
+  b.publicationId===p.id && b.publicationId===r.publicationId && b.packageId===p.listing_package_id && b.packageId===r.packageId &&
+  b.accountKey===p.marketplace_account_key && b.accountKey===r.accountKey && b.offerId===p.offer_id &&
+  b.sku===record(r.preview).sku && b.packageHash===r.packageHash && b.packageGeneration===r.packageGeneration && b.previewHash===r.previewHash &&
+  r.previewHash===digest(r.preview) && result.pass===true && inventory.safe===true && offer.safe===true &&
+  offer.offerId===b.offerId && offer.sku===b.sku && offer.status==='UNPUBLISHED' && offer.listingPresent===false && offer.payloadMatches===true
+}

@@ -1,3 +1,4 @@
+import { currentUnpublishedPayloadAcceptedV1 } from "./ebay-current-package-preparation-v1"
 import { getSupabaseAdminClient } from '../supabase-admin'
 import { getEbaySellerAccountScopeConfiguration } from './ebay-seller-account-scope'
 import { keywordRecord as record, keywordWireDigestV1 as digest } from '../seller-os/keyword-intelligence-handoff-v1'
@@ -11,7 +12,7 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
  const db=getSupabaseAdminClient(), accountKey=getEbaySellerAccountScopeConfiguration().accountKey
  if(!accountKey || !/^[a-f0-9-]{36}$/.test(packageId))throw Error('EXACT_PACKAGE_REQUIRED')
  const pubRead=await db.from('ebay_authorized_listing_publications')
-  .select('id,actor_user_id,sanitized_result,phase,preview_hash,draft_execution_id,offer_id')
+  .select('id,actor_user_id,listing_package_id,marketplace_account_key,sanitized_result,phase,preview_hash,draft_execution_id,offer_id')
   .eq('listing_package_id',packageId).eq('marketplace_account_key',accountKey).limit(2).abortSignal(AbortSignal.timeout(8000)).retry(false)
  if(pubRead.error || pubRead.data?.length!==1)throw Error('ONE_PUBLICATION_INTENT_REQUIRED')
  const pub=pubRead.data[0], revision=record(record(record(pub.sanitized_result).publicationPreparationV1).current)
@@ -44,6 +45,7 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
    ? verifyEbayUnpublishedOffer(pub.offer_id,String(p.sku),'EBAY_US',offer)
    : Promise.resolve({safe:false,blocker:'CURRENT_REVISION_OFFER_ID_UNAVAILABLE'})])
  const [currentInventoryReadback,currentOfferReadback]=preparationReads.map(r=>r.status==='fulfilled'?r.value:{safe:false,blocker:'CURRENT_PREPARATION_OFFICIAL_READ_UNAVAILABLE'})
+ const accepted=currentUnpublishedPayloadAcceptedV1(pub,revision) && record(currentInventoryReadback).safe===true && record(currentOfferReadback).safe===true
  const warnings=(Array.isArray(mobile.warnings)?mobile.warnings:[]).map(code=>({code,classification:'BLOCKING'}))
  return {contractVersion:'SELLER_OS_CURRENT_REVISION_PREFLIGHT_READONLY_V1',packageId,publicationId:pub.id,
   packageHash:revision.packageHash,packageGeneration:revision.packageGeneration,previewHash:digest(p),observedAt:new Date().toISOString(),
@@ -52,7 +54,8 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
   officialCategoryPreflight:category,warnings,
   preflightErrors:preflightErrors.map(code=>({code,classification:'BLOCKING'})),currentPolicySelectionExact:selectionExact,
   currentInventoryReadback,currentOfferReadback,
-  currentPayloadAcceptance:'NOT_EXECUTED',ebayPrevalidationPass:false,
-  blockers:[...current.publicationGate.blockingEvidence,...preflightErrors,...warnings.map(w=>String(w.code)),'CURRENT_DRAFT_PAYLOAD_NOT_ACCEPTED'],
+  currentPayloadAcceptance:accepted?'CURRENT_UNPUBLISHED_PAYLOAD_ACCEPTED':'NOT_PROVEN',ebayPrevalidationPass:false,
+  fullPublishValidation:false,
+  blockers:[...current.publicationGate.blockingEvidence,...preflightErrors,...warnings.map(w=>String(w.code)),...(accepted?[...(current.publicationGate.blockingEvidence.includes('CURRENT_PREVIEW_EBAY_PREPARATION_PENDING')?['CURRENT_PREPARATION_LEDGER_HANDOFF_PENDING']:[]),'FULL_PUBLISH_VALIDATION_NOT_PROVEN']:['CURRENT_DRAFT_PAYLOAD_NOT_ACCEPTED'])],
   safety:{readOnly:true,marketplaceWrites:0,publicationWrites:0,adsWrites:0,databaseWrites:0}}
 }

@@ -3065,7 +3065,7 @@ test("CURRENT unpublished update replaces same Offer, readbacks after timeout, a
     const u=new URL(url),method=init.method??'GET';calls.push([method,u.pathname])
     if(u.pathname.endsWith('/oauth2/token'))return Response.json({access_token:'a',expires_in:7200})
     if(u.pathname==='/commerce/identity/v1/user/')return Response.json({userId:'sandbox-user-1',status:'CONFIRMED'})
-    if(method==='POST'&&u.pathname.endsWith('/offer/get_listing_fees')){assert.equal(init.headers['Accept-Language'],'en-US');return Response.json({fees:[{marketplaceId:'EBAY_US',feeSummaries:[]}]})}
+    if(method==='POST'&&u.pathname.endsWith('/offer/get_listing_fees')){assert.equal(init.headers['Accept-Language'],'en-US');return Response.json({feeSummaries:[{marketplaceId:'EBAY_US',fees:[],warnings:[{errorId:123,message:'Observed warning'}]}]})}
     if(method==='GET'&&u.pathname.endsWith('/offer'))return Response.json({offers:mode==='duplicate'?[offer,{...offer,offerId:'second'}]:[offer],total:mode==='duplicate'?2:1,limit:100,size:mode==='duplicate'?2:1})
     if(method==='GET'&&u.pathname.endsWith('/offer/'+offerId))return Response.json(offer)
     if(method==='GET'&&u.pathname.includes('/inventory_item/'))return Response.json(inventory)
@@ -3080,6 +3080,7 @@ test("CURRENT unpublished update replaces same Offer, readbacks after timeout, a
    if(['published','wrong-sku','duplicate'].includes(mode)){await assert.rejects(module.prepareExistingUnpublishedRevisionV1(input,fetchImpl));assert.equal(calls.filter(c=>c[0]==='PUT').length,0);continue}
    const out=await module.prepareExistingUnpublishedRevisionV1(input,fetchImpl)
    assert.equal(out.pass,mode!=='timeout-not-committed',mode)
+   if(out.pass){assert.equal(out.listingFeePrevalidation.feeSummaries[0].marketplaceId,'EBAY_US');assert.equal(out.listingFeePrevalidation.feeSummaries[0].warnings.length,1)}
    assert.equal(out.offerWrites,mode==='already-current'?0:1);assert.equal(out.offerReadback.offerId,offerId)
    assert.equal(out.offerReadback.status,'UNPUBLISHED');assert.equal(out.offerCreates,0);assert.equal(out.publicationWrites,0)
    const retry=await module.prepareExistingUnpublishedRevisionV1(input,fetchImpl)

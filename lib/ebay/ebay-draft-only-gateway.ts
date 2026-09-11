@@ -2602,7 +2602,8 @@ export async function prepareExistingUnpublishedRevisionV1(input: {
         body:JSON.stringify({offers:[{offerId:input.offerId}]}),cache:"no-store",signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)})
       const body=record(await response.json().catch(()=>({})))
       listingFeePrevalidation={httpStatus:response.status,ok:response.ok,body:safeBody(body),
-        fees:body.fees??null,fullPublishValidation:false}
+        feeSummaries:(Array.isArray(body.feeSummaries)?body.feeSummaries:[]).slice(0,1).map(value=>{const summary=record(value);return {marketplaceId:summary.marketplaceId,fees:Array.isArray(summary.fees)?summary.fees.slice(0,100):null,warnings:safeBody({errors:summary.warnings}).errors}}),
+        fullPublishValidation:false}
     } catch { listingFeePrevalidation={ok:false,httpStatus:0,fullPublishValidation:false} }
   }
   return {version:"CURRENT_UNPUBLISHED_REVISION_PREPARATION_V1",offerId:input.offerId,sku:input.sku,
