@@ -136,7 +136,7 @@ export async function recoverQuickPickPublisherPackagesV1(input: Readonly<{
   for (const entry of eligible) {
     const listingPackageId = String(entry.projection.listingPackageId)
     const exactCandidateKey = String(entry.projection.candidateKey)
-    const read = await input.supabase.from("ebay_listing_packages")
+    const read = await input.supabase.from("ebay_current_listing_packages_v1")
       .select("id,account_key,opportunity_id,candidate_key,status,package_data,readiness,source_observed_at,created_by,updated_at")
       .eq("id", listingPackageId).eq("account_key", input.accountKey)
       .eq("opportunity_id", entry.projection.opportunityId)

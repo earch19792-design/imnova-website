@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import {beginCurrentPublicationPackageV1} from '../seller-os/current-publication-factory-server-v1'
+import {currentFactoryMarkerV1,currentFactoryMaterializationV1} from '../seller-os/current-publication-factory-v1'
 import { buildSmartStockingLearningProfileV1,
   updateSmartStockingDecisionSnapshotV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit extension;
@@ -660,6 +662,7 @@ async function ensureSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
 }
 
 export function isSellerOsDeterministicFactoryPackageV1(value: unknown) {
+  if(currentFactoryMarkerV1(value)) return true
   const authority = record(record(value).factoryPreparationAuthority)
   return authority.contractVersion === SELLER_OS_DURABLE_FACTORY_VERSION
     && authority.authority === SELLER_OS_DETERMINISTIC_FACTORY
@@ -849,10 +852,10 @@ async function resolveAndPersistQuickPickCategoryV1(input: Readonly<{
         input.listingPackage.package_data)) return input.listingPackage
   const exactCanonicalCategory = await exactDurableCategoryAuthorityV1(
     input.opportunity, input.listingPackage)
-    ?? await priorExactDurableCategoryAuthorityV1({
+    ?? (currentFactoryMarkerV1(input.listingPackage.package_data) ? null : await priorExactDurableCategoryAuthorityV1({
       supabase: input.supabase, accountKey: input.accountKey,
       opportunity: input.opportunity,
-    })
+    }))
   const currentPackageData = record(input.listingPackage.package_data)
   const categoryResolver = await import(
     // @ts-expect-error Node direct TypeScript tests require the explicit
@@ -924,6 +927,7 @@ export function rematerializeSellerOsDeterministicPackageDataV1(
   seed: JsonRecord,
   durablePackageData: JsonRecord,
 ) {
+  if(currentFactoryMarkerV1(durablePackageData)) return Object.freeze(currentFactoryMaterializationV1(seed,durablePackageData))
   const next = preserveCanonicalCategoryBindingV1(seed, durablePackageData)
   const ownerReview = record(durablePackageData.quickPickOwnerReviewV1)
   const authorizedEdits = record(ownerReview.authorizedEdits)
@@ -1201,6 +1205,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   if (!productId || !variantId || !supplierSku) {
     throw new Error("DETERMINISTIC_FACTORY_SUPPLIER_IDENTITY_REQUIRED")
   }
+  await beginCurrentPublicationPackageV1({supabase:input.supabase,accountKey:input.accountKey,
+    opportunityId:input.opportunityId,candidateKey:input.candidateKey})
   const [frontierRead, duplicateRead, packageRead, providedDecisionPackageRead] =
     await Promise.all([
     input.supabase.rpc("get_seller_os_latest_profitability_frontiers_v1", {
@@ -1213,7 +1219,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       .select("id,supplier_variant_id,supplier_sku,ebay_sku")
       .eq("account_key", input.accountKey).eq("listing_status", "active")
       .limit(1000),
-    input.supabase.from("ebay_listing_packages").select("*")
+    input.supabase.from("ebay_current_listing_packages_v1").select("*")
       .eq("account_key", input.accountKey)
       .eq("opportunity_id", input.opportunityId).maybeSingle(),
     input.decisionPackageId
@@ -1330,12 +1336,21 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       })
       : { row: null, createdOrReused: false as const,
         identityAmbiguityReason: null }
-  const plan = buildSellerOsDeterministicFactoryPlanV1({
+  const proposedPlan = buildSellerOsDeterministicFactoryPlanV1({
     opportunity: opportunityForPlan,
     frontier: normalizedFrontier,
     activeDuplicateCount,
     decisionPackage: decisionPackageBinding.row,
   })
+  // The old market-test projection remains diagnostic, never CURRENT
+  // publication readiness. Certification belongs to the CURRENT package gate.
+  const plan = currentFactoryMarkerV1(durableListingPackage?.package_data) ? {
+    ...proposedPlan, listingReady:false, marketTestReady:false,
+    firstBlocker:'CURRENT_PUBLICATION_CERTIFICATION_REQUIRED',
+    blockers:['CURRENT_PUBLICATION_CERTIFICATION_REQUIRED'],
+    readiness:0,
+    packageSeed:currentFactoryMaterializationV1(proposedPlan.packageSeed,durableListingPackage?.package_data),
+  } : proposedPlan
   const updatedAssessment = record(opportunityForPlan.assessment)
   const assessment = {
     ...updatedAssessment,
@@ -1373,7 +1388,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   let packageCreated = false
   if (existingPackage) {
     listingPackage = existingPackage
-    if (isSellerOsDeterministicFactoryPackageV1(
+    if (currentFactoryMarkerV1(existingPackage.package_data) || isSellerOsDeterministicFactoryPackageV1(
       existingPackage.package_data)) {
       let packageWriteQuery = input.supabase.from("ebay_listing_packages")
         .update({

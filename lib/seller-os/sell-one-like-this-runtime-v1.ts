@@ -15,6 +15,7 @@ import { SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1 } from "../ebay/ebay-l
 import { readEbayFeeHandoffV1 } from "./ebay-fee-runtime-v1"
 import { createProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
 import { currentPackagePreviewRevisionV1 } from "./publication-package-preparation-v1"
+import {CURRENT_PUBLICATION_FACTORY_V1,currentFactoryPreparationStatusV1} from './current-publication-factory-v1'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: boolean) => T }>(q: T) =>
@@ -27,8 +28,8 @@ export async function readSellOneLikeThisV1(input: {
 }) {
   if (!UUID.test(input.packageId) || !/^\d{9,19}$/.test(input.referenceItemId)) throw Error("REFERENCE_INPUT_INVALID")
   const db = input.supabase, now = input.now ?? new Date()
-  const p = await bounded(db.from("ebay_listing_packages").select(
-    "id,opportunity_id,candidate_key,account_key,ownPrice:package_data->pricing->targetPrice,category:package_data->categoryResolverV1,quantityReview:package_data->quickPickOwnerReviewV1,quantityReviewProjection:package_data->quickPickMarketTestPackageV1")
+  const p = await bounded(db.from("ebay_current_listing_packages_v1").select(
+    "id,opportunity_id,candidate_key,account_key,factory:package_data->currentPublicationFactoryV1,ownPrice:package_data->pricing->targetPrice,category:package_data->categoryResolverV1,quantityReview:package_data->quickPickOwnerReviewV1,quantityReviewProjection:package_data->quickPickMarketTestPackageV1")
     .eq("account_key", input.accountKey).eq("id", input.packageId).limit(1)).maybeSingle()
   if (p.error || !p.data) throw Error("REFERENCE_OWN_PACKAGE_UNAVAILABLE")
   const pkg = record(p.data)
@@ -166,7 +167,18 @@ export async function readSellOneLikeThisV1(input: {
     INTERNAL_EXECUTION_BLOCKER_COUNT:currentExecution.INTERNAL_EXECUTION_BLOCKER_COUNT+1,
     blockers:[...currentExecution.blockers,'CURRENT_EXECUTION_VALIDATION_RECEIPT_REQUIRED']}
   const publicationGate=applyCurrentExecutionParityV1(preliminaryPublicationGate,executionProjection)
-  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate, currentExecution, validationReady, brandAuthority, feeStructure, publicationEconomics,
+  const currentFactory=record(pkg.factory).version===CURRENT_PUBLICATION_FACTORY_V1
+    ? currentFactoryPreparationStatusV1({keywordReady:keyword.STATUS==='READY',shippingReady:shippingProven,
+      feeReady:feeStructure.feeAuthorityReady,previewAligned:revision.valid,executionValid:currentExecution.CURRENT_EXECUTION_CONTRACT_VALID,
+      claimable:executionProjection.EXECUTOR_CLAIMABLE}) : null
+  // An empty new CURRENT draft has missing authorities, not the former
+  // package's failed Preview/execution. Keep the gate fail-closed without
+  // projecting synthetic failures of downstream artifacts not created yet.
+  const pendingFactory=currentFactory && !record(result).listingPackage
+  const projectedGate=pendingFactory ? {...publicationGate,READY_TO_PUBLISH:false,
+    blockingEvidence:currentFactory.missingCurrentAuthorities.map(k=>`CURRENT_FACTORY_${k.toUpperCase()}_REQUIRED`),
+    blockerClassification:'SELLER_OS_CURRENT_FACTORY_DEFECT' as const} : publicationGate
+  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate:projectedGate, currentExecution, validationReady, brandAuthority, feeStructure, publicationEconomics,currentFactory,
     previewRevision: { valid: revision.valid, revision: revision.revision,
       ebayPrevalidated: false, prepublicationContractValidationPass:prepublicationValid },
     publicationEvidenceStatus: publication.error ? "WAITING_FOR_DATA" : "READ" }
@@ -176,7 +188,7 @@ export async function readSellOneLikeThisV1(input: {
 // UI discovery uses only the current bounded page of existing packages. Missing
 // keyword/reference evidence is an ordinary pending state, never a new research job.
 export async function readReferenceDraftChoicesV1(input: { supabase: SupabaseClient; accountKey: string }) {
-  const r = await bounded(input.supabase.from("ebay_listing_packages")
+  const r = await bounded(input.supabase.from("ebay_current_listing_packages_v1")
     .select("id,title:package_data->>title").eq("account_key", input.accountKey)
     .order("updated_at", { ascending: false }).order("id", { ascending: false }).limit(20))
   if (r.error) throw Error("REFERENCE_DRAFT_CHOICES_UNAVAILABLE")

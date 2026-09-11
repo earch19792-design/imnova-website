@@ -1642,6 +1642,9 @@ async function loadPackageContext(
   const currentPreparation = currentRevisionPreparation ? await readCurrentDraftPreparationV1({
     supabase,accountKey:sellerAccountKey,actor:actorUserId,listingPackage,
   }) : null
+  if (currentRevisionPreparation && !currentPreparation) {
+    throw new Error("CURRENT_REVISION_PREPARATION_REQUIRED_NO_LEGACY_FALLBACK")
+  }
   if (currentPreparation) {
     if (!currentPreparationBindingValidV1(currentPreparation,listingPackage,opportunity,accountFingerprint)) {
       throw new Error("CURRENT_REVISION_EXACT_BINDING_REQUIRED")
@@ -4060,6 +4063,11 @@ async function approveDraft(body: JsonRecord, actor: string) {
     target,
     oneClickCorrelation(),
   )
+  // Historical one-click approvals remain readable for audit/dedup. They
+  // cannot create a new publication approval outside the CURRENT contract.
+  if (oneClickRequested) return jsonError(new Error(
+    "LEGACY_SUPERSEDED_FOR_NEW_PUBLICATION_CURRENT_REVISION_REQUIRED",
+  ), 409)
   if (oneClickRequested) {
     try {
       const accountKey = getEbaySellerAccountScopeConfiguration().accountKey

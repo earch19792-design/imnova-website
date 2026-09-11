@@ -1137,7 +1137,7 @@ async function readExactDurableProductTruthForRefreshV1(input: Readonly<{
   )
   if (Object.keys(opportunityTruth).length) return opportunityTruth
 
-  const exactPackage = await input.supabase.from("ebay_listing_packages")
+  const exactPackage = await input.supabase.from("ebay_current_listing_packages_v1")
     .select("opportunity_id,candidate_key,package_data,updated_at")
     .eq("account_key", input.accountKey)
     .eq("opportunity_id", existing.data.id)

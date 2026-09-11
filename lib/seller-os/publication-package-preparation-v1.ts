@@ -27,9 +27,13 @@ export function packageExposurePolicyV1(value: unknown, binding: {
 
 export function buildPackagePreviewRevisionV1(input: {
   certified: unknown; consistency: unknown; publication: unknown; exposure: unknown; now: Date;
+  currentConfiguration?: unknown;
 }) {
   const g = record(input.consistency), s = record(g.snapshot), b = record(s.binding), c = record(s.content)
-  const p = record(input.publication), old = record(p.preview), exposure = record(input.exposure)
+  const p = record(input.publication), exposure = record(input.exposure)
+  // A historical Preview is audit/identity evidence, never a payload template.
+  // Missing CURRENT preparation fields remain missing for the existing validator.
+  const configuration = record(input.currentConfiguration)
   if (g.PACKAGE_CONSISTENT !== true || g.IMMUTABLE !== true || g.PACKAGE_HASH_PRESENT !== true ||
     !/^sha256:[a-f0-9]{64}$/.test(String(g.PACKAGE_HASH)) ||
     p.phase !== "preview_ready" || Number(p.publish_attempt_count) !== 0 || p.publication_idempotency_key || p.claim_token || p.listing_id ||
@@ -38,20 +42,22 @@ export function buildPackagePreviewRevisionV1(input: {
     !String(b.ACCOUNT_KEY).endsWith(`:${p.account_fingerprint}`) ||
     exposure.valid !== true || exposure.quantity !== 1) throw Error("PUBLICATION_REVISION_PRECONDITION_FAILED")
   const preview = {
-    version: PACKAGE_PREVIEW_REVISION_V1, target: old.target, marketplaceId: "EBAY_US",
+    version: PACKAGE_PREVIEW_REVISION_V1, target: configuration.target, marketplaceId: "EBAY_US",
     permittedOperation: "INTERNAL_PREVIEW_ONLY", offerId: null, draftExecutionId: null, draftApprovalId: null,
     imageUrls: c.imageUrls, imageCount: Array.isArray(c.imageUrls) ? c.imageUrls.length : 0,
     listingPackageId: p.listing_package_id, opportunityId: b.OPPORTUNITY_ID, candidateKey: b.CANDIDATE_KEY,
     sku: p.sku, accountFingerprint: p.account_fingerprint,
-    inventoryItemPayload: { ...record(old.inventoryItemPayload), availability: { shipToLocationAvailability: { quantity: 1 } },
+    inventoryItemPayload: { ...(configuration.condition ? {condition:configuration.condition} : {}), availability: { shipToLocationAvailability: { quantity: 1 } },
       product: { title: c.title, description: c.description,
         aspects: Object.fromEntries(Object.entries(record(c.itemSpecifics)).map(([k, v]) => [k, [v]])), imageUrls: c.imageUrls } },
-    offerPayload: { ...record(old.offerPayload), sku: p.sku, categoryId: c.categoryId, marketplaceId: "EBAY_US",
+    offerPayload: { ...(configuration.listingPolicies ? {listingPolicies:configuration.listingPolicies} : {}),
+      ...(configuration.merchantLocationKey ? {merchantLocationKey:configuration.merchantLocationKey} : {}),
+      sku: p.sku, categoryId: c.categoryId, marketplaceId: "EBAY_US",
       format: "FIXED_PRICE", availableQuantity: 1, listingDescription: c.description,
       pricingSummary: { price: { value: String(c.price), currency: "USD" } } },
   }
-  // The old offer/policies are preparation hints only. This revision has no
-  // official preparation receipt, and cannot advance the publisher by itself.
+  // Configuration must come from CURRENT policy/condition authorities at the
+  // server caller. This revision creates neither a preparation ACK nor a grant.
   return { version: PACKAGE_PREVIEW_REVISION_V1, publicationId: p.id, packageId: p.listing_package_id,
     accountKey: b.ACCOUNT_KEY, productId: b.PRODUCT_ID, variantId: b.VARIANT_ID, sku: b.SKU,
     packageGeneration: s.generation, packageHash: g.PACKAGE_HASH, preview, previewHash: digest(preview),

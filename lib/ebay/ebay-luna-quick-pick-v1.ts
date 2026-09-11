@@ -1437,7 +1437,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     text(row.supplier_variant_id, 80)
       ? [String(row.supplier_variant_id)] : []))]
   const packageRead = opportunityIds.length
-    ? await input.supabase.from("ebay_listing_packages")
+    ? await input.supabase.from("ebay_current_listing_packages_v1")
       .select("id,account_key,opportunity_id,candidate_key,status,package_data,readiness,source_observed_at,created_by,updated_at")
       .in("opportunity_id", opportunityIds)
       .order("updated_at", { ascending: false })

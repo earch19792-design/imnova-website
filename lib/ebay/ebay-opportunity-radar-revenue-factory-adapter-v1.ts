@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import {beginCurrentPublicationPackageV1} from '../seller-os/current-publication-factory-server-v1'
 
 import { getSellerOsRadarPriceDistributionEconomicsV1,
   getSellerOsQuickPickMarketTestEconomicsV1,
@@ -1611,6 +1612,18 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     }
   }
   const outcomes: JsonRecord[] = []
+  // Intake exists independently of Shipping/economics. No legacy package or
+  // approval is revived while CURRENT authorities are being acquired.
+  const currentIntakes = new Map<string,string>()
+  for(const candidate of newListingDurableCandidates){
+    const exact=queueRows.filter(row=>exactQueueIdentity(candidate,row))
+    if(exact.length!==1 || queueCreationFailures.has(candidate.candidateId))continue
+    try{
+      const intake=await beginCurrentPublicationPackageV1({supabase:input.supabase,accountKey:input.accountKey,
+        opportunityId:String(exact[0].id),candidateKey:String(exact[0].candidate_key)})
+      currentIntakes.set(candidate.candidateId,String(intake.listingPackage.id))
+    }catch(error){queueCreationFailures.set(candidate.candidateId,failureCode(error))}
+  }
   const requiredSpecificsPending: Array<Readonly<{
     candidate: RadarRevenueFactoryCandidateV1
     queueRow: JsonRecord
@@ -1652,6 +1665,12 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   }
 
   for (const candidate of candidates) {
+    const intakeFailure=queueCreationFailures.get(candidate.candidateId)
+    if(intakeFailure){
+      outcomes.push({candidateId:candidate.candidateId,status:'PARKED',reasonCode:intakeFailure,
+        listingReady:false,ownerActionRequired:false,marketplaceWrites:0})
+      continue
+    }
     const alreadyLive = alreadyLiveGuard.matches.get(candidate.candidateId)
     if (alreadyLive) {
       outcomes.push({ candidateId: candidate.candidateId,
@@ -1713,6 +1732,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
           radarShippingCandidateIdentity(candidate, durableQueueRow!),
         shippingOpportunityId: waitingForBrowser
           ? durableQueueRow?.id ?? null : null,
+        listingPackageId:currentIntakes.get(candidate.candidateId)??null,
         queuePersistenceOutcome: queueCreationOutcomes.get(candidate.candidateId)
           ?? null,
         deterministicRejected: !waitingForBrowser && !priceContinuation,
