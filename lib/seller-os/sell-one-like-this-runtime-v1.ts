@@ -126,12 +126,16 @@ export async function readSellOneLikeThisV1(input: {
   const revision = currentPackagePreviewRevisionV1(prep.current, consistency, publication.data, prep.activation)
   const basePublicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : revision.publication, !publication.error)
   const revisionNeedsPreparation = revision.valid && revision.publication.phase === "draft"
+  // Reconciliation activates CURRENT non-LIVE preparation, not publish-time
+  // validation or economic authority. Do not turn that handoff into READY.
+  const currentNonliveOnly = record(prep.activation).scope === "PREPARE_UNPUBLISHED_ONLY"
   const brandBlocked = record(content.itemSpecifics).Brand === "Unbranded" && !brandAuthority.supported
-  const publicationGate = { ...basePublicationGate, READY_TO_PUBLISH:basePublicationGate.READY_TO_PUBLISH && !brandBlocked, blockingEvidence: [...basePublicationGate.blockingEvidence, ...(brandBlocked ? ["UNSUPPORTED_DOWNSTREAM_BRAND"] : []),
+  const publicationGate = { ...basePublicationGate, READY_TO_PUBLISH:basePublicationGate.READY_TO_PUBLISH && !brandBlocked && !currentNonliveOnly, blockingEvidence: [...basePublicationGate.blockingEvidence, ...(brandBlocked ? ["UNSUPPORTED_DOWNSTREAM_BRAND"] : []),
+    ...(currentNonliveOnly ? ["CURRENT_FULL_PUBLISH_PREVALIDATION_REQUIRED"] : []),
     ...(revisionNeedsPreparation ? ["CURRENT_PREVIEW_EBAY_PREPARATION_PENDING"] : [])] }
   return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate, brandAuthority,
     previewRevision: { valid: revision.valid, revision: revision.revision,
-      ebayPrevalidated: revision.valid && !revisionNeedsPreparation && basePublicationGate.existingLedgerState === "OFFER_READY" },
+      ebayPrevalidated: revision.valid && !revisionNeedsPreparation && !currentNonliveOnly && basePublicationGate.existingLedgerState === "OFFER_READY" },
     publicationEvidenceStatus: publication.error ? "WAITING_FOR_DATA" : "READ" }
 
 }

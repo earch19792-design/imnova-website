@@ -3,7 +3,7 @@ import { getSupabaseAdminClient } from '../supabase-admin'
 import { getEbaySellerAccountScopeConfiguration } from './ebay-seller-account-scope'
 import { keywordRecord as record, keywordWireDigestV1 as digest } from '../seller-os/keyword-intelligence-handoff-v1'
 import { readSellOneLikeThisV1 } from '../seller-os/sell-one-like-this-runtime-v1'
-import { preflightEbayDraftOnlyMobile, preflightEbayCategoryProductIdentifiers, verifyEbayDraftInventoryItem, verifyEbayUnpublishedOffer } from './ebay-draft-only-gateway'
+import { preflightEbayDraftOnlyMobile, preflightEbayCategoryProductIdentifiers, preflightEbayDraftDependencies, preflightCurrentUnpublishedOfferFeesV1, verifyEbayDraftInventoryItem, verifyEbayUnpublishedOffer } from './ebay-draft-only-gateway'
 import { publicationRevisionPublisherViewV1 } from '../seller-os/publication-revision-publisher-view-v1'
 
 // Existing gateway GET preflights only. Never claim, create inventory/offer, or
@@ -46,6 +46,21 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
    : Promise.resolve({safe:false,blocker:'CURRENT_REVISION_OFFER_ID_UNAVAILABLE'})])
  const [currentInventoryReadback,currentOfferReadback]=preparationReads.map(r=>r.status==='fulfilled'?r.value:{safe:false,blocker:'CURRENT_PREPARATION_OFFICIAL_READ_UNAVAILABLE'})
  const accepted=currentUnpublishedPayloadAcceptedV1(pub,revision) && record(currentInventoryReadback).safe===true && record(currentOfferReadback).safe===true
+ const activation=record(record(record(pub.sanitized_result).publicationPreparationV1).activation)
+ const active=activation.publicationId===pub.id && activation.draftExecutionId===pub.draft_execution_id &&
+  activation.previewHash===pub.preview_hash && activation.packageHash===revision.packageHash && activation.packageGeneration===revision.packageGeneration &&
+  activation.historicalExecutionReused===false && activation.publicationAuthorized===false && accepted
+ // Once CURRENT is active, exercise the already-integrated non-LIVE validation
+ // operations. Neither accepted payload nor getListingFees proves publish-time
+ // validation of every required field; preserve that distinction explicitly.
+ const validations=active && selectionExact && mobile.snapshotStatus==='READY' ? await Promise.allSettled([
+  preflightEbayDraftDependencies({...requested,preflightSnapshot:String(mobile.snapshot??'')}),
+  preflightCurrentUnpublishedOfferFeesV1(String(pub.offer_id)),
+ ]) : []
+ const validationValues=validations.map(x=>x.status==='fulfilled'?x.value:{safe:false,ok:false,blocker:'CURRENT_VALIDATION_READ_UNAVAILABLE'})
+ const currentDependencies=validationValues[0]??null,currentListingFeePrevalidation=validationValues[1]??null
+ if(active && record(currentDependencies).safe!==true)preflightErrors.push(String(record(currentDependencies).blocker??'CURRENT_DEPENDENCY_VALIDATION_NOT_PROVEN'))
+ if(active && record(currentListingFeePrevalidation).ok!==true)preflightErrors.push('CURRENT_LISTING_FEE_PREVALIDATION_FAILED')
  const warnings=(Array.isArray(mobile.warnings)?mobile.warnings:[]).map(code=>({code,classification:'BLOCKING'}))
  return {contractVersion:'SELLER_OS_CURRENT_REVISION_PREFLIGHT_READONLY_V1',packageId,publicationId:pub.id,
   packageHash:revision.packageHash,packageGeneration:revision.packageGeneration,previewHash:digest(p),observedAt:new Date().toISOString(),
@@ -54,11 +69,13 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
   officialCategoryPreflight:category,warnings,
   preflightErrors:preflightErrors.map(code=>({code,classification:'BLOCKING'})),currentPolicySelectionExact:selectionExact,
   currentInventoryReadback,currentOfferReadback,
+  currentPreparationLedgerActivated:active,currentRevisionPublisherActive:active,historicalExecutionReused:false,
+  currentDependencies,currentListingFeePrevalidation,
   fulfillmentFeeBasis:mobile.fulfillmentFeeBasis,
   currentPreparationReceiptBound:accepted,historicalAckReused:false,
   preparationReceiptBinding:accepted?record(record(record(pub.sanitized_result).currentUnpublishedPreparationV1).binding):null,
   currentPayloadAcceptance:accepted?'CURRENT_UNPUBLISHED_PAYLOAD_ACCEPTED':'NOT_PROVEN',ebayPrevalidationPass:false,
-  fullPublishValidation:false,
+  fullPublishValidation:false,fullPublishValidationLimitation:'INVENTORY_API_UNPUBLISHED_ACCEPTANCE_AND_GET_LISTING_FEES_DO_NOT_VALIDATE_ALL_PUBLISH_REQUIRED_FIELDS',
   blockers:[...current.publicationGate.blockingEvidence,...preflightErrors,...warnings.map(w=>String(w.code)),...(accepted?[...(current.publicationGate.blockingEvidence.includes('CURRENT_PREVIEW_EBAY_PREPARATION_PENDING')?['CURRENT_PREPARATION_LEDGER_HANDOFF_PENDING']:[]),'FULL_PUBLISH_VALIDATION_NOT_PROVEN']:['CURRENT_DRAFT_PAYLOAD_NOT_ACCEPTED'])],
   safety:{readOnly:true,marketplaceWrites:0,publicationWrites:0,adsWrites:0,databaseWrites:0}}
 }

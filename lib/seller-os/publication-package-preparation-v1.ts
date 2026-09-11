@@ -66,8 +66,8 @@ export function currentPackagePreviewRevisionV1(value: unknown, consistency: unk
   const a = record(activation), rp = record(r.preview), pp = record(p.preview)
   const activated = a.publicationId === p.id && a.draftExecutionId === p.draft_execution_id && a.previewHash === p.preview_hash &&
     Number.isFinite(Date.parse(String(a.activatedAt))) &&
-    digest(record(rp.inventoryItemPayload).product) === digest(record(pp.inventoryItemPayload).product) &&
-    digest(record(rp.inventoryItemPayload).availability) === digest(record(pp.inventoryItemPayload).availability)
+    digest(rp.inventoryItemPayload) === digest(pp.inventoryItemPayload) &&
+    digest(rp.offerPayload) === digest(pp.offerPayload)
   const valid = r.version === PACKAGE_PREVIEW_REVISION_V1 && g.PACKAGE_CONSISTENT === true &&
     r.publicationId === p.id && r.packageId === p.listing_package_id && r.accountKey === p.marketplace_account_key &&
     r.productId === b.PRODUCT_ID && r.variantId === b.VARIANT_ID && r.sku === b.SKU &&

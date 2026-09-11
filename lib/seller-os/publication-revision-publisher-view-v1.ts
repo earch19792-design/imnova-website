@@ -15,9 +15,14 @@ export function publicationRevisionPublisherViewV1(publication:unknown, assessme
  const superseded=(valid || durableSuperseded) && historicalError==='EBAY_PUBLICATION_HIGH_QUALITY_EXACT_SEVEN_REQUIRED'
  const currentViolation=a.contractVersion==='SELLER_OS_CURRENT_SOURCE_GALLERY_PUBLICATION_V1' &&
   a.currentViolationProven===true && a.packageHash===r.packageHash && a.generation===r.packageGeneration
+ const activation=record(record(record(p.sanitized_result).publicationPreparationV1).activation)
+ const active=valid && activation.publicationId===p.id && activation.draftExecutionId===p.draft_execution_id &&
+  activation.previewHash===p.preview_hash && activation.packageHash===r.packageHash && activation.packageGeneration===r.packageGeneration &&
+  activation.historicalExecutionReused===false && activation.publicationAuthorized===false
  return {currentRevisionImageContractPass:valid,historicalPublisherContradictionSuperseded:superseded,
+  currentRevisionPublisherActive:active,
   currentPublisherContradictionCount:currentViolation || historicalError && !superseded?1:0,
   currentIssue:currentViolation?'CURRENT_GALLERY_PROVENANCE_MISMATCH':null,
-  status:currentViolation?'REQUIRES_ATTENTION':superseded?valid?'WAITING_FOR_CURRENT_REVISION_PREPARATION':'WAITING_FOR_CURRENT_IMAGE_EVIDENCE':historicalError?'REQUIRES_ATTENTION':'WAITING_FOR_PREVALIDATION',
+  status:currentViolation?'REQUIRES_ATTENTION':active?'WAITING_FOR_PREVALIDATION':superseded?valid?'WAITING_FOR_CURRENT_REVISION_PREPARATION':'WAITING_FOR_CURRENT_IMAGE_EVIDENCE':historicalError?'REQUIRES_ATTENTION':'WAITING_FOR_PREVALIDATION',
   historicalError:historicalError??null,publicationAuthorized:false}
 }

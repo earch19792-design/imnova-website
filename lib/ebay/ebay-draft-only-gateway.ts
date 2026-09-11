@@ -1512,9 +1512,19 @@ export async function preflightEbayDraftOnlyMobile(
   const feePolicyRows = Array.isArray(fulfillment.body.fulfillmentPolicies)
     ? fulfillment.body.fulfillmentPolicies.map(record).filter(p => p.fulfillmentPolicyId === selection.fulfillmentPolicyId) : []
   const feePolicy = feePolicyRows.length === 1 ? feePolicyRows[0] : {}
+  const geography = (value:unknown) => {
+    const locations=record(value)
+    const regions=(entries:unknown) => Array.isArray(entries) ? entries.map(raw => {
+      const region=record(raw)
+      return {regionName:region.regionName,regionType:region.regionType}
+    }) : null
+    return {regionIncluded:regions(locations.regionIncluded),regionExcluded:regions(locations.regionExcluded)}
+  }
   const fulfillmentFeeBasis = {
     policyId: selection.fulfillmentPolicyId, marketplaceId: feePolicy.marketplaceId,
     observedAt: new Date().toISOString(), source: "OFFICIAL_EBAY_FULFILLMENT_POLICY",
+    shipToLocations: geography(feePolicy.shipToLocations),
+    globalShipping: typeof feePolicy.globalShipping==='boolean'?feePolicy.globalShipping:null,
     shippingOptions: (Array.isArray(feePolicy.shippingOptions) ? feePolicy.shippingOptions : []).map(raw => {
       const option = record(raw)
       return { optionType: option.optionType, costType: option.costType,
@@ -1522,6 +1532,7 @@ export async function preflightEbayDraftOnlyMobile(
         shippingServices: (Array.isArray(option.shippingServices) ? option.shippingServices : []).map(rawService => {
           const service = record(rawService)
           return { shippingServiceCode: service.shippingServiceCode, freeShipping: service.freeShipping ?? null,
+            shipToLocations: geography(service.shipToLocations),
             shippingCost: service.shippingCost ?? null, additionalShippingCost: service.additionalShippingCost ?? null,
             sortOrder: service.sortOrder ?? null }
         }) }
@@ -2615,21 +2626,31 @@ export async function prepareExistingUnpublishedRevisionV1(input: {
   const offerReadback = await verifyOfferWithToken(config,auth.token,input.offerId,input.sku,"EBAY_US",input.offerPayload,fetchImpl)
   // Official non-mutating fee prevalidation for this one unpublished Offer.
   // This is not an estimate of post-sale final-value fees or publish approval.
-  let listingFeePrevalidation: JsonRecord | null = null
-  if (inventoryReadback.safe && offerReadback.safe) {
-    try {
-      const response = await fetchImpl(new URL("/sell/inventory/v1/offer/get_listing_fees",config.apiOrigin),{
-        method:"POST",headers:{Authorization:`Bearer ${auth.token}`,"Content-Type":"application/json","Accept-Language":"en-US"},
-        body:JSON.stringify({offers:[{offerId:input.offerId}]}),cache:"no-store",signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)})
-      const body=record(await response.json().catch(()=>({})))
-      listingFeePrevalidation={httpStatus:response.status,ok:response.ok,body:safeBody(body),
-        feeSummaries:(Array.isArray(body.feeSummaries)?body.feeSummaries:[]).slice(0,1).map(value=>{const summary=record(value);return {marketplaceId:summary.marketplaceId,fees:Array.isArray(summary.fees)?summary.fees.slice(0,100):null,warnings:safeBody({errors:summary.warnings}).errors}}),
-        fullPublishValidation:false}
-    } catch { listingFeePrevalidation={ok:false,httpStatus:0,fullPublishValidation:false} }
-  }
+  const listingFeePrevalidation=inventoryReadback.safe && offerReadback.safe
+    ? await currentOfferFeePrevalidationWithToken(config,auth.token,input.offerId,fetchImpl) : null
   return {version:"CURRENT_UNPUBLISHED_REVISION_PREPARATION_V1",offerId:input.offerId,sku:input.sku,
     inventoryWrites,offerWrites,responses,inventoryReadback,offerReadback,listingFeePrevalidation,
     pass:inventoryReadback.safe && offerReadback.safe,
     state:inventoryReadback.safe && offerReadback.safe ? "READBACK_CONFIRMED" : "READBACK_REQUIRED",
     publicationWrites:0,offerCreates:0,blindRetryAllowed:false}
+}
+
+async function currentOfferFeePrevalidationWithToken(config:GatewayConfig,token:string,offerId:string,fetchImpl:typeof fetch) {
+    try {
+      const response = await fetchImpl(new URL("/sell/inventory/v1/offer/get_listing_fees",config.apiOrigin),{
+        method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json","Accept-Language":"en-US"},
+        body:JSON.stringify({offers:[{offerId:offerId}]}),cache:"no-store",signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)})
+      const body=record(await response.json().catch(()=>({})))
+      return {httpStatus:response.status,ok:response.ok,body:safeBody(body),
+        feeSummaries:(Array.isArray(body.feeSummaries)?body.feeSummaries:[]).slice(0,1).map(value=>{const summary=record(value);return {marketplaceId:summary.marketplaceId,fees:Array.isArray(summary.fees)?summary.fees.slice(0,100):null,warnings:safeBody({errors:summary.warnings}).errors}}),
+        fullPublishValidation:false}
+    } catch { return {ok:false,httpStatus:0,fullPublishValidation:false} }
+}
+
+// Existing non-mutating operation, callable without an Inventory/Offer writer.
+export async function preflightCurrentUnpublishedOfferFeesV1(offerId:string,fetchImpl:typeof fetch=fetch) {
+ if(!/^[0-9]+$/.test(offerId))throw Error("EXACT_OFFER_REQUIRED")
+ const config=getEbayDraftOnlyGatewayConfig(),auth=await authenticatedToken(config,fetchImpl,false,false)
+ if(auth.identityStatus!=="BOUND")throw Error("EXACT_ACCOUNT_REQUIRED")
+ return currentOfferFeePrevalidationWithToken(config,auth.token,offerId,fetchImpl)
 }

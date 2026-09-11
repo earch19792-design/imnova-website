@@ -1,3 +1,4 @@
+import { activateCurrentPreparationV1 } from "@/lib/ebay/ebay-current-preparation-activation-server-v1"
 import { getEbayDraftWriteEnvironmentBoundary } from "@/lib/ebay/environment-boundaries"
 import { executeCurrentUnpublishedPreparationV1 } from "@/lib/ebay/ebay-current-unpublished-preparation-server-v1"
 import { readCurrentDraftPreparationV1 } from "@/lib/ebay/ebay-current-package-preparation-server-v1"
@@ -3168,7 +3169,7 @@ async function handlePost(req: Request) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
   }
   const action = text(body.action)
-  if (action === "prepare_current_unpublished") {
+  if (action === "prepare_current_unpublished" || action === "activate_current_preparation") {
  const auth=await validateAdminApiRequest(req)
  if(!auth.ok)return NextResponse.json({error:"ADMIN_REQUIRED"},{status:403})
  const boundary=getEbayDraftWriteEnvironmentBoundary()
@@ -3185,6 +3186,10 @@ async function handlePost(req: Request) {
   if(read.error||read.data?.length!==1)throw Error("ONE_EXISTING_INTENT_REQUIRED")
   const actor=read.data[0].actor_user_id
   if(auth.authenticationMode!=="service_role"&&auth.userId!==actor)throw Error("OWNER_BINDING_MISMATCH")
+  if(action === "activate_current_preparation") {
+   const result=await activateCurrentPreparationV1({supabase:db,accountKey,packageId,actor})
+   return NextResponse.json({success:true,...result})
+  }
   const result=await executeCurrentUnpublishedPreparationV1({supabase:db,accountKey,packageId,actor})
   return NextResponse.json({success:result.pass,result,publicationWrites:0},{status:result.pass?200:409})
  }catch(error){
