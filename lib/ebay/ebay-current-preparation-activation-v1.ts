@@ -1,6 +1,10 @@
 import { keywordRecord as record, keywordWireDigestV1 as digest } from '../seller-os/keyword-intelligence-handoff-v1'
 import { currentUnpublishedPayloadAcceptedV1 } from './ebay-current-package-preparation-v1'
 
+// Publication ledger stores SHA-256 hex; package receipts use the URI prefix.
+// Compute from content, never assign an unrelated hash to bypass alignment.
+export const currentPreviewLedgerHashV1=(preview:unknown)=>digest(preview).slice(7)
+
 // Reconciliation of accepted non-LIVE work, not a new marketplace operation or
 // publish grant. No historic approval, execution, or economics is an input.
 export function currentPreparationActivationEvidenceV1(publication: unknown, preflight: unknown, now=new Date()) {
@@ -31,7 +35,7 @@ export function currentPreparationActivationReadbackV1(publication:unknown, exec
   packageGeneration:r.packageGeneration,packageHash:r.packageHash,previewGeneration:r.revisionKey,previewHash:r.previewHash}
  return a.version==='CURRENT_PREPARATION_ACTIVATION_V1' && a.scope==='PREPARE_UNPUBLISHED_ONLY' &&
   a.publicationAuthorized===false && a.historicalExecutionReused===false &&
-  a.draftExecutionId===p.draft_execution_id && e.id===p.draft_execution_id && e.id!==r.priorDraftExecutionId &&
+  a.previewHash===p.preview_hash && a.draftExecutionId===p.draft_execution_id && e.id===p.draft_execution_id && e.id!==r.priorDraftExecutionId &&
   a.draftApprovalId===p.draft_approval_id && e.approval_id===approvalRow.id && approvalRow.id===p.draft_approval_id &&
   e.phase==='completed' && e.offer_id===p.offer_id && e.sku===p.sku && e.actor_user_id===p.actor_user_id &&
   e.listing_package_id===p.listing_package_id && e.account_fingerprint===p.account_fingerprint &&
@@ -41,7 +45,7 @@ export function currentPreparationActivationReadbackV1(publication:unknown, exec
   e.request_hash===approvalRow.payload_hash && proof.version==='CURRENT_PREPARATION_ACTIVATION_V1' &&
   digest(b)===digest(expected) && proof.key===digest(expected) && a.receiptBindingKey===proof.key &&
   proof.publicationAuthorized===false && proof.economicsInherited===false &&
-  p.preview_hash===r.previewHash && digest(p.preview)===r.previewHash &&
+  p.preview_hash===currentPreviewLedgerHashV1(r.preview) && digest(p.preview)===r.previewHash &&
   digest(record(approvalRow.approved_payload).inventoryItemPayload)===digest(record(r.preview).inventoryItemPayload) &&
   digest(record(approvalRow.approved_payload).offerPayload)===digest(record(r.preview).offerPayload) &&
   record(record(approvalRow.approved_payload).economics).historicalStateInherited===false &&
