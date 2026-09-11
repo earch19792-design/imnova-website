@@ -44,7 +44,10 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
    }
    if (intent.baseVersionHash !== task.data.source_image_set_digest) throw Error("OUTBOX_SAVED_BASE_CHANGED")
    binding = { ...binding, taskId: task.data.id,
-     baseImageHash: ebayOfficialImageSetDigestV1(task.data.current_image_set), sourceImageSetDigest: task.data.source_image_set_digest }
+     baseImageHash: ebayOfficialImageSetDigestV1(task.data.current_image_set), sourceImageSetDigest: task.data.source_image_set_digest,
+     baselineGallery: { urls: task.data.current_image_set,
+       observedAt: record(record(task.data.selection_signal).currentOfficialGallery).observedAt ?? null,
+       sourceReference: `VISUAL_TASK:${task.data.id}:${task.data.visual_manifest_digest ?? task.data.source_image_set_digest}` } }
    if (intent.kind === "IMAGE_UPLOAD") {
      if (task.data.assigned_operator_user_id !== input.actorUserId) throw Error("OUTBOX_TASK_SCOPE_REQUIRED")
      const assets = await input.supabase.from("ebay_listing_image_assets")
@@ -60,6 +63,8 @@ export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown
      })
    } else if (intent.kind === "IMAGE_SYNC") {
      const proposed = record(task.data.visual_manifest).proposedOrderedImages
+     binding.galleryProposal = { images: proposed, manifestDigest: task.data.visual_manifest_digest,
+       recordedAt: intent.createdAt }
      const ids = Array.isArray(proposed) ? proposed.map(record).flatMap(e => typeof e.assetId === "string" ? [e.assetId] : []) : []
      if (!ids.includes(intent.requestedChanges.assetId!) || !ids.length) throw Error("OUTBOX_DRAFT_AUTHORITY_CHANGED")
      const native = await input.supabase.from("ebay_listing_image_assets")

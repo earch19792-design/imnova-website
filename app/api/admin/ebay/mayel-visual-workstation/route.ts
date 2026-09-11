@@ -400,6 +400,13 @@ export async function POST(request: Request) {
           expectedCurrentImages: body.expectedCurrentImages, decisions: body.decisions as import("@/lib/seller-os/mayel-full-gallery-mutation-v1").GalleryDecisionV1[] })
         return json({ success: true, result, marketplaceWrites: 0, ownerApprovalRequired: false })
       }
+      if (body?.action === "RECONCILE_EXISTING_GALLERY_SYNC_V1") {
+        const { recoverExistingGalleryOrderV1 } = await import("@/lib/seller-os/mayel-existing-gallery-recovery-v1")
+        const result = await recoverExistingGalleryOrderV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(),
+          outboxId: String(body.outboxId ?? ""), itemId: String(body.expectedItemId ?? ""),
+          expectedManifestDigest: String(body.expectedManifestDigest ?? "") })
+        return json({ success: true, result })
+      }
       if (body?.action === "RUN_DELEGATED_VISUAL_SYNC_V1") {
         const { runDelegatedVisualScopedV1 } = await import("@/lib/seller-os/mayel-delegated-visual-scoped-run-v1")
         const result = await runDelegatedVisualScopedV1({

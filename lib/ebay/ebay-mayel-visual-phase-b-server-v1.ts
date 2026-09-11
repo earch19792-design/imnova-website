@@ -1,4 +1,5 @@
 import { visualAssetOwnerApprovedV1 } from "../seller-os/visual-asset-sync-state-v1"
+import { currentLiveGalleryV1 } from "../seller-os/mayel-gallery-drift-v1"
 import { visualExecutionScopeV1 } from "../seller-os/mayel-visual-execution-scope-v1"
 import { slotManifestMatchesGalleryV1, type GalleryReplacementV1 } from "./mayel-gallery-slot-policy-v1"
 import { createHash, randomUUID } from "node:crypto"
@@ -338,14 +339,7 @@ async function loadContext(input: {
     baseManagement, official)
   const tradingRateLimited = tradingReadFailureClass?.endsWith(
     "_EBAY_ERROR_518") === true
-  const inventoryImageUrls = Array.isArray(record(
-    record(management.inventoryItemPayload).product).imageUrls)
-    ? record(record(management.inventoryItemPayload).product).imageUrls as unknown[]
-    : []
-  const currentOfficialImageUrls = management.managementModel ===
-    "INVENTORY_API_MANAGED"
-    ? inventoryImageUrls.map((value) => text(value, 1_000)).filter(Boolean)
-    : official?.pictureUrls ?? []
+  const currentOfficialImageUrls = currentLiveGalleryV1(official)
   const plan = buildMayelVisualPhaseBPlanV1({
     visualTaskId: String(task.id),
     ebayItemId: String(task.ebay_item_id),
@@ -405,9 +399,7 @@ async function loadContext(input: {
     accountIdentityProven: management.accountIdentityProven,
     listingIdentityProven: inventoryManagedIdentityProven
       || tradingManagedIdentityProven,
-    currentImageSetProven: currentOfficialImageUrls.length > 0
-      && (management.managementModel === "INVENTORY_API_MANAGED"
-        || (official?.pictureUrls.length ?? 0) > 0),
+    currentImageSetProven: currentOfficialImageUrls.length > 0 && official !== null,
     correctEbayApi: management.managementModel === "INVENTORY_API_MANAGED"
       ? "INVENTORY_API" : management.managementModel === "TRADING_MANAGED"
         ? "TRADING_API" : null,

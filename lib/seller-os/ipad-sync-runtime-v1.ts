@@ -2,6 +2,7 @@ import { nextOutboxAttemptAtV1 } from "./ipad-outbox-contract-v1"
 import { randomUUID } from "node:crypto"
 import { visualScopeFailureDefinitelyUnsentV1 } from "./mayel-visual-execution-scope-v1"
 import { approvedVisualReadbackMatchesV1 } from "./visual-sync-readback-v1"
+import { galleryDriftEvidenceV1 } from "./mayel-gallery-drift-v1"
 import { stableOutboxJsonV1 } from "./ipad-outbox-contract-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { IPAD_OUTBOX_TABLE, readOutboxImageAuthorityV1, type OutboxRow } from "./ipad-durable-outbox-v1"
@@ -88,6 +89,13 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        if (execution.error) throw Error("OUTBOX_EXECUTION_READ_FAILED")
        const official = preview.officialReadStatus === "PASS" && preview.currentImageSetProven &&
          preview.accountIdentityProven && preview.listingIdentityProven && preview.officialReadAuthority !== "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1"
+       const drift = galleryDriftEvidenceV1({ binding: row.binding, currentUrls: preview.currentImages,
+         currentObservedAt: preview.officialObservedAt, official,
+         currentReadbackReference: `${preview.officialReadAuthority}:${row.item_id}:${preview.officialObservedAt}` })
+       row.binding = { ...row.binding, galleryDriftEvidence: drift }
+       // Persist the three authorities BEFORE the engine can emit any drift
+       // blocker. No success/ACK or marketplace mutation is implied.
+       await patch({ binding: row.binding })
        const baseListingCompatible = Boolean(row.binding.baseListing && preview.currentListingVersionFields &&
          stableOutboxJsonV1(row.binding.baseListing) === stableOutboxJsonV1(preview.currentListingVersionFields))
        const e = execution.data
