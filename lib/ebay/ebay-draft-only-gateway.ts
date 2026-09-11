@@ -2668,12 +2668,14 @@ export async function verifySingleCurrentOfferV1(offerId:string,sku:string,fetch
  const config=getEbayDraftOnlyGatewayConfig()
  if(!sanitizeEbayOfferId(offerId)||!isCanonicalEbayPackageSku(sku))throw Error('CURRENT_OFFER_SCOPE_INVALID')
  const token=await accessToken(config,fetchImpl,false)
- const url=new URL(`${config.apiOrigin}/sell/inventory/v1/offer`)
- url.searchParams.set('sku',sku);url.searchParams.set('marketplace_id','EBAY_US');url.searchParams.set('limit','2')
- const response=await fetchImpl(url,{method:'GET',headers:{Authorization:`Bearer ${token}`},cache:'no-store',signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)})
- const body=record(await response.json()),offers=Array.isArray(body.offers)?body.offers.map(record):[]
- const exact=response.ok && Number(body.total)===1 && offers.length===1 && offers[0].offerId===offerId && offers[0].sku===sku && offers[0].marketplaceId==='EBAY_US'
+ // Reuse the already-certified exact-SKU collection request used by CURRENT
+ // non-LIVE preparation. Do not filter away another marketplace/format offer.
+ const url=new URL('/sell/inventory/v1/offer',config.apiOrigin)
+ url.searchParams.set('sku',sku);url.searchParams.set('limit','100')
+ const response=await preflightRead(config,token,url,fetchImpl)
+ const body=response.body,offers=Array.isArray(body.offers)?body.offers.map(record):[]
+ const exact=response.ok && completeOfferCollection(response) && offers.length===1 && offers[0].offerId===offerId && offers[0].sku===sku && offers[0].marketplaceId==='EBAY_US'
  return {safe:exact,httpStatus:response.status,offerCount:Number.isFinite(Number(body.total))?Number(body.total):null,
   offerId:exact?offerId:null,sku:exact?sku:null,status:exact?offers[0].status:null,listingId:exact?offerListingId(offers[0]):null,
-  blocker:exact?null:'CURRENT_OFFER_COLLECTION_AMBIGUOUS'}
+  errors:safeReadErrors(response),blocker:exact?null:'CURRENT_OFFER_COLLECTION_AMBIGUOUS'}
 }
