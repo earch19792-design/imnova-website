@@ -18,9 +18,9 @@ export function publicationInventoryAuthorityV1(input: {
   const valid = input.exactBinding && evidence(f) && Number.isFinite(observedAt) && observedAt <= input.now.getTime()
   const availability = valid && [true, "AVAILABLE", "IN_STOCK"].includes(f.VALUE as string | boolean) ? "IN_STOCK" :
     valid && [false, "UNAVAILABLE", "OUT_OF_STOCK"].includes(f.VALUE as string | boolean) ? "OUT_OF_STOCK" : "UNKNOWN"
-  const freshness = valid && Number.isFinite(expires) && expires > observedAt ?
+  const freshness = valid && f.EVIDENCE_STATUS === "STALE" ? "STALE" : valid && Number.isFinite(expires) && expires > observedAt ?
     expires > input.now.getTime() ? "FRESH" : "STALE" : "UNKNOWN"
-  const numericFresh = evidence(stock) && Date.parse(String(stock.FRESH_UNTIL)) > input.now.getTime() &&
+  const numericFresh = stock.EVIDENCE_STATUS === "PROVEN" && evidence(stock) && Date.parse(String(stock.FRESH_UNTIL)) > input.now.getTime() &&
     Date.parse(String(stock.OBSERVED_AT ?? stock.CAPTURED_AT)) <= input.now.getTime()
   const supplierQuantity = input.exactBinding && numericFresh && typeof stock.VALUE === "number" &&
     Number.isInteger(stock.VALUE) && stock.VALUE >= 0 ? stock.VALUE : null
