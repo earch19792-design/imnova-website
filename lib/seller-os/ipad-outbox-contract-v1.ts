@@ -1,3 +1,4 @@
+import type { MayelOwnerActionEvidenceV1 } from "./mayel-owner-action-presentation-v1"
 export const IPAD_OUTBOX_VERSION = "SELLER_OS_IPAD_LOCAL_FIRST_EBAY_SYNC_V1" as const
 export const OUTBOX_FRIENDLY_STATES = ["GUARDADO", "PENDIENTE_DE_SINCRONIZAR", "SINCRONIZADO", "REQUIERE_ATENCION"] as const
 export type OutboxFriendlyState = typeof OUTBOX_FRIENDLY_STATES[number]
@@ -9,7 +10,7 @@ export type OutboxChanges = { title?: string; description?: string; price?: numb
 export type OutboxIntent = { version: typeof IPAD_OUTBOX_VERSION; kind: OutboxKind; itemId: string;
   listingTitle: string; generationId: string; createdAt: string; baseVersionHash: string | null;
   baseObservedAt: string | null; idempotencyKey: string; requestedChanges: OutboxChanges }
-export type DurableOutboxReceipt = { id: string; idempotencyKey: string; state: OutboxFriendlyState;
+export type DurableOutboxReceipt = MayelOwnerActionEvidenceV1 & { id: string; idempotencyKey: string; state: OutboxFriendlyState;
   internalState: string; receivedAt: string; reasonCode: string | null; officialReadback: boolean }
 
 const object = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}

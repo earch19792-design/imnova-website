@@ -8,7 +8,7 @@ export function proposalSlotLabelV1(position: number, sourcePosition: number | n
 
 export function proposalDeliveryStatusV1(input: VisualSyncPresentationV1) {
   if (input.discarded || input.state === "SUPERSEDED") return { kind: "ARCHIVED", label: "Archivada · No se enviará a eBay", tone: "bg-gray-100 text-gray-700" }
-  if (input.rejected) return { kind: "REJECTED", label: "Rechazada · No se enviará a eBay", tone: "bg-red-50 text-red-800" }
+  if (input.rejected) return { kind: "REJECTED", label: "Rechazada · No se enviará a eBay", tone: "bg-slate-100 text-slate-700" }
   const status = visualAssetStatusV1(visualEvidenceV1(input))
   return { kind: status.synced ? "SYNCED" : status.status === "REQUIRES_ATTENTION" ? "ATTENTION" : status.status === "PENDING_EBAY_SYNC" ? "PENDING" : "SAVED",
     label: `${status.icon} ${status.label}`, tone: status.className }

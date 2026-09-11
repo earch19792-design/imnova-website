@@ -1,5 +1,6 @@
 import { delegatedVisualQaV1 } from "./mayel-optimization-delegation-v1"
 import { visualAssetStatusV1, visualEvidenceV1 } from "./mayel-visual-asset-status-v1"
+import type { MayelOwnerActionEvidenceV1 } from "./mayel-owner-action-presentation-v1"
 import { createHash } from "node:crypto"
 
 export const VISUAL_OWNER_SYNC_CONFIRMATION = "APPROVE_THIS_ASSET_FOR_EBAY_SYNC_V1"
@@ -66,7 +67,18 @@ export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Reco
   const state = synced ? "SYNCED" : attention || invalidSyncClaim || recoveryAttention || asset.status === "rejected" || delegation.active && !delegation.authorized && !quotaOnly && asset.status === "approved" ? "REQUIRES_ATTENTION" :
     !approved ? delegation.active ? "QA_READY" : record(asset.qa_result).automaticStatus === "PASSED" ? "OWNER_APPROVAL_REQUIRED" : "DRAFT" :
     synced ? "SYNCED" : active ? active.state === "UNKNOWN_COMMIT" ? "OFFICIAL_READBACK_REQUIRED" : String(active.state) : "APPROVED_FOR_EBAY_SYNC"
-  const view = { state, autonomousOptimization: delegation.active, generated, qaPassed, readbackCompatible: synced,
+  const latest = currentRows[0]
+  const receiptOwnerAction = record(latest?.execution_receipt).ownerAction as MayelOwnerActionEvidenceV1["ownerAction"]
+  const ownerEvidenceBound = latest?.account_key === task.marketplace_account_key && latest?.item_id === task.ebay_item_id &&
+    record(record(latest?.intent).requestedChanges).manifestDigest === task.visual_manifest_digest
+  const manualApprovalRequired = !delegation.active && boundAsset && state === "OWNER_APPROVAL_REQUIRED"
+  const ownerAction = manualApprovalRequired ? { required: true, humanOnly: true, proven: true,
+    action: "Compara la propuesta y completa la revisión requerida por la autoridad de tu cuenta antes de autorizarla.",
+    reasonCode: "OWNER_VISUAL_REVIEW_REQUIRED", sourceReference: `visual-asset:${asset.id}:${visualAssetGenerationV1(asset)}` } :
+    ownerEvidenceBound ? receiptOwnerAction : undefined
+  const view = { state, ownerAction, ownerActionRequired: manualApprovalRequired,
+    reasonCode: typeof latest?.reason_code === "string" ? latest.reason_code : delegation.reason,
+    autonomousOptimization: delegation.active, generated, qaPassed, readbackCompatible: synced,
     waitingForEbay: waitingForEbay && !synced && asset.status !== "rejected",
     officialReadback: synced, savedToSellerOS: generated, approvedForEbaySync: approved || synced, generation: visualAssetGenerationV1(asset),
     idempotencyKey: visualAssetSyncKeyV1(asset), creativeSlot: asset.mayel_output_role,
@@ -74,5 +86,8 @@ export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Reco
     sourceProvenance: { references: asset.source_image_references, sourceImageSetDigest: asset.source_image_set_digest,
       productTruthDigest: asset.product_truth_digest, sourceSha256: asset.source_sha256 },
     serverReceiptPresent: rows.length > 0 }
-  return { ...view, presentation: visualAssetStatusV1(visualEvidenceV1(view)) }
+  const presentation = visualAssetStatusV1(visualEvidenceV1(view))
+  return { ...view, ownerActionRequired: presentation.ownerActionRequired, ownerCtaPresent: presentation.ownerCtaPresent,
+    ownerActionState: presentation.ownerActionState, mayelWorkflowState: presentation.mayelWorkflowState,
+    listingOperationalHealth: presentation.listingOperationalHealth, presentation }
 }

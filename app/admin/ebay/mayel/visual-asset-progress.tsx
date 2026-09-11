@@ -1,7 +1,8 @@
 import type { visualAssetStatusV1 } from "@/lib/seller-os/mayel-visual-asset-status-v1"
 
 export function MayelVisualAssetProgress({ status }: { status: ReturnType<typeof visualAssetStatusV1> }) {
-  return <div data-visual-asset-status={status.status}>
+  return <div data-visual-asset-status={status.status} data-mayel-workflow-state={status.mayelWorkflowState}
+    data-listing-operational-health={status.listingOperationalHealth} data-owner-action-state={status.ownerActionState}>
     <div role="status" className={`mb-4 rounded-xl border p-3 text-sm font-semibold ${status.className}`}>
       {status.icon} {status.label}<p className="mt-1 font-normal">{status.action}</p>
     </div>

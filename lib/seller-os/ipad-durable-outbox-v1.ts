@@ -1,3 +1,4 @@
+import { mayelOwnerActionPresentationV1, type MayelOwnerActionEvidenceV1 } from "./mayel-owner-action-presentation-v1"
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { parseOutboxIntentV1, stableOutboxJsonV1, outboxFriendlyStateV1, type OutboxIntent, type DurableOutboxReceipt } from "./ipad-outbox-contract-v1"
@@ -10,7 +11,12 @@ export type OutboxRow = { id: string; account_key: string; actor_user_id: string
 export type OutboxScope = { supabase: SupabaseClient; accountKey: string; actorUserId: string; owner?: boolean }
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 export function publicOutboxReceiptV1(row: OutboxRow): DurableOutboxReceipt {
- return { id: row.id, idempotencyKey: row.idempotency_key, state: outboxFriendlyStateV1(row.state), internalState: row.state,
+ const ownerAction = row.state === "OWNER_APPROVAL_REQUIRED" && row.reason_code === "OWNER_VISUAL_REVIEW_REQUIRED" && !row.binding.ownerDelegation ?
+   { required: true, humanOnly: true, proven: true, action: "Completa la revisión de la propuesta requerida por la autoridad de tu cuenta.",
+     reasonCode: row.reason_code, sourceReference: `outbox:${row.id}:${row.payload_hash}` } :
+   record(row.execution_receipt).ownerAction as MayelOwnerActionEvidenceV1["ownerAction"]
+ const owner = mayelOwnerActionPresentationV1({ state: row.state, ownerAction })
+ return { ownerAction, ownerActionRequired: owner.ownerActionRequired, id: row.id, idempotencyKey: row.idempotency_key, state: outboxFriendlyStateV1(row.state), internalState: row.state,
    receivedAt: row.received_at, reasonCode: row.reason_code, officialReadback: row.official_readback }
 }
 export async function saveDurableOutboxV1(input: OutboxScope & { intent: unknown; galleryPreviewDigest?: string; delegationId?: string }) {

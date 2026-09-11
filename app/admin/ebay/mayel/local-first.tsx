@@ -139,6 +139,7 @@ export function MayelLocalSaveStatus({ local }: { local: ReturnType<typeof useMa
  if (!local.ready) return null
  return <aside aria-label="Guardado automático de Mayel" className="rounded-xl border bg-white p-3">
    <p role="status" className={`rounded-xl border p-3 font-semibold ${status.className}`}>{status.icon} {status.label}</p>
+   <p className="mt-2 text-sm">{status.action}</p>
    <details><summary>Ver detalles</summary>
      <p className="text-sm">{local.error ? "No se pudo guardar en este navegador. Mantén la página abierta mientras se recupera el almacenamiento." :
        !local.localImagesPending && latest.length && latest.every(r => r.receipt) ? "Seller OS recibió tus borradores. Puedes cerrar el iPad; las operaciones autorizadas continúan en el servidor cuando eBay y las comprobaciones lo permitan." :

@@ -579,7 +579,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
           className="mt-2 aspect-square w-full rounded-xl bg-[#f4efe7] object-contain" />
       </div>
     </div>
-    {(!task.autonomousOptimization || !owner) && !status.synced && output.status !== "rejected" && <div className="mt-4">
+    {status.ownerCtaPresent && !status.synced && output.status !== "rejected" && <div className="mt-4">
       <label className="block text-sm font-semibold">¿Qué cambio quieres preparar?
         <select value={intent} onChange={e => setIntent(e.target.value as typeof intent)} className="mt-2 min-h-11 w-full rounded-xl border p-3">
           <option value="">Selecciona la intención</option><option value="REPLACE_MAIN">Reemplazar sólo la imagen principal</option>
@@ -594,7 +594,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
         className="mt-2 min-h-11 rounded-xl border px-4 disabled:opacity-40">Guardar intención y Preview</button>}
       <p className="mt-2 text-sm">{task.autonomousOptimization ? "Conserva las demás posiciones. Mayel aplica la delegación sólo después de validar QA y evidencia." : "Conserva las demás posiciones. Guardar la intención no autoriza sincronizar."}</p>
     </div>}
-    {output.status === "pending_review" && <div className="mt-4">
+    {output.status === "pending_review" && status.ownerCtaPresent && <div className="mt-4">
       <p className="text-sm font-semibold">{task.autonomousOptimization ? "QA de identidad pendiente" : "Comparación humana obligatoria"}</p>
       {task.autonomousOptimization && <p className="mt-2 text-sm">Mayel continúa automáticamente cuando la evaluación semántica está guardada y es segura. La delegación no aprueba cambios en la identidad ni datos sin evidencia.</p>}
       <div className="mt-2 grid gap-2 sm:grid-cols-2">{baseChecks.map(([key, label]) =>
@@ -625,7 +625,7 @@ function HumanQa({ task, output, busy, onDone, owner = false }: {
     </div>}
     {output.sync && <div className="mt-4 rounded-xl bg-[#f4efe7] p-3 text-sm">
 
-      {output.status === "approved" && output.sync.state === "OWNER_APPROVAL_REQUIRED" && !output.sync.autonomousOptimization && owner &&
+      {status.ownerCtaPresent && output.status === "approved" && output.sync.state === "OWNER_APPROVAL_REQUIRED" && !output.sync.autonomousOptimization && owner &&
         <button type="button" disabled={busy || approvingSync} onClick={() => void approveSync()}
           className="mt-3 min-h-11 rounded-xl bg-[#1d5961] px-4 py-2 font-semibold text-white disabled:opacity-40">Aprobar esta imagen para sincronizar con eBay</button>}
       <p className="mt-2 text-xs">{output.sync.autonomousOptimization ? AUTONOMOUS_VISUAL_COPY_V1 : "Cada imagen necesita su propia aprobación. Las fuentes originales guardadas siguen disponibles para las otras propuestas."}</p>
@@ -1615,7 +1615,7 @@ export function MayelVisualWorkstation({ canOperate,
       owner={canOwnerAuthorize} busy={busy} onDone={refresh} />
     <PortfolioOverview listings={livePortfolio} canOperate={canOperate}
       busy={busy} onOpen={openVisualListing} /></>}
-    {message && <div className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]"><p>Requiere atención. Revisa el estado de tu propuesta guardada.</p><details><summary>Ver detalles</summary><p>{message}</p></details></div>}
+    {message && <div className="mt-4 rounded-xl bg-[#f7e9de] p-4 text-sm text-[#704d3c]"><p>Mayel está revisando el estado de tu propuesta guardada.</p><details><summary>Ver detalles</summary><p>{message}</p></details></div>}
     {!busy && !tasks.length && <div className="mt-6 rounded-[28px] border border-[#d9d1c4] bg-[#fffdf8] p-7">
       <h3 className="font-serif text-2xl font-semibold">No hay una oportunidad visual lista</h3>
       <p className="mt-2 text-sm leading-6 text-[#64675f]">Seller OS no fabricará una tarea. Aparecerá aquí cuando una publicación activa tenga identidad, verdad del producto, imágenes autorizadas y una oportunidad visual demostrada.</p>
