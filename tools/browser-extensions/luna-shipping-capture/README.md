@@ -52,3 +52,23 @@ La versión 1.0.55 separa conexión y capacidad de captura. La reanudación auto
 requiere el probe de sólo lectura de un checkout existente y el permiso durable
 del líder. Un heartbeat no crea claims. Los 429 y las ventanas vacías conservan
 el backoff de Phase A; no hay un poller nuevo.
+
+Recuperación de observación (`LUNA_CHECKOUT_OBSERVER_HANDSHAKE_V1`): el probe
+comprueba permiso y documento superior de `shop.app`, y verifica el canal de
+mensajes con un nonce. Un script estático compatible se reutiliza. Si no responde,
+se puede inyectar una sola vez por probe `checkout-observation.js`, dirigido al
+`documentId` ya comprobado. Cada documento conserva una ventana mínima de 15
+minutos entre intentos; no hay timer de recuperación. Un resultado ambiguo se
+comprueba mediante handshake, nunca mediante otra inyección inmediata.
+
+El archivo de observación se genera con `node tools/build-luna-checkout-observer.mjs`
+a partir del detector existente de `content.js`. Su modo de sólo lectura desactiva
+bootstrap de captura, recuperación de jobs y binding de destino. No navega, no
+reclama trabajo ni activa controles de compra. `checkoutContentScriptPortConnected`
+representa el canal runtime verificado; no se crea un Port persistente adicional.
+Los diagnósticos guardan códigos allowlisted y booleanos, sin DOM, direcciones,
+URLs de checkout ni credenciales. Los selectores y los guards de captura no cambian.
+
+Al cambiar estos artefactos, instalar la carpeta completa conservando `manifest.json`
+y el storage. Un deploy web no activa código nuevo en una extensión ya cargada:
+la activación debe demostrarse con un probe nuevo que incluya el handshake.

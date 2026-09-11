@@ -858,13 +858,13 @@ async function bindOperatorCanonicalDestination(existingBinding, bootstrapJob) {
       : "BIND_CANONICAL_DESTINATION" }
 }
 
-function sendTabMessage(tabId, message) {
+function sendTabMessage(tabId, message, documentId) {
   return new Promise((resolve, reject) => {
     if (!Number.isInteger(tabId)) {
       reject(new Error("BIND_CHECKOUT_TAB_ID_INVALID"))
       return
     }
-    chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, (response) => {
+    chrome.tabs.sendMessage(tabId, message, documentId ? { documentId } : { frameId: 0 }, (response) => {
       if (chrome.runtime.lastError) {
         reject(new Error("CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE"))
         return
@@ -896,6 +896,115 @@ async function queryAccessibleTabIds() {
   }
 }
 
+// Observation-only recovery. No job, binding, cart or navigation authority.
+const checkoutObserverAttempts = new Map()
+const CHECKOUT_OBSERVER_RETRY_MS = 15 * 60 * 1000
+function checkoutRecoveryError(error) {
+  const text = String(error?.message ?? error ?? '')
+  if (/permission|Cannot access|not allowed/i.test(text)) return 'HOST_PERMISSION_DENIED'
+  if (/No tab|tab.*closed/i.test(text)) return 'TAB_CLOSED'
+  if (/frame|document/i.test(text)) return 'FRAME_UNAVAILABLE'
+  if (/load file|resource|file.*not/i.test(text)) return 'SCRIPT_RESOURCE_UNAVAILABLE'
+  if (/context invalidated/i.test(text)) return 'EXTENSION_CONTEXT_INVALIDATED'
+  if (/TIMEOUT/i.test(text)) return 'INJECTION_TIMEOUT'
+  return 'INJECTION_API_ERROR'
+}
+function checkoutChromeRead(invoke) {
+  return new Promise((resolve, reject) => invoke(value => {
+    const error = chrome.runtime.lastError
+    if (error) reject(new Error(error.message || 'CHROME_API_ERROR'))
+    else resolve(value)
+  }))
+}
+async function checkoutObserverHello(tabId, documentId) {
+  const nonce = crypto.randomUUID()
+  try {
+    const answer = await boundedBindStep(sendTabMessage(tabId, {
+      type: 'SELLER_OS_LUNA_CHECKOUT_OBSERVER_HELLO_V1', nonce,
+    }, documentId), 'CHECKOUT_OBSERVER_HELLO', BIND_CONTENT_RESPONSE_TIMEOUT_MS)
+    return answer?.contract === 'LUNA_CHECKOUT_OBSERVER_HANDSHAKE_V1' &&
+      answer.nonce === nonce && answer.version === EXTENSION_BUILD_VERSION && answer.loaded === true
+  } catch { return false }
+}
+async function recoverCheckoutObserver(tabId, allowance) {
+  const d = { checkoutTabIdPresent: Number.isInteger(tabId), checkoutFrameId: 0,
+    checkoutHostPermissionMatch: null, checkoutInjectionRequested: false,
+    checkoutInjectionApiSucceeded: null, checkoutInjectionErrorCode: null,
+    checkoutScriptBootstrapAck: false, checkoutScriptBootstrapErrorCode: null,
+    checkoutContentScriptLoaded: false, checkoutContentScriptPortConnected: false,
+    // This is the runtime message channel; there is no persistent content Port.
+    checkoutTransport: 'RUNTIME_MESSAGE', recoveryBlockedReason: null }
+  let documentId
+  const ack = async () => {
+    const connected = await checkoutObserverHello(tabId, documentId)
+    d.checkoutScriptBootstrapAck = connected
+    d.checkoutContentScriptLoaded = connected
+    d.checkoutContentScriptPortConnected = connected
+    d.checkoutScriptBootstrapErrorCode = connected ? null : 'CONTENT_SCRIPT_NO_RESPONSE'
+    return connected
+  }
+  if (!d.checkoutTabIdPresent || activeJob) { d.recoveryBlockedReason = 'ACTIVE_JOB_OR_INVALID_TAB'; return d }
+  try {
+    d.checkoutHostPermissionMatch = await boundedBindStep(checkoutChromeRead(cb =>
+      chrome.permissions.contains({ origins: [SHOP_APP_HOST_PATTERN] }, cb)), 'CHECKOUT_HOST_PERMISSION') === true
+    if (!d.checkoutHostPermissionMatch) { d.recoveryBlockedReason = 'HOST_PERMISSION_DENIED'; return d }
+    const frame = await boundedBindStep(checkoutChromeRead(cb =>
+      chrome.webNavigation.getFrame({ tabId, frameId: 0 }, cb)), 'CHECKOUT_FRAME')
+    if (!frame || !frame.documentId || frame.parentFrameId !== -1 ||
+        new URL(frame.url).origin !== 'https://shop.app') {
+      d.recoveryBlockedReason = 'FRAME_UNAVAILABLE'; return d
+    }
+    documentId = frame.documentId
+    d.documentId = documentId // volatile routing only; durable projection excludes it
+    if (await ack()) return d
+    // Older static scripts may answer the existing probe but not the new HELLO.
+    // Preserve compatibility without injecting a second observer into a healthy script.
+    const existing = await probeBindingCapability(tabId, documentId)
+    if (existing.responder) {
+      d.checkoutContentScriptLoaded = true
+      d.checkoutContentScriptPortConnected = true
+      d.checkoutScriptBootstrapAck = null
+      d.checkoutScriptBootstrapErrorCode = null
+      d.existingProbe = existing
+      return d
+    }
+    const key = `${tabId}:${frame.documentId}`
+    if (activeJob || allowance.used || Date.now() < (checkoutObserverAttempts.get(key) ?? 0)) {
+      d.recoveryBlockedReason = activeJob ? 'ACTIVE_JOB' : 'OBSERVER_RECOVERY_BACKOFF'; return d
+    }
+    allowance.used = true
+    // One attempt per document per conservative window; no timer or poller.
+    checkoutObserverAttempts.set(key, Date.now() + CHECKOUT_OBSERVER_RETRY_MS)
+    while (checkoutObserverAttempts.size > MAX_BIND_DISCOVERY_TABS) checkoutObserverAttempts.delete(checkoutObserverAttempts.keys().next().value)
+    d.checkoutInjectionRequested = true
+    try {
+      // documentIds prevents a navigation race from injecting into a different frame/page.
+      const result = await boundedBindStep(chrome.scripting.executeScript({
+        target: { tabId, documentIds: [frame.documentId] }, world: 'ISOLATED',
+        files: ['checkout-observation.js'],
+      }), 'CHECKOUT_OBSERVER_INJECTION', BIND_CONTENT_RESPONSE_TIMEOUT_MS)
+      d.checkoutInjectionApiSucceeded = Array.isArray(result) && result.length === 1 &&
+        result[0].frameId === 0 && result[0].documentId === frame.documentId
+      if (!d.checkoutInjectionApiSucceeded) d.checkoutInjectionErrorCode = 'INJECTION_FRAME_MISMATCH'
+    } catch (error) {
+      d.checkoutInjectionApiSucceeded = false
+      d.checkoutInjectionErrorCode = checkoutRecoveryError(error)
+    }
+    // Read back even an ambiguous API result. Never reinject blindly.
+    if (!activeJob) await ack()
+  } catch (error) { d.recoveryBlockedReason = checkoutRecoveryError(error) }
+  return d
+}
+async function observeRecoverableCheckout(tabId, allowance) {
+  const recovery = await recoverCheckoutObserver(tabId, allowance)
+  if (recovery.existingProbe && !activeJob) return { ...recovery.existingProbe, recovery }
+  if (!recovery.checkoutScriptBootstrapAck || activeJob ||
+      (recovery.checkoutInjectionRequested && recovery.checkoutInjectionApiSucceeded !== true)) {
+    return { id: tabId, responded: false, responder: false, eligible: false, recovery }
+  }
+  return { ...await probeBindingCapability(tabId, recovery.documentId), recovery }
+}
+
 function safeEligibilityResponse(value) {
   const fields = ["eligible", "checkoutPageDetected",
     "shipToMarker", "shippingMarker", "subtotalMarker", "totalMarker",
@@ -911,12 +1020,12 @@ function safeEligibilityResponse(value) {
     ...Object.fromEntries(fields.map((field) => [field, value[field]])) })
 }
 
-async function probeBindingCapability(tabId) {
+async function probeBindingCapability(tabId, documentId) {
   try {
     const response = await boundedBindStep(sendTabMessage(tabId, {
       type: BIND_ELIGIBILITY_PROBE,
       contractVersion: BIND_ELIGIBILITY_CONTRACT,
-    }), "BIND_CHECKOUT_TAB_ELIGIBILITY", BIND_TOP_FRAME_TIMEOUT_MS)
+    }, documentId), "BIND_CHECKOUT_TAB_ELIGIBILITY", BIND_TOP_FRAME_TIMEOUT_MS)
     const safe = safeEligibilityResponse(response)
     return { id: tabId, responded: response !== undefined,
       responder: Boolean(safe), probeError: !safe, observation: safe,
@@ -943,9 +1052,10 @@ function checkoutObservationV1(tabFound, probe) {
   return {
     version: "LUNA_CHECKOUT_OBSERVATION_V1", checkoutTabFound: tabFound,
     checkoutHostMatch: tabFound, // queryTabs is restricted to https://shop.app/*
-    // Static manifest injection has no scripting API result. Do not fabricate one.
     checkoutInjectionRequested: false, checkoutInjectionApiSucceeded: null,
-    checkoutScriptBootstrapAck: null, contentScriptAuthority: "STATIC_MANIFEST",
+    checkoutScriptBootstrapAck: null, contentScriptAuthority: "STATIC_OR_READ_ONLY_RECOVERY",
+    ...Object.fromEntries(Object.entries(probe?.recovery ?? {})
+      .filter(([key]) => key !== 'documentId' && key !== 'existingProbe')),
     checkoutContentScriptResponded: responded,
     checkoutPageDetected: Boolean(pageDetected), shopPayMarkersEvaluated: evaluated,
     shopPayRequiredMarkersReady: evaluated && missingMarkers.length === 0,
@@ -953,10 +1063,11 @@ function checkoutObservationV1(tabFound, probe) {
     markerContractDrift: null, productIdentityStatus: "NOT_EVALUATED",
     quantityIdentityStatus: "NOT_EVALUATED",
     checkoutNotReadyReason: !tabFound ? "NO_CHECKOUT_TAB"
-      : !responded ? "CONTENT_SCRIPT_NO_RESPONSE"
+      : probe?.recovery?.recoveryBlockedReason ?? (probe?.recovery?.checkoutInjectionErrorCode
+        ? "INJECTION_FAILED" : !responded ? "CONTENT_SCRIPT_NO_RESPONSE"
       : !evaluated ? "CONTENT_SCRIPT_RESPONSE_INVALID"
       : !pageDetected ? "CHECKOUT_PAGE_NOT_DETECTED"
-      : !ready ? "REQUIRED_MARKERS_MISSING" : "READY",
+      : !ready ? "REQUIRED_MARKERS_MISSING" : "READY"),
   }
 }
 
@@ -974,8 +1085,9 @@ async function reportCaptureCapability() {
     const candidates = (await queryTabs({ url: ["https://shop.app/*"] }))
       .slice(0, MAX_BIND_DISCOVERY_TABS)
     let observation = null
+    const recoveryAllowance = { used: false }
     for (const tab of candidates) {
-      const probe = await probeBindingCapability(tab.id)
+      const probe = await observeRecoverableCheckout(tab.id, recoveryAllowance)
       // Prefer an actual structured response over silence; stop at readiness.
       if (!observation || probe.responder || probe.eligible) observation = probe
       if (probe.eligible) break
