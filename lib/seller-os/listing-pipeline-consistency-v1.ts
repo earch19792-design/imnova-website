@@ -2,6 +2,7 @@ import { keywordRecord as record, keywordWireDigestV1 as digest, consumeListingP
   KEYWORD_DECISION_VERSION, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
 import { commercialComponentV1, type CommercialComponent } from "./listing-commercial-envelope-v1"
 import { publicationInventoryAuthorityV1 } from "./publication-inventory-authority-v1"
+import { publicationEvidenceMaterialityV1, sameKeywordSemanticsV1 } from './publication-evidence-materiality-v1'
 
 const rows = (v: unknown) => Array.isArray(v) ? v.map(record) : []
 const hash = (v: unknown) => typeof v === "string" && /^sha256:[a-f0-9]{64}$/.test(v)
@@ -13,7 +14,7 @@ export type PipelineCurrentAuthorityV1 = { binding: KeywordBindingV1; accountKey
   truthFields: unknown; requiredTruth: unknown; aspectResolutions: unknown; category: unknown; keywordRead: unknown;
   reference: Record<string, unknown>; ownPrice: unknown; shipping?: Partial<CommercialComponent>; feeHandoff?: unknown;
   sellerPolicies?: unknown; quantityReview?: unknown; currentQuantityMaterial?: unknown;
-  exposurePolicy?: unknown; productTruthDigest?: string; now: Date }
+  exposurePolicy?: unknown; productTruthDigest?: string; pinnedSnapshot?: unknown; pinnedPackageHash?: unknown; now: Date }
 
 // Audit an existing generation. This never rebuilds its content or mutates it.
 // Fresh commercial observations form a new evaluation, not a new package.
@@ -45,7 +46,8 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
     Object.keys(aspects).every(k => Boolean(record(aspectSources[k]).evidenceDigest))
   const keyword = consumeListingPackageKeywordHandoffV1(a.keywordRead, a.binding), oldKeyword = record(r.keyword)
   const keywordPinned = keyword.STATUS === "ACCEPTED" && keyword.DECISION_VERSION === KEYWORD_DECISION_VERSION &&
-    oldKeyword.DECISION_VERSION === KEYWORD_DECISION_VERSION && oldKeyword.INPUT_FINGERPRINT === keyword.INPUT_FINGERPRINT &&
+    oldKeyword.DECISION_VERSION === KEYWORD_DECISION_VERSION &&
+    sameKeywordSemanticsV1(oldKeyword,keyword) &&
     oldKeyword.LEGACY_FALLBACK_USED === false
   const ownSet = record(rt.lunaExactProductEvidenceSetV1), imageFact = fact("IMAGES")[0]
   const images = Array.isArray(content.imageUrls) ? content.imageUrls : []
@@ -56,7 +58,8 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
       Array.isArray(ownSet.exactImageUrls) && ownSet.exactImageUrls.includes(url))
   const currentSourceDigest = digest({ b: a.binding, reference: a.reference, fields: a.truthFields, category: a.category,
     requiredTruth: a.requiredTruth, resolutions: a.aspectResolutions, keyword: keyword.INPUT_FINGERPRINT, price: a.ownPrice })
-  const sourcePinned = currentSourceDigest === r.sourceDigest
+  const materiality = publicationEvidenceMaterialityV1(existing,a)
+  const sourcePinned = currentSourceDigest === r.sourceDigest || materiality.equivalent
   const generation = hash(p.generation) && p.generation === digest({ sourceDigest: r.sourceDigest, preview: content }) && digest(content) === digest(r.preview)
   const contamination = r.competitorContaminationCount === 0 && r.ownProductTruthWins === true && sourcePinned && generation
   const claims = r.unsupportedClaimCount === 0 && sourcePinned && generation
@@ -104,7 +107,16 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
   const consistent = inconsistencies.length === 0 && ambiguous === 0
   const sourceEvidenceReferences = [...new Set([a.packageId, r.sourceDigest, c.taxonomySnapshotDigest, rt.evidenceDigest,
     keyword.INPUT_FINGERPRINT, ...facts.map(f => f.EVIDENCE_ID)].filter((v): v is string => typeof v === "string" && v.length > 0))]
-  const material = { binding: { ...a.binding, SKU: a.sku }, generation: p.generation, content, sourceEvidenceReferences }
+  const currentMaterial = { binding: { ...a.binding, SKU: a.sku }, generation: p.generation, content, sourceEvidenceReferences }
+  const pinned=record(a.pinnedSnapshot)
+  const pinnedValid=sourcePinned && generation && hash(a.pinnedPackageHash) && digest(pinned)===a.pinnedPackageHash &&
+    digest(pinned.binding)===digest(currentMaterial.binding) && pinned.generation===p.generation &&
+    digest(pinned.content)===digest(content) && Array.isArray(pinned.sourceEvidenceReferences) &&
+    pinned.sourceEvidenceReferences[0]===a.packageId && pinned.sourceEvidenceReferences.includes(r.sourceDigest) &&
+    pinned.sourceEvidenceReferences.includes(oldKeyword.INPUT_FINGERPRINT)
+  // The immutable package keeps its original evidence pins. A fresh evaluation
+  // carries the replacement receipts separately, after semantic equivalence.
+  const material = pinnedValid ? pinned : currentMaterial
   const packageHash = generation ? digest(material) : null
   // Preparation identity only. It conveys no approval and does not replace the
   // publisher's authorization/execution idempotency contracts.
@@ -120,6 +132,7 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
     PUBLICATION_AUTHORIZATION_GRANTED: false, READY_TO_PUBLISH: consistent && waiting.length === 0,
     SHIPPING_STATUS: evidence.shipping.status === "PROVEN" ? "FRESH" : "WAITING_FOR_DATA",
     status: consistent ? waiting.length ? "PACKAGE_CONSISTENT_WAITING_FOR_DATA" : "PACKAGE_CONSISTENT" : "REQUIRES_REVIEW", evidence, waiting, inconsistencies,
+    evidenceMateriality:materiality,currentEvidenceLineage:{sourceEvidenceReferences,currentSourceDigest,observedAt:a.now.toISOString()},
     evaluationObservedAt: a.now.toISOString(), reevaluation: "EXISTING_READ_PATH_AND_POST_SHIPPING_CONTINUATION",
     CODEX_RUNTIME_DEPENDENCY: false, safety: { publicationWrites: 0, adsWrites: 0, marketplaceWrites: 0, newPollers: 0, newBackgroundWorkers: 0 } })
 }

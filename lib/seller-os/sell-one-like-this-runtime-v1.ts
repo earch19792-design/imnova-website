@@ -112,7 +112,8 @@ export async function readSellOneLikeThisV1(input: {
   const brandAuthority = await readPublicationBrandAuthorityV1({supabase:db,accountKey:input.accountKey,now,aspects:content.itemSpecifics,
     opportunity:{...own,assessment:{ownerLunaUnbrandedPolicyApplicationV1:own.brandApplication,canonicalMarketplaceReadinessV1:{requiredItemSpecificsTruth:own.requiredTruth}}}})
   const consistency = listingPipelineConsistencyV1(result, { ...authority, quantityReview, currentQuantityMaterial,
-    exposurePolicy: prep.exposurePolicy, productTruthDigest: String(own.productTruthDigest ?? "") })
+    exposurePolicy: prep.exposurePolicy, productTruthDigest: String(own.productTruthDigest ?? ""),
+    pinnedSnapshot:record(prep.current).snapshot,pinnedPackageHash:record(prep.current).packageHash })
   const revision = currentPackagePreviewRevisionV1(prep.current, consistency, publication.data, prep.activation)
   const basePublicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : revision.publication, !publication.error)
   const revisionNeedsPreparation = revision.valid && revision.publication.phase === "draft"

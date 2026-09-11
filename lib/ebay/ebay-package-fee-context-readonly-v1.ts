@@ -1,4 +1,4 @@
-import { readPublicationPayoutCurrencyV1 } from './ebay-publication-fee-supplement-v1'
+import { readPublicationPayoutCurrencyV1, inspectPublicationPayoutGrantV1 } from './ebay-publication-fee-supplement-v1'
 import { readCurrentCategoryServiceMetricsV1 } from './ebay-seller-analytics-readonly-gateway'
 import { getSupabaseAdminClient } from "../supabase-admin"
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
@@ -60,7 +60,9 @@ export async function readEbayPackageFeeContextReadonlyV1(packageId: string) {
   const pending=await Promise.allSettled([cached && freshSupplement(cached.payoutCurrencyAuthority)?cached.payoutCurrencyAuthority:readPublicationPayoutCurrencyV1(),
     cached && freshSupplement(cached.currentCategoryServiceAuthority)?cached.currentCategoryServiceAuthority:currentCategoryAncestryV1(categoryAuthority,p.data.category,new Date())
       ? readCurrentCategoryServiceMetricsV1(String(p.data.category),categoryAuthority.ancestorIds as string[]) : null])
-  const payout=pending[0].status==='fulfilled'?pending[0].value:null
+  const payoutResult=pending[0].status==='fulfilled'?pending[0].value:null
+  const payout=record(payoutResult).oauthError==='invalid_scope' && !freshSupplement(record(payoutResult).scopeAudit)
+    ? {...record(payoutResult),scopeAudit:await inspectPublicationPayoutGrantV1()} : payoutResult
   const service=pending[1].status==='fulfilled'?pending[1].value:null
   return { contractVersion: "SELLER_OS_PACKAGE_FEE_CONTEXT_READONLY_V1", packageId,
     payoutCurrencyAuthority:payout,currentCategoryServiceAuthority:service, marketplaceAccountKey: accountKey,

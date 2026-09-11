@@ -2,6 +2,30 @@ import { getEbayDraftOnlyGatewayConfig } from './ebay-draft-only-gateway'
 import { ebayProductionAccountFingerprint } from './ebay-seller-account-scope'
 import { keywordRecord as record } from '../seller-os/keyword-intelligence-handoff-v1'
 
+export const PAYOUT_REQUIRED_SCOPE_V1='https://api.ebay.com/oauth/api_scope/sell.finances'
+export function payoutGrantEvidenceV1(value:unknown) {
+ const b=record(value), scopes=typeof b.scope==='string'?b.scope.split(/\s+/).filter(s=>/^https:\/\/api\.ebay\.com\/oauth\/api_scope(?:\/[a-z._]+)?$/.test(s)):null
+ return {active:b.active===true,requiredScope:PAYOUT_REQUIRED_SCOPE_V1,grantedScopes:scopes,
+  requiredScopePresent:b.active===true&&scopes?scopes.includes(PAYOUT_REQUIRED_SCOPE_V1):null,
+  ownerReauthRequired:b.active===true&&scopes?!scopes.includes(PAYOUT_REQUIRED_SCOPE_V1):null,
+  applicationKeysetScopeAvailability:'NOT_EXPOSED_BY_TOKEN_INTROSPECTION',payoutCurrencyProven:false}
+}
+
+/** Official token metadata only; never returns tokens, user IDs or client IDs. */
+export async function inspectPublicationPayoutGrantV1(fetchImpl:typeof fetch=fetch) {
+ const c=getEbayDraftOnlyGatewayConfig(),observedAt=new Date().toISOString()
+ const endpoint='https://api.ebay.com/identity/v1/oauth2/token/introspect'
+ if(c.target!=='PRODUCTION'||!c.oauthConfigured||!c.identityBound||!c.identityConfigurationConsistent)
+  return {status:'UNPROVEN',reason:'PAYOUT_ACCOUNT_AUTHORITY_UNAVAILABLE',observedAt}
+ try {
+  const r=await fetchImpl(endpoint,{method:'POST',headers:{Authorization:`Basic ${Buffer.from(`${c.clientId}:${c.clientSecret}`).toString('base64')}`,'Content-Type':'application/x-www-form-urlencoded'},
+   body:new URLSearchParams({token:c.refreshToken,token_type_hint:'refresh_token'}),cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
+  if(!r.ok)return {status:'UNPROVEN',reason:'OFFICIAL_TOKEN_INTROSPECTION_UNAVAILABLE',httpStatus:r.status,endpoint,observedAt}
+  const result=payoutGrantEvidenceV1(await r.json())
+  return {...result,status:result.requiredScopePresent===null?'UNPROVEN':'PROVEN',httpStatus:r.status,endpoint,observedAt}
+ }catch{return {status:'UNPROVEN',reason:'OFFICIAL_TOKEN_INTROSPECTION_UNAVAILABLE',endpoint,observedAt}}
+}
+
 export function payoutCurrencyEvidenceV1(body:unknown, bound:boolean, observedAt:string) {
  const b=record(body), funds=['totalFunds','availableFunds','processingFunds','fundsOnHold'].map(k=>record(b[k]))
  const currencies=funds.map(f=>f.convertedToCurrency??f.currency)
