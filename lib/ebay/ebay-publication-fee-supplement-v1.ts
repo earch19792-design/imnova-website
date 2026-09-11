@@ -13,6 +13,18 @@ export function payoutGrantEvidenceV1(value:unknown) {
   applicationKeysetScopeAvailability:'NOT_EXPOSED_BY_TOKEN_INTROSPECTION',payoutCurrencyProven:false}
 }
 
+// Actual access by this exact account outranks an incomplete scope list. Keep
+// the advertised list unchanged; never claim that a scope was newly granted.
+export function resolvePayoutGrantWithFundsReadV1(audit:unknown,payout:unknown) {
+ const a=record(audit),p=record(payout)
+ const proven=p.status==='PROVEN'&&p.accountBindingExact===true&&
+  p.source==='https://apiz.ebay.com/sell/finances/v1/seller_funds_summary'&&
+  typeof p.currency==='string'&&/^[A-Z]{3}$/.test(p.currency)&&
+  a.accountBindingExact===true&&a.fundsHttpStatus===200
+ return proven?{...a,ownerReauthRequired:false,payoutCurrencyProven:true,
+  effectiveFinancesAccessProven:true,decisionAuthority:'EXACT_ACCOUNT_OFFICIAL_FUNDS_READ'}:a
+}
+
 /** Official token metadata only; never returns tokens, user IDs or client IDs. */
 export async function inspectPublicationPayoutGrantV1(fetchImpl:typeof fetch=fetch) {
  const c=getEbayDraftOnlyGatewayConfig(),observedAt=new Date().toISOString()
@@ -50,9 +62,9 @@ export async function inspectPublicationPayoutGrantV1(fetchImpl:typeof fetch=fet
   const fundsBody=record(await funds.json().catch(()=>({})))
   const payout=funds.ok?payoutCurrencyEvidenceV1(fundsBody,true,observedAt):null
   const errors=Array.isArray(fundsBody.errors)?fundsBody.errors.map(e=>{const x=record(e);return {errorId:typeof x.errorId==='number'?x.errorId:null,domain:typeof x.domain==='string'?x.domain:null,category:typeof x.category==='string'?x.category:null}}):[]
-  return {...result,version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:result.requiredScopePresent===null?'UNPROVEN':'PROVEN',httpStatus:r.status,endpoint,observedAt,
+  return resolvePayoutGrantWithFundsReadV1({...result,version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:result.requiredScopePresent===null?'UNPROVEN':'PROVEN',httpStatus:r.status,endpoint,observedAt,
    existingGrantRefreshPass:true,accountBindingExact:true,tradingIdentityReadAttempted,refreshReturnedScopes:payoutGrantEvidenceV1({active:true,scope:refreshed.scope}).grantedScopes,
-   inactiveIntrospectionProvesInvalidToken:false,scopeExpansionRequested:false,fundsHttpStatus:funds.status,fundsErrors:errors,payout}
+   inactiveIntrospectionProvesInvalidToken:false,scopeExpansionRequested:false,fundsHttpStatus:funds.status,fundsErrors:errors,payout},payout)
  }catch{return {status:'UNPROVEN',reason:'OFFICIAL_TOKEN_INTROSPECTION_UNAVAILABLE',endpoint,observedAt}}
 }
 
