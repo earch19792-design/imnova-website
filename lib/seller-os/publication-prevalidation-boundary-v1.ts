@@ -5,9 +5,9 @@ const rows=(v:unknown)=>Array.isArray(v)?v.map(record):[]
 
 /** The Inventory API has no full publishOffer dry run. This receipt proves
  * only performed reads and local checks, never a successful publish. */
-export function currentPrepublicationProofV1(publication:unknown,proof:unknown,now=new Date()) {
+export function currentPrepublicationBindingV1(publication:unknown,proof:unknown,now=new Date()) {
  const p=record(publication),prep=record(record(p.sanitized_result).publicationPreparationV1 ?? p.preparation)
- const r=record(prep.current),v=record(proof),b=record(v.binding),checks=record(v.checks)
+ const r=record(prep.current),v=record(proof),b=record(v.binding)
  return v.version===PREPUBLICATION_VALIDATION_V1 &&
   p.phase==='preview_ready' && p.listing_id==null && p.publication_idempotency_key==null &&
   b.publicationId===p.id && b.packageId===p.listing_package_id && b.accountKey===p.marketplace_account_key &&
@@ -15,7 +15,12 @@ export function currentPrepublicationProofV1(publication:unknown,proof:unknown,n
   b.packageHash===r.packageHash && b.packageGeneration===r.packageGeneration &&
   b.previewHash===r.previewHash && r.previewHash===digest(r.preview) && b.previewGeneration===r.packageGeneration &&
   typeof v.observedAt==='string' && Date.parse(v.observedAt)<=now.getTime() &&
-  now.getTime()-Date.parse(v.observedAt)<10*60*1000 &&
+  now.getTime()-Date.parse(v.observedAt)<10*60*1000
+}
+
+export function currentPrepublicationProofV1(publication:unknown,proof:unknown,now=new Date()) {
+ const v=record(proof),checks=record(v.checks)
+ return currentPrepublicationBindingV1(publication,proof,now) &&
   ['currentOfferReadbackPass','currentInventoryReadbackPass','currentPolicyReadbackPass','currentFeesRequestPass',
     'prepublicationContractValidationPass','currentTaxonomyPass','currentAccountPass','currentImageAuthorityPass'].every(k=>checks[k]===true) &&
   v.fullOfficialDryRunAvailable===false && v.publishTimeOnlyValidationRequired===true &&

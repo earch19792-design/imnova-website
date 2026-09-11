@@ -73,6 +73,8 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
      ...taxonomy.requiredAspects.filter(a=>!Array.isArray(aspectValues[a.name]) || !aspectValues[a.name].length).map(a=>`REQUIRED_ASPECT_MISSING:${a.name}`)]
   : ['CURRENT_OFFICIAL_ASPECT_CONSTRAINTS_UNAVAILABLE']
  const localErrors=[...knownPublicationPayloadErrorsV1(p),...taxonomyErrors]
+ const feeErrors=record(record(currentListingFeePrevalidation).body).errors
+ if(Array.isArray(feeErrors))for(const error of feeErrors)preflightErrors.push(`OFFICIAL_LISTING_FEE_ERROR:${String(record(error).errorId??record(error).message??'UNCLASSIFIED')}`)
  const summaries=Array.isArray(record(currentListingFeePrevalidation).feeSummaries)?record(currentListingFeePrevalidation).feeSummaries as unknown[]:[]
  const fees=summaries.map(record).filter(s=>s.marketplaceId==='EBAY_US').flatMap(s=>Array.isArray(s.fees)?s.fees.map(record):[])
  const listingFee=fees.filter(f=>f.feeType==='ListingFee')
@@ -80,6 +82,7 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
   Number.isFinite(Number(record(listingFee[0].amount).value)) && Number(record(listingFee[0].amount).value)>=0 ? Number(record(listingFee[0].amount).value):null
  if(listingFeeReserve===null)localErrors.push('CURRENT_LISTING_FEE_RESERVE_UNPROVEN')
  const warnings=[...(Array.isArray(mobile.warnings)?mobile.warnings:[]),
+  ...(Array.isArray(record(record(currentListingFeePrevalidation).body).warnings)?record(record(currentListingFeePrevalidation).body).warnings as unknown[]:[]),
   ...summaries.map(record).flatMap(s=>Array.isArray(s.warnings)?s.warnings:[])].map(code=>({code,classification:'BLOCKING'}))
  const prepublicationEvidence={version:PREPUBLICATION_VALIDATION_V1,binding:{publicationId:pub.id,packageId,accountKey,
   sku:p.sku,offerId:pub.offer_id,draftExecutionId:pub.draft_execution_id,packageHash:revision.packageHash,packageGeneration:revision.packageGeneration,
