@@ -7,6 +7,7 @@ import { automaticFeeResolutionInputsV1, completeAutomaticFeeAdjustmentsV1 } fro
 import { assessFeeBoundCoverageV1 } from "./ebay-fee-safe-bound-v1"
 import { createHash } from "node:crypto"
 import { resolveListingPreSaleFeesV1 } from "./listing-fee-resolver-v1"
+import { currentCategoryAncestryV1 } from "../ebay/ebay-package-category-fee-binding-v1"
 
 export const EBAY_FEE_PRODUCER_V1 = "SELLER_OS_EBAY_FEE_PRODUCER_V1"
 export const EBAY_FEE_AUTHORITY_V1 = "SELLER_OS_EBAY_FEE_AUTHORITY_V1"
@@ -48,7 +49,9 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     standards.program==="PROGRAM_US" && feeRecordV1(standards.evaluation).evaluationType==="CURRENT" &&
     ["ABOVE_STANDARD","TOP_RATED"].includes(String(standards.standardsLevel))
   const matchingService=(Array.isArray(service.categories)?service.categories:[]).map(feeRecordV1)
-    .filter(x=>x.categoryId===listing.categoryId)
+    .filter(x=>x.categoryId===listing.categoryId || policyKnown &&
+      currentCategoryAncestryV1(c.categoryAuthority,listing.categoryId,input.now) &&
+      (feeRecordV1(c.categoryAuthority).ancestorIds as string[]).includes(String(x.categoryId)))
   const noService=exact&&service.status==="AVAILABLE"&&service.marketplace==="EBAY_US"&&
     feeRecordV1(service.evaluation).evaluationType==="CURRENT"&&matchingService.length===1&&
     ["LOW","AVERAGE","HIGH","NOT_APPLICABLE"].includes(String(matchingService[0].rating))
@@ -122,6 +125,12 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     storeContext:store,sellerContext:{standards,serviceMetrics:service},policyVersion:str(policy.sourceVersion),
     policyObservedAt:str(policy.observedAt),sourceEffectiveDate:policy.sourceEffectiveDate??null,
     sourceObservedAt:str(c.observedAt), feeTaxPolicy: taxPolicy,
+    // Reuse current package context on the existing economics lane without
+    // rewriting an immutable package or refreshing still-current account data.
+    ...(input.itemId === null ? { preSaleSourceContextV1: Object.fromEntries([
+      "observedAt", "marketplaceAccountKey", "identity", "listing", "resolvedStoreContext", "subscription",
+      "accountPerformance", "officialFeePolicySnapshot", "feeTaxPolicy", "categoryAuthority", "categoryFeePolicy",
+    ].filter(k=>c[k] !== undefined).map(k=>[k,c[k]])) } : {}),
     automaticFeeProducer: true, codexRuntimeDependency: false,
     taxTreatment, componentApplicability: classifyFeeComponentsV1({ components: state === "PROVEN_PRE_SALE" ? resolved?.authority?.components ?? components : components,
       normalCategoryFee: taxTreatment.normalCategoryFeeBeforeBuyerTax, contingentFeeOnTax: taxTreatment.contingentFeeOnTax,

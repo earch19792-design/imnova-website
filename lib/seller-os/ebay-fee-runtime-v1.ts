@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SafeMarketplaceOrder } from "../marketplace/commercial-monitor-domain"
 import { produceEbayFeeAuthorityV1, feeRecordV1, feeDigestV1, feePackageRevisionV1 } from "./ebay-fee-producer-v1"
 import { reconcileObservedEbayFeesV1 } from "./ebay-fee-reconciliation-v1"
+import { bindPackageCategoryFeeV1 } from "../ebay/ebay-package-category-fee-binding-v1"
 
 const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: boolean) => T }>(q: T) =>
   q.abortSignal(AbortSignal.timeout(8000)).retry(false)
@@ -54,11 +55,18 @@ export async function persistProducedEbayFeeV1(input: Scope & { itemId: string |
   }
   const provided = feeRecordV1(input.context)
   const packageData = feeRecordV1(pkg?.data)
-  const storedContext = feeRecordV1(packageData.feeContextV1)
-  const context = pkg ? { ...storedContext, ...provided,
+  const previous = pkg && !packageData.feeContextV1 && head.data.authority_id
+    ? await bounded(input.supabase.from("seller_os_ebay_fee_authorities_v1").select("authority")
+      .eq("marketplace_account_key", input.accountKey).eq("authority_id", head.data.authority_id).limit(1)).maybeSingle() : null
+  const previousAuthority = feeRecordV1(previous?.error ? null : previous?.data?.authority)
+  const storedContext = feeRecordV1(packageData.feeContextV1 ??
+    (previousAuthority.packageRevision === pkg?.revision ? previousAuthority.preSaleSourceContextV1 : null))
+  const context: Record<string, unknown> = pkg ? { ...storedContext, ...provided,
+    observedAt: provided.accountPerformance || provided.categoryFeePolicy ? provided.observedAt : storedContext.observedAt ?? provided.observedAt,
     marketplaceAccountKey: provided.marketplaceAccountKey ?? storedContext.marketplaceAccountKey ?? input.accountKey,
-    identity: provided.identity ?? storedContext.identity ?? { accountBindingExact: true, marketplace: "EBAY_US", itemId: null,
-      packageId: input.packageId, packageRevision: pkg.revision, sku, productId: pkg.productId, variantId: pkg.variantId },
+    identity: { accountBindingExact: true, marketplace: "EBAY_US", itemId: null,
+      packageId: input.packageId, packageRevision: pkg.revision, sku, productId: pkg.productId, variantId: pkg.variantId,
+      ...feeRecordV1(storedContext.identity), ...feeRecordV1(provided.identity) },
     listing: provided.listing ?? storedContext.listing ?? { categoryId: packageData.categoryId,
       price: feeRecordV1(packageData.pricing).targetPrice, currency: feeRecordV1(packageData.pricing).currency },
   } : provided
@@ -66,6 +74,11 @@ export async function persistProducedEbayFeeV1(input: Scope & { itemId: string |
     const listing = feeRecordV1(context.listing), pricing = feeRecordV1(packageData.pricing)
     if (listing.categoryId !== packageData.categoryId || listing.price !== pricing.targetPrice ||
       (listing.currency !== undefined && listing.currency !== pricing.currency)) throw Error("FEE_PACKAGE_CONTEXT_CONFLICT")
+    if (listing.saleFormat === "FIXED_PRICE") context.listing = { ...listing, saleFormat: "FixedPriceItem" }
+    if (!context.categoryFeePolicy || provided.categoryAuthority !== undefined) context.categoryFeePolicy = bindPackageCategoryFeeV1({
+      ancestry: context.categoryAuthority, policySnapshot: context.officialFeePolicySnapshot, store: context.resolvedStoreContext,
+      accountKey: input.accountKey, packageId: input.packageId!, packageRevision: pkg.revision, sku: pkg.sku,
+      categoryId: String(listing.categoryId), now: input.now })
   }
   // Retain fresh official document evidence across server/browser lifecycles.
   // One exact-item history read; never refresh a still-current public policy.
@@ -73,8 +86,8 @@ export async function persistProducedEbayFeeV1(input: Scope & { itemId: string |
     ? await input.supabase.from("seller_os_ebay_fee_authorities_v1").select("authority")
       .eq("marketplace_account_key",input.accountKey).eq("ebay_item_id",input.itemId)
       .order("observed_at",{ascending:false}).order("authority_id").limit(2) : null
-  const retainedTax = retainedSellingFeeTaxPolicyV1(taxHistory?.error ? [] :
-    (taxHistory?.data ?? []).map(row=>feeRecordV1(row.authority).feeTaxPolicy),input.now)
+  const retainedTax = retainedSellingFeeTaxPolicyV1([context.feeTaxPolicy, ...(taxHistory?.error ? [] :
+    (taxHistory?.data ?? []).map(row=>feeRecordV1(row.authority).feeTaxPolicy))],input.now)
   const feeTaxPolicy = retainedTax ?? (input.itemId && feeRecordV1(context.identity).accountBindingExact === true
     ? await readSellingFeeTaxPolicyV1(input.now) : null)
   const authority = produceEbayFeeAuthorityV1({...input, sku, packageRevision: pkg?.revision,
