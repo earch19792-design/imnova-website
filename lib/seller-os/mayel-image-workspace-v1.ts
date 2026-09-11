@@ -1,4 +1,3 @@
-import { readOptimizationGrantV1, readDelegatedVisualAuthorityV1 } from "./mayel-optimization-delegation-server-v1"
 import { optimizationGrantActiveV1 } from "./mayel-optimization-delegation-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readMayelGeneratedImageV1, validateMayelGeneratedImageV1 } from "./mayel-generated-image-binding-v1"
@@ -49,6 +48,7 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
     .eq("account_key", input.accountKey).in("item_id", input.itemIds).in("kind", ["IMAGE_DRAFT", "IMAGE_SYNC", "IMAGE_UPLOAD"])
     .neq("state", "SUPERSEDED").limit(500)
   if (outbox.error || (outbox.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
+  const { readOptimizationGrantV1, readDelegatedVisualAuthorityV1 } = await import("./mayel-optimization-delegation-server-v1")
   const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
   const active = optimizationGrantActiveV1(grant, input.accountKey)
   const authorityByTask = new Map<string, Awaited<ReturnType<typeof readDelegatedVisualAuthorityV1>>>()

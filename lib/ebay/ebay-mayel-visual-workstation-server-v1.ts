@@ -1262,7 +1262,7 @@ export async function readMayelVisualWorkstationV1(input: {
   const { optimizationGrantActiveV1 } = await import("../seller-os/mayel-optimization-delegation-v1")
   const optimizationActive = optimizationGrantActiveV1(optimizationGrant, input.accountKey)
   const contentStates = optimizationGrant && taskIds.length ? await input.supabase.from("seller_os_mayel_content_outbox_v1")
-    .select("task_id,item_id,state,official_readback,created_at,actions:audit->actions,manifestDigest:audit->galleryMutation->>visualManifestDigest,afterGallery:execution_receipt->afterGallery,readbackItem:execution_receipt->>itemId,readbackAuthority:execution_receipt->>authority").eq("account_key", input.accountKey).in("task_id", taskIds)
+    .select("task_id,item_id,state,official_readback,created_at,actions:audit->actions,manifestDigest:audit->galleryMutation->>visualManifestDigest,afterGallery:execution_receipt->afterGallery,readbackItem:execution_receipt->>itemId,readbackAuthority:execution_receipt->>authority,readbackObservedAt:execution_receipt->>observedAt").eq("account_key", input.accountKey).in("task_id", taskIds)
     .order("created_at", { ascending: false }).limit(100) : { data: [], error: null }
   const outputsByTaskId = new Map<string, JsonRecord[]>()
   for (const output of (assetRead.data ?? []) as JsonRecord[]) {
@@ -1317,11 +1317,17 @@ export async function readMayelVisualWorkstationV1(input: {
     const galleryOnly = Array.isArray(record(task.visual_manifest).proposedOrderedImages) &&
       (record(task.visual_manifest).proposedOrderedImages as JsonRecord[]).length > 0 &&
       (record(task.visual_manifest).proposedOrderedImages as JsonRecord[]).every(e => !e.assetId)
+    const contentProofLater = currentContent && Number.isFinite(Date.parse(String(currentContent.readbackObservedAt))) &&
+      (!gallery || Date.parse(String(currentContent.readbackObservedAt)) > Date.parse(gallery.observedAt))
+    const contentSynced = Boolean(currentContent && galleryOnly &&
+      contentGalleryReceiptMatchesV1({ taskId: String(task.id), itemId: String(task.ebay_item_id), manifestDigest: String(task.visual_manifest_digest),
+        currentImages: contentProofLater && Array.isArray(currentContent.afterGallery) ? currentContent.afterGallery as string[] : gallery?.images ?? [], receipt: currentContent }) &&
+      JSON.stringify(currentContent.afterGallery) === JSON.stringify((record(task.visual_manifest).proposedOrderedImages as JsonRecord[]).map(e => e.publicUrl)))
     const pendingDecision = record(record(task.selection_signal).pendingGalleryDecision)
     const currentVisualAction = pendingDecision.expectedManifestDigest === task.visual_manifest_digest && pendingDecision.contract
       ? { state: pendingDecision.state === "REQUIRES_ATTENTION" ? "REQUIRES_ATTENTION" : "PENDING_EBAY_SYNC", waitingForEbay: pendingDecision.state !== "REQUIRES_ATTENTION" }
       : galleryOnly && currentContent ? { state: currentContent.state, generated: true, qaPassed: true, savedToSellerOS: true,
-        approvedForEbaySync: true, serverReceiptPresent: true, officialReadback: currentGallerySynced, readbackCompatible: currentGallerySynced } : undefined
+        approvedForEbaySync: true, serverReceiptPresent: true, officialReadback: contentSynced, readbackCompatible: contentSynced } : undefined
     tasks.push({ currentVisualAction, autonomousOptimization: optimizationActive, latestOptimization: latestOptimization ? {
       state: latestOptimization.state, officialReadback: latestOptimization.official_readback === true,
       label: Array.isArray(latestOptimization.actions) && latestOptimization.actions.some(a => a === "IMAGE_REORDER" || a === "IMAGE_REMOVAL") ? "Galería de imágenes" : "Texto del listing" } : null,

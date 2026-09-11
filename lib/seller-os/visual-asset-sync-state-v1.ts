@@ -53,13 +53,17 @@ export function visualAssetSyncViewV1(asset: Record<string, unknown>, task: Reco
     typeof task.visual_manifest_digest === "string" && record(r.binding).executionManifestDigest === task.visual_manifest_digest &&
     record(r.execution_receipt).manifestDigest === task.visual_manifest_digest &&
     typeof record(r.execution_receipt).officialDigest === "string" &&
-    gallery.authority === "CURRENT_OFFICIAL_ORDERED_IMAGE_SET" && record(r.execution_receipt).officialDigest === gallery.digest &&
+    (record(r.execution_receipt).officialDigest === gallery.digest && gallery.authority === "CURRENT_OFFICIAL_ORDERED_IMAGE_SET" ||
+      Number.isFinite(Date.parse(String(record(r.execution_receipt).observedAt))) &&
+      (gallery.authority !== "CURRENT_OFFICIAL_ORDERED_IMAGE_SET" ||
+        Date.parse(String(record(r.execution_receipt).observedAt)) > Date.parse(String(gallery.observedAt)))) &&
     entries.some(e => e.assetId === asset.id && e.outputSha256 === asset.output_sha256))
   const active = currentRows.find(r => ["OFFICIAL_READBACK_REQUIRED", "UNKNOWN_COMMIT", "SYNCING", "REVALIDATING", "PENDING_EBAY_SYNC"].includes(String(r.state)))
   const recoveryAttention = asset.status === "pending_review" && record(record(asset.qa_result).transitionRecovery).state === "REQUIRES_ATTENTION"
-  const waitingForEbay = ["WAITING_FOR_EBAY", "WAIT_RETRY_WINDOW"].includes(String(record(record(task.selection_signal).galleryRecovery).state))
+  const waitingForEbay = gallery.authority !== "CURRENT_OFFICIAL_ORDERED_IMAGE_SET" && ["WAITING_FOR_EBAY", "WAIT_RETRY_WINDOW"].includes(String(record(record(task.selection_signal).galleryRecovery).state))
   const quotaOnly = waitingForEbay && qaPassed && delegation.reason === "CURRENT_LIVE_READBACK_REQUIRED"
-  const state = synced ? "SYNCED" : attention || recoveryAttention || asset.status === "rejected" || delegation.active && !delegation.authorized && !quotaOnly && asset.status === "approved" ? "REQUIRES_ATTENTION" :
+  const invalidSyncClaim = !synced && currentRows.some(r => r.state === "SYNCED")
+  const state = synced ? "SYNCED" : attention || invalidSyncClaim || recoveryAttention || asset.status === "rejected" || delegation.active && !delegation.authorized && !quotaOnly && asset.status === "approved" ? "REQUIRES_ATTENTION" :
     !approved ? delegation.active ? "QA_READY" : record(asset.qa_result).automaticStatus === "PASSED" ? "OWNER_APPROVAL_REQUIRED" : "DRAFT" :
     synced ? "SYNCED" : active ? active.state === "UNKNOWN_COMMIT" ? "OFFICIAL_READBACK_REQUIRED" : String(active.state) : "APPROVED_FOR_EBAY_SYNC"
   const view = { state, autonomousOptimization: delegation.active, generated, qaPassed, readbackCompatible: synced,

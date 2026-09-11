@@ -6,7 +6,7 @@ import { Check, Clipboard, ShieldCheck,
   "lucide-react"
 
 import { MayelVisualAssetProgress } from "./ebay/mayel/visual-asset-progress"
-import { visualAssetStatusV1, visualEvidenceV1, visualListingStatusV1, AUTONOMOUS_VISUAL_COPY_V1, type VisualSyncPresentationV1 } from "@/lib/seller-os/mayel-visual-asset-status-v1"
+import { visualAssetStatusV1, visualEvidenceV1, visualTaskStatusV1, AUTONOMOUS_VISUAL_COPY_V1, type VisualSyncPresentationV1 } from "@/lib/seller-os/mayel-visual-asset-status-v1"
 import { proposalSlotLabelV1, proposalDeliveryStatusV1 } from "@/lib/seller-os/mayel-gallery-presentation-v1"
 import { scopedVisualTasksV1 } from "@/lib/seller-os/mayel-visual-scope-v1"
 import { supabase } from "@/lib/supabase"
@@ -285,17 +285,7 @@ function commercialDate(value: string | null | undefined) {
     timeZone: "America/Managua" }).format(new Date(value))
 }
 
-function taskVisualPresentation(task: VisualTask) {
-  const manifest = task.visualManifest ?? {}
-  const entries = Array.isArray(manifest.proposedOrderedImages) ? manifest.proposedOrderedImages as {assetId?: string}[] : []
-  const assets = task.outputs.filter(o => !o.discarded && o.status !== "rejected" &&
-    (o.status === "pending_review" || entries.some(e => e.assetId === o.id)))
-    .map(o => ({ ...o.sync, discarded: o.discarded, rejected: o.status === "rejected" }))
-  const actions: VisualSyncPresentationV1[] = task.currentVisualAction ? [task.currentVisualAction] : []
-  if (task.galleryRebaseRequired) actions.push({ state: "REQUIRES_ATTENTION" })
-  if (task.galleryRecovery?.state === "WAITING_FOR_EBAY") actions.push({ state: "PENDING_EBAY_SYNC", waitingForEbay: true })
-  return visualListingStatusV1([...assets, ...actions], { autonomousOptimization: task.autonomousOptimization })
-}
+const taskVisualPresentation = visualTaskStatusV1
 
 function TaskCommercialContext({ intelligence, revalidationStatus, ebayItemId,
   canOperate }: {
@@ -852,7 +842,7 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
           <figure>{d.afterImage ? <img src={d.afterImage} alt="Después" className="aspect-square w-full object-contain"/> : <p>Se elimina</p>}<figcaption>Después</figcaption></figure></div>
         <p className="mt-2 text-sm">{d.intentReason}</p>
       </article>)}</div>
-    <p className="mt-3 text-sm">{taskVisualPresentation(task).synced ? "Sincronizada con eBay: orden confirmado oficialmente." : "Preparada. La sincronización requiere confirmar todas las posiciones en eBay."}</p>
+    <p className="mt-3 text-sm">{task.currentGallerySynced && taskVisualPresentation(task).synced ? "Sincronizada con eBay: orden confirmado oficialmente." : "Preparada. La sincronización requiere confirmar todas las posiciones en eBay."}</p>
   </section>
   const explicitPreview = task.visualManifest?.intentContract === "MAYEL_VISUAL_INTENT_V1" && Array.isArray(task.visualManifest.slotPreview)
     ? task.visualManifest.slotPreview as { targetImagePosition: number; before: string | null; after: string; action: string; assetId: string | null }[] : []
@@ -875,7 +865,7 @@ function OrderedGalleryManager({ task, busy, onDone, owner }: { task: VisualTask
     <h4 className="font-serif text-xl font-semibold">Galería actual de eBay</h4>
     <p className="mt-2 text-sm">{task.currentGalleryProven ? `${task.currentImages.length} imágenes en su orden oficial.` :
       "Esperando la galería oficial completa. Tus propuestas siguen guardadas."} Sólo cambia la posición que selecciones.</p>
-    {taskVisualPresentation(task).synced && <p role="status" className="mt-2 text-sm">Sincronizado. eBay confirma estas {task.currentImages.length} posiciones.</p>}
+    {task.currentGallerySynced && taskVisualPresentation(task).synced && <p role="status" className="mt-2 text-sm">Sincronizado. eBay confirma estas {task.currentImages.length} posiciones.</p>}
     {task.galleryRebaseRequired && <p role="status" className="mt-2 text-sm">La galería cambió. Revisa el nuevo Preview; la sincronización está detenida.</p>}
     <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{task.currentImages.map((before, position) => {
       const asset = approved.find(o => o.id === selected[position])

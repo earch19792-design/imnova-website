@@ -59,3 +59,21 @@ export function localReceiptVisualEvidenceV1(row: { intent: { idempotencyKey: st
     // This is a delivery summary, not an assertion that unreviewed files passed QA.
     generated: official, qaPassed: official, approvedForEbaySync: official, officialReadback: official, readbackCompatible: official }
 }
+
+/** Exact current manifest membership, including missing evidence, drives the listing summary. */
+export function visualTaskStatusV1(task: {
+  outputs: readonly {id: string; status: string; discarded?: boolean; sync?: VisualSyncPresentationV1}[];
+  visualManifest?: Record<string, unknown> | null; currentVisualAction?: VisualSyncPresentationV1;
+  galleryRebaseRequired?: boolean; currentGalleryProven?: boolean; galleryRecovery?: {state?: string}; autonomousOptimization?: boolean;
+}) {
+  const raw = task.visualManifest?.proposedOrderedImages
+  const entries = Array.isArray(raw) ? raw as {assetId?: string}[] : []
+  const assets = task.outputs.filter(o => !o.discarded && o.status !== "rejected" &&
+    (o.status === "pending_review" || entries.some(e => e.assetId === o.id)))
+    .map(o => ({ ...o.sync, discarded: o.discarded, rejected: o.status === "rejected" }))
+  const actions: VisualSyncPresentationV1[] = task.currentVisualAction ? [task.currentVisualAction] : []
+  if (entries.some(e => e.assetId && !task.outputs.some(o => o.id === e.assetId))) actions.push({ state: "REQUIRES_ATTENTION" })
+  if (task.galleryRebaseRequired) actions.push({ state: "REQUIRES_ATTENTION" })
+  if (!task.currentGalleryProven && task.galleryRecovery?.state === "WAITING_FOR_EBAY") actions.push({ state: "PENDING_EBAY_SYNC", waitingForEbay: true })
+  return visualListingStatusV1([...assets, ...actions], { autonomousOptimization: task.autonomousOptimization })
+}
