@@ -311,3 +311,24 @@ export async function readEbayFeePerformanceReadonlyV1() {
       observedAt: new Date().toISOString(), standards: profile(0), serviceMetrics: profile(1), invoice: profile(2) }
   } finally { token = "" }
 }
+
+/** Reconcile only CURRENT INAD service metrics; no invoice/standards refresh. */
+export async function readCurrentCategoryServiceMetricsV1(categoryId:string,ancestorIds:string[]) {
+  const source='https://api.ebay.com/sell/analytics/v1/customer_service_metric/ITEM_NOT_AS_DESCRIBED/CURRENT?evaluation_marketplace_id=EBAY_US'
+  const observedAt=new Date().toISOString()
+  if(!/^\d+$/.test(categoryId)||ancestorIds.some(id=>!/^\d+$/.test(id)))throw Error('EXACT_CATEGORY_REQUIRED')
+  try {
+    const token=await getSellerAnalyticsAccessToken()
+    await assertAnalyticsSellerAccount(token)
+    const response=await fetch(source,{method:'GET',headers:{Authorization:`Bearer ${token}`},cache:'no-store',signal:AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS)})
+    if(!response.ok)return {status:'UNPROVEN',applicability:'UNPROVEN',httpStatus:response.status,source,observedAt}
+    const profile=projectEbayFeePerformanceV1('SERVICE',await response.json())
+    const categories=array(record(profile).categories).map(record)
+    const matches=categories.filter(c=>[categoryId,...ancestorIds].includes(String(c.categoryId)))
+    const rating=matches.length===1?text(matches[0].rating):''
+    return {profile,categoryId,ancestorIds,source,observedAt,httpStatus:response.status,
+      matchingCategoryCount:matches.length,status:rating?'AVAILABLE':'UNPROVEN',
+      applicability:rating==='VERY_HIGH'?'APPLICABLE':['LOW','AVERAGE','HIGH','NOT_APPLICABLE'].includes(rating)?'NOT_APPLICABLE':'UNPROVEN',
+      reason:rating?null:'CURRENT_CATEGORY_PROFILE_NOT_RETURNED',accountBindingExact:true}
+  }catch{return {status:'UNPROVEN',applicability:'UNPROVEN',source,observedAt,reason:'CURRENT_CATEGORY_SERVICE_READ_UNAVAILABLE'}}
+}

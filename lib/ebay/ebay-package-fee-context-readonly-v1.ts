@@ -1,3 +1,5 @@
+import { readPublicationPayoutCurrencyV1 } from './ebay-publication-fee-supplement-v1'
+import { readCurrentCategoryServiceMetricsV1 } from './ebay-seller-analytics-readonly-gateway'
 import { getSupabaseAdminClient } from "../supabase-admin"
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 import { readEbaySellerStoreSubscriptionReadonly } from "./ebay-account-policy-readonly-gateway"
@@ -53,11 +55,19 @@ export async function readEbayPackageFeeContextReadonlyV1(packageId: string) {
       readCategoryAncestry(String(p.data.category),String(p.data.title))])
   const component = (i: number) => { const r = results[i]; return r.status === "fulfilled" ? r.value :
     { status: "UNPROVEN", errorCode: feeContextSafeErrorV1(r.reason) } }
-  return { contractVersion: "SELLER_OS_PACKAGE_FEE_CONTEXT_READONLY_V1", packageId, marketplaceAccountKey: accountKey,
+  const categoryAuthority=record(component(4))
+  const freshSupplement=(value:unknown)=>{const d=Date.parse(String(record(value).observedAt));return Number.isFinite(d)&&d<=Date.now()&&Date.now()-d<6*3600000}
+  const pending=await Promise.allSettled([cached && freshSupplement(cached.payoutCurrencyAuthority)?cached.payoutCurrencyAuthority:readPublicationPayoutCurrencyV1(),
+    cached && freshSupplement(cached.currentCategoryServiceAuthority)?cached.currentCategoryServiceAuthority:currentCategoryAncestryV1(categoryAuthority,p.data.category,new Date())
+      ? readCurrentCategoryServiceMetricsV1(String(p.data.category),categoryAuthority.ancestorIds as string[]) : null])
+  const payout=pending[0].status==='fulfilled'?pending[0].value:null
+  const service=pending[1].status==='fulfilled'?pending[1].value:null
+  return { contractVersion: "SELLER_OS_PACKAGE_FEE_CONTEXT_READONLY_V1", packageId,
+    payoutCurrencyAuthority:payout,currentCategoryServiceAuthority:service, marketplaceAccountKey: accountKey,
     observedAt: cached?.observedAt ?? new Date().toISOString(), accountContextReused: Boolean(cached), identity: { itemId: null, packageId, sku: q.data.supplier_sku,
       productId: q.data.supplier_product_id, variantId: q.data.supplier_variant_id, marketplace: "EBAY_US" },
     listing: { categoryId: p.data.category, price: p.data.price, currency: "USD", saleFormat: "FIXED_PRICE" },
     resolvedStoreContext: resolveEbayFeeStoreContextV1(component(0), component(1)), subscription: component(0),
-    accountPerformance: component(1), officialFeePolicySnapshot: component(2), feeTaxPolicy: component(3), categoryAuthority: component(4),
+    accountPerformance: service && record(service).httpStatus===200 ? {...record(component(1)),serviceMetrics:record(service).profile} : component(1), officialFeePolicySnapshot: component(2), feeTaxPolicy: component(3), categoryAuthority: component(4),
     status: "CONTEXT_ONLY_NOT_FEE_AUTHORITY", safety: { readOnly: true, marketplaceWrites: 0, databaseWrites: 0 } }
 }
