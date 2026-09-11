@@ -56,13 +56,13 @@ export function MayelImageWorkspace({ itemIds, titles = {}, saveDraft, owner = f
     {rows?.filter(row => itemIds.includes(row.itemId)).map(row => <article key={row.assetId} className="space-y-3 rounded-xl border p-4">
       <h4 className="font-semibold">{titles[row.itemId] ?? "Propuesta de imagen"}</h4>
       <MayelVisualAssetProgress status={friendlyVisualSyncV1(row.sync ?? undefined)} />
-      {friendlyVisualSyncV1(row.sync).ownerCtaPresent && row.sync?.state === "OWNER_APPROVAL_REQUIRED" && !row.autonomousOptimization && <p>Pendiente de aprobación OWNER. Esta imagen todavía no está autorizada para sincronizar.</p>}
+      {friendlyVisualSyncV1(row.sync ?? undefined).ownerCtaPresent && row.sync?.state === "OWNER_APPROVAL_REQUIRED" && !row.autonomousOptimization && <p>Pendiente de aprobación OWNER. Esta imagen todavía no está autorizada para sincronizar.</p>}
       <p className="text-sm">Preparado: {row.generatedAt ? new Date(row.generatedAt).toLocaleString("es") : "Fecha por comprobar"}. Antes de enviarlo se comprobará el estado actual.</p>
       <div className="grid gap-3 sm:grid-cols-2">{[[row.beforeUrl, "Imagen anterior guardada"], [row.previewUrl, "Propuesta de imagen principal"]].map(([url, label]) => typeof url === "string" && <figure key={String(label)}>
         <Image src={url} alt={String(label)} width={360} height={360} unoptimized /><figcaption>{String(label)}</figcaption></figure>)}</div>
       {row.status === "DRAFT" && (row.editable || row.canAssignAndPrepare) && !row.imported && <button className={button} disabled={busy} onClick={() => void act("PREPARE_REVIEW", row)}>{row.canAssignAndPrepare ? "Asignarme y preparar esta imagen" : "Preparar esta imagen para revisión"}</button>}
       {row.diagnostics.imageQaPassed && <p role="status">Borrador preparado y verificado. La propuesta está incluida en el Preview guardado; no se ha solicitado su envío a eBay.</p>}
-      {friendlyVisualSyncV1(row.sync).ownerCtaPresent && row.status === "DRAFT" && row.editable && row.imported && owner && !row.autonomousOptimization && <>
+      {friendlyVisualSyncV1(row.sync ?? undefined).ownerCtaPresent && row.status === "DRAFT" && row.editable && row.imported && owner && !row.autonomousOptimization && <>
         <label className="flex gap-2"><input type="checkbox" checked={reviewed.includes(row.assetId)} onChange={e => setReviewed(old => e.target.checked ? [...old, row.assetId] : old.filter(id => id !== row.assetId))} />
           <span>He comparado las imágenes: es el mismo producto, con su color, forma, piezas y logos. No añade accesorios, promesas ni texto sin respaldo. Quiero usarla como imagen principal y conservar las demás imágenes.</span></label>
         <button className={button} disabled={busy || !reviewed.includes(row.assetId)} onClick={() => void act("CONFIRM_QUEUE", row)}>Autorizar esta propuesta según la revisión de tu cuenta</button>
