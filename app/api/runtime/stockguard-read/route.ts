@@ -8,6 +8,7 @@ import { PRODUCTION_STOCK_AUTHORITY_BINDING_V1 as binding,
 import { authorizeProductionStockReadV1, productionStockReadTransportV1,
   PRODUCTION_STOCK_READ_VERSION } from "@/lib/ebay/ebay-production-stock-read-boundary-v1"
 import { readProductionStockGuardV1 } from "@/lib/ebay/ebay-production-stock-read-service-v1"
+import type { StockReadDiagnosticV1 } from "@/lib/ebay/ebay-production-stock-read-diagnostics-v1"
 
 const safety = { marketplaceWrites: 0, publicationWrites: 0, offerWrites: 0,
   adsWrites: 0, stockClaims: 0, durableWrites: 0 }
@@ -25,22 +26,24 @@ export async function GET(request: Request) {
     productionAccountBindingPresent: true, productionAccountBindingCanonical: true,
     preprodRuntimeDependency: false, preprodSecretReused: false }
   const failures: string[] = []
+  const reads: StockReadDiagnosticV1[] = []
   try {
     const supabase = getSupabaseAdminClient({ fetch: productionStockReadTransportV1({
       databaseUrl: binding.databaseUrl,
       accountKey: binding.accountKey, deadlineAt: Date.now() + 6_000,
       onFailure: code => { failures.push(code) },
+      onRead: diagnostic => { reads.push(diagnostic) },
     }) })
     const result = await readProductionStockGuardV1({ supabase,
       accountKey: binding.accountKey, accountAlias: binding.accountAlias,
       itemId: authorization.itemId })
     if (failures.length) return respond({ error: [...new Set(failures)].sort()[0],
-      authority, safety }, 503)
+      authority, reads, safety }, 503)
     return respond({ contractVersion: PRODUCTION_STOCK_READ_VERSION,
-      ...result, authority, safety }, 200)
+      ...result, authority, reads, safety }, 200)
   } catch {
     return respond({ error: [...new Set(failures)].sort()[0] ??
-      "PRODUCTION_STOCK_CANONICAL_REPOSITORY_READ_FAILED", authority, safety }, 503)
+      "PRODUCTION_STOCK_CANONICAL_REPOSITORY_READ_FAILED", authority, reads, safety }, 503)
   }
 }
 

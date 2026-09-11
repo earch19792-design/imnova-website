@@ -1,5 +1,7 @@
 import { PRODUCTION_STOCK_AUTHORITY_BINDING_V1 as binding,
   verifyProductionStockServiceIdentityV1 } from "./ebay-production-stock-authority-binding-v1"
+import { stockRequestAuthMetadataV1, stockResponseDiagnosticV1,
+  type StockReadDiagnosticV1 } from "./ebay-production-stock-read-diagnostics-v1"
 
 export const PRODUCTION_STOCK_READ_PATH = "/api/runtime/stockguard-read"
 export const PRODUCTION_STOCK_READ_CALLER = "SELLER_OS_STOCKGUARD_MONITOR_V1"
@@ -56,6 +58,7 @@ export function productionStockReadTransportV1(input: {
   databaseUrl: string; accountKey: string; fetcher?: typeof fetch
   deadlineAt: number
   onFailure?: (code: string) => void
+  onRead?: (diagnostic: StockReadDiagnosticV1) => void
 }): typeof fetch {
   const database = new URL(input.databaseUrl)
   if (database.protocol !== "https:" || !/^[a-z0-9]{20}\.supabase\.co$/.test(database.hostname) ||
@@ -63,6 +66,7 @@ export function productionStockReadTransportV1(input: {
       database.search || database.hash || database.origin !== binding.databaseUrl ||
       input.accountKey !== binding.accountKey) throw Error("PRODUCTION_STOCK_DATABASE_CONFIGURATION_INVALID")
   let calls = 0
+  let firstAuth: { authorization: string | null; apiKey: string | null } | null = null
   return async (target, init) => {
     const url = new URL(target instanceof Request ? target.url : String(target))
     const method = init?.method ?? (target instanceof Request ? target.method : "GET")
@@ -76,8 +80,15 @@ export function productionStockReadTransportV1(input: {
         Number(url.searchParams.get("limit")) > 1501 || ++calls > 5 || remaining <= 0) {
       throw Error("PRODUCTION_STOCK_READ_TRANSPORT_DENIED")
     }
+    const headers = new Headers(init?.headers ?? (target instanceof Request ? target.headers : undefined))
+    const auth = { authorization: headers.get("authorization"), apiKey: headers.get("apikey") }
+    firstAuth ??= auth
+    const authHeadersMatchFirstRequest = firstAuth.authorization === auth.authorization && firstAuth.apiKey === auth.apiKey
     const response = await (input.fetcher ?? fetch)(target, { ...init,
       redirect: "error", cache: "no-store", signal: AbortSignal.timeout(remaining) })
+    if (input.onRead) input.onRead({ table, method, accountFilterMatches: true,
+      authHeadersMatchFirstRequest, ...stockRequestAuthMetadataV1(headers),
+      httpStatus: response.status, ...await stockResponseDiagnosticV1(response, table) })
     // Do not forward upstream diagnostics, HTML, URLs, or credentials.
     if (!response.ok) {
       const error = response.status === 400 ? await response.json().catch(() => null) : null
