@@ -3,7 +3,7 @@ import { ebayProductionAccountFingerprint } from './ebay-seller-account-scope'
 import { keywordRecord as record } from '../seller-os/keyword-intelligence-handoff-v1'
 
 export const PAYOUT_REQUIRED_SCOPE_V1='https://api.ebay.com/oauth/api_scope/sell.finances'
-export const PAYOUT_GRANT_DIAGNOSTIC_V2='PAYOUT_EXISTING_ACCESS_GRANT_V2'
+export const PAYOUT_GRANT_DIAGNOSTIC_V2='PAYOUT_EXISTING_ACCESS_GRANT_V3'
 export function payoutGrantEvidenceV1(value:unknown) {
  const b=record(value), scopes=typeof b.scope==='string'?b.scope.split(/\s+/).filter(s=>/^https:\/\/api\.ebay\.com\/oauth\/api_scope(?:\/[a-z._]+)?$/.test(s)):null
  return {active:b.active===true,requiredScope:PAYOUT_REQUIRED_SCOPE_V1,grantedScopes:scopes,
@@ -28,11 +28,16 @@ export async function inspectPublicationPayoutGrantV1(fetchImpl:typeof fetch=fet
   const token=refreshed.access_token
   const userRead=await fetchImpl(new URL('/commerce/identity/v1/user/',c.identityOrigin),{headers:{Authorization:`Bearer ${token}`},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
   const user=record(await userRead.json().catch(()=>({})))
-  if(!userRead.ok||typeof user.userId!=='string'||ebayProductionAccountFingerprint(user.userId)!==c.accountFingerprint)return {version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:'UNPROVEN',reason:'EXISTING_GRANT_IDENTITY_NOT_PROVEN',observedAt}
+  const identityMatch=userRead.ok&&typeof user.userId==='string'&&ebayProductionAccountFingerprint(user.userId.trim())===c.accountFingerprint
   const r=await fetchImpl(endpoint,{method:'POST',headers:basic,
    body:new URLSearchParams({token,token_type_hint:'access_token'}),cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
   if(!r.ok)return {status:'UNPROVEN',reason:'OFFICIAL_TOKEN_INTROSPECTION_UNAVAILABLE',httpStatus:r.status,endpoint,observedAt}
   const result=payoutGrantEvidenceV1(await r.json())
+  if(!identityMatch)return {...result,version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:'UNPROVEN',reason:'EXISTING_GRANT_IDENTITY_NOT_PROVEN',observedAt,
+   existingGrantRefreshPass:true,identityHttpStatus:userRead.status,identityValuePresent:typeof user.userId==='string',accountBindingExact:false,
+   identityErrors:Array.isArray(user.errors)?user.errors.map(e=>{const x=record(e);return {errorId:typeof x.errorId==='number'?x.errorId:null,domain:typeof x.domain==='string'?x.domain:null,category:typeof x.category==='string'?x.category:null}}):[],
+   refreshReturnedScopes:payoutGrantEvidenceV1({active:true,scope:refreshed.scope}).grantedScopes,
+   scopeExpansionRequested:false,fundsReadAttempted:false,ownerReauthRequired:null}
   const funds=await fetchImpl('https://apiz.ebay.com/sell/finances/v1/seller_funds_summary',{headers:{Authorization:`Bearer ${token}`},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
   const fundsBody=record(await funds.json().catch(()=>({})))
   const payout=funds.ok?payoutCurrencyEvidenceV1(fundsBody,true,observedAt):null
