@@ -23,7 +23,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        .in("state", ["APPROVED_FOR_EBAY_SYNC", "PENDING_EBAY_SYNC", "REVALIDATING", "SYNCING", "OFFICIAL_READBACK_REQUIRED", "UNKNOWN_COMMIT"])
        .lte("next_attempt_at", new Date().toISOString())
        .or(`lease_until.is.null,lease_until.lt.${new Date().toISOString()}`)
-       .select("id,account_key,actor_user_id,item_id,kind,intent,binding,idempotency_key,payload_hash,state,reason_code,received_at,lease_token,dispatch_count,official_readback")
+       .select("id,account_key,actor_user_id,item_id,kind,intent,binding,idempotency_key,payload_hash,state,reason_code,received_at,lease_token,dispatch_count,official_readback,execution_receipt")
      : await input.supabase.rpc("seller_os_claim_ipad_outbox_v1", { p_account_key: input.accountKey })
    if (claim.error) throw Error("OUTBOX_CLAIM_FAILED")
    const row = claim.data?.[0] as OutboxRow | undefined
@@ -93,10 +93,10 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
          currentObservedAt: preview.officialObservedAt, official,
          orderedIdentityProof: preview.galleryOrderedIdentityProof,
          currentReadbackReference: `${preview.officialReadAuthority}:${row.item_id}:${preview.officialObservedAt}` })
-       row.binding = { ...row.binding, [row.dispatch_count > 0 ? "postWriteGalleryEvidence" : "galleryDriftEvidence"]: drift }
+       row.execution_receipt = { ...row.execution_receipt, [row.dispatch_count > 0 ? "postWriteGalleryEvidence" : "galleryDriftEvidence"]: drift }
        // Persist the three authorities BEFORE the engine can emit any drift
        // blocker. No success/ACK or marketplace mutation is implied.
-       await patch({ binding: row.binding })
+       await patch({ execution_receipt: row.execution_receipt })
        const baseListingCompatible = Boolean(row.binding.baseListing && preview.currentListingVersionFields &&
          stableOutboxJsonV1(row.binding.baseListing) === stableOutboxJsonV1(preview.currentListingVersionFields))
        const e = execution.data
@@ -141,7 +141,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        const due = nextOutboxAttemptAtV1(retryAt)
        await patch({ state, reason_code: reason, next_attempt_at: due, lease_until: null, lease_token: null,
          official_readback: state === "SYNCED" && proof?.official === true && proof.matchesIntent,
-         ...(proof?.receipt || recoveryProof ? { execution_receipt: { ...proof?.receipt, ...(recoveryProof ? { preDispatchRecovery: recoveryProof } : {}) } } : {}),
+         ...(proof?.receipt || recoveryProof ? { execution_receipt: { ...row.execution_receipt, ...proof?.receipt, ...(recoveryProof ? { preDispatchRecovery: recoveryProof } : {}) } } : {}),
          ...(state === "SYNCED" && manifestDigest ? { binding: { ...row.binding, executionManifestDigest: manifestDigest } } : {}) })
      },
    }

@@ -39,7 +39,8 @@ export async function recoverExistingGalleryOrderV1(input: {
     const changed = await input.supabase.from(IPAD_OUTBOX_TABLE).update({ ...values, updated_at: new Date().toISOString() })
       .eq("id", row.id).eq("account_key", input.accountKey).eq("lease_token", lease).eq("dispatch_count", 0)
       .select("id").maybeSingle()
-    if (changed.error || !changed.data) throw Error("GALLERY_RECOVERY_LEASE_LOST")
+    if (changed.error) throw Error(changed.error.message === "OUTBOX_IMMUTABLE_IDENTITY" ? "OUTBOX_IMMUTABLE_IDENTITY" : "GALLERY_RECOVERY_PERSISTENCE_REJECTED")
+    if (!changed.data) throw Error("GALLERY_RECOVERY_LEASE_LOST")
   }
   try {
     const authority = await readOutboxImageAuthorityV1({ supabase: input.supabase, row })
@@ -54,8 +55,8 @@ export async function recoverExistingGalleryOrderV1(input: {
       currentObservedAt: preview.officialObservedAt,
       orderedIdentityProof: preview.galleryOrderedIdentityProof,
       currentReadbackReference: `${preview.officialReadAuthority}:${row.item_id}:${preview.officialObservedAt}` })
-    const binding = { ...row.binding, galleryDriftEvidence: evidence }
-    await patch({ binding })
+    const receipt = { ...row.execution_receipt, galleryDriftEvidence: evidence }
+    await patch({ execution_receipt: receipt })
     if (evidence.DRIFT_CLASSIFICATION !== "NO_DRIFT") return { status: "REQUIRES_ATTENTION", evidence, imageWriteCount: 0 }
     if (!preview.safeToExecuteVisualChange || !preview.visualOnlyDiff || preview.unauthorizedFieldDiffCount !== 0 ||
       preview.visualManifestDigest !== input.expectedManifestDigest || !row.binding.baseListing || !preview.currentListingVersionFields ||
@@ -65,7 +66,7 @@ export async function recoverExistingGalleryOrderV1(input: {
       previousState: row.state, previousReason: row.reason_code, sameOutboxId: row.id,
       originalPayloadHash: row.payload_hash, manifestDigest: input.expectedManifestDigest,
       classification: evidence.DRIFT_CLASSIFICATION, approvedAssetsReused: true, newImageGenerationCount: 0, duplicateAssetCount: 0 }
-    await patch({ binding: { ...binding, galleryRecovery: recovery }, state: "PENDING_EBAY_SYNC", reason_code: null,
+    await patch({ execution_receipt: { ...receipt, galleryRecovery: recovery }, state: "PENDING_EBAY_SYNC", reason_code: null,
       next_attempt_at: new Date().toISOString(), lease_token: null, lease_until: null })
   } finally {
     await input.supabase.from(IPAD_OUTBOX_TABLE).update({ lease_token: null, lease_until: null })
@@ -77,5 +78,5 @@ export async function recoverExistingGalleryOrderV1(input: {
   if (stored.error) throw Error("GALLERY_RECOVERY_DURABLE_READBACK_REQUIRED")
   return { status: stored.data.state, reason: stored.data.reason_code, syncOrderRecovered: true,
     imageWriteCount: runtime.listingWriteCount, officialReadback: stored.data.official_readback,
-    evidence: stored.data.binding.galleryDriftEvidence, executionReceipt: stored.data.execution_receipt, runtime }
+    evidence: stored.data.execution_receipt?.galleryDriftEvidence, executionReceipt: stored.data.execution_receipt, runtime }
 }

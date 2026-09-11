@@ -6,7 +6,7 @@ import { visualAssetOwnerApprovedV1 } from "./visual-asset-sync-state-v1"
 export const IPAD_OUTBOX_TABLE = "seller_os_ipad_outbox_v1"
 export type OutboxRow = { id: string; account_key: string; actor_user_id: string; item_id: string; kind: string;
   intent: OutboxIntent; binding: Record<string, unknown>; idempotency_key: string; payload_hash: string;
-  state: string; reason_code: string | null; received_at: string; lease_token: string; dispatch_count: number; official_readback: boolean }
+  state: string; reason_code: string | null; received_at: string; lease_token: string; dispatch_count: number; official_readback: boolean; execution_receipt?: Record<string, unknown> | null }
 export type OutboxScope = { supabase: SupabaseClient; accountKey: string; actorUserId: string; owner?: boolean }
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 export function publicOutboxReceiptV1(row: OutboxRow): DurableOutboxReceipt {
