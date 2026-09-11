@@ -1,5 +1,10 @@
 "use client"
 
+import {
+  canonicalDestinationMatchStatusV1, checkoutObservationV1,
+  type CanonicalDestinationMatchStatusV1,
+} from "@/lib/ebay/luna-checkout-observation-v1"
+
 import { useEffect, useRef, useState } from "react"
 
 import { createLunaShippingPortLeadershipGateV1, createLunaCaptureProbeRecorderV1 } from
@@ -529,7 +534,8 @@ export function LunaShippingCaptureControlPlane({
   const [runtimeTrace, setRuntimeTrace] = useState<RuntimeTrace>(EMPTY_RUNTIME_TRACE)
   const [results, setResults] = useState<Result[]>([])
   const [canonicalDestinationBound, setCanonicalDestinationBound] = useState(false)
-  const [canonicalDestinationMatch, setCanonicalDestinationMatch] = useState(false)
+  const [canonicalDestinationMatchStatus, setCanonicalDestinationMatchStatus] = useState<CanonicalDestinationMatchStatusV1>('NOT_EVALUATED')
+  const [checkoutObservation, setCheckoutObservation] = useState<ReturnType<typeof checkoutObservationV1>>(null)
   const [canonicalBindingStatusReady, setCanonicalBindingStatusReady] =
     useState(false)
   const [autoClaimEnabled, setAutoClaimEnabled] = useState(runtimeOnly)
@@ -834,13 +840,14 @@ export function LunaShippingCaptureControlPlane({
         canonicalDestinationMismatchProven = false
         setCanonicalBindingStatusReady(true)
         setCanonicalDestinationBound(true)
-        setCanonicalDestinationMatch(true)
+        setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1('MATCH'))
         setCanonicalDestinationMismatch(false)
       }
       if (event.state === "FAIL" &&
           event.reasonCode === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH") {
         canonicalDestinationMismatchProven = true
         setCanonicalDestinationMismatch(true)
+        setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1('MISMATCH'))
       }
       const terminal = event.state === "PASS" || event.state === "FAIL"
       flushRuntimeTrace(terminal)
@@ -1499,6 +1506,7 @@ export function LunaShippingCaptureControlPlane({
           if (message.probe?.contract !== "LUNA_CAPTURE_READ_ONLY_PROBE_V1") return
           if (!probeRecorder.receive(message.probe)) return
           captureProbe = message.probe
+          setCheckoutObservation(checkoutObservationV1(message.probe.checkoutObservation))
           setCaptureAvailable(captureProbe?.captureAvailable === true)
           void probeRecorder.flush()
           if (captureProbe?.captureAvailable === true && !busy) {
@@ -1566,6 +1574,7 @@ export function LunaShippingCaptureControlPlane({
           canonicalDestinationMismatchProven = false
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationBound(canonicalDestinationBindingPresent)
+          setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1(null))
           setCanonicalDestinationMismatch(false)
           scheduleProductionAcquisition(0)
           return
@@ -1584,10 +1593,10 @@ export function LunaShippingCaptureControlPlane({
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationMismatch(false)
           setCanonicalDestinationBound(bound)
+          setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1(null))
           if (bound) {
             setError("")
           } else {
-            setCanonicalDestinationMatch(false)
             setStatus("CANONICAL_OPERATOR_BIND_REQUIRED")
             setError("")
           }
@@ -1710,12 +1719,13 @@ export function LunaShippingCaptureControlPlane({
           if (message.success !== true ||
               message.canonicalDestinationBound !== true ||
               message.canonicalDestinationMatch !== true) {
-            setCanonicalDestinationMatch(false)
+            setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1(null))
             const destinationMismatch =
               message.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH"
             if (destinationMismatch) {
               canonicalDestinationMismatchProven = true
               setCanonicalDestinationMismatch(true)
+              setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1('MISMATCH'))
             }
             fail(new Error(typeof message.error === "string" ? message.error
               : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"),
@@ -1730,7 +1740,7 @@ export function LunaShippingCaptureControlPlane({
           canonicalDestinationBindingPresent = true
           canonicalDestinationMismatchProven = false
           setCanonicalBindingStatusReady(true)
-          setCanonicalDestinationMatch(true)
+          setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1('MATCH'))
           setCanonicalDestinationMismatch(false)
           busy = false
           setRunning(false)
@@ -1962,6 +1972,7 @@ export function LunaShippingCaptureControlPlane({
           acceptExactScope()
           if (message.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH") {
             setCanonicalDestinationMismatch(true)
+            setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1('MISMATCH'))
           }
           if (typeof message.lastRuntimeState === "string") {
             setLastRuntimeState(message.lastRuntimeState)
@@ -2128,6 +2139,13 @@ export function LunaShippingCaptureControlPlane({
             const result = certified.result ?? {}
             const economics = result.economics ?? {}
             setStatus("RESULT_PERSISTED")
+            if (result.quote?.exactLunaIdentity === true &&
+                result.capturePostAccepted === true &&
+                result.captureResultDurable === true &&
+                result.durableReadbackMatch === true &&
+                capture.canonicalDestinationMatch === true) {
+              setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1('MATCH'))
+            }
             setResults((current) => [...current, {
               candidateId: job.identity.candidateId,
               productName: String(result.productName ?? job.productName),
@@ -2693,6 +2711,12 @@ export function LunaShippingCaptureControlPlane({
           `IGNORED_OUT_OF_SCOPE=${ignoredOutOfScope}\n` +
           `IGNORED_OUT_OF_SCOPE_SET_BY=${ignoredOutOfScopeSource}`}
       </code> : null}
+      <details className="mt-3 text-xs text-white/70">
+        <summary>Ver detalles de detección del checkout</summary>
+        <pre className="whitespace-pre-wrap">{checkoutObservation
+          ? Object.entries(checkoutObservation).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n')
+          : 'CHECKOUT_NOT_READY_REASON=CHECKOUT_DIAGNOSTIC_NOT_REPORTED'}</pre>
+      </details>
       {showCanonicalBindControl ? <button type="button"
         disabled={running}
         onClick={() => bindDestinationRef.current?.()}
@@ -2704,7 +2728,7 @@ export function LunaShippingCaptureControlPlane({
         perfil US canónico de Seller OS; nunca guarda ni muestra la dirección.
       </p> : null}
       <p className="mt-2 text-xs text-white/50">
-        CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH={String(canonicalDestinationMatch)}
+        CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH_STATUS={canonicalDestinationMatchStatus}
       </p>
       <section className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-200/[0.04] p-4">
         <h2 className="text-sm font-black">Diagnóstico real de storage</h2>

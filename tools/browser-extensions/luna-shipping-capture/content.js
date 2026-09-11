@@ -2005,10 +2005,18 @@ function bindingEligibilityResponse() {
     totalMarker: runtimeMarkers.shopPayMarkerTotal,
     payNowMarker: runtimeMarkers.shopPayMarkerPayNow,
   }
+  // Page recognition and readiness are independent observations. No selector
+  // change: reuse the same visible semantic markers as the capture parser.
   const checkoutPageDetected = checkoutHost === "SHOP_PAY_CHECKOUT_HOST" &&
-    Object.values(markers).every((value) => value === true)
+    Object.values(markers).some((value) => value === true)
+  const requiredMarkersReady = Object.values(markers).every(value => value === true)
   return Object.freeze({ contractVersion: BIND_ELIGIBILITY_CONTRACT,
-    eligible: checkoutPageDetected, checkoutPageDetected,
+    diagnosticVersion: "LUNA_CHECKOUT_OBSERVATION_V1",
+    eligible: checkoutPageDetected && requiredMarkersReady, checkoutPageDetected,
+    markersEvaluated: true, requiredMarkersReady,
+    // Job identity is certified by the capture path, never by this readiness probe.
+    productIdentityStatus: "NOT_EVALUATED",
+    quantityIdentityStatus: "NOT_EVALUATED",
     checkoutHostClassification: checkoutHost, ...markers })
 }
 

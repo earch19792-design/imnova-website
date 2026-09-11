@@ -1,3 +1,4 @@
+import { checkoutObservationV1 } from '../ebay/luna-checkout-observation-v1'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { keywordRecord as record } from './keyword-intelligence-handoff-v1'
 
@@ -8,9 +9,12 @@ export function shippingProbeDiagnosticV1(value:unknown) {
   ['captureAvailable','canonicalBindingPresent','checkoutDomReady'].every(k=>typeof p[k]==='boolean') &&
   Number.isFinite(Date.parse(String(p.observedAt))) && p.captureAvailable===(p.canonicalBindingPresent&&p.checkoutDomReady)
  if(!valid)return null
+ const checkout=checkoutObservationV1(p.checkoutObservation)
+ if(checkout&&checkout.checkoutDomReady!==p.checkoutDomReady)return null
  return {version:'SHIPPING_EXISTING_PROBE_DIAGNOSTIC_V1',observedAt:String(p.observedAt),
   canonicalBindingPresent:p.canonicalBindingPresent,checkoutDomReady:p.checkoutDomReady,captureAvailable:p.captureAvailable,
-  reason:p.captureAvailable?'AVAILABLE':p.canonicalBindingPresent?'SHOP_PAY_NOT_READY':'CANONICAL_BINDING_NOT_PROVEN',
+  checkoutObservation:checkout,
+  reason:!p.canonicalBindingPresent?'CANONICAL_BINDING_NOT_PROVEN':checkout?.checkoutNotReadyReason??(p.captureAvailable?'AVAILABLE':'CHECKOUT_DIAGNOSTIC_NOT_REPORTED'),
   // Extension catch paths also report false binding; do not claim proven loss.
   captureAuthorized:false}
 }

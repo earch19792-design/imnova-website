@@ -906,6 +906,8 @@ function safeEligibilityResponse(value) {
       fields.some((field) => typeof value[field] !== "boolean")) return null
   return Object.freeze({ contractVersion: value.contractVersion,
     checkoutHostClassification: value.checkoutHostClassification,
+    diagnosticVersion: value.diagnosticVersion === "LUNA_CHECKOUT_OBSERVATION_V1"
+      ? value.diagnosticVersion : null,
     ...Object.fromEntries(fields.map((field) => [field, value[field]])) })
 }
 
@@ -917,7 +919,7 @@ async function probeBindingCapability(tabId) {
     }), "BIND_CHECKOUT_TAB_ELIGIBILITY", BIND_TOP_FRAME_TIMEOUT_MS)
     const safe = safeEligibilityResponse(response)
     return { id: tabId, responded: response !== undefined,
-      responder: Boolean(safe), probeError: !safe,
+      responder: Boolean(safe), probeError: !safe, observation: safe,
       eligible: Boolean(safe) && safe.eligible && safe.checkoutPageDetected &&
       safe.checkoutHostClassification === "SHOP_PAY_CHECKOUT_HOST" &&
       safe.shipToMarker && safe.shippingMarker && safe.subtotalMarker &&
@@ -928,33 +930,65 @@ async function probeBindingCapability(tabId) {
   }
 }
 
+function checkoutObservationV1(tabFound, probe) {
+  const safe = probe?.observation
+  const expectedMarkers = ["shipToMarker", "shippingMarker", "subtotalMarker",
+    "totalMarker", "payNowMarker"]
+  const responded = probe?.responded === true
+  const evaluated = Boolean(safe)
+  const observedMarkers = evaluated ? expectedMarkers.filter(key => safe[key]) : []
+  const missingMarkers = evaluated ? expectedMarkers.filter(key => !safe[key]) : []
+  const ready = probe?.eligible === true
+  const pageDetected = evaluated && safe.checkoutPageDetected
+  return {
+    version: "LUNA_CHECKOUT_OBSERVATION_V1", checkoutTabFound: tabFound,
+    checkoutHostMatch: tabFound, // queryTabs is restricted to https://shop.app/*
+    // Static manifest injection has no scripting API result. Do not fabricate one.
+    checkoutInjectionRequested: false, checkoutInjectionApiSucceeded: null,
+    checkoutScriptBootstrapAck: null, contentScriptAuthority: "STATIC_MANIFEST",
+    checkoutContentScriptResponded: responded,
+    checkoutPageDetected: Boolean(pageDetected), shopPayMarkersEvaluated: evaluated,
+    shopPayRequiredMarkersReady: evaluated && missingMarkers.length === 0,
+    checkoutDomReady: ready, expectedMarkers, observedMarkers, missingMarkers,
+    markerContractDrift: null, productIdentityStatus: "NOT_EVALUATED",
+    quantityIdentityStatus: "NOT_EVALUATED",
+    checkoutNotReadyReason: !tabFound ? "NO_CHECKOUT_TAB"
+      : !responded ? "CONTENT_SCRIPT_NO_RESPONSE"
+      : !evaluated ? "CONTENT_SCRIPT_RESPONSE_INVALID"
+      : !pageDetected ? "CHECKOUT_PAGE_NOT_DETECTED"
+      : !ready ? "REQUIRED_MARKERS_MISSING" : "READY",
+  }
+}
+
 // Independent read-only capability observation. No cart, navigation, fetch,
 // binding mutation or job discovery. Existing worker events drive transitions.
 let captureCapabilityProbeInFlight = false
-async function reportCaptureCapability(existingTabId) {
+async function reportCaptureCapability() {
   if (!sellerPort || captureCapabilityProbeInFlight || activeJob) return
   captureCapabilityProbeInFlight = true
   const responsePort = sellerPort
   try {
     const binding = await readDestinationBinding()
-    const candidates = Number.isInteger(existingTabId) ? [{ id: existingTabId }]
-      : (await queryTabs({ url: ["https://shop.app/*"] }))
-        .slice(0, MAX_BIND_DISCOVERY_TABS)
-    let checkoutDomReady = false
-    if (binding) {
-      for (const tab of candidates) {
-        if ((await probeBindingCapability(tab.id)).eligible) {
-          checkoutDomReady = true
-          break
-        }
-      }
+    // Enumerate existing Shop Pay tabs once, even when a tab event triggered
+    // the observation. A non-ready tab must not hide another ready checkout.
+    const candidates = (await queryTabs({ url: ["https://shop.app/*"] }))
+      .slice(0, MAX_BIND_DISCOVERY_TABS)
+    let observation = null
+    for (const tab of candidates) {
+      const probe = await probeBindingCapability(tab.id)
+      // Prefer an actual structured response over silence; stop at readiness.
+      if (!observation || probe.responder || probe.eligible) observation = probe
+      if (probe.eligible) break
     }
+    const checkout = checkoutObservationV1(candidates.length > 0, observation)
+    const checkoutDomReady = checkout.checkoutDomReady
     if (sellerPort === responsePort) responsePort.postMessage({
       type: "LUNA_CAPTURE_CAPABILITY_STATE_V1", probe: {
         contract: "LUNA_CAPTURE_READ_ONLY_PROBE_V1",
         observedAt: new Date().toISOString(),
         canonicalBindingPresent: Boolean(binding), checkoutDomReady,
         captureAvailable: Boolean(binding) && checkoutDomReady,
+        checkoutObservation: checkout,
       },
     })
   } catch {
@@ -962,6 +996,8 @@ async function reportCaptureCapability(existingTabId) {
       type: "LUNA_CAPTURE_CAPABILITY_STATE_V1", probe: {
         contract: "LUNA_CAPTURE_READ_ONLY_PROBE_V1", observedAt: new Date().toISOString(),
         captureAvailable: false, canonicalBindingPresent: false, checkoutDomReady: false,
+        checkoutObservation: { ...checkoutObservationV1(false, null),
+          checkoutNotReadyReason: "PROBE_RUNTIME_FAILURE" },
       },
     })
   } finally { captureCapabilityProbeInFlight = false }
