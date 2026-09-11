@@ -126,6 +126,14 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
     return {pass:false,publicationWrites:writes,listingId,blocker:'CURRENT_PUBLISHED_PAYLOAD_READBACK_MISMATCH',inventoryReadback,offerReadback,collection}
    const binding=record(record(record(recorded.data).sanitized_result).currentPublicationExecutionV1).binding
    const b=record(binding)
+   const handoffBase=await read(),handoffMetadata=record(handoffBase.sanitized_result)
+   const handoffExecution=record(handoffMetadata.currentPublicationExecutionV1)
+   const handoffAttempt=await db.from('ebay_authorized_listing_publications').update({sanitized_result:{...handoffMetadata,
+    currentPublicationExecutionV1:{...handoffExecution,supplierLinkageHandoffAttempted:true}},updated_at:new Date().toISOString()})
+    .eq('id',p.id).eq('updated_at',handoffBase.updated_at).eq('listing_id',listingId)
+    .eq('phase','published_pending_verification').select('id').abortSignal(AbortSignal.timeout(8000)).retry(false)
+   if(handoffAttempt.error || record(record((await read()).sanitized_result).currentPublicationExecutionV1).supplierLinkageHandoffAttempted!==true)
+    throw Error('CURRENT_SUPPLIER_HANDOFF_ATTEMPT_READBACK_REQUIRED')
    const registration=await deps.register(db,{ebayItemId:listingId,ebayUrl:`https://www.ebay.com/itm/${listingId}`,
     opportunityId:String(b.opportunityId),candidateKey:String(b.candidateKey),supplierSku:String(b.supplierSku),supplierVariantId:String(b.variantId),safeDefaults:{}},input.actor,{automatedDeterministic:true})
    const v=registration.verification,snapshot=record(v.connectorListingSnapshot),policies=record(v.learnedSafeDefaults)
@@ -143,7 +151,7 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
    const officialReceipt={binding:execution.binding,listingId,observedAt:new Date().toISOString(),pass:true,matches,
     inventoryReadback,offerReadback,collection,verification:v}
    const receipt=await db.from('ebay_authorized_listing_publications').update({sanitized_result:{...sanitized,
-    currentPublicationExecutionV1:{...execution,readback:officialReceipt}},updated_at:new Date().toISOString()})
+    currentPublicationExecutionV1:{...execution,readback:officialReceipt,supplierLinkage:'CERTIFIED',stockGuardMonitored:true}},updated_at:new Date().toISOString()})
     .eq('id',p.id).eq('updated_at',beforeReceipt.updated_at).eq('phase','published_pending_verification')
     .eq('listing_id',listingId).eq('draft_execution_id',p.draft_execution_id).select('id').abortSignal(AbortSignal.timeout(8000)).retry(false)
    const receiptRead=await read()

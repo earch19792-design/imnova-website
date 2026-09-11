@@ -85,14 +85,16 @@ export function createSellerOsLunaStockObservationRepositoryV1(
     async claimJob(input: Readonly<{
       stockCheckJobId: string
       workerId: string
-      now: string
+      now?: string
       leaseSeconds?: number
     }>) {
       const data = await rpc(client,
         "claim_seller_os_luna_stock_check_job_v1", {
           p_stock_check_job_id: input.stockCheckJobId,
           p_worker_id: input.workerId,
-          p_now: input.now,
+          // Production callers use the database clock, also used at creation.
+          // An explicit clock remains available for existing deterministic tests.
+          ...(input.now === undefined ? {} : { p_now: input.now }),
           p_lease_seconds: input.leaseSeconds ?? 180,
         })
       const value = row(data)

@@ -329,12 +329,11 @@ export async function reconcileSellerOsStockIdentityV1(
       databaseWrites += 1
       const workerId = `stock-identity-v1:${createHash("sha256")
         .update(`${target}:${now.toISOString()}`).digest("hex").slice(0, 32)}`
-      // The job row is created by the database during ensureJob. Claim with a
-      // fresh timestamp so its immutable timestamp ordering cannot move
-      // backwards when the request crossed a network boundary.
+      // Use the RPC's database-clock default. A fresh application timestamp can
+      // still predate created_at when the two clocks differ by milliseconds.
       const claim = await repository.claimJob({
         stockCheckJobId: job.stockCheckJobId,
-        workerId, now: new Date().toISOString(),
+        workerId,
       })
       if (!claim.claimed || !claim.attemptNumber) {
         outcomes.push({ itemId: target, status: "ALREADY_CURRENT",

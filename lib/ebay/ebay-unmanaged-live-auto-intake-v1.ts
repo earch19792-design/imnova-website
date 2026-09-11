@@ -4,6 +4,7 @@ import type { EbayLiveListing } from
   "@/lib/ebay/ebay-commercial-monitor-live-readonly-domain"
 import { registerManualEbayListing } from
   "@/lib/ebay/ebay-manual-listing-service"
+import { orderRelistHandoffCandidatesV1, reconcileRelistSupplierHandoffV1 } from "./ebay-relist-supplier-handoff-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -332,7 +333,35 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
   ))
   let attempted = 0
   const outcomes: Array<JsonRecord> = []
-  for (const classification of classifications) {
+  // Rotate the existing bounded cycle, so unresolved entries cannot permanently
+  // occupy both slots. This schedules no work and creates no timer.
+  const unresolved = orderRelistHandoffCandidatesV1(classifications.filter((row) =>
+    row.classification !== "ALREADY_MANAGED" && !conflictingItemIds.has(row.itemId)), Date.now())
+  const cycleOrder = [...unresolved,
+    ...classifications.filter((row) => row.classification === "ALREADY_MANAGED" ||
+      conflictingItemIds.has(row.itemId))]
+  for (const classification of cycleOrder) {
+    if (classification.classification !== "ALREADY_MANAGED" &&
+        !conflictingItemIds.has(classification.itemId) && attempted < maximumAutoLinks) {
+      // Reuse the same bounded intake slot. Relists inherit only database-
+      // proven lineage; a legacy Product Truth projection cannot suppress it.
+      const inherited = await reconcileRelistSupplierHandoffV1({
+        supabase, accountKey: input.accountKey, itemId: classification.itemId,
+      })
+      if (inherited.status === "CERTIFIED") {
+        attempted += 1
+        outcomes.push({ ...classification, status: "AUTO_LINKED",
+          mode: "DETERMINISTIC_RELIST", supplierLinkage: "CERTIFIED",
+          durableReadbackMatch: true, ownerActionRequired: false,
+          humanClicks: 0, marketplaceWrites: 0 })
+        continue
+      }
+      if (classification.classification !== "EXACT_DETERMINISTIC_MATCH") {
+        attempted += 1
+        outcomes.push({ ...classification, handoff: inherited })
+        continue
+      }
+    }
     if (classification.classification !== "EXACT_DETERMINISTIC_MATCH") {
       outcomes.push(classification)
       continue

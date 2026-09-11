@@ -70,14 +70,15 @@ function fixedLunaProductUrl(value: string) {
   let parsed: URL
   try {
     parsed = new URL(value)
+    // The exact public product reader already certifies Unicode product handles.
+    // Reuse that boundary instead of rejecting durable URLs with emoji/non-ASCII.
+    parseDirectedLunaProductUrl(value)
   } catch {
     throw new Error("LUNA_CANONICAL_SERVER_READ_URL_REJECTED")
   }
   if (parsed.protocol !== "https:" || !FIXED_LUNA_HOSTS.has(parsed.hostname) ||
       parsed.username || parsed.password || parsed.port || parsed.search ||
-      parsed.hash || !/^\/products\/[A-Za-z0-9][A-Za-z0-9-]{0,220}\/?$/.test(
-        parsed.pathname,
-      )) {
+      parsed.hash) {
     throw new Error("LUNA_CANONICAL_SERVER_READ_URL_REJECTED")
   }
   parsed.pathname = parsed.pathname.replace(/\/$/, "")
@@ -237,3 +238,4 @@ export function buildSellerOsLunaAutomationPrerequisitesStatusV1(input: Readonly
     environmentValuesIncluded: false as const,
   })
 }
+import { parseDirectedLunaProductUrl } from "./ebay-luna-directed-product-import"
