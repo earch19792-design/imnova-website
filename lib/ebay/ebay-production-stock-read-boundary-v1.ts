@@ -1,4 +1,5 @@
-import { timingSafeEqual } from "node:crypto"
+import { PRODUCTION_STOCK_AUTHORITY_BINDING_V1 as binding,
+  verifyProductionStockServiceIdentityV1 } from "./ebay-production-stock-authority-binding-v1"
 
 export const PRODUCTION_STOCK_READ_PATH = "/api/runtime/stockguard-read"
 export const PRODUCTION_STOCK_READ_CALLER = "SELLER_OS_STOCKGUARD_MONITOR_V1"
@@ -10,10 +11,11 @@ export const PRODUCTION_STOCK_READ_CAPABILITIES = Object.freeze([
 ])
 
 // Separate service capability, not an exception to the eBay Pro boundary.
-// Reuse the installed service credential; never accept a target or credential
-// selector. A replay is another read, with no claim or durable mutation.
-export function authorizeProductionStockReadV1(request: Request,
-  environment: NodeJS.ProcessEnv = process.env) {
+// Authenticate the production workload, never a caller-supplied database/eBay
+// token. The data credential stays exclusively inside its production runtime.
+export async function authorizeProductionStockReadV1(request: Request,
+  environment: NodeJS.ProcessEnv = process.env,
+  verifyIdentity: (assertion: string) => Promise<boolean> = verifyProductionStockServiceIdentityV1) {
   const denied = (reason: string) => ({ allowed: false as const, reason,
     itemId: null, capability: null })
   const url = new URL(request.url)
@@ -37,11 +39,8 @@ export function authorizeProductionStockReadV1(request: Request,
   if (request.headers.get("x-seller-os-caller") !== PRODUCTION_STOCK_READ_CALLER) {
     return denied("PRODUCTION_STOCK_READ_CALLER_DENIED")
   }
-  const expected = environment.SUPABASE_SERVICE_ROLE_KEY?.trim() ?? ""
-  const actual = request.headers.get("authorization") ?? ""
-  const wanted = `Bearer ${expected}`
-  if (expected.length < 32 || Buffer.byteLength(actual) !== Buffer.byteLength(wanted) ||
-      !timingSafeEqual(Buffer.from(actual), Buffer.from(wanted))) {
+  const assertion = request.headers.get("x-seller-os-service-assertion") ?? ""
+  if (request.headers.has("authorization") || !assertion || !await verifyIdentity(assertion)) {
     return denied("PRODUCTION_STOCK_READ_AUTHENTICATION_DENIED")
   }
   return { allowed: true as const, reason: null, itemId, capability }
@@ -56,11 +55,13 @@ const TABLES = new Set(["ebay_active_listings", "ebay_active_listing_sync_state"
 export function productionStockReadTransportV1(input: {
   databaseUrl: string; accountKey: string; fetcher?: typeof fetch
   deadlineAt: number
+  onFailure?: (code: string) => void
 }): typeof fetch {
   const database = new URL(input.databaseUrl)
   if (database.protocol !== "https:" || !/^[a-z0-9]{20}\.supabase\.co$/.test(database.hostname) ||
       database.username || database.password || database.port || database.pathname !== "/" ||
-      database.search || database.hash) throw Error("PRODUCTION_STOCK_DATABASE_CONFIGURATION_INVALID")
+      database.search || database.hash || database.origin !== binding.databaseUrl ||
+      input.accountKey !== binding.accountKey) throw Error("PRODUCTION_STOCK_DATABASE_CONFIGURATION_INVALID")
   let calls = 0
   return async (target, init) => {
     const url = new URL(target instanceof Request ? target.url : String(target))
@@ -78,7 +79,18 @@ export function productionStockReadTransportV1(input: {
     const response = await (input.fetcher ?? fetch)(target, { ...init,
       redirect: "error", cache: "no-store", signal: AbortSignal.timeout(remaining) })
     // Do not forward upstream diagnostics, HTML, URLs, or credentials.
-    if (!response.ok) throw Error("PRODUCTION_STOCK_AUTHORITY_READ_UNAVAILABLE")
+    if (!response.ok) {
+      const error = response.status === 400 ? await response.json().catch(() => null) : null
+      const code = response.status === 404
+        ? `PRODUCTION_STOCK_AUTHORITY_TABLE_MISSING:${table}`
+        : error?.code === "42703"
+          ? `PRODUCTION_STOCK_AUTHORITY_COLUMN_MISSING:${table}`
+        : response.status === 401 || response.status === 403
+          ? "PRODUCTION_STOCK_DATABASE_SERVICE_AUTH_REJECTED"
+          : "PRODUCTION_STOCK_DATABASE_READ_FAILED"
+      input.onFailure?.(code)
+      throw Error(code)
+    }
     return response
   }
 }
