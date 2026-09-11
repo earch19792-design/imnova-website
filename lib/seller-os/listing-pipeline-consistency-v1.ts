@@ -1,6 +1,7 @@
 import { keywordRecord as record, keywordWireDigestV1 as digest, consumeListingPackageKeywordHandoffV1,
   KEYWORD_DECISION_VERSION, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
 import { commercialComponentV1, type CommercialComponent } from "./listing-commercial-envelope-v1"
+import { publicationInventoryAuthorityV1 } from "./publication-inventory-authority-v1"
 
 const rows = (v: unknown) => Array.isArray(v) ? v.map(record) : []
 const hash = (v: unknown) => typeof v === "string" && /^sha256:[a-f0-9]{64}$/.test(v)
@@ -11,7 +12,7 @@ function freeze<T>(v: T): T {
 export type PipelineCurrentAuthorityV1 = { binding: KeywordBindingV1; accountKey: string; packageId: string; sku: string;
   truthFields: unknown; requiredTruth: unknown; aspectResolutions: unknown; category: unknown; keywordRead: unknown;
   reference: Record<string, unknown>; ownPrice: unknown; shipping?: Partial<CommercialComponent>; feeHandoff?: unknown;
-  sellerPolicies?: unknown; now: Date }
+  sellerPolicies?: unknown; quantityReview?: unknown; currentQuantityMaterial?: unknown; now: Date }
 
 // Audit an existing generation. This never rebuilds its content or mutates it.
 // Fresh commercial observations form a new evaluation, not a new package.
@@ -76,7 +77,19 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
     Number.isFinite(Date.parse(String(policies.verified_at))) && Date.parse(String(policies.verified_at)) <= a.now.getTime() &&
     Date.parse(String(policies.expires_at)) > a.now.getTime() &&
     ["fulfillment_policy_id", "payment_policy_id", "return_policy_id", "merchant_location_key"].every(k => typeof policies[k] === "string" && Boolean(policies[k]))
-  const evidence = { productCost: fromFact("SUPPLIER_COST"), inventory: fromFact("SUPPLIER_STOCK"),
+  const quantityMaterial = record(a.currentQuantityMaterial)
+  const quantityContentMatches = quantityMaterial.title === content.title && quantityMaterial.description === content.description &&
+    quantityMaterial.categoryId === content.categoryId && quantityMaterial.price === content.price &&
+    digest(quantityMaterial.itemSpecifics) === digest(content.itemSpecifics) && digest(quantityMaterial.imageUrls) === digest(content.imageUrls)
+  const inventory = publicationInventoryAuthorityV1({ availability: fact("SUPPLIER_AVAILABILITY").length === 1 ? fact("SUPPLIER_AVAILABILITY")[0] : null,
+    numericStock: fact("SUPPLIER_STOCK").length === 1 ? fact("SUPPLIER_STOCK")[0] : null,
+    exactBinding: product && variation && account && sku && lineage, now: a.now,
+    packageId: a.packageId, sku: a.sku, productId: a.binding.PRODUCT_ID, variantId: a.binding.VARIANT_ID,
+    quantityReview: a.quantityReview, currentQuantityMaterial: quantityContentMatches ? quantityMaterial : null })
+  const evidence = { productCost: fromFact("SUPPLIER_COST"), inventory: {
+    ...commercialComponentV1({ status: inventory.inventoryReady ? "PROVEN" : inventory.freshness === "STALE" ? "STALE" : "PENDING",
+      value: inventory.listingQuantity, reference: inventory.reference, source: "LUNA_AVAILABILITY_WITH_SEPARATE_PACKAGE_EXPOSURE_V1",
+      observedAt: inventory.observedAt, freshUntil: inventory.freshUntil }, a.now), ...inventory },
     salePrice: commercialComponentV1({ status: typeof a.ownPrice === "number" && a.ownPrice > 0 && content.price === a.ownPrice ? "PROVEN" : "PENDING",
       value: a.ownPrice, reference: a.packageId, source: "OWN_LISTING_PACKAGE_PRICE" }, a.now),
     shipping: commercialComponentV1(a.shipping ?? {}, a.now),
@@ -85,8 +98,6 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
       freshUntil: typeof feeAuthority.freshUntil === "string" ? feeAuthority.freshUntil : null }, a.now),
     // Presence alone is not evidence of exact account/category policy authority.
     sellerPolicies: { status: policiesProven ? "PROVEN" : "PENDING", present: Object.keys(policies).length > 0, authority: "ebay_account_policy_profiles", reference: policiesProven ? digest(policies) : null } }
-  if (evidence.inventory.status === "PROVEN" && (typeof evidence.inventory.value !== "number" ||
-      !Number.isInteger(evidence.inventory.value) || evidence.inventory.value < 1)) evidence.inventory.status = "PENDING"
   const waiting = Object.entries(evidence).filter(([,e]) => e.status !== "PROVEN").map(([k]) => k)
   const consistent = inconsistencies.length === 0 && ambiguous === 0
   const sourceEvidenceReferences = [...new Set([a.packageId, r.sourceDigest, c.taxonomySnapshotDigest, rt.evidenceDigest,

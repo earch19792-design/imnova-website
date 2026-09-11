@@ -66,6 +66,8 @@ export type ReadonlyLunaStockObservationRowV1 = Readonly<{
 type SourceRows<T> = Readonly<{
   status: "AVAILABLE" | "PARTIAL" | "ERROR"
   rows: readonly T[]
+  limitationCode?: string | null
+  truncated?: boolean
 }>
 
 type Component = Readonly<{
@@ -377,8 +379,14 @@ export function projectSellerOsCanonicalLunaStockReadModelV1(input: Readonly<{
     evidenceReferences: [decisionEvidence],
     limitingComponentId: null,
   })
-  if (input.jobs.status !== "AVAILABLE" ||
-      input.observations.status !== "AVAILABLE") {
+  // A newest-first bounded prefix is not a failed read. A returned job can
+  // still have every exact component/attempt below. Missing components remain
+  // fail-closed; the durable unique(job, component, attempt) constraint prevents
+  // a second canonical observation hiding beyond the prefix.
+  const usablePrefix = <T>(source: SourceRows<T>, name: string) => source.status === "AVAILABLE" ||
+    source.status === "PARTIAL" && source.truncated === true && source.limitationCode === `${name}_RESULT_LIMIT_REACHED`
+  if (!usablePrefix(input.jobs, "SELLER_OS_LUNA_STOCK_CHECK_JOBS_V1") ||
+      !usablePrefix(input.observations, "SELLER_OS_LUNA_STOCK_OBSERVATIONS_V1")) {
     return unknownProjection({
       limitationCode: "CERTIFIED_COMPONENT_STOCK_READ_UNAVAILABLE",
       supplierLinkageStatus: "CERTIFIED",
@@ -431,7 +439,9 @@ export function projectSellerOsCanonicalLunaStockReadModelV1(input: Readonly<{
       integer(row.supplier_quantity_required, 1, 10_000) ===
         component.quantityRequired)
   })
-  if (!attemptNumber || selected.some((rows) => rows.length !== 1)) {
+  if (!attemptNumber || selected.some((rows) => rows.length !== 1) ||
+      input.observations.status === "PARTIAL" && selected.some((rows, index) =>
+        rows[0]?.component_identity_id !== components[index].componentIdentityId)) {
     return unknownProjection({
       limitationCode: "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH",
       supplierLinkageStatus: "CERTIFIED",

@@ -21,12 +21,12 @@ export async function readSellOneLikeThisV1(input: {
   if (!UUID.test(input.packageId) || !/^\d{9,19}$/.test(input.referenceItemId)) throw Error("REFERENCE_INPUT_INVALID")
   const db = input.supabase, now = input.now ?? new Date()
   const p = await bounded(db.from("ebay_listing_packages").select(
-    "id,opportunity_id,candidate_key,account_key,ownPrice:package_data->pricing->targetPrice,category:package_data->categoryResolverV1")
+    "id,opportunity_id,candidate_key,account_key,ownPrice:package_data->pricing->targetPrice,category:package_data->categoryResolverV1,quantityReview:package_data->quickPickOwnerReviewV1,quantityReviewProjection:package_data->quickPickMarketTestPackageV1")
     .eq("account_key", input.accountKey).eq("id", input.packageId).limit(1)).maybeSingle()
   if (p.error || !p.data) throw Error("REFERENCE_OWN_PACKAGE_UNAVAILABLE")
   const pkg = record(p.data)
   const q = await bounded(db.from("ebay_luna_opportunity_queue").select(
-    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions")
+    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,productTruthDigest:assessment->productTruth->evidenceDigest,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions")
     .eq("id", pkg.opportunity_id).eq("candidate_key", pkg.candidate_key).limit(1)).maybeSingle()
   if (q.error || !q.data) throw Error("REFERENCE_OWN_PRODUCT_UNAVAILABLE")
   const own = record(q.data)
@@ -84,7 +84,29 @@ export async function readSellOneLikeThisV1(input: {
   // Audit the supplied server-side generation without recreating its content.
   // Normal reference preparation uses the same gate on its existing read path.
   const result = input.existingPackagePreview ?? prepareSellOneLikeThisV1(authority)
-  const consistency = listingPipelineConsistencyV1(result, authority)
+  const content = record(record(record(result).listingPackage).content), reviewView = record(pkg.quantityReviewProjection)
+  const economics = record(reviewView.dollarCheck), quantityReview = record(pkg.quantityReview)
+  // Recompute the existing review's material binding using CURRENT certified
+  // content. Stored `reviewedPackageDigestMatch` flags are never authority.
+  // A changed title/image/description (or commercial amount) invalidates the
+  // old whole-package exposure authorization; it cannot silently become a
+  // reusable account-wide quantity policy.
+  const currentQuantityMaterial = {
+    contractVersion: "QUICK_PICK_MATERIAL_PACKAGE_DIGEST_V1", listingPackageId: input.packageId,
+    opportunityId: own.id, candidateKey: own.candidate_key,
+    exactProductLineage: { supplierSku: own.supplier_sku, lunaProductId: binding.PRODUCT_ID,
+      lunaVariantId: binding.VARIANT_ID, productTruthDigest: own.productTruthDigest },
+    title: content.title, description: content.description, itemSpecifics: content.itemSpecifics,
+    categoryId: content.categoryId, categoryName: record(reviewView.category).name,
+    conditionId: record(reviewView.condition).id, conditionLabel: record(reviewView.condition).label,
+    price: content.price, quantity: quantityReview.authorizedQuantity, imageUrls: content.imageUrls,
+    shipping: shippingProven ? s.shippingUsd : null,
+    supplierCost: (Array.isArray(own.truthFields) ? own.truthFields.map(record) : []).find(f => f.FIELD === "SUPPLIER_COST")?.VALUE,
+    ebayFees: record(fee).status === "PROVEN" ? record(record(fee).authority).amount : null,
+    profit: economics.expectedContribution, margin: economics.expectedMargin, roi: economics.expectedRoi,
+    ...(record(reviewView.productIdentifiers).upc ? { productIdentifiers: reviewView.productIdentifiers } : {}),
+  }
+  const consistency = listingPipelineConsistencyV1(result, { ...authority, quantityReview, currentQuantityMaterial })
   const publicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : publication.data, !publication.error)
   return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate,
     publicationEvidenceStatus: publication.error ? "WAITING_FOR_DATA" : "READ" }
