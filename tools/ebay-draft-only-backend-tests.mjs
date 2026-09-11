@@ -3065,7 +3065,7 @@ test("CURRENT unpublished update replaces same Offer, readbacks after timeout, a
     const u=new URL(url),method=init.method??'GET';calls.push([method,u.pathname])
     if(u.pathname.endsWith('/oauth2/token'))return Response.json({access_token:'a',expires_in:7200})
     if(u.pathname==='/commerce/identity/v1/user/')return Response.json({userId:'sandbox-user-1',status:'CONFIRMED'})
-    if(method==='POST'&&u.pathname.endsWith('/offer/get_listing_fees'))return Response.json({fees:[{marketplaceId:'EBAY_US',feeSummaries:[]}]})
+    if(method==='POST'&&u.pathname.endsWith('/offer/get_listing_fees')){assert.equal(init.headers['Accept-Language'],'en-US');return Response.json({fees:[{marketplaceId:'EBAY_US',feeSummaries:[]}]})}
     if(method==='GET'&&u.pathname.endsWith('/offer'))return Response.json({offers:mode==='duplicate'?[offer,{...offer,offerId:'second'}]:[offer],total:mode==='duplicate'?2:1,limit:100,size:mode==='duplicate'?2:1})
     if(method==='GET'&&u.pathname.endsWith('/offer/'+offerId))return Response.json(offer)
     if(method==='GET'&&u.pathname.includes('/inventory_item/'))return Response.json(inventory)

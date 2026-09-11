@@ -74,6 +74,7 @@ export async function executeCurrentUnpublishedPreparationV1(input: {
   pub=await readPub()
   const prior=record(record(pub.sanitized_result).currentUnpublishedPreparationV1)
   await cas({...prior,version:"CURRENT_UNPUBLISHED_PREPARATION_V1",key,binding,result,
+    firstWriteResult:prior.firstWriteResult ?? prior.result ?? result,
     state:result.state,observedAt:new Date().toISOString(),publicationAuthorized:false})
   return {...result,binding,durableReceipt:true}
 }

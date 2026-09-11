@@ -2598,7 +2598,7 @@ export async function prepareExistingUnpublishedRevisionV1(input: {
   if (inventoryReadback.safe && offerReadback.safe) {
     try {
       const response = await fetchImpl(new URL("/sell/inventory/v1/offer/get_listing_fees",config.apiOrigin),{
-        method:"POST",headers:{Authorization:`Bearer ${auth.token}`,"Content-Type":"application/json"},
+        method:"POST",headers:{Authorization:`Bearer ${auth.token}`,"Content-Type":"application/json","Accept-Language":"en-US"},
         body:JSON.stringify({offers:[{offerId:input.offerId}]}),cache:"no-store",signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)})
       const body=record(await response.json().catch(()=>({})))
       listingFeePrevalidation={httpStatus:response.status,ok:response.ok,body:safeBody(body),
