@@ -18,7 +18,7 @@ export function currentLiveGalleryV1(official: { pictureUrls: readonly string[] 
 
 export function galleryDriftEvidenceV1(input: {
   binding: Record<string, unknown>; currentUrls: readonly string[]; currentObservedAt: string | null;
-  currentReadbackReference: string; official: boolean;
+  currentReadbackReference: string; official: boolean; proposalObservedAt?: string;
   // Only the existing official ordered-image verifier may supply this proof.
   orderedIdentityProof?: { verified: boolean; method: string; baselineDigest: string; currentDigest: string };
 }) {
@@ -56,7 +56,7 @@ export function galleryDriftEvidenceV1(input: {
       images: after.map((a, position) => ({ position, assetId: a.assetId ?? null, normalizedUrl: proposedUrls?.[position] ?? null,
         identity: typeof a.outputSha256 === "string" ? `sha256:${a.outputSha256}` : null })),
       sourceReference: proposal.manifestDigest ?? record(audit.mayelDecision).visualManifestDigest ?? null,
-      observedAt: proposal.recordedAt ?? null },
+      observedAt: proposal.recordedAt ?? input.proposalObservedAt ?? null },
     ADDED_ASSETS: currentEntries.filter(e => !beforeIds.includes(e.identity)),
     REMOVED_ASSETS: baselineEntries.filter(e => !currentIds.includes(e.identity)),
     REORDERED_ASSETS: currentEntries.filter(e => beforeIds.includes(e.identity) && beforeIds.indexOf(e.identity) !== e.position),

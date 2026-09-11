@@ -90,7 +90,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
        const official = preview.officialReadStatus === "PASS" && preview.currentImageSetProven &&
          preview.accountIdentityProven && preview.listingIdentityProven && preview.officialReadAuthority !== "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1"
        const drift = galleryDriftEvidenceV1({ binding: row.binding, currentUrls: preview.currentImages,
-         currentObservedAt: preview.officialObservedAt, official,
+         currentObservedAt: preview.officialObservedAt, official, proposalObservedAt: row.received_at,
          orderedIdentityProof: preview.galleryOrderedIdentityProof,
          currentReadbackReference: `${preview.officialReadAuthority}:${row.item_id}:${preview.officialObservedAt}` })
        row.execution_receipt = { ...row.execution_receipt, [row.dispatch_count > 0 ? "postWriteGalleryEvidence" : "galleryDriftEvidence"]: drift }
