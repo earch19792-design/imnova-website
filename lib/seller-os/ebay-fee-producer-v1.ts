@@ -1,3 +1,4 @@
+import { feeSubjectMatchesV1, feeSubjectFieldsV1 } from "./fee-subject-v1"
 import { classifyFeeComponentsV1 } from "./fee-component-applicability-v1"
 import { preSaleFeeBreakdownV1 } from "./pre-sale-fee-breakdown-v1"
 import { SELLING_FEE_TAX_SOURCE } from "../ebay/ebay-selling-fee-tax-policy-v1"
@@ -18,6 +19,13 @@ export function feeDigestV1(v: unknown): string {
     ? Object.fromEntries(Object.entries(x).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,canonical(v)])) : x
   return createHash("sha256").update(JSON.stringify(canonical(v)) ?? "null").digest("hex")
 }
+/** Fee evidence is a projection of this package, not part of its own subject
+ * hash. Excluding only the fee handoffs avoids a circular self-binding. This
+ * revision does not replace the certified Listing Package hash/generation. */
+export function feePackageRevisionV1(value: unknown): string {
+  return `sha256:${feeDigestV1(Object.fromEntries(Object.entries(feeRecordV1(value))
+    .filter(([key]) => !["feeContextV1", "feeResolutionInputsV1"].includes(key))))}`
+}
 const feeSource = "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822"
 const regulatorySource = "https://export.ebay.com/en/fees-regulations-policies/seller-fees/international-fees/"
 
@@ -25,16 +33,16 @@ const regulatorySource = "https://export.ebay.com/en/fees-regulations-policies/s
  * Monetary unknowns stay null. PENDING is an expected business state, not an exception.
  */
 export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:string|null; sku:string|null;
-  packageId:string|null; context:unknown; resolutionInputs?:unknown; now:Date}) {
+  packageId:string|null; packageRevision?:string|null; context:unknown; resolutionInputs?:unknown; now:Date}) {
   const c=feeRecordV1(input.context), identity=feeRecordV1(c.identity), listing=feeRecordV1(c.listing)
   const store=feeRecordV1(c.resolvedStoreContext), performance=feeRecordV1(c.accountPerformance)
   const standards=feeRecordV1(performance.standards), service=feeRecordV1(performance.serviceMetrics)
   const boundPolicy=feeRecordV1(c.categoryFeePolicy), policy=feeRecordV1(boundPolicy.policy)
-  const exact=identity.accountBindingExact===true && identity.itemId===input.itemId &&
+  const exact=identity.accountBindingExact===true && feeSubjectMatchesV1(input,identity) &&
     identity.sku===input.sku && identity.marketplace==="EBAY_US" && c.marketplaceAccountKey===input.accountKey
   const policyKnown=exact && boundPolicy.status==="PROVEN_BASE_POLICY_ONLY" &&
     Date.parse(String(policy.freshUntil))>input.now.getTime() &&
-    policy.marketplaceAccountKey===input.accountKey && policy.itemId===input.itemId
+    policy.marketplaceAccountKey===input.accountKey && feeSubjectMatchesV1(input,policy)
   const knownPrice=typeof listing.price==="number"&&Number.isFinite(listing.price)&&listing.price>=0 ? listing.price:null
   const noPerformance=exact && performance.accountBindingExact===true && standards.status==="AVAILABLE" &&
     standards.program==="PROGRAM_US" && feeRecordV1(standards.evaluation).evaluationType==="CURRENT" &&
@@ -89,7 +97,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
   const currentContextMatches=policyKnown && resolutionContext.categoryId===listing.categoryId &&
     resolutionContext.saleFormat===listing.saleFormat && resolutionContext.storeLevel===store.storeSubscriptionLevel &&
     currentSurchargesMatch
-  const resolved=input.itemId && coverage.pass && currentContextMatches ? resolveListingPreSaleFeesV1({accountKey:input.accountKey,itemId:input.itemId,
+  const resolved=exact && coverage.pass && currentContextMatches ? resolveListingPreSaleFeesV1({accountKey:input.accountKey,...feeSubjectFieldsV1(input),
     categoryId:str(listing.categoryId),salePrice:knownPrice,now:input.now,bundle:{...supplied,policies:[policy]}}) : null
   const sourceFresh=exact&&str(c.observedAt)!==null&&Date.parse(String(c.observedAt))<=input.now.getTime()&&
     input.now.getTime()-Date.parse(String(c.observedAt))<6*3600000
@@ -101,7 +109,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
   // One exact hypothetical order is useful arithmetic, but cannot authorize
   // promotion across unknown future buyers. Pre-sale exposure must be bounded.
   const preSaleScopeProven=resolved?.authority?.feeBasis.method==="PROVEN_UPPER_BOUND"
-  const state:FeeLifecycleState = input.itemId && !exact ? "CONFLICT" : input.itemId && (!sourceFresh || Date.parse(freshUntil)<=input.now.getTime()) ? "STALE" :
+  const state:FeeLifecycleState = (input.itemId || input.packageRevision) && !exact ? "CONFLICT" : exact && (!sourceFresh || Date.parse(freshUntil)<=input.now.getTime()) ? "STALE" :
     resolved?.status==="PROVEN" && preSaleScopeProven ? "PROVEN_PRE_SALE" : "PENDING_ORDER_CONTEXT"
   const knownBasis = policyKnown && knownPrice !== null && listing.buyerShippingChargeStatus === "AVAILABLE" &&
     typeof listing.buyerShippingCharge === "number" && listing.buyerShippingCharge >= 0
@@ -109,7 +117,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
   const taxTreatment = preSaleFeeBreakdownV1({ policy, knownBasis,
     fullBasis: resolved?.authority?.feeBasis.amount as number | undefined, boundProven: state === "PROVEN_PRE_SALE" })
   const body={contractVersion:EBAY_FEE_AUTHORITY_V1,producerVersion:EBAY_FEE_PRODUCER_V1,
-    marketplaceAccountKey:input.accountKey,marketplace:"EBAY_US",itemId:input.itemId,sku:input.sku,packageId:input.packageId,
+    marketplaceAccountKey:input.accountKey,marketplace:"EBAY_US",...feeSubjectFieldsV1(input),sku:input.sku,packageId:input.packageId,
     categoryId:str(listing.categoryId),categoryPath:str(listing.categoryPath),saleFormat:str(listing.saleFormat),
     storeContext:store,sellerContext:{standards,serviceMetrics:service},policyVersion:str(policy.sourceVersion),
     policyObservedAt:str(policy.observedAt),sourceEffectiveDate:policy.sourceEffectiveDate??null,

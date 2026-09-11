@@ -1,3 +1,4 @@
+import { feeSubjectMatchesV1, type FeeSubjectV1 } from "./fee-subject-v1"
 const feeRecordV1 = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 
 export const CONTINGENT_FEE_RISKS_V1 = ["BUYER_TAX", "INTERNATIONAL_APPLICABILITY", "CURRENCY_CONVERSION", "TAX_ON_FEES"] as const
@@ -17,7 +18,7 @@ export function assessFeeBoundCoverageV1(bundleValue: unknown, now: Date) {
     try { const url = new URL(String(c.source)); official = url.protocol === "https:" && (url.hostname === "ebay.com" || url.hostname.endsWith(".ebay.com")) } catch {}
     return !official || c.status !== "PROVEN" || c.coversAllEligibleOrders !== true ||
       typeof c.sourceVersion !== "string" || !c.sourceVersion || typeof c.reference !== "string" || !c.reference ||
-      c.marketplaceAccountKey !== context.marketplaceAccountKey || c.itemId !== context.itemId ||
+      c.marketplaceAccountKey !== context.marketplaceAccountKey || !feeSubjectMatchesV1(context as FeeSubjectV1, c) ||
       c.categoryId !== context.categoryId || c.currency !== "USD" || c.scenarioReference !== basis.scenarioReference ||
       !(Date.parse(String(c.observedAt)) <= now.getTime()) || !(Date.parse(String(c.freshUntil)) > now.getTime()) ||
       typeof c.maximumAmount !== "number" || !Number.isFinite(c.maximumAmount) || c.maximumAmount < 0 ||

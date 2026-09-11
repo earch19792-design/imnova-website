@@ -1,3 +1,4 @@
+import { feeSubjectFieldsV1, feeSubjectMatchesV1, type FeeSubjectV1 } from "./fee-subject-v1"
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 
 /** Assemble inputs on the normal producer path. Package/official evidence may
@@ -12,7 +13,7 @@ export function automaticFeeResolutionInputsV1(input: { context: unknown; packag
   const bundle = record(supplied), identity = record(c.identity), listing = record(c.listing)
   const policy = record(record(c.categoryFeePolicy).policy), store = record(c.resolvedStoreContext)
   const context = { status: "PROVEN", marketplaceAccountKey: c.marketplaceAccountKey, marketplace: identity.marketplace,
-    itemId: identity.itemId, categoryId: listing.categoryId, currency: listing.currency ?? policy.currency,
+    ...feeSubjectFieldsV1(identity as FeeSubjectV1), categoryId: listing.categoryId, currency: listing.currency ?? policy.currency,
     saleFormat: listing.saleFormat, storeLevel: store.storeSubscriptionLevel,
     source: policy.source, sourceVersion: policy.sourceVersion,
     reference: policy.reference, categoryReference: policy.reference,
@@ -35,7 +36,7 @@ export function completeAutomaticFeeAdjustmentsV1(input: { bundle: ReturnType<ty
   const coverage = Array.isArray(b.boundCoverage) ? [...b.boundCoverage].map(record) : []
   if (basis.method !== "PROVEN_UPPER_BOUND" || basis.status !== "PROVEN" ||
     typeof basis.amount !== "number" || !Number.isFinite(basis.amount) || basis.amount < 0 ||
-    basis.marketplaceAccountKey !== context.marketplaceAccountKey || basis.itemId !== context.itemId ||
+    basis.marketplaceAccountKey !== context.marketplaceAccountKey || !feeSubjectMatchesV1(context as FeeSubjectV1, basis) ||
     basis.categoryId !== context.categoryId || !basis.scenarioReference ||
     !(Date.parse(String(basis.freshUntil)) > input.now.getTime())) return input.bundle
   for (const c of input.components.filter(c => !["FINAL_VALUE_PERCENT", "PER_ORDER"].includes(c.type))) {

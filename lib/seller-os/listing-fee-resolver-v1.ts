@@ -1,3 +1,4 @@
+import { feeSubjectMatchesV1, feeSubjectFieldsV1, type FeeSubjectV1 } from "./fee-subject-v1"
 import { preSaleFeeBreakdownV1 } from "./pre-sale-fee-breakdown-v1"
 import { consumeListingFeeAuthorityV1, LISTING_FEE_AUTHORITY_V1,
   REQUIRED_FEE_COMPONENTS_V1 } from "./listing-fee-authority-v1"
@@ -29,13 +30,13 @@ function effective(e: R, now: number) {
  * path, never from an operator-supplied rate or an inferred product title.
  * No implicit default category, Store tier, date, surcharge or tax exists here.
  */
-export function resolveListingPreSaleFeesV1(input: { accountKey: string; itemId: string;
+export function resolveListingPreSaleFeesV1(input: FeeSubjectV1 & { accountKey: string;
   categoryId: string | null; salePrice: number | null; now: Date; bundle: unknown }) {
   const bundle = record(input.bundle), context = record(bundle.context), basis = record(bundle.basis)
   const now = input.now.getTime(), blockers: string[] = []
   const contextValid = validEvidence(context, now) && effective(context, now) &&
     context.marketplaceAccountKey === input.accountKey && context.marketplace === "EBAY_US" &&
-    context.itemId === input.itemId && input.categoryId !== null && context.categoryId === input.categoryId &&
+    feeSubjectMatchesV1(input, context) && input.categoryId !== null && context.categoryId === input.categoryId &&
     text(context.categoryReference) && text(context.storeReference) && text(context.formatReference) &&
     context.currency === "USD" && text(context.saleFormat) && text(context.storeLevel)
   if (!contextValid) blockers.push("FEE_ACCOUNT_CATEGORY_FORMAT_STORE_CONTEXT_UNPROVEN")
@@ -43,7 +44,7 @@ export function resolveListingPreSaleFeesV1(input: { accountKey: string; itemId:
   const matching = allPolicies.filter(p => includes(p.categoryIds, input.categoryId) &&
     p.marketplace === context.marketplace && p.currency === "USD" &&
     (p.marketplaceAccountKey === undefined || p.marketplaceAccountKey === input.accountKey) &&
-    (p.itemId === undefined || p.itemId === input.itemId) && includes(p.saleFormats, context.saleFormat) &&
+    (input.itemId !== null ? p.itemId === undefined || p.itemId === input.itemId : feeSubjectMatchesV1(input, p)) && includes(p.saleFormats, context.saleFormat) &&
     includes(p.storeLevels, context.storeLevel) && effective(p, now))
   const policy = matching.length === 1 ? matching[0] : {}
   const policyValid = contextValid && allPolicies.length <= 32 && matching.length === 1 && validEvidence(policy, now)
@@ -52,7 +53,7 @@ export function resolveListingPreSaleFeesV1(input: { accountKey: string; itemId:
   if (basis.quantity !== 1 || basis.orderItemCount !== 1) blockers.push("FEE_MULTI_ITEM_ALLOCATION_UNPROVEN")
   const amounts = [basis.itemPrice, basis.buyerShipping, basis.handling, basis.buyerTax]
   const basisValid = validEvidence(basis, now) && basis.marketplaceAccountKey === input.accountKey &&
-    basis.itemId === input.itemId && basis.categoryId === input.categoryId && basis.currency === "USD" && amounts.every(money) &&
+    feeSubjectMatchesV1(input, basis) && basis.categoryId === input.categoryId && basis.currency === "USD" && amounts.every(money) &&
     basis.itemPrice === input.salePrice && money(input.salePrice) &&
     ["EXACT_SCENARIO", "PROVEN_UPPER_BOUND"].includes(String(basis.method)) && text(basis.scenarioReference) &&
     money(basis.amount) && basis.amount === cents(amounts.reduce<number>((s, v) => s + Number(v), 0))
@@ -105,7 +106,7 @@ export function resolveListingPreSaleFeesV1(input: { accountKey: string; itemId:
       if (matches.length !== 1) continue
       const a = matches[0]
       if (!validEvidence(a, now) || !effective(a, now) || a.marketplaceAccountKey !== input.accountKey ||
-          a.itemId !== input.itemId || a.categoryId !== input.categoryId || a.currency !== "USD" ||
+          !feeSubjectMatchesV1(input, a) || a.categoryId !== input.categoryId || a.currency !== "USD" ||
           a.scenarioReference !== basis.scenarioReference || !text(a.applicabilityEvidence)) continue
       if (a.applicability === "NOT_APPLICABLE") {
         // An explicit zero decision still needs current official applicability evidence.
@@ -126,11 +127,11 @@ export function resolveListingPreSaleFeesV1(input: { accountKey: string; itemId:
   const unknown = REQUIRED_FEE_COMPONENTS_V1.filter(t => !components.some(c => c.type === t))
   blockers.push(...unknown.map(t => `FEE_COMPONENT_UNPROVEN:${t}`))
   const candidate = { contractVersion: LISTING_FEE_AUTHORITY_V1, evidenceClass: "PRE_SALE_FEE_ESTIMATE",
-    marketplaceAccountKey: input.accountKey, marketplace: "EBAY_US", itemId: input.itemId,
+    marketplaceAccountKey: input.accountKey, marketplace: "EBAY_US", ...feeSubjectFieldsV1(input),
     categoryId: input.categoryId, saleFormat: context.saleFormat, storeLevel: context.storeLevel,
     storeContextReference: context.storeReference, accountContextReference: context.reference,
     source: policy.source, sourceVersion: policy.sourceVersion,
-    reference: `${LISTING_FEE_RESOLVER_V1}:${String(policy.reference)}:${String(basis.reference)}:${input.itemId}`,
+    reference: `${LISTING_FEE_RESOLVER_V1}:${String(policy.reference)}:${String(basis.reference)}:${input.itemId ?? `${input.packageId}:${input.packageRevision}`}`,
     observedAt: input.now.toISOString(), freshUntil: new Date(Math.min(...[
       context, policy, basis, ...records(bundle.adjustments),
     ].flatMap(e => [Date.parse(String(e.freshUntil)), ...(e.effectiveUntil ? [Date.parse(String(e.effectiveUntil))] : [])])

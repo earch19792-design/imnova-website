@@ -1,3 +1,4 @@
+import { feeSubjectMatchesV1, type FeeSubjectV1 } from "./fee-subject-v1"
 export const LISTING_FEE_AUTHORITY_V1 = "SELLER_OS_LISTING_FEE_AUTHORITY_V1"
 export const REQUIRED_FEE_COMPONENTS_V1 = ["FINAL_VALUE_PERCENT", "PER_ORDER", "SELLER_PERFORMANCE",
   "SERVICE_METRICS", "INTERNATIONAL", "CURRENCY_CONVERSION", "REGULATORY_OPERATING", "TAX_ON_FEES"] as const
@@ -12,8 +13,8 @@ function official(v: unknown) {
 
 // This consumer accepts a versioned official estimate; historical actual fees
 // cannot activate it. No percentage, category mapping or missing zero lives here.
-export function consumeListingFeeAuthorityV1(input: { metadata: unknown; accountKey: string;
-  itemId: string; categoryId: string | null; salePrice: number | null; now: Date }) {
+export function consumeListingFeeAuthorityV1(input: FeeSubjectV1 & { metadata: unknown; accountKey: string;
+  categoryId: string | null; salePrice: number | null; now: Date }) {
   const a = record(record(input.metadata).feeAuthorityV1)
   const components = Array.isArray(a.components) ? a.components.map(record) : []
   const unknown = REQUIRED_FEE_COMPONENTS_V1.filter(type => {
@@ -27,7 +28,7 @@ export function consumeListingFeeAuthorityV1(input: { metadata: unknown; account
   })
   const blockers: string[] = unknown.map(c => `FEE_COMPONENT_UNPROVEN:${c}`)
   if (a.contractVersion !== LISTING_FEE_AUTHORITY_V1 || a.evidenceClass !== "PRE_SALE_FEE_ESTIMATE") blockers.push("CURRENT_PRE_SALE_AUTHORITY_REQUIRED")
-  if (a.marketplaceAccountKey !== input.accountKey || a.marketplace !== "EBAY_US" || a.itemId !== input.itemId ||
+  if (a.marketplaceAccountKey !== input.accountKey || a.marketplace !== "EBAY_US" || !feeSubjectMatchesV1(input, a) ||
     !input.categoryId || a.categoryId !== input.categoryId || !text(a.storeContextReference) || !text(a.accountContextReference)) blockers.push("FEE_ACCOUNT_CATEGORY_CONTEXT_UNPROVEN")
   if (!text(a.sourceVersion) || !official(a.source) || !text(a.reference) ||
     !text(a.observedAt) || !text(a.freshUntil) || !Number.isFinite(Date.parse(a.observedAt)) ||
