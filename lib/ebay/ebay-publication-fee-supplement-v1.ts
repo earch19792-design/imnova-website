@@ -3,6 +3,7 @@ import { ebayProductionAccountFingerprint } from './ebay-seller-account-scope'
 import { keywordRecord as record } from '../seller-os/keyword-intelligence-handoff-v1'
 
 export const PAYOUT_REQUIRED_SCOPE_V1='https://api.ebay.com/oauth/api_scope/sell.finances'
+export const PAYOUT_GRANT_DIAGNOSTIC_V2='PAYOUT_EXISTING_ACCESS_GRANT_V2'
 export function payoutGrantEvidenceV1(value:unknown) {
  const b=record(value), scopes=typeof b.scope==='string'?b.scope.split(/\s+/).filter(s=>/^https:\/\/api\.ebay\.com\/oauth\/api_scope(?:\/[a-z._]+)?$/.test(s)):null
  return {active:b.active===true,requiredScope:PAYOUT_REQUIRED_SCOPE_V1,grantedScopes:scopes,
@@ -18,11 +19,27 @@ export async function inspectPublicationPayoutGrantV1(fetchImpl:typeof fetch=fet
  if(c.target!=='PRODUCTION'||!c.oauthConfigured||!c.identityBound||!c.identityConfigurationConsistent)
   return {status:'UNPROVEN',reason:'PAYOUT_ACCOUNT_AUTHORITY_UNAVAILABLE',observedAt}
  try {
-  const r=await fetchImpl(endpoint,{method:'POST',headers:{Authorization:`Basic ${Buffer.from(`${c.clientId}:${c.clientSecret}`).toString('base64')}`,'Content-Type':'application/x-www-form-urlencoded'},
-   body:new URLSearchParams({token:c.refreshToken,token_type_hint:'refresh_token'}),cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
+  const basic={Authorization:`Basic ${Buffer.from(`${c.clientId}:${c.clientSecret}`).toString('base64')}`,'Content-Type':'application/x-www-form-urlencoded'}
+  // Omitting scope requests the existing grant, never an expansion of consent.
+  const refresh=await fetchImpl(c.tokenEndpoint,{method:'POST',headers:basic,
+   body:new URLSearchParams({grant_type:'refresh_token',refresh_token:c.refreshToken}),cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
+  const refreshed=record(await refresh.json().catch(()=>({})))
+  if(!refresh.ok||typeof refreshed.access_token!=='string')return {version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:'UNPROVEN',reason:'EXISTING_GRANT_REFRESH_FAILED',refreshHttpStatus:refresh.status,observedAt}
+  const token=refreshed.access_token
+  const userRead=await fetchImpl(new URL('/commerce/identity/v1/user/',c.identityOrigin),{headers:{Authorization:`Bearer ${token}`},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
+  const user=record(await userRead.json().catch(()=>({})))
+  if(!userRead.ok||typeof user.userId!=='string'||ebayProductionAccountFingerprint(user.userId)!==c.accountFingerprint)return {version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:'UNPROVEN',reason:'EXISTING_GRANT_IDENTITY_NOT_PROVEN',observedAt}
+  const r=await fetchImpl(endpoint,{method:'POST',headers:basic,
+   body:new URLSearchParams({token,token_type_hint:'access_token'}),cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
   if(!r.ok)return {status:'UNPROVEN',reason:'OFFICIAL_TOKEN_INTROSPECTION_UNAVAILABLE',httpStatus:r.status,endpoint,observedAt}
   const result=payoutGrantEvidenceV1(await r.json())
-  return {...result,status:result.requiredScopePresent===null?'UNPROVEN':'PROVEN',httpStatus:r.status,endpoint,observedAt}
+  const funds=await fetchImpl('https://apiz.ebay.com/sell/finances/v1/seller_funds_summary',{headers:{Authorization:`Bearer ${token}`},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)})
+  const fundsBody=record(await funds.json().catch(()=>({})))
+  const payout=funds.ok?payoutCurrencyEvidenceV1(fundsBody,true,observedAt):null
+  const errors=Array.isArray(fundsBody.errors)?fundsBody.errors.map(e=>{const x=record(e);return {errorId:typeof x.errorId==='number'?x.errorId:null,domain:typeof x.domain==='string'?x.domain:null,category:typeof x.category==='string'?x.category:null}}):[]
+  return {...result,version:PAYOUT_GRANT_DIAGNOSTIC_V2,status:result.requiredScopePresent===null?'UNPROVEN':'PROVEN',httpStatus:r.status,endpoint,observedAt,
+   existingGrantRefreshPass:true,accountBindingExact:true,refreshReturnedScopes:payoutGrantEvidenceV1({active:true,scope:refreshed.scope}).grantedScopes,
+   inactiveIntrospectionProvesInvalidToken:false,scopeExpansionRequested:false,fundsHttpStatus:funds.status,fundsErrors:errors,payout}
  }catch{return {status:'UNPROVEN',reason:'OFFICIAL_TOKEN_INTROSPECTION_UNAVAILABLE',endpoint,observedAt}}
 }
 

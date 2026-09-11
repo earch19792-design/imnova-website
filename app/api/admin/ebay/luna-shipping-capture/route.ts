@@ -2,6 +2,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
+import { persistExistingShippingProbeDiagnosticV1 } from '@/lib/seller-os/shipping-probe-diagnostic-v1'
 import {
   enforceListingAiRouteRateLimit,
   listingAiFailure,
@@ -295,6 +296,11 @@ export async function POST(req: Request) {
         p_retry_after: shippingRetryAfterAtV1(body.retryAfter),
       })
       if (result.error) throw new Error("SHIPPING_CAPTURE_CAPABILITY_PERSIST_FAILED")
+      if (action === "CAPABILITY") await persistExistingShippingProbeDiagnosticV1({
+        supabase:auth.supabase,accountKey:auth.accountKey,
+        workerId:runtimeInstanceId(body.runtimeInstanceId,auth.actorId),
+        leaderSessionId:claimAuthoritySessionId(body.leaderSessionId),probe,gate:result.data,
+      }).catch(() => false)
       return listingAiResponse({ success: true, capability: result.data,
         safety: { jobScans: 0, shippingClaims: 0, lunaRequests: 0, marketplaceWrites: 0 } })
     }
