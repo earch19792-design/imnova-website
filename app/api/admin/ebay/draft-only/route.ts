@@ -3191,7 +3191,8 @@ async function handlePost(req: Request) {
    return NextResponse.json({success:true,...result})
   }
   const result=await executeCurrentUnpublishedPreparationV1({supabase:db,accountKey,packageId,actor})
-  return NextResponse.json({success:result.pass,result,publicationWrites:0},{status:result.pass?200:409})
+  const activation=result.pass ? await activateCurrentPreparationV1({supabase:db,accountKey,packageId,actor}) : null
+  return NextResponse.json({success:result.pass,result,activation,publicationWrites:0},{status:result.pass?200:409})
  }catch(error){
   const message=error instanceof Error?error.message:"PREPARATION_FAILED"
   return NextResponse.json({error:/^[A-Z0-9_]+$/.test(message)?message:"PREPARATION_FAILED",publicationWrites:0},{status:409})
