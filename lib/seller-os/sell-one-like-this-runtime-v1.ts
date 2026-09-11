@@ -28,7 +28,7 @@ export async function readSellOneLikeThisV1(input: {
   if (p.error || !p.data) throw Error("REFERENCE_OWN_PACKAGE_UNAVAILABLE")
   const pkg = record(p.data)
   const q = await bounded(db.from("ebay_luna_opportunity_queue").select(
-    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,brandApplication:assessment->ownerLunaUnbrandedPolicyApplicationV1,productTruthDigest:assessment->productTruth->evidenceDigest,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions")
+    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,brandApplication:assessment->ownerLunaUnbrandedPolicyApplicationV1,productTruthDigest:assessment->productTruth->evidenceDigest,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions,shippingFamily:assessment->radarFactoryCandidateV1->>familyId")
     .eq("id", pkg.opportunity_id).eq("candidate_key", pkg.candidate_key).limit(1)).maybeSingle()
   if (q.error || !q.data) throw Error("REFERENCE_OWN_PRODUCT_UNAVAILABLE")
   const own = record(q.data)
@@ -47,11 +47,11 @@ export async function readSellOneLikeThisV1(input: {
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US").eq("plan_id", planId)
       .eq("item_id", input.referenceItemId).order("source_observation_id", { ascending: false }).limit(1)).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
-    bounded(db.from("seller_os_profitability_frontier_snapshots")
-      .select("frontier_id,family_id,account_key,marketplace_id,luna_product_id,luna_variant_id,luna_sku,shipping_status,shipping_value,shippingEvidence:frontier_payload->shippingCaptureEvidence")
-      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US").eq("luna_product_id", binding.PRODUCT_ID)
-      .eq("luna_variant_id", binding.VARIANT_ID).eq("luna_sku", own.supplier_sku)
-      .order("created_at", { ascending: false }).order("frontier_id", { ascending: false }).limit(1)).maybeSingle(),
+    /^market-family-v1:sha256:[a-f0-9]{64}$/.test(String(own.shippingFamily))
+      ? bounded(db.rpc("get_seller_os_latest_profitability_frontiers_v1", {
+        p_account_key: input.accountKey, p_marketplace_id: "EBAY_US",
+        p_family_ids: [own.shippingFamily], p_limit: 100,
+      })) : Promise.resolve({ data: null, error: null }),
     feeRead,
     bounded(db.from("ebay_account_policy_profiles").select("account_key,marketplace_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,verified_at,expires_at")
       .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US").limit(1)).maybeSingle(),
@@ -61,7 +61,16 @@ export async function readSellOneLikeThisV1(input: {
       .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1)).maybeSingle(),
   ])
   if (ref.error) throw Error("REFERENCE_EVIDENCE_UNAVAILABLE")
-  const f = record(frontier.error ? null : frontier.data), s = record(f.shippingEvidence)
+  // The frontier table intentionally denies direct service-role SELECT. Reuse
+  // its authorized, family-bounded reader; never widen table permissions.
+  const frontierRows = record(frontier.data).frontiers
+  const exactFrontiers = (frontier.error || !Array.isArray(frontierRows) ? [] : frontierRows).map(record)
+    .filter(row => row.accountKey === input.accountKey && row.marketplaceId === "EBAY_US")
+    .map(row => record(row.frontier)).filter(row => row.familyId === own.shippingFamily &&
+      row.lunaProductId === binding.PRODUCT_ID && row.lunaVariantId === binding.VARIANT_ID && row.lunaSku === own.supplier_sku)
+  const raw = exactFrontiers.length === 1 ? exactFrontiers[0] : {}
+  const f = { family_id: raw.familyId, shipping_status: raw.shippingStatus, shipping_value: raw.shippingValue }
+  const s = record(raw.shippingCaptureEvidence)
   const observed = Date.parse(String(s.observedAt)), freshUntil = observed + LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS * 1000
   // Capture candidate IDs use the existing family/product/variant/SKU contract,
   // which is distinct from the opportunity candidate key.

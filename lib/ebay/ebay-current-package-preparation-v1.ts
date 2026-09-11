@@ -66,6 +66,7 @@ export function currentUnpublishedPayloadAcceptedV1(publication: unknown, revisi
   b.publicationId===p.id && b.publicationId===r.publicationId && b.packageId===p.listing_package_id && b.packageId===r.packageId &&
   b.accountKey===p.marketplace_account_key && b.accountKey===r.accountKey && b.offerId===p.offer_id &&
   b.sku===record(r.preview).sku && b.packageHash===r.packageHash && b.packageGeneration===r.packageGeneration && b.previewHash===r.previewHash &&
+  r.packageHash===digest(r.snapshot) && record(r.snapshot).generation===r.packageGeneration &&
   r.previewHash===digest(r.preview) && result.pass===true && inventory.safe===true && offer.safe===true &&
   offer.offerId===b.offerId && offer.sku===b.sku && offer.status==='UNPUBLISHED' && offer.listingPresent===false && offer.payloadMatches===true
 }

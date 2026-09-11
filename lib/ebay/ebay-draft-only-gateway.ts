@@ -1507,6 +1507,26 @@ export async function preflightEbayDraftOnlyMobile(
     returnPolicyId: selectedId(options.returnPolicies, requested.returnPolicyId),
     merchantLocationKey: selectedId(options.merchantLocations, requested.merchantLocationKey),
   }
+  // Reuse the exact official policy response already read for preflight. Only
+  // fee-base fields leave this projection; no addresses or new API requests.
+  const feePolicyRows = Array.isArray(fulfillment.body.fulfillmentPolicies)
+    ? fulfillment.body.fulfillmentPolicies.map(record).filter(p => p.fulfillmentPolicyId === selection.fulfillmentPolicyId) : []
+  const feePolicy = feePolicyRows.length === 1 ? feePolicyRows[0] : {}
+  const fulfillmentFeeBasis = {
+    policyId: selection.fulfillmentPolicyId, marketplaceId: feePolicy.marketplaceId,
+    observedAt: new Date().toISOString(), source: "OFFICIAL_EBAY_FULFILLMENT_POLICY",
+    shippingOptions: (Array.isArray(feePolicy.shippingOptions) ? feePolicy.shippingOptions : []).map(raw => {
+      const option = record(raw)
+      return { optionType: option.optionType, costType: option.costType,
+        handlingCost: option.handlingCost ?? null, rateTableId: option.rateTableId ?? null,
+        shippingServices: (Array.isArray(option.shippingServices) ? option.shippingServices : []).map(rawService => {
+          const service = record(rawService)
+          return { shippingServiceCode: service.shippingServiceCode, freeShipping: service.freeShipping ?? null,
+            shippingCost: service.shippingCost ?? null, additionalShippingCost: service.additionalShippingCost ?? null,
+            sortOrder: service.sortOrder ?? null }
+        }) }
+    }),
+  }
   const selectionComplete = Object.values(selection).every(Boolean)
   const sellerRegistrationCompleted = privilege.body.sellerRegistrationCompleted === true
   const sellingLimitPresent = privilege.body.sellingLimit !== null
@@ -1555,6 +1575,7 @@ export async function preflightEbayDraftOnlyMobile(
       sellingLimitZero,
       usable: privilegeUsable,
     },
+    fulfillmentFeeBasis,
     options,
     selection,
     selectionComplete,
