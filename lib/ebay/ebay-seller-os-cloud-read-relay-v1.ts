@@ -28,6 +28,7 @@ export const SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1 =
   "seller_os_internal_read_luna_supplier_linkage_resource" as const
 export const SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1 =
   "seller_os_internal_read_ebay_trading_rate_limit_resource" as const
+export const SELLER_OS_PUBLICATION_PREFLIGHT_READ_V1 = "seller_os_internal_read_publication_preflight" as const
 export const SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1 =
   "seller_os_internal_read_fee_context" as const
 export const SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1 =
@@ -60,6 +61,7 @@ const RELAY_TOOL_NAMES = new Set(
     SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1,
     SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1,
     SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1,
+    SELLER_OS_PUBLICATION_PREFLIGHT_READ_V1,
   ],
 )
 const SAFE_HEADERS = Object.freeze({
@@ -152,6 +154,7 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
         toolName === SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1
       ? [] : ["limit"],
   )
+  if (toolName === SELLER_OS_PUBLICATION_PREFLIGHT_READ_V1) { allowedKeys.delete("limit");allowedKeys.add("packageId") }
   if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1) {
     allowedKeys.delete("limit")
     allowedKeys.add("itemId")
@@ -213,7 +216,7 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
     }
     normalized.limit = Number(args.limit)
   }
-  if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1 && args.packageId !== undefined) {
+  if (toolName === SELLER_OS_PUBLICATION_PREFLIGHT_READ_V1 || toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1 && args.packageId !== undefined) {
     if (args.itemId !== undefined || typeof args.packageId !== "string" ||
       !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(args.packageId)) throw Error("SELLER_OS_RELAY_PACKAGE_ID_INVALID")
     normalized.packageId = args.packageId
@@ -514,6 +517,7 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     now?: () => number
     monitorLoader?: () => Promise<CommercialMonitorGetDto>
     feeContextCollector?: (itemId: string) => Promise<unknown>
+    publicationPreflightCollector?: (packageId:string)=>Promise<unknown>
     packageFeeContextCollector?: (packageId: string) => Promise<unknown>
     previewCollector?: (itemId: string, traceId: string) => Promise<unknown>
     officialOrdersCollector?: () => Promise<SellerOsOfficialOrdersReadV1>
@@ -594,7 +598,13 @@ export async function handleSellerOsCloudReadRelayRequestV1(
   }
   try {
     let result: unknown
-    if (envelope.toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1) {
+    if (envelope.toolName === SELLER_OS_PUBLICATION_PREFLIGHT_READ_V1) {
+      const collector=options.publicationPreflightCollector ?? (async(packageId:string)=>{
+        const gateway=await import('./ebay-publication-revision-preflight-readonly-v1')
+        return gateway.readPublicationRevisionPreflightV1(packageId)
+      })
+      result=await collector(String(envelope.arguments.packageId))
+    } else if (envelope.toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1) {
       if (envelope.arguments.packageId) {
         const collector = options.packageFeeContextCollector ?? (async (packageId: string) => {
           const gateway = await import("./ebay-package-fee-context-readonly-v1")

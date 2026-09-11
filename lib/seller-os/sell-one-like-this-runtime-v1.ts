@@ -1,3 +1,4 @@
+import { readPublicationBrandAuthorityV1 } from "./publication-brand-authority-v1"
 import { listingPipelineConsistencyV1 } from "./listing-pipeline-consistency-v1"
 import { listingPublicationE2eGateV1 } from "./listing-publication-e2e-gate-v1"
 import { createHash } from "node:crypto"
@@ -27,7 +28,7 @@ export async function readSellOneLikeThisV1(input: {
   if (p.error || !p.data) throw Error("REFERENCE_OWN_PACKAGE_UNAVAILABLE")
   const pkg = record(p.data)
   const q = await bounded(db.from("ebay_luna_opportunity_queue").select(
-    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,productTruthDigest:assessment->productTruth->evidenceDigest,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions")
+    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,brandApplication:assessment->ownerLunaUnbrandedPolicyApplicationV1,productTruthDigest:assessment->productTruth->evidenceDigest,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions")
     .eq("id", pkg.opportunity_id).eq("candidate_key", pkg.candidate_key).limit(1)).maybeSingle()
   if (q.error || !q.data) throw Error("REFERENCE_OWN_PRODUCT_UNAVAILABLE")
   const own = record(q.data)
@@ -108,14 +109,17 @@ export async function readSellOneLikeThisV1(input: {
     profit: economics.expectedContribution, margin: economics.expectedMargin, roi: economics.expectedRoi,
     ...(record(reviewView.productIdentifiers).upc ? { productIdentifiers: reviewView.productIdentifiers } : {}),
   }
+  const brandAuthority = await readPublicationBrandAuthorityV1({supabase:db,accountKey:input.accountKey,now,aspects:content.itemSpecifics,
+    opportunity:{...own,assessment:{ownerLunaUnbrandedPolicyApplicationV1:own.brandApplication,canonicalMarketplaceReadinessV1:{requiredItemSpecificsTruth:own.requiredTruth}}}})
   const consistency = listingPipelineConsistencyV1(result, { ...authority, quantityReview, currentQuantityMaterial,
     exposurePolicy: prep.exposurePolicy, productTruthDigest: String(own.productTruthDigest ?? "") })
   const revision = currentPackagePreviewRevisionV1(prep.current, consistency, publication.data, prep.activation)
   const basePublicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : revision.publication, !publication.error)
   const revisionNeedsPreparation = revision.valid && revision.publication.phase === "draft"
-  const publicationGate = { ...basePublicationGate, blockingEvidence: [...basePublicationGate.blockingEvidence,
+  const brandBlocked = record(content.itemSpecifics).Brand === "Unbranded" && !brandAuthority.supported
+  const publicationGate = { ...basePublicationGate, READY_TO_PUBLISH:basePublicationGate.READY_TO_PUBLISH && !brandBlocked, blockingEvidence: [...basePublicationGate.blockingEvidence, ...(brandBlocked ? ["UNSUPPORTED_DOWNSTREAM_BRAND"] : []),
     ...(revisionNeedsPreparation ? ["CURRENT_PREVIEW_EBAY_PREPARATION_PENDING"] : [])] }
-  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate,
+  return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate, brandAuthority,
     previewRevision: { valid: revision.valid, revision: revision.revision,
       ebayPrevalidated: revision.valid && !revisionNeedsPreparation && basePublicationGate.existingLedgerState === "OFFER_READY" },
     publicationEvidenceStatus: publication.error ? "WAITING_FOR_DATA" : "READ" }

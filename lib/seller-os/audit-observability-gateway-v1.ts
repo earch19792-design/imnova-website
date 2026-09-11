@@ -1,3 +1,5 @@
+import { publicationRevisionPublisherViewV1 } from "./publication-revision-publisher-view-v1"
+import { readPublicationBrandAuthorityV1 } from "./publication-brand-authority-v1"
 import { readEbayFeeHandoffV1 } from "./ebay-fee-runtime-v1"
 import { revenueFailureV1, revenueTraceIdV1 } from "./revenue-first-diagnostics-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -336,6 +338,10 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   const productTruth = record(first(assessment.productTruth,
     assessment.productTruthV1, assessment.lunaProductTruthV1))
   const lunaTruth = projectLunaFieldTruthV1(productTruth.fieldTruthV1, now)
+  const brandAuthority = lunaTruth.unsupportedDownstreamValues.some(v=>record(v).FIELD==='BRAND' && record(v).DOWNSTREAM_VALUE==='Unbranded')
+    ? await readPublicationBrandAuthorityV1({supabase:input.supabase,accountKey:input.accountKey,opportunity:queue,aspects:{Brand:'Unbranded'},now}) : null
+  const unsupportedDownstream = brandAuthority?.supported ? lunaTruth.unsupportedDownstreamValues.filter(v=>
+    !(record(v).FIELD==='BRAND' && record(v).DOWNSTREAM_VALUE==='Unbranded')) : lunaTruth.unsupportedDownstreamValues
   const packageData = record(packageRow.package_data)
   const packageId = text(packageRow.id, 80)
   const itemId = text(active.ebay_item_id, 30)
@@ -397,6 +403,12 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   const execution = latest(rows(executionRead.data)) ?? {}
   const publication = latest(rows(publicationRead.data)) ?? {}
   const batchChild = latest(rows(childRead.data)) ?? {}
+  const publisherError=first(batchChild.error_class,execution.last_error_code)
+  const revisionImages=publisherError==='EBAY_PUBLICATION_HIGH_QUALITY_EXACT_SEVEN_REQUIRED' &&
+    record(record(publication.sanitized_result).publicationPreparationV1).current
+    ? await budget.read({dependency:'CURRENT_PUBLICATION_REVISION_IMAGES',authority:'CURRENT_CERTIFIED_PACKAGE_IMAGE_AUTHORITY',query:()=>input.supabase.rpc(
+      'assess_publication_revision_images_v1',{p_publication_id:publication.id,p_actor:publication.actor_user_id,p_account_key:input.accountKey})}) : null
+  const publisherRevision=publicationRevisionPublisherViewV1(publication,revisionImages?.error?null:revisionImages?.data,publisherError)
   const economics = record(economicsRead.data)
   const research = rows(researchRead.data)
   const shipping = record(shippingRead.data)
@@ -446,14 +458,14 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
       : Object.keys(approval).length
         ? "UNPROVEN" : "MISSING", authority: "ebay_draft_only_approvals",
       observedAt: first(approval.approved_at, approval.updated_at), receipt: approval.id },
-    PUBLISHER: { status: Object.keys(batchChild).length && batchChild.error_class
+    PUBLISHER: { status: publisherRevision.historicalPublisherContradictionSuperseded ? "UNPROVEN" : Object.keys(batchChild).length && batchChild.error_class
       ? "CONTRADICTED" : Object.keys(execution).length ? "PROVEN" : "MISSING",
       authority: Object.keys(batchChild).length
         ? "seller_os_publisher_batch_children_v1"
         : "ebay_draft_only_execution_ledger",
       observedAt: first(batchChild.updated_at, execution.updated_at),
       receipt: first(batchChild.receipt_id, execution.id),
-      failure: first(batchChild.error_class, execution.last_error_code) },
+      failure: publisherRevision.historicalPublisherContradictionSuperseded ? "CURRENT_REVISION_PREPARATION_REQUIRED" : publisherError },
     OFFICIAL_EBAY_READBACK: { status: itemId && Object.keys(active).length
       ? "PROVEN" : "UNPROVEN", authority: "ebay_active_listings",
       observedAt: activeObserved, receipt: itemId },
@@ -591,7 +603,10 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     PRODUCT_TRUTH_COMPLETENESS: { STATUS: lunaTruth.status,
       FIELD_TRUTH_CONTRACT_VERSION: lunaTruth.contractVersion,
       COUNTS: lunaTruth.counts, EVIDENCE_ID: lunaTruth.evidenceDigest },
-    UNSUPPORTED_DOWNSTREAM_VALUES: lunaTruth.unsupportedDownstreamValues,
+    PUBLICATION_REVISION_STATUS: publisherRevision,
+    UNSUPPORTED_DOWNSTREAM_VALUES: unsupportedDownstream,
+    MARKETPLACE_POLICY_VALUES: brandAuthority?.supported ? [brandAuthority] : [],
+    HISTORICAL_UNSUPPORTED_DOWNSTREAM_VALUES: lunaTruth.unsupportedDownstreamValues,
     FIELD_TRUTH: mode === "SUMMARY"
       ? fieldTruth.filter((entry) => (LUNA_FIELD_TRUTH_FIELDS_V1 as readonly string[]).includes(entry.FIELD) ||
         ["LUNA_PRODUCT_ID", "LUNA_VARIANT_ID",
