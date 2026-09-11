@@ -52,6 +52,7 @@ export async function recoverExistingGalleryOrderV1(input: {
     const official = preview.officialReadStatus === "PASS" && preview.currentImageSetProven && preview.accountIdentityProven && preview.listingIdentityProven
     const evidence = galleryDriftEvidenceV1({ binding: row.binding, currentUrls: preview.currentImages, official,
       currentObservedAt: preview.officialObservedAt,
+      orderedIdentityProof: preview.galleryOrderedIdentityProof,
       currentReadbackReference: `${preview.officialReadAuthority}:${row.item_id}:${preview.officialObservedAt}` })
     const binding = { ...row.binding, galleryDriftEvidence: evidence }
     await patch({ binding })

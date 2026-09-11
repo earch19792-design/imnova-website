@@ -460,6 +460,17 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
   fetchImpl?: FetchLike
 }) {
   const context = await loadContext({ ...input, fetchImpl: input.fetchImpl ?? fetch })
+  const manifestBaseline = record(context.task.visual_manifest).currentOfficialImageSet
+  let galleryOrderedIdentityProof: { verified: boolean; method: string; baselineDigest: string; currentDigest: string } | undefined
+  if (context.officialReadStatus === "PASS" && context.official && Array.isArray(manifestBaseline) &&
+    manifestBaseline.length === context.currentOfficialImageUrls.length && manifestBaseline.length <= 24 &&
+    manifestBaseline.every((url): url is string => typeof url === "string")) {
+    try {
+      const proof = await verifyOfficialOrderedImageSetV1(context.official, manifestBaseline, input.fetchImpl ?? fetch)
+      galleryOrderedIdentityProof = { ...proof, baselineDigest: ebayOfficialImageSetDigestV1(manifestBaseline),
+        currentDigest: ebayOfficialImageSetDigestV1(context.currentOfficialImageUrls) }
+    } catch { /* Missing image transport evidence never proves equivalence. */ }
+  }
   const proposedEntries = Array.isArray(record(context.task.visual_manifest).proposedOrderedImages)
     ? (record(context.task.visual_manifest).proposedOrderedImages as unknown[]).map(record) : []
   const fingerprints = proposedEntries.filter(e => uuid(e.assetId) && text(e.outputSha256, 80)).map(e => ({
@@ -562,6 +573,7 @@ export async function readMayelVisualPhaseBPreviewV1(input: {
     ? "eBay Trading alcanzó temporalmente su límite de llamadas. Tu trabajo está guardado y se aplicará cuando vuelva a estar disponible."
     : null
   const preview = {
+    galleryOrderedIdentityProof,
     approvedGalleryAlreadyOfficial, galleryTradingReady,
     contractVersion: "MAYEL_VISUAL_WORKSTATION_PHASE_B_V1",
     visualManifestId: uuid(context.task.visual_manifest_id),

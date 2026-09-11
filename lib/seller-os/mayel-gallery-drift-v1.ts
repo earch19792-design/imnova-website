@@ -20,7 +20,7 @@ export function galleryDriftEvidenceV1(input: {
   binding: Record<string, unknown>; currentUrls: readonly string[]; currentObservedAt: string | null;
   currentReadbackReference: string; official: boolean;
   // Only the existing official ordered-image verifier may supply this proof.
-  orderedIdentityProof?: { verified: boolean; method: string };
+  orderedIdentityProof?: { verified: boolean; method: string; baselineDigest: string; currentDigest: string };
 }) {
   const audit = record(input.binding.optimizationAudit)
   const baseline = record(input.binding.baselineGallery)
@@ -34,6 +34,7 @@ export function galleryDriftEvidenceV1(input: {
   const proposedDigest = proposedUrls ? digest(proposedUrls) : null
   const baselineValid = Boolean(baselineUrls && baselineDigest === input.binding.baseImageHash)
   const equivalent = input.official && baselineValid && baselineUrls?.length === currentUrls?.length && input.orderedIdentityProof?.verified === true &&
+    input.orderedIdentityProof.baselineDigest === baselineDigest && input.orderedIdentityProof.currentDigest === currentDigest &&
     ["EXACT_EXTERNAL_URLS", "EXACT_PICTURE_URLS", "PERCEPTUAL_EPS"].includes(input.orderedIdentityProof.method)
   const classification = !baselineValid || !currentUrls || !input.official ? "BASELINE_EVIDENCE_DEFECT" :
     baselineDigest === currentDigest ? "NO_DRIFT" : equivalent ? "NON_MATERIAL_DRIFT" : "MATERIAL_EXTERNAL_DRIFT"

@@ -91,8 +91,9 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
          preview.accountIdentityProven && preview.listingIdentityProven && preview.officialReadAuthority !== "EBAY_BROWSE_GET_ITEM_BY_LEGACY_ID_V1"
        const drift = galleryDriftEvidenceV1({ binding: row.binding, currentUrls: preview.currentImages,
          currentObservedAt: preview.officialObservedAt, official,
+         orderedIdentityProof: preview.galleryOrderedIdentityProof,
          currentReadbackReference: `${preview.officialReadAuthority}:${row.item_id}:${preview.officialObservedAt}` })
-       row.binding = { ...row.binding, galleryDriftEvidence: drift }
+       row.binding = { ...row.binding, [row.dispatch_count > 0 ? "postWriteGalleryEvidence" : "galleryDriftEvidence"]: drift }
        // Persist the three authorities BEFORE the engine can emit any drift
        // blocker. No success/ACK or marketplace mutation is implied.
        await patch({ binding: row.binding })
@@ -119,6 +120,7 @@ export async function runIpadOutboxRuntimeV1(input: { supabase: SupabaseClient; 
      markDispatch: async () => {
        if (!manifestDigest || row.dispatch_count !== 0 && !preDispatchFailureProven) throw Error("OUTBOX_DUPLICATE_DISPATCH_BLOCKED")
        await patch({ state: "SYNCING", dispatch_count: 1, binding: { ...row.binding, executionManifestDigest: manifestDigest } })
+       row.dispatch_count = 1
      },
      execute: async () => {
        if (managementModel === "INVENTORY_API_MANAGED" && row.binding.ownerDelegation) {
