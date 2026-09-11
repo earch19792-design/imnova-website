@@ -478,13 +478,14 @@ export function isEbayDraftOnlyForbiddenWritePath(pathname: string) {
   return FORBIDDEN_WRITE_PATHS.some((pattern) => pattern.test(pathname))
 }
 
-function assertAllowedInventoryWrite(config: GatewayConfig, url: URL, method: string) {
+function assertAllowedInventoryWrite(config: GatewayConfig, url: URL, method: string, unpublishedUpdate = false) {
   if (isEbayDraftOnlyForbiddenWritePath(url.pathname)) {
     throw new Error("EBAY_DRAFT_ONLY_PUBLISH_FORBIDDEN")
   }
   const inventoryItem = method === "PUT" && /^\/sell\/inventory\/v1\/inventory_item\/[^/]+$/.test(url.pathname)
   const createOffer = method === "POST" && url.pathname === "/sell/inventory/v1/offer"
-  if (url.origin !== config.apiOrigin || (!inventoryItem && !createOffer)) {
+  const updateOffer = unpublishedUpdate && method === "PUT" && /^\/sell\/inventory\/v1\/offer\/[^/]+$/.test(url.pathname)
+  if (url.origin !== config.apiOrigin || (!inventoryItem && !createOffer && !updateOffer)) {
     throw new Error("EBAY_DRAFT_ONLY_ENDPOINT_BLOCKED")
   }
   if (url.pathname.includes("publish_offer") || url.pathname.includes("withdraw_offer")) {
@@ -1590,8 +1591,9 @@ async function write(
   method: "PUT" | "POST",
   payload: JsonRecord,
   fetchImpl: typeof fetch,
+  unpublishedUpdate = false,
 ): Promise<GatewayResult> {
-  assertAllowedInventoryWrite(config, url, method)
+  assertAllowedInventoryWrite(config, url, method, unpublishedUpdate)
   try {
     const response = await fetchImpl(url, {
       method,
@@ -2524,4 +2526,88 @@ export function ebayDraftOnlyRuntimeStatus() {
       available: config.enabled && config.configured && config.target === "PRODUCTION",
     },
   }
+}
+
+/** Official Inventory API 1.18.5 updateOffer: full replacement, same Offer ID.
+ * This capability is limited to one UNPUBLISHED offer and a non-grouped SKU.
+ * Durable reservation and CURRENT revision revalidation precede each PUT.
+ */
+export async function prepareExistingUnpublishedRevisionV1(input: {
+  accountKey: string; offerId: string; sku: string;
+  inventoryItemPayload: JsonRecord; offerPayload: JsonRecord;
+  reserveWrite: (operation: "INVENTORY" | "OFFER") => Promise<boolean>;
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  if (!sanitizeEbayOfferId(input.offerId) || !isCanonicalEbayPackageSku(input.sku)
+    || input.offerPayload.sku !== input.sku || input.offerPayload.marketplaceId !== "EBAY_US"
+    || input.offerPayload.format !== "FIXED_PRICE") throw Error("CURRENT_OFFER_BINDING_INVALID")
+  const auth = await authenticatedToken(config, fetchImpl, true, true)
+  if (!input.accountKey.endsWith(`:${auth.actualFingerprint}`)) throw Error("CURRENT_OFFER_ACCOUNT_MISMATCH")
+  const offerUrl = new URL(`/sell/inventory/v1/offer/${encodeURIComponent(input.offerId)}`, config.apiOrigin)
+  const inventoryUrl = new URL(`/sell/inventory/v1/inventory_item/${encodeURIComponent(input.sku)}`, config.apiOrigin)
+  const collectionUrl = new URL("/sell/inventory/v1/offer", config.apiOrigin)
+  collectionUrl.searchParams.set("sku", input.sku); collectionUrl.searchParams.set("limit", "100")
+  const collection = await preflightRead(config, auth.token, collectionUrl, fetchImpl)
+  const offers = Array.isArray(collection.body.offers) ? collection.body.offers.map(record) : []
+  if (!completeOfferCollection(collection) || offers.length !== 1 || offers[0].offerId !== input.offerId
+    || offers[0].status !== "UNPUBLISHED" || offers[0].sku !== input.sku
+    || "listing" in offers[0] || "listingId" in offers[0]) throw Error("CURRENT_OFFER_COLLECTION_UNSAFE")
+  const current = await preflightRead(config, auth.token, offerUrl, fetchImpl)
+  if (!current.ok || current.body.offerId !== input.offerId || current.body.sku !== input.sku
+    || current.body.marketplaceId !== "EBAY_US" || current.body.format !== "FIXED_PRICE"
+    || current.body.status !== "UNPUBLISHED" || "listing" in current.body || "listingId" in current.body)
+    throw Error("CURRENT_OFFER_NOT_EXACT_UNPUBLISHED")
+  const inventory = await preflightRead(config, auth.token, inventoryUrl, fetchImpl)
+  if (!inventory.ok || inventory.body.sku !== input.sku || inventory.body.groupIds
+    || inventory.body.inventoryItemGroupKeys) throw Error("CURRENT_INVENTORY_BINDING_UNSAFE")
+  const inventoryComparison = compareEbayInventoryItemReadbackV1(inventory.body, input.inventoryItemPayload)
+  const offerComparison = compareEbayOfferReadbackV1(current.body, input.offerPayload)
+  // Preserve all other current writable fields; refuse unknown material changes.
+  const offerPayload: JsonRecord = { ...current.body, ...input.offerPayload,
+    listingPolicies: { ...record(current.body.listingPolicies), ...record(input.offerPayload.listingPolicies) } }
+  for (const field of ["offerId", "status", "sku", "marketplaceId", "format"]) delete offerPayload[field]
+  const inventoryPayload: JsonRecord = { ...inventory.body, ...input.inventoryItemPayload }
+  for (const field of ["sku", "locale"]) delete inventoryPayload[field]
+  let inventoryWrites = 0, offerWrites = 0
+  const responses: JsonRecord[] = []
+  const stillUnpublished = async () => {
+    const read = await verifyOfferWithToken(config, auth.token, input.offerId,input.sku,"EBAY_US",null,fetchImpl)
+    if (!read.safe) throw Error("CURRENT_OFFER_CHANGED_BEFORE_WRITE")
+  }
+  if (!inventoryComparison.equivalent) {
+    await stillUnpublished()
+    if (await input.reserveWrite("INVENTORY")) {
+      inventoryWrites++
+      const result = await write(config,auth.token,inventoryUrl,"PUT",inventoryPayload,fetchImpl)
+      responses.push({operation:"INVENTORY",httpStatus:result.status,outcomeKnown:result.outcomeKnown,body:safeBody(result.body)})
+    }
+  }
+  const inventoryReadback = await verifyInventoryItemWithToken(config,auth.token,input.sku,input.inventoryItemPayload,fetchImpl)
+  if (inventoryReadback.safe && !offerComparison.equivalent) {
+    await stillUnpublished()
+    if (await input.reserveWrite("OFFER")) {
+      offerWrites++
+      const result = await write(config,auth.token,offerUrl,"PUT",offerPayload,fetchImpl,true)
+      responses.push({operation:"OFFER",httpStatus:result.status,outcomeKnown:result.outcomeKnown,body:safeBody(result.body)})
+    }
+  }
+  const offerReadback = await verifyOfferWithToken(config,auth.token,input.offerId,input.sku,"EBAY_US",input.offerPayload,fetchImpl)
+  // Official non-mutating fee prevalidation for this one unpublished Offer.
+  // This is not an estimate of post-sale final-value fees or publish approval.
+  let listingFeePrevalidation: JsonRecord | null = null
+  if (inventoryReadback.safe && offerReadback.safe) {
+    try {
+      const response = await fetchImpl(new URL("/sell/inventory/v1/offer/get_listing_fees",config.apiOrigin),{
+        method:"POST",headers:{Authorization:`Bearer ${auth.token}`,"Content-Type":"application/json"},
+        body:JSON.stringify({offers:[{offerId:input.offerId}]}),cache:"no-store",signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)})
+      const body=record(await response.json().catch(()=>({})))
+      listingFeePrevalidation={httpStatus:response.status,ok:response.ok,body:safeBody(body),
+        fees:body.fees??null,fullPublishValidation:false}
+    } catch { listingFeePrevalidation={ok:false,httpStatus:0,fullPublishValidation:false} }
+  }
+  return {version:"CURRENT_UNPUBLISHED_REVISION_PREPARATION_V1",offerId:input.offerId,sku:input.sku,
+    inventoryWrites,offerWrites,responses,inventoryReadback,offerReadback,listingFeePrevalidation,
+    pass:inventoryReadback.safe && offerReadback.safe,
+    state:inventoryReadback.safe && offerReadback.safe ? "READBACK_CONFIRMED" : "READBACK_REQUIRED",
+    publicationWrites:0,offerCreates:0,blindRetryAllowed:false}
 }

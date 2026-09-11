@@ -1,3 +1,4 @@
+import { executeCurrentUnpublishedPreparationV1 } from "@/lib/ebay/ebay-current-unpublished-preparation-server-v1"
 import { readCurrentDraftPreparationV1 } from "@/lib/ebay/ebay-current-package-preparation-server-v1"
 import { projectCurrentPreparationPackageV1, currentPreparationBindingValidV1, currentPreparationApprovalMatchesV1, currentPreparationVisualGateV1 } from "@/lib/ebay/ebay-current-package-preparation-v1"
 export const runtime = "nodejs"
@@ -4608,6 +4609,13 @@ async function executeDraft(body: JsonRecord, actor: string) {
   })
   if (!visualPublicationGate.allowed) {
     throw new Error(visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY")
+  }
+  if (currentRevisionAuthority) {
+    if (approval.status !== "approved" || approval.revoked_at || Date.parse(approval.expires_at) <= Date.now())
+      return jsonError(new Error("CURRENT_REVISION_APPROVAL_NOT_ACTIVE"),409)
+    const result=await executeCurrentUnpublishedPreparationV1({supabase,actor,
+      accountKey:String(currentPackageRead.data.account_key),packageId:String(approval.listing_package_id)})
+    return NextResponse.json({success:result.pass,result,safety:{canPublish:false,publicationWrites:0}})
   }
   const batchContinuationAuthority =
     await hasExactPublisherBatchApprovalContinuationAuthorityV1({

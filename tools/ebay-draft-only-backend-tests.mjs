@@ -1804,7 +1804,7 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
   assert.match(routeSource, /\.eq\("lease_token", claimToken\)/)
   assert.ok(
     executeSource.indexOf('existing?.phase === "inventory_outcome_unknown"')
-      < executeSource.indexOf('approval.status !== "approved"'),
+      < executeSource.indexOf('approval.status !== "approved"',executeSource.indexOf('const batchContinuationAuthority')),
   )
   assert.ok(
     executeSource.indexOf("inspectEbayDraftSkuState")
@@ -3048,4 +3048,43 @@ test("Smart Stocking monitor closure and compensated recovery stay fail closed",
     /SAFE_TO_REARM_EXISTING_GOLDEN_PATH/)
   assert.match(routeSource,
     /rearm_ebay_authorized_listing_after_compensated_monitor_failure/)
+})
+
+test("CURRENT unpublished update replaces same Offer, readbacks after timeout, and cannot publish",async()=>{
+ const module=await importTypeScript(gatewaySource),original={...process.env}
+ Object.assign(process.env,{EBAY_DRAFT_ONLY_WRITES_ENABLED:"true",EBAY_DRAFT_ONLY_TARGET:"SANDBOX",EBAY_DRAFT_ONLY_SANDBOX_CLIENT_ID:"client",EBAY_DRAFT_ONLY_SANDBOX_CLIENT_SECRET:"secret",EBAY_DRAFT_ONLY_SANDBOX_REFRESH_TOKEN:"update-current-grant",EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_USER_ID:"sandbox-user-1",EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET:SNAPSHOT_SECRET})
+ try {
+  for(const mode of ['normal','timeout-committed','timeout-not-committed','published','wrong-sku','duplicate','already-current']){
+   const sku='IMNOVA24535B3703354984A36CDBB73A7560DA',offerId='256820077011',calls=[],reserved=new Set()
+   const inv={availability:{shipToLocationAvailability:{quantity:1}},condition:'NEW',product:{title:'Current',description:'Current truth',imageUrls:['https://example.com/current.jpg']}}
+   const expected={sku,marketplaceId:'EBAY_US',format:'FIXED_PRICE',categoryId:'261987',availableQuantity:1,listingDescription:'Current truth',pricingSummary:{price:{value:'17.77',currency:'USD'}},listingPolicies:{paymentPolicyId:'p',returnPolicyId:'r',fulfillmentPolicyId:'f'}}
+   let inventory={sku,...structuredClone(inv),product:{...inv.product,title:'Old'}}
+   let offer={offerId,status:mode==='published'?'PUBLISHED':'UNPUBLISHED',...structuredClone(expected),listingDescription:'Old'}
+   if(mode==='wrong-sku')offer.sku='OTHER';if(mode==='already-current'){inventory={sku,...inv};offer={offerId,status:'UNPUBLISHED',...expected}}
+   const fetchImpl=async(url,init={})=>{
+    const u=new URL(url),method=init.method??'GET';calls.push([method,u.pathname])
+    if(u.pathname.endsWith('/oauth2/token'))return Response.json({access_token:'a',expires_in:7200})
+    if(u.pathname==='/commerce/identity/v1/user/')return Response.json({userId:'sandbox-user-1',status:'CONFIRMED'})
+    if(method==='POST'&&u.pathname.endsWith('/offer/get_listing_fees'))return Response.json({fees:[{marketplaceId:'EBAY_US',feeSummaries:[]}]})
+    if(method==='GET'&&u.pathname.endsWith('/offer'))return Response.json({offers:mode==='duplicate'?[offer,{...offer,offerId:'second'}]:[offer],total:mode==='duplicate'?2:1,limit:100,size:mode==='duplicate'?2:1})
+    if(method==='GET'&&u.pathname.endsWith('/offer/'+offerId))return Response.json(offer)
+    if(method==='GET'&&u.pathname.includes('/inventory_item/'))return Response.json(inventory)
+    if(method==='PUT'&&u.pathname.includes('/inventory_item/')){inventory={sku,...JSON.parse(init.body)};return new Response(null,{status:204})}
+    if(method==='PUT'&&u.pathname.endsWith('/offer/'+offerId)){
+     if(mode!=='timeout-not-committed')offer={...offer,...JSON.parse(init.body)}
+     if(mode.startsWith('timeout'))throw Error('timeout');return new Response(null,{status:204})
+    }
+    throw Error('UNEXPECTED_OPERATION '+method+' '+u.pathname)
+   }
+   const input={accountKey:'test:'+(await import('node:crypto')).createHash('sha256').update('SANDBOX:sandbox-user-1').digest('hex'),offerId,sku,inventoryItemPayload:inv,offerPayload:expected,reserveWrite:async op=>{if(reserved.has(op))return false;reserved.add(op);return true}}
+   if(['published','wrong-sku','duplicate'].includes(mode)){await assert.rejects(module.prepareExistingUnpublishedRevisionV1(input,fetchImpl));assert.equal(calls.filter(c=>c[0]==='PUT').length,0);continue}
+   const out=await module.prepareExistingUnpublishedRevisionV1(input,fetchImpl)
+   assert.equal(out.pass,mode!=='timeout-not-committed',mode)
+   assert.equal(out.offerWrites,mode==='already-current'?0:1);assert.equal(out.offerReadback.offerId,offerId)
+   assert.equal(out.offerReadback.status,'UNPUBLISHED');assert.equal(out.offerCreates,0);assert.equal(out.publicationWrites,0)
+   const retry=await module.prepareExistingUnpublishedRevisionV1(input,fetchImpl)
+   assert.equal(retry.offerWrites,0);assert.equal(calls.some(c=>/publish/.test(c[1])),false)
+   assert.equal(calls.filter(c=>c[0]==='PUT'&&c[1].endsWith('/offer/'+offerId)).length,mode==='already-current'?0:1)
+  }
+ }finally{process.env=original}
 })

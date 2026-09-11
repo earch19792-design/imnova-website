@@ -1142,6 +1142,12 @@ export async function acquireOneLegacyEconomicShippingRecoveryV1(input:
     historicalAttemptCount: Number(classification.historicalAttemptCount) })
 }
 
+export function shippingFrontierTurnV1(eligibleFrontiers: number,
+  lastClaimFreshnessGeneration: unknown): boolean {
+  return eligibleFrontiers > 0 && typeof lastClaimFreshnessGeneration === "string"
+    && lastClaimFreshnessGeneration.length > 0
+}
+
 export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
@@ -1150,10 +1156,6 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   now?: number
   maximumJobs?: 1
 }>): Promise<LunaChromeShippingJobAcquisitionV1> {
-  if (input.maximumJobs === 1) {
-    const current = await acquireEconomicLiveListingShippingJobsV1({ ...input, limit: 1 })
-    if (current.eligiblePendingJobCount > 0) return Object.freeze(current)
-  }
   let eligible: readonly LunaChromeShippingJobV1[] = Object.freeze([])
   let standardDiscoveryError: unknown = null
   try {
@@ -1166,6 +1168,23 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     // their discovery authorities are independent. A degraded frontier must
     // not strand a durable LIVE economic shipping job.
     standardDiscoveryError = error
+  }
+  if (input.maximumJobs === 1) {
+    // Existing claims provide the class turn; no timer, counter or new worker.
+    // LIVE economic claims carry freshness_generation; frontier claims do not.
+    const history = eligible.length ? await input.supabase
+      .from("seller_os_luna_shipping_job_claims")
+      .select("freshness_generation,claimed_at")
+      .eq("account_key", input.accountKey)
+      .order("claimed_at", { ascending: false }).limit(1)
+      .abortSignal(AbortSignal.timeout(8000)).retry(false) : null
+    if (history?.error) throw Error("SHIPPING_FAIRNESS_AUTHORITY_UNAVAILABLE")
+    const frontierTurn = shippingFrontierTurnV1(eligible.length,
+      records(history?.data)[0]?.freshness_generation)
+    if (!frontierTurn) {
+      const current = await acquireEconomicLiveListingShippingJobsV1({ ...input, limit: 1 })
+      if (current.eligiblePendingJobCount > 0) return Object.freeze(current)
+    }
   }
   const jobs: LunaChromeShippingJobV1[] = []
   let leaseConflictCount = 0
