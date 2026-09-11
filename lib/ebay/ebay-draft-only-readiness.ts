@@ -1,3 +1,4 @@
+import { currentPreparationBindingValidV1, currentPreparationPayloadMatchesV1 } from "./ebay-current-package-preparation-v1"
 import { createHash } from "node:crypto"
 
 import {
@@ -33,6 +34,7 @@ export type DraftOnlyReadinessInput = {
   sameDayPilotAuthorization?: JsonRecord | null
   smartStockingPublicationAuthorization?: JsonRecord | null
   quickPickPublicationAuthorization?: JsonRecord | null
+  currentPreparation?: JsonRecord | null
   revalidatedExecutionEvidence?: {
     freshSameDaySourceVerified?: boolean
     finalV3ImageTransportVerified?: boolean
@@ -425,8 +427,10 @@ export function buildEbayDraftOnlyPayload(
   sameDayPilotAuthorization: JsonRecord | null = null,
   smartStockingPublicationAuthorization: JsonRecord | null = null,
   quickPickPublicationAuthorization: JsonRecord | null = null,
+  currentPreparation: JsonRecord | null = null,
 ) {
   const packageData = record(listingPackage.package_data)
+  const preparationRevision = record(record(currentPreparation).revision)
   const pricing = record(packageData.pricing)
   const policies = record(draftConfiguration.businessPolicies)
   const packageWeightAndSize = record(draftConfiguration.packageWeightAndSize)
@@ -505,6 +509,7 @@ export function buildEbayDraftOnlyPayload(
     format: "FIXED_PRICE",
     availableQuantity: quantity,
     categoryId,
+    ...(currentPreparation ? {listingDescription:text(packageData.description)} : {}),
     merchantLocationKey: text(draftConfiguration.merchantLocationKey),
     listingPolicies: {
       fulfillmentPolicyId: text(policies.fulfillmentPolicyId),
@@ -525,6 +530,11 @@ export function buildEbayDraftOnlyPayload(
     },
     sourceEvidence: sourceEvidence(opportunity),
     compliance: {
+      ...(currentPreparation ? {publicationPreparationRevisionV1:{
+        publicationId:preparationRevision.publicationId,packageHash:preparationRevision.packageHash,
+        packageGeneration:preparationRevision.packageGeneration,previewHash:preparationRevision.previewHash,
+        operation:"PREPARE_UNPUBLISHED_ONLY",publicationAuthorized:false,
+      }} : {}),
       imageAuthorization: record(draftConfiguration.imageAuthorization),
       aspectValidation: record(draftConfiguration.aspectValidation),
       skuCollisionCheck: record(draftConfiguration.skuCollisionCheck),
@@ -562,6 +572,8 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const accountFingerprint = text(input.accountFingerprint)
   const listingPackage = input.listingPackage
   const opportunity = input.opportunity
+  const currentPreparation = input.currentPreparation ?? null
+  const currentPreparationAuthorized = currentPreparationBindingValidV1(currentPreparation,listingPackage,opportunity,accountFingerprint,now)
   const configuration = input.draftConfiguration
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
@@ -838,7 +850,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     ['hold', 'rejected', 'listed', 'archived'].includes(
       text(opportunity.queue_status),
     )) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
-  if (!sameDayPilotAuthorized && !smartStockingPublicationAuthorized &&
+  if (!currentPreparationAuthorized && !sameDayPilotAuthorized && !smartStockingPublicationAuthorized &&
       !quickPickPublicationAuthorized) {
     if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
     if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
@@ -847,14 +859,16 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     blockers.push(...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`))
   }
   if (
-    !smartStockingPublicationAuthorized
+    !currentPreparationAuthorized
+    && !smartStockingPublicationAuthorized
     && !quickPickPublicationAuthorized
     && (opportunity.supplier_available !== true
       || supplierStock === null || supplierStock <= 0)
   ) blockers.push("LUNA_STOCK_UNAVAILABLE")
   if (supplierPrice === null || supplierPrice <= 0) blockers.push("LUNA_COST_REQUIRED")
   if (
-    !quickPickPublicationAuthorized
+    !currentPreparationAuthorized
+    && !quickPickPublicationAuthorized
     && !recent(opportunity.supplier_snapshot_at ?? opportunity.last_scanned_at,
       sourceMaxAge, now)
   ) blockers.push("LUNA_SNAPSHOT_STALE")
@@ -862,6 +876,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     !recent(listingPackage.source_observed_at, sourceMaxAge, now)
     && !freshSameDaySourceVerified
     && !quickPickPublicationAuthorized
+    && !currentPreparationAuthorized
   ) blockers.push("PACKAGE_SOURCE_STALE")
   if (!text(packageData.title) || text(packageData.title).length > 80) blockers.push("TITLE_INVALID")
   if (!/^\d{1,12}$/.test(categoryId)) blockers.push("CATEGORY_ID_REQUIRED")
@@ -899,14 +914,17 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   }
   if (
     !Number.isInteger(quantity) || quantity < 1
-    || (!smartStockingPublicationAuthorized &&
+    || (!currentPreparationAuthorized && !smartStockingPublicationAuthorized &&
       !quickPickPublicationAuthorized && supplierStock === null)
     || (supplierStock !== null && quantity > supplierStock)
   ) blockers.push("QUANTITY_EXCEEDS_FRESH_STOCK")
   if (target === "PRODUCTION" && quantity !== 1) blockers.push("PRODUCTION_QUANTITY_MUST_EQUAL_ONE")
   if (!['NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'USED_EXCELLENT', 'USED_GOOD', 'USED_ACCEPTABLE'].includes(condition)) blockers.push("CONDITION_INVALID")
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
-  if (!economics.ready || !economics.passesProfitGate) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
+  // Non-LIVE preparation can validate content while monetary evidence is pending.
+  // The independent publication gate still requires proven Shipping/fees/economics.
+  if (!currentPreparationAuthorized && (!economics.ready || !economics.passesProfitGate)) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
+  if (currentPreparation && !currentPreparationAuthorized) blockers.push("CURRENT_REVISION_AUTHORITY_NOT_READY")
   for (const [key, value] of Object.entries({
     FULFILLMENT_POLICY_REQUIRED: policies.fulfillmentPolicyId,
     PAYMENT_POLICY_REQUIRED: policies.paymentPolicyId,
@@ -944,7 +962,11 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     quickPickPublicationAuthorized
       ? quickPickPublicationAuthorization
       : null,
+    currentPreparation,
   )
+  if (currentPreparation && !currentPreparationPayloadMatchesV1(currentPreparation,payload)) {
+    blockers.push("CURRENT_REVISION_PAYLOAD_PREVIEW_MISMATCH")
+  }
   const uniqueBlockers = unique(blockers)
   return {
     ready: uniqueBlockers.length === 0,
@@ -960,19 +982,19 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     economics: {
       targetPrice: price,
       supplierPrice,
-      estimatedEbayFees: economics.estimatedEbayFees,
-      estimatedOutboundShipping: economics.estimatedOutboundShipping,
-      returnsReserve: economics.returnsReserve,
-      promotedListingsReserve: economics.promotedListingsReserve,
-      estimatedNetProfit: economics.estimatedNetProfit,
-      marginPercent: economics.estimatedNetMarginPercent,
-      roiPercent: economics.estimatedRoiPercent,
-      minimumProfitablePrice: economics.minimumProfitablePrice,
+      estimatedEbayFees: currentPreparationAuthorized ? null : economics.estimatedEbayFees,
+      estimatedOutboundShipping: currentPreparationAuthorized ? null : economics.estimatedOutboundShipping,
+      returnsReserve: currentPreparationAuthorized ? null : economics.returnsReserve,
+      promotedListingsReserve: currentPreparationAuthorized ? null : economics.promotedListingsReserve,
+      estimatedNetProfit: currentPreparationAuthorized ? null : economics.estimatedNetProfit,
+      marginPercent: currentPreparationAuthorized ? null : economics.estimatedNetMarginPercent,
+      roiPercent: currentPreparationAuthorized ? null : economics.estimatedRoiPercent,
+      minimumProfitablePrice: currentPreparationAuthorized ? null : economics.minimumProfitablePrice,
       minimumNetProfit: economicsConfig.minimumNetProfit,
       minimumMarginPercent: economicsConfig.minimumNetMarginPercent,
       minimumRoiPercent: economicsConfig.minimumRoiPercent,
-      passesProfitGate: economics.passesProfitGate,
-      calculationSource: economics.calculationSource,
+      passesProfitGate: currentPreparationAuthorized ? false : economics.passesProfitGate,
+      calculationSource: currentPreparationAuthorized ? "PUBLICATION_ECONOMICS_SEPARATE_AUTHORITY_REQUIRED" : economics.calculationSource,
     },
     payloadHash: hashEbayDraftOnlyPayload(payload),
     requiredSku,

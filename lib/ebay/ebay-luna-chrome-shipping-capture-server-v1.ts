@@ -56,6 +56,7 @@ import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from
   "./ebay-unit-economics"
 import { buildEconomicEvidenceV1 } from
   "../seller-os/economic-evidence-refresh-v1"
+import { LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS } from "./ebay-live-listing-shipping-evidence-v1"
 
 export const LUNA_SHIPPING_CANARY_CANDIDATE_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60" as const
@@ -66,6 +67,17 @@ type JsonRecord = Record<string, unknown>
 
 const CAPTURE_SESSION_MAXIMUM_AGE_MS = 10 * 60 * 1_000
 const SHA256 = /^sha256:[0-9a-f]{64}$/
+
+// A completed historical capture is not a perpetual operational quote. This
+// only admits discovery; leader/capability/backoff/claim and capture validation
+// remain the existing authorities. Never renew age from the frontier receipt.
+export function frontierShippingRefreshRequiredV1(frontier: unknown, now: number) {
+  const f = record(frontier)
+  if (!["SHIPPING_DURABLY_PERSISTED", "SHIPPING_OBSERVED"].includes(String(f.shippingStatus))) return true
+  const observed = Date.parse(String(record(f.shippingCaptureEvidence).observedAt))
+  return !Number.isFinite(observed) || observed > now ||
+    now - observed >= LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS * 1000
+}
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -616,8 +628,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   const requested = input.candidateIds?.length
     ? [...new Set(input.candidateIds)]
     : stockEligibleCandidates.filter((candidate) =>
-      !["SHIPPING_DURABLY_PERSISTED", "SHIPPING_OBSERVED"]
-        .includes(String(candidate.frontier.shippingStatus)))
+      frontierShippingRefreshRequiredV1(candidate.frontier, input.now ?? Date.now()))
       .map((candidate) => candidate.candidateId)
       .slice(0, 2)
   if (requested.length > LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH ||

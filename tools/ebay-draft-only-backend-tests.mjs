@@ -42,6 +42,7 @@ const publisherSemanticReadbackSource = readFileSync(
 
 function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) {
   const withoutImport = source
+    .replace('from "./ebay-current-package-preparation-v1"', `from ${JSON.stringify(new URL("../lib/ebay/ebay-current-package-preparation-v1.ts", import.meta.url).href)}`)
     .replace('import { validateMayelContentPatchV1 } from "../seller-os/mayel-content-patch-v1"\n', "")
     .replace(/import \{[^}\n]*\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
     .replace(/import \{\n(?:\s+[A-Za-z0-9_]+,?\n)+\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")

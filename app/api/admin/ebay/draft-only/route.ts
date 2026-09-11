@@ -1,3 +1,5 @@
+import { readCurrentDraftPreparationV1 } from "@/lib/ebay/ebay-current-package-preparation-server-v1"
+import { projectCurrentPreparationPackageV1, currentPreparationBindingValidV1, currentPreparationApprovalMatchesV1, currentPreparationVisualGateV1 } from "@/lib/ebay/ebay-current-package-preparation-v1"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
@@ -1610,31 +1612,42 @@ async function loadPackageContext(
   accountFingerprint: string,
   selfLineage?: ExactDraftOnlyPublicationSelfLineageV1,
   allowFinalV3ReadOnlyFallback = false,
+  currentRevisionPreparation = false,
 ) {
   const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
   if (!sellerAccountKey) throw new Error("EBAY_DRAFT_ONLY_PACKAGE_ACCOUNT_SCOPE_REQUIRED")
   if (sku && !/^[A-Za-z0-9._-]{1,50}$/.test(sku)) {
     throw new Error("EBAY_DRAFT_ONLY_SKU_INVALID")
   }
-  const { data: listingPackage, error: packageError } = await supabase
+  const { data: storedListingPackage, error: packageError } = await supabase
     .from("ebay_listing_packages")
     .select("*")
     .eq("id", packageId)
     .eq("created_by", actorUserId)
     .eq("account_key", sellerAccountKey)
     .maybeSingle()
-  if (packageError || !listingPackage) throw new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND")
+  if (packageError || !storedListingPackage) throw new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND")
+  let listingPackage: JsonRecord = storedListingPackage as JsonRecord
   const { data: opportunity, error: opportunityError } = await supabase
     .from("ebay_luna_opportunity_queue")
     .select("*")
     .eq("id", listingPackage.opportunity_id)
     .maybeSingle()
   if (opportunityError || !opportunity) throw new Error("EBAY_DRAFT_ONLY_OPPORTUNITY_NOT_FOUND")
+  const currentPreparation = currentRevisionPreparation ? await readCurrentDraftPreparationV1({
+    supabase,accountKey:sellerAccountKey,actor:actorUserId,listingPackage,
+  }) : null
+  if (currentPreparation) {
+    if (!currentPreparationBindingValidV1(currentPreparation,listingPackage,opportunity,accountFingerprint)) {
+      throw new Error("CURRENT_REVISION_EXACT_BINDING_REQUIRED")
+    }
+    listingPackage = projectCurrentPreparationPackageV1(listingPackage,currentPreparation)
+  }
   let sameDayContext: Awaited<ReturnType<
     typeof loadSameDayAuthorizedPublicationContext
   >> = null
   try {
-    sameDayContext = await loadSameDayAuthorizedPublicationContext({
+    sameDayContext = currentPreparation ? null : await loadSameDayAuthorizedPublicationContext({
       supabase,
       accountKey: sellerAccountKey,
       actorUserId,
@@ -1656,7 +1669,7 @@ async function loadPackageContext(
     if (!finalReviewGate.allowed) throw contextError
   }
   const effectiveOpportunity = sameDayContext?.opportunity ?? (opportunity as JsonRecord)
-  const smartStockingContext = isSmartStockingListingIntakeV1(
+  const smartStockingContext = !currentPreparation && isSmartStockingListingIntakeV1(
     record(effectiveOpportunity.assessment),
   ) ? await resolveSmartStockingAuthorizedPublicationV1({
     supabase,
@@ -1665,7 +1678,7 @@ async function loadPackageContext(
     listingPackage: listingPackage as JsonRecord,
     opportunity: effectiveOpportunity,
   }) : null
-  const quickPickContext = !smartStockingContext &&
+  const quickPickContext = !currentPreparation && !smartStockingContext &&
     isQuickPickCanonicalPublishPackageV1(
       record(listingPackage.package_data),
     ) ? await resolveQuickPickCanonicalPublishHandoffV1({
@@ -1723,6 +1736,19 @@ async function loadPackageContext(
     .eq("sku", collisionSku || "__missing__")
     .neq("phase", "terminal_failure")
     .limit(1)
+  if (currentPreparation) {
+    const priorExecutionId = uuid(record(currentPreparation.revision).priorDraftExecutionId)
+    if (!priorExecutionId) throw new Error("CURRENT_REVISION_PRIOR_EXECUTION_REQUIRED")
+    const prior = await supabase.from("ebay_draft_only_execution_ledger")
+      .select("id,phase,actor_user_id,listing_package_id,target,account_fingerprint,sku,lease_token")
+      .eq("id",priorExecutionId).eq("actor_user_id",actorUserId).maybeSingle()
+    if (prior.error || !prior.data || prior.data.phase !== "completed" || prior.data.lease_token ||
+      prior.data.listing_package_id !== packageId || prior.data.target !== target ||
+      prior.data.account_fingerprint !== accountFingerprint || prior.data.sku !== collisionSku) {
+      throw new Error("CURRENT_REVISION_PRIOR_EXECUTION_NOT_SETTLED")
+    }
+    ledgerQuery = ledgerQuery.neq("id",priorExecutionId)
+  }
   if (selfLineage?.exact) {
     const excludedApprovalIds = selfLineage.excludeApprovalIds?.length
       ? selfLineage.excludeApprovalIds
@@ -1776,6 +1802,7 @@ async function loadPackageContext(
     gtinPackageResult.data?.length ? "LISTING_PACKAGE_GTIN" : "",
   ].filter(Boolean)
   return {
+    currentPreparation,
     listingPackage: listingPackage as JsonRecord,
     opportunity: effectiveOpportunity,
     sameDayPilotAuthorization: sameDayContext?.authorization ?? null,
@@ -4178,9 +4205,12 @@ async function approveDraft(body: JsonRecord, actor: string) {
       text(requestedConfiguration.sku),
       target,
       fingerprint,
+      undefined,
+      false,
+      true,
     )
   }
-  const visualPublicationGate = await loadFinalListingReviewPublicationGate({
+  const visualPublicationGate = context.currentPreparation ? currentPreparationVisualGateV1(context.currentPreparation) : await loadFinalListingReviewPublicationGate({
     supabase,
     listingPackageId: packageId,
     actorId: actor,
@@ -4547,14 +4577,6 @@ async function executeDraft(body: JsonRecord, actor: string) {
     .eq("actor_user_id", actor)
     .maybeSingle()
   if (approvalError || !approval) return jsonError(new Error("EBAY_DRAFT_ONLY_APPROVAL_NOT_FOUND"), 404)
-  const visualPublicationGate = await loadFinalListingReviewPublicationGate({
-    supabase,
-    listingPackageId: text(approval.listing_package_id),
-    actorId: actor,
-  })
-  if (!visualPublicationGate.allowed) {
-    throw new Error(visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY")
-  }
   const runtime = ebayDraftOnlyRuntimeStatus()
   const target = runtime.target
   const fingerprint = runtime.accountFingerprint || ""
@@ -4570,6 +4592,23 @@ async function executeDraft(body: JsonRecord, actor: string) {
   const approvedPayload = record(approval.approved_payload)
   const approvedOfferPayload = record(approvedPayload.offerPayload)
   const approvedSku = text(approvedPayload.sku)
+  const currentPackageRead = await supabase.from("ebay_listing_packages")
+    .select("id,created_by,account_key,candidate_key").eq("id",approval.listing_package_id)
+    .eq("created_by",actor).maybeSingle()
+  if (currentPackageRead.error || !currentPackageRead.data) throw new Error("CURRENT_REVISION_PACKAGE_READ_FAILED")
+  const currentRevisionAuthority = await readCurrentDraftPreparationV1({supabase,
+    accountKey:String(currentPackageRead.data.account_key),actor,listingPackage:currentPackageRead.data})
+  if (currentRevisionAuthority && !currentPreparationApprovalMatchesV1(currentRevisionAuthority,approvedPayload)) {
+    return jsonError(new Error("CURRENT_REVISION_APPROVAL_REQUIRED"),409)
+  }
+  const visualPublicationGate = currentRevisionAuthority ? currentPreparationVisualGateV1(currentRevisionAuthority) : await loadFinalListingReviewPublicationGate({
+    supabase,
+    listingPackageId: text(approval.listing_package_id),
+    actorId: actor,
+  })
+  if (!visualPublicationGate.allowed) {
+    throw new Error(visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY")
+  }
   const batchContinuationAuthority =
     await hasExactPublisherBatchApprovalContinuationAuthorityV1({
       supabase, approval: approval as JsonRecord, actor,
@@ -4878,6 +4917,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
     target,
     fingerprint,
     collisionSelfLineage,
+    false,
+    true,
   )
   const v3Binding = record(record(approvedPayload.compliance).v3FinalSetAuthorization)
   let revalidatedExecutionEvidence:
@@ -4976,6 +5017,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     context.sameDayPilotAuthorization,
     context.smartStockingPublicationAuthorization,
     context.quickPickPublicationAuthorization,
+    context.currentPreparation,
   )
   const currentBasePayload = Object.keys(v3Binding).length
     ? withV3FinalSetAuthorization(rebuiltPayload, v3Binding)
