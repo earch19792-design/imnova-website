@@ -12,7 +12,8 @@ function freeze<T>(v: T): T {
 export type PipelineCurrentAuthorityV1 = { binding: KeywordBindingV1; accountKey: string; packageId: string; sku: string;
   truthFields: unknown; requiredTruth: unknown; aspectResolutions: unknown; category: unknown; keywordRead: unknown;
   reference: Record<string, unknown>; ownPrice: unknown; shipping?: Partial<CommercialComponent>; feeHandoff?: unknown;
-  sellerPolicies?: unknown; quantityReview?: unknown; currentQuantityMaterial?: unknown; now: Date }
+  sellerPolicies?: unknown; quantityReview?: unknown; currentQuantityMaterial?: unknown;
+  exposurePolicy?: unknown; productTruthDigest?: string; now: Date }
 
 // Audit an existing generation. This never rebuilds its content or mutates it.
 // Fresh commercial observations form a new evaluation, not a new package.
@@ -85,7 +86,8 @@ export function listingPipelineConsistencyV1(existing: unknown, a: PipelineCurre
     numericStock: fact("SUPPLIER_STOCK").length === 1 ? fact("SUPPLIER_STOCK")[0] : null,
     exactBinding: product && variation && account && sku && lineage, now: a.now,
     packageId: a.packageId, sku: a.sku, productId: a.binding.PRODUCT_ID, variantId: a.binding.VARIANT_ID,
-    quantityReview: a.quantityReview, currentQuantityMaterial: quantityContentMatches ? quantityMaterial : null })
+    quantityReview: a.quantityReview, currentQuantityMaterial: quantityContentMatches ? quantityMaterial : null,
+    exposurePolicy: a.exposurePolicy, accountKey: a.accountKey, productTruthDigest: a.productTruthDigest })
   const evidence = { productCost: fromFact("SUPPLIER_COST"), inventory: {
     ...commercialComponentV1({ status: inventory.inventoryReady ? "PROVEN" : inventory.freshness === "STALE" ? "STALE" : "PENDING",
       value: inventory.listingQuantity, reference: inventory.reference, source: "LUNA_AVAILABILITY_WITH_SEPARATE_PACKAGE_EXPOSURE_V1",

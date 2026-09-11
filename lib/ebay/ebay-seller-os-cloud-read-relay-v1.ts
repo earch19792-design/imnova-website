@@ -171,6 +171,7 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
   if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1 || toolName === "seller_os_get_listing_intelligence" || toolName === "seller_os_prepare_listing_optimization_preview") {
     allowedKeys.add("itemId")
   }
+  if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1) allowedKeys.add("packageId")
   if (toolName === "seller_os_get_opportunity_case") {
     allowedKeys.add("opportunityCaseId")
   }
@@ -212,7 +213,11 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
     }
     normalized.limit = Number(args.limit)
   }
-  if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1 || toolName === "seller_os_get_listing_intelligence" || toolName === "seller_os_prepare_listing_optimization_preview") {
+  if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1 && args.packageId !== undefined) {
+    if (args.itemId !== undefined || typeof args.packageId !== "string" ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(args.packageId)) throw Error("SELLER_OS_RELAY_PACKAGE_ID_INVALID")
+    normalized.packageId = args.packageId
+  } else if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1 || toolName === "seller_os_get_listing_intelligence" || toolName === "seller_os_prepare_listing_optimization_preview") {
     if (typeof args.itemId !== "string" || !/^\d{9,19}$/.test(args.itemId)) {
       throw new Error("SELLER_OS_RELAY_ITEM_ID_INVALID")
     }
@@ -509,6 +514,7 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     now?: () => number
     monitorLoader?: () => Promise<CommercialMonitorGetDto>
     feeContextCollector?: (itemId: string) => Promise<unknown>
+    packageFeeContextCollector?: (packageId: string) => Promise<unknown>
     previewCollector?: (itemId: string, traceId: string) => Promise<unknown>
     officialOrdersCollector?: () => Promise<SellerOsOfficialOrdersReadV1>
     whatsappSaleAlertStatusCollector?: () => Promise<
@@ -589,11 +595,19 @@ export async function handleSellerOsCloudReadRelayRequestV1(
   try {
     let result: unknown
     if (envelope.toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1) {
+      if (envelope.arguments.packageId) {
+        const collector = options.packageFeeContextCollector ?? (async (packageId: string) => {
+          const gateway = await import("./ebay-package-fee-context-readonly-v1")
+          return gateway.readEbayPackageFeeContextReadonlyV1(packageId)
+        })
+        result = await collector(String(envelope.arguments.packageId))
+      } else {
       const collector = options.feeContextCollector ?? (async (itemId: string) => {
         const gateway = await import("./ebay-fee-context-readonly-v1")
         return gateway.readEbayFeeContextReadonlyV1(itemId)
       })
       result = await collector(String(envelope.arguments.itemId))
+      }
     } else if (envelope.toolName === SELLER_OS_OFFICIAL_ORDERS_TOOL_V1.name) {
       const collector = options.officialOrdersCollector ?? (async () => {
         const runtime = await import("./ebay-seller-os-assistant-runtime")

@@ -8,6 +8,7 @@ import { LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS } from "../ebay/ebay-live-lis
 import { SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1 } from "../ebay/ebay-luna-authoritative-shipping-server-v1"
 import { readEbayFeeHandoffV1 } from "./ebay-fee-runtime-v1"
 import { createProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
+import { currentPackagePreviewRevisionV1 } from "./publication-package-preparation-v1"
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: boolean) => T }>(q: T) =>
@@ -54,7 +55,7 @@ export async function readSellOneLikeThisV1(input: {
     bounded(db.from("ebay_account_policy_profiles").select("account_key,marketplace_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,verified_at,expires_at")
       .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US").limit(1)).maybeSingle(),
     bounded(db.from("ebay_authorized_listing_publications")
-      .select("id,listing_package_id,marketplace_account_key,account_fingerprint,sku,phase,preview,publication_idempotency_key,listing_id,active_listing_id,manual_registration_id,verified_active_at,monitor_registered_at")
+      .select("id,listing_package_id,marketplace_account_key,account_fingerprint,sku,phase,preview,preview_hash,draft_execution_id,publication_idempotency_key,listing_id,active_listing_id,manual_registration_id,verified_active_at,monitor_registered_at,preparation:sanitized_result->publicationPreparationV1")
       .eq("marketplace_account_key", input.accountKey).eq("listing_package_id", input.packageId)
       .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1)).maybeSingle(),
   ])
@@ -83,7 +84,8 @@ export async function readSellOneLikeThisV1(input: {
     sellerPolicies: policies.error ? null : policies.data }
   // Audit the supplied server-side generation without recreating its content.
   // Normal reference preparation uses the same gate on its existing read path.
-  const result = input.existingPackagePreview ?? prepareSellOneLikeThisV1(authority)
+  const prep = record(record(publication.data).preparation)
+  const result = input.existingPackagePreview ?? record(prep.current).certifiedPackage ?? prepareSellOneLikeThisV1(authority)
   const content = record(record(record(result).listingPackage).content), reviewView = record(pkg.quantityReviewProjection)
   const economics = record(reviewView.dollarCheck), quantityReview = record(pkg.quantityReview)
   // Recompute the existing review's material binding using CURRENT certified
@@ -106,9 +108,16 @@ export async function readSellOneLikeThisV1(input: {
     profit: economics.expectedContribution, margin: economics.expectedMargin, roi: economics.expectedRoi,
     ...(record(reviewView.productIdentifiers).upc ? { productIdentifiers: reviewView.productIdentifiers } : {}),
   }
-  const consistency = listingPipelineConsistencyV1(result, { ...authority, quantityReview, currentQuantityMaterial })
-  const publicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : publication.data, !publication.error)
+  const consistency = listingPipelineConsistencyV1(result, { ...authority, quantityReview, currentQuantityMaterial,
+    exposurePolicy: prep.exposurePolicy, productTruthDigest: String(own.productTruthDigest ?? "") })
+  const revision = currentPackagePreviewRevisionV1(prep.current, consistency, publication.data, prep.activation)
+  const basePublicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : revision.publication, !publication.error)
+  const revisionNeedsPreparation = revision.valid && revision.publication.phase === "draft"
+  const publicationGate = { ...basePublicationGate, blockingEvidence: [...basePublicationGate.blockingEvidence,
+    ...(revisionNeedsPreparation ? ["CURRENT_PREVIEW_EBAY_PREPARATION_PENDING"] : [])] }
   return { ...(result as ReturnType<typeof prepareSellOneLikeThisV1>), consistency, publicationGate,
+    previewRevision: { valid: revision.valid, revision: revision.revision,
+      ebayPrevalidated: revision.valid && !revisionNeedsPreparation && basePublicationGate.existingLedgerState === "OFFER_READY" },
     publicationEvidenceStatus: publication.error ? "WAITING_FOR_DATA" : "READ" }
 
 }

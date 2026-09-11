@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { keywordRecord as record } from "./keyword-intelligence-handoff-v1"
+import { packageExposurePolicyV1 } from "./publication-package-preparation-v1"
 
 // Availability describes the supplier. The existing package review separately
 // authorizes listing exposure; it never proves supplier quantity.
@@ -7,6 +8,7 @@ export function publicationInventoryAuthorityV1(input: {
   availability: unknown; numericStock: unknown; exactBinding: boolean; now: Date;
   packageId: string; sku: string; productId: string; variantId: string;
   quantityReview?: unknown; currentQuantityMaterial?: unknown;
+  exposurePolicy?: unknown; accountKey?: string; productTruthDigest?: string;
 }) {
   const f = record(input.availability), stock = record(input.numericStock)
   const evidence = (v: Record<string, unknown>) => ["PROVEN", "STALE"].includes(String(v.EVIDENCE_STATUS)) &&
@@ -27,8 +29,10 @@ export function publicationInventoryAuthorityV1(input: {
   const review = record(input.quantityReview), material = record(input.currentQuantityMaterial)
   const lineage = record(material.exactProductLineage), reviewedLineage = record(review.exactProductLineage)
   const materialDigest = `sha256:${createHash("sha256").update(JSON.stringify(material)).digest("hex")}`
-  const quantity = review.authorizedQuantity
-  const policyValid = review.contractVersion === "QUICK_PICK_REMOTE_OWNER_REVIEW_V1" &&
+  const exposure = packageExposurePolicyV1(input.exposurePolicy, { ...input,
+    accountKey: input.accountKey ?? "", productTruthDigest: input.productTruthDigest ?? "" })
+  const quantity = exposure.valid ? exposure.quantity : review.authorizedQuantity
+  const oldPolicyValid = review.contractVersion === "QUICK_PICK_REMOTE_OWNER_REVIEW_V1" &&
     review.status === "CONFIRMED" && Boolean(review.reviewedBy) &&
     Date.parse(String(review.reviewedAt)) <= input.now.getTime() &&
     review.materialPackageDigestVersion === "QUICK_PICK_MATERIAL_PACKAGE_DIGEST_V1" &&
@@ -42,6 +46,7 @@ export function publicationInventoryAuthorityV1(input: {
     /^sha256:[a-f0-9]{64}$/.test(String(lineage.productTruthDigest)) &&
     lineage.productTruthDigest === reviewedLineage.productTruthDigest &&
     typeof quantity === "number" && Number.isInteger(quantity) && quantity > 0 && material.quantity === quantity
+  const policyValid = exposure.valid || oldPolicyValid
   const contradictory = supplierQuantity !== null && (availability === "IN_STOCK" && supplierQuantity === 0 ||
     availability === "OUT_OF_STOCK" && supplierQuantity > 0)
   const ready = input.exactBinding && availability === "IN_STOCK" && freshness === "FRESH" &&
@@ -53,8 +58,8 @@ export function publicationInventoryAuthorityV1(input: {
   return { contractVersion: "LUNA_AVAILABILITY_WITH_SEPARATE_PACKAGE_EXPOSURE_V1", availability, freshness,
     supplierNumericQuantityRequired: false, supplierQuantity, supplierAvailabilityAuthorityValid: valid && availability !== "UNKNOWN",
     listingQuantity: policyValid ? quantity as number : null, inventoryReady: ready, reason,
-    quantityPolicy: { source: "QUICK_PICK_REMOTE_OWNER_REVIEW_V1", valid: policyValid,
-      reference: policyValid ? materialDigest : null, supplierQuantityInferred: false },
+    quantityPolicy: { source: exposure.valid ? exposure.version : "QUICK_PICK_REMOTE_OWNER_REVIEW_V1", valid: policyValid,
+      scope: exposure.scope, reference: exposure.valid ? exposure.reference : policyValid ? materialDigest : null, supplierQuantityInferred: false },
     observedAt: Number.isFinite(observedAt) ? new Date(observedAt).toISOString() : null,
     freshUntil: Number.isFinite(expires) ? new Date(expires).toISOString() : null,
     reference: typeof f.EVIDENCE_ID === "string" ? f.EVIDENCE_ID : null }
