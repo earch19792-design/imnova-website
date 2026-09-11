@@ -1244,7 +1244,7 @@ export async function readMayelVisualWorkstationV1(input: {
   const taskIds = typedTaskRows.map((task) => String(task.id))
     .filter(Boolean)
   const assetColumns =
-    "id,mayel_visual_task_id,status,mayel_output_role,source_sha256,output_sha256,source_width,source_height,output_width,output_height,output_bytes,qa_result,mayel_approval_status,owner_approval_status,owner_sync_approval,source_image_references,source_image_set_digest,product_truth_digest,output_storage_path,public_url,created_at,approved_at"
+    "id,account_key,mayel_visual_task_id,status,mayel_output_role,source_sha256,output_sha256,source_width,source_height,output_width,output_height,output_bytes,qa_result,mayel_approval_status,owner_approval_status,owner_sync_approval,source_image_references,source_image_set_digest,product_truth_digest,output_storage_path,public_url,created_at,approved_at"
   const assetRead = taskIds.length
     ? await input.supabase.from("ebay_listing_image_assets")
       .select(assetColumns).eq("account_key", input.accountKey).in("mayel_visual_task_id", taskIds)
@@ -1253,12 +1253,14 @@ export async function readMayelVisualWorkstationV1(input: {
     : { data: [], error: null }
   if (assetRead.error) throw new Error("MAYEL_VISUAL_OUTPUT_READ_FAILED")
   const outboxRead = taskIds.length ? await input.supabase.from("seller_os_ipad_outbox_v1")
-    .select("id,item_id,intent,binding,state,official_readback,received_at,execution_receipt").eq("account_key", input.accountKey)
+    .select("id,account_key,item_id,intent,binding,state,official_readback,received_at,execution_receipt").eq("account_key", input.accountKey)
     .in("item_id", typedTaskRows.map(t => String(t.ebay_item_id))).in("kind", ["IMAGE_DRAFT", "IMAGE_UPLOAD", "IMAGE_SYNC"])
     .neq("state", "SUPERSEDED").limit(500) : { data: [], error: null }
   if (outboxRead.error || (outboxRead.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
   const { readOptimizationGrantV1, readDelegatedVisualAuthorityV1 } = await import("../seller-os/mayel-optimization-delegation-server-v1")
   const optimizationGrant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+  const { optimizationGrantActiveV1 } = await import("../seller-os/mayel-optimization-delegation-v1")
+  const optimizationActive = optimizationGrantActiveV1(optimizationGrant, input.accountKey)
   const contentStates = optimizationGrant && taskIds.length ? await input.supabase.from("seller_os_mayel_content_outbox_v1")
     .select("task_id,item_id,state,official_readback,created_at,actions:audit->actions,manifestDigest:audit->galleryMutation->>visualManifestDigest,afterGallery:execution_receipt->afterGallery,readbackItem:execution_receipt->>itemId,readbackAuthority:execution_receipt->>authority").eq("account_key", input.accountKey).in("task_id", taskIds)
     .order("created_at", { ascending: false }).limit(100) : { data: [], error: null }
@@ -1286,7 +1288,7 @@ export async function readMayelVisualWorkstationV1(input: {
         previewExpiresInSeconds = previewUrl ? 300 : null
       }
       outputs.push({ ...output, discarded: discardedProposalIdsV1(task.selection_signal).includes(String(output.id)), previewUrl, previewExpiresInSeconds,
-        sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? [], { active: Boolean(optimizationGrant), authorized: delegated?.authorized === true && output.status === "approved" && delegated.proposed.some(p => p.assetId === output.id) }) })
+        sync: visualAssetSyncViewV1(output, task, outboxRead.data ?? [], { active: optimizationActive, reason: delegated?.reason, authorized: delegated?.authorized === true && output.status === "approved" && delegated.proposed.some(p => p.assetId === output.id) }) })
     }
     const activeOutputs = outputs.filter(o => !o.discarded)
     const { evidence, prompt: promptContract, storedMatchesCanonical } =
@@ -1311,7 +1313,16 @@ export async function readMayelVisualWorkstationV1(input: {
       JSON.stringify([record(task.visual_manifest).currentMainImage, ...(Array.isArray(record(task.visual_manifest).currentSecondaryImages)
         ? record(task.visual_manifest).currentSecondaryImages as unknown[] : [])]) !== JSON.stringify(gallery.images))
     const latestOptimization = contentStates.error ? null : contentStates.data?.find(row => row.task_id === task.id && row.item_id === task.ebay_item_id)
-    tasks.push({ autonomousOptimization: Boolean(optimizationGrant), latestOptimization: latestOptimization ? {
+    const currentContent = !contentStates.error ? contentStates.data?.find(r => r.task_id === task.id && r.item_id === task.ebay_item_id && r.manifestDigest === task.visual_manifest_digest) : null
+    const galleryOnly = Array.isArray(record(task.visual_manifest).proposedOrderedImages) &&
+      (record(task.visual_manifest).proposedOrderedImages as JsonRecord[]).length > 0 &&
+      (record(task.visual_manifest).proposedOrderedImages as JsonRecord[]).every(e => !e.assetId)
+    const pendingDecision = record(record(task.selection_signal).pendingGalleryDecision)
+    const currentVisualAction = pendingDecision.expectedManifestDigest === task.visual_manifest_digest && pendingDecision.contract
+      ? { state: pendingDecision.state === "REQUIRES_ATTENTION" ? "REQUIRES_ATTENTION" : "PENDING_EBAY_SYNC", waitingForEbay: pendingDecision.state !== "REQUIRES_ATTENTION" }
+      : galleryOnly && currentContent ? { state: currentContent.state, generated: true, qaPassed: true, savedToSellerOS: true,
+        approvedForEbaySync: true, serverReceiptPresent: true, officialReadback: currentGallerySynced, readbackCompatible: currentGallerySynced } : undefined
+    tasks.push({ currentVisualAction, autonomousOptimization: optimizationActive, latestOptimization: latestOptimization ? {
       state: latestOptimization.state, officialReadback: latestOptimization.official_readback === true,
       label: Array.isArray(latestOptimization.actions) && latestOptimization.actions.some(a => a === "IMAGE_REORDER" || a === "IMAGE_REMOVAL") ? "Galería de imágenes" : "Texto del listing" } : null,
       currentGallerySynced, visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),

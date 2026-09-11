@@ -1,4 +1,5 @@
 "use client"
+import { visualListingStatusV1, localReceiptVisualEvidenceV1 } from "@/lib/seller-os/mayel-visual-asset-status-v1"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { MayelShippingSnapshotV1 } from "@/lib/seller-os/mayel-shipping-visibility-v1"
 import { supabase } from "@/lib/supabase"
@@ -130,13 +131,14 @@ export function useMayelLocalFirstV1(workspace: Omit<MayelLocalWorkspace, "actor
  return { ready, actorId, rows, error, serverError, saveDraft, localImagesPending, shipping }
 }
 export function MayelLocalSaveStatus({ local }: { local: ReturnType<typeof useMayelLocalFirstV1> }) {
- const latest = [...new Map([...local.rows].sort((a,b) => a.intent.createdAt.localeCompare(b.intent.createdAt)).map(r => [`${r.intent.itemId}:${r.intent.kind}`, r])).values()]
- const state = local.error || latest.some(r => r.receipt?.state === "REQUIERE_ATENCION" || (r.lastError && !/FAILED|UNREACHABLE|TIMEOUT|SESSION/.test(r.lastError))) ? "REQUIERE_ATENCION" :
-   local.localImagesPending || latest.some(r => !r.receipt || r.receipt.state === "PENDIENTE_DE_SINCRONIZAR") ? "PENDIENTE_DE_SINCRONIZAR" :
-   latest.length && latest.every(r => r.receipt?.state === "SINCRONIZADO") ? "SINCRONIZADO" : "GUARDADO"
+ const latest = local.rows.filter(r => r.receipt?.internalState !== "SUPERSEDED")
+ const evidence = latest.map(row => localReceiptVisualEvidenceV1(row))
+ if (local.error || latest.some(r => r.receipt?.state === "REQUIERE_ATENCION" || (r.lastError && !/FAILED|UNREACHABLE|TIMEOUT|SESSION/.test(r.lastError)))) evidence.push({ state: "REQUIRES_ATTENTION" })
+ if (local.localImagesPending) evidence.push({ state: "DRAFT" })
+ const status = visualListingStatusV1(evidence)
  if (!local.ready) return null
  return <aside aria-label="Guardado automático de Mayel" className="rounded-xl border bg-white p-3">
-   <p role="status">{state}</p>
+   <p role="status" className={`rounded-xl border p-3 font-semibold ${status.className}`}>{status.icon} {status.label}</p>
    <details><summary>Ver detalles</summary>
      <p className="text-sm">{local.error ? "No se pudo guardar en este navegador. Mantén la página abierta mientras se recupera el almacenamiento." :
        !local.localImagesPending && latest.length && latest.every(r => r.receipt) ? "Seller OS recibió tus borradores. Puedes cerrar el iPad; las operaciones autorizadas continúan en el servidor cuando eBay y las comprobaciones lo permitan." :

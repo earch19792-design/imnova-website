@@ -138,7 +138,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
       </div>
       <section className="border-t pt-4" aria-label="Cambios de listings activos">
         <h3 className="font-semibold">Pendientes de sincronizar con eBay</h3>
-        <p>Los cambios de imágenes de listings activos se revisan en Mejorar listings. Se sincronizan con su aprobación individual; conservan el listing existente.</p>
+        <p>Los cambios de imágenes de listings activos se revisan en Mejorar listings. Mayel guarda las mejoras y sincroniza las que cumplen la delegación y la revisión de calidad; conservan el listing existente.</p>
         <button className={button} onClick={() => setMenu(0)}>Revisar cambios de listings activos</button>
       </section>
       {owner && <><button className={button} onClick={() => setReferenceOpen(open => !open)}>{referenceOpen ? "Cerrar referencia" : "Preparar con una referencia eBay"}</button>

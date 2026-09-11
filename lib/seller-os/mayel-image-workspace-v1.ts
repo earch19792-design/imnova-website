@@ -1,3 +1,5 @@
+import { readOptimizationGrantV1, readDelegatedVisualAuthorityV1 } from "./mayel-optimization-delegation-server-v1"
+import { optimizationGrantActiveV1 } from "./mayel-optimization-delegation-v1"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readMayelGeneratedImageV1, validateMayelGeneratedImageV1 } from "./mayel-generated-image-binding-v1"
 import { startMayelSavedImageDraftV1, completeMayelSavedImageDraftV1, savedImageDraftReceiptV1 } from "./mayel-saved-image-draft-v1"
@@ -5,7 +7,7 @@ import { VISUAL_OWNER_SYNC_CONFIRMATION, visualAssetGenerationV1, visualAssetSyn
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 type Scope = { supabase: SupabaseClient; accountKey: string; actorUserId: string; owner?: boolean }
-const TASK_COLUMNS = "id,ebay_item_id,status,assigned_operator_user_id,current_image_set,visual_manifest,visual_manifest_digest,source_image_set_digest,product_truth_digest,selection_signal,updated_at"
+const TASK_COLUMNS = "id,marketplace_account_key,evidence_pack,source_image_references,ebay_item_id,status,assigned_operator_user_id,current_image_set,visual_manifest,visual_manifest_digest,source_image_set_digest,product_truth_digest,selection_signal,updated_at"
 
 function itemScope(ids: string[]) {
   if (!ids.length || ids.length > 20 || new Set(ids).size !== ids.length || ids.some(id => typeof id !== "string" || !/^\d{9,20}$/.test(id)))
@@ -32,7 +34,7 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
   const taskIds = (tasks.data ?? []).map(t => String(t.id))
   const [assets, executions] = taskIds.length ? await Promise.all([
     input.supabase.from("ebay_listing_image_assets")
-      .select("id,mayel_visual_task_id,status,source_type,source_sha256,output_sha256,mayel_output_role,mayel_approval_status,owner_sync_approval,source_image_references,source_image_set_digest,product_truth_digest,qa_result,output_storage_path,public_url,uploaded_by,provenance")
+      .select("id,account_key,mayel_visual_task_id,status,source_type,source_sha256,output_sha256,mayel_output_role,mayel_approval_status,owner_sync_approval,source_image_references,source_image_set_digest,product_truth_digest,qa_result,output_storage_path,public_url,uploaded_by,provenance")
       .eq("account_key", input.accountKey).in("mayel_visual_task_id", taskIds)
       .in("status", ["pending_review", "approved"]).limit(121),
     input.supabase.from("ebay_mayel_visual_phase_b_executions_v1")
@@ -43,10 +45,15 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
   if (assets.error || executions.error || (assets.data?.length ?? 0) > 120 || (executions.data?.length ?? 0) > 100)
     throw Error("MAYEL_WORKSPACE_RECEIPT_READ_INCOMPLETE")
   const proposals = []
-  const outbox = await input.supabase.from("seller_os_ipad_outbox_v1").select("id,item_id,intent,binding,state,official_readback,received_at")
+  const outbox = await input.supabase.from("seller_os_ipad_outbox_v1").select("id,account_key,item_id,intent,binding,state,official_readback,received_at,execution_receipt")
     .eq("account_key", input.accountKey).in("item_id", input.itemIds).in("kind", ["IMAGE_DRAFT", "IMAGE_SYNC", "IMAGE_UPLOAD"])
     .neq("state", "SUPERSEDED").limit(500)
   if (outbox.error || (outbox.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
+  const grant = await readOptimizationGrantV1(input.supabase, input.accountKey)
+  const active = optimizationGrantActiveV1(grant, input.accountKey)
+  const authorityByTask = new Map<string, Awaited<ReturnType<typeof readDelegatedVisualAuthorityV1>>>()
+  if (active) for (const task of tasks.data ?? []) authorityByTask.set(task.id,
+    await readDelegatedVisualAuthorityV1({ ...input, task, assets: (assets.data ?? []).filter(a => a.mayel_visual_task_id === task.id), grant }))
   for (const row of experiments.data ?? []) {
     const visual = record(record(row.baseline_evidence_ref).sellerOsVisualVariant)
     for (const candidate of (Array.isArray(visual.variants) ? visual.variants : []).slice(0, 2)) {
@@ -67,12 +74,14 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
       const included = ordered.some(entry => entry.assetId === origin.assetId)
       const exactExecutions = (executions.data ?? []).filter(e => e.visual_task_id === task?.id && e.visual_manifest_digest === task?.visual_manifest_digest)
       const applied = included && exactExecutions.some(e => e.phase === "APPLIED_AND_OFFICIALLY_VERIFIED")
-      const sync = asset && task ? visualAssetSyncViewV1(asset, task, outbox.data ?? []) : null
+      const delegated = task ? authorityByTask.get(task.id) : null
+      const sync = asset && task ? visualAssetSyncViewV1(asset, task, outbox.data ?? [], { active, reason: delegated?.reason,
+        authorized: delegated?.authorized === true && delegated.proposed.some(p => p.assetId === asset.id) }) : null
       const status = sync?.state === "REQUIRES_ATTENTION" ? "REQUIRES_ATTENTION" : applied && sync?.approvedForEbaySync ? "APPLIED" :
         sync?.approvedForEbaySync && included ? "QUEUED" : asset?.status === "approved" && !included ? "SUPERSEDED" : "DRAFT"
       const path = asset?.output_storage_path ?? origin.outputStoragePath
       const signed = await input.supabase.storage.from("ebay-listing-image-staging").createSignedUrl(String(path), 300)
-      proposals.push({ itemId: origin.itemId, assetId: origin.assetId, experimentId: origin.experimentId,
+      proposals.push({ autonomousOptimization: active, itemId: origin.itemId, assetId: origin.assetId, experimentId: origin.experimentId,
         taskId: task?.id ?? null, status, sync, generatedAt: origin.generatedAt,
         editable: !task || task.assigned_operator_user_id === input.actorUserId,
         canAssignAndPrepare: input.owner === true && task !== undefined && task.assigned_operator_user_id !== input.actorUserId &&
@@ -89,7 +98,7 @@ export async function readMayelImageWorkspaceV1(input: Scope & { itemIds: string
           draftManifest: draftComplete ? draft.manifest : null } })
     }
   }
-  return { proposals, marketplaceWrites: 0, tradingCalls: 0, storedEvidenceOnly: true }
+  return { proposals, autonomousOptimization: active, marketplaceWrites: 0, tradingCalls: 0, storedEvidenceOnly: true }
 }
 
 export async function prepareMayelImageReviewV1(input: Scope & { itemId: string; taskId: string | null; experimentId: string; assetId: string }) {
