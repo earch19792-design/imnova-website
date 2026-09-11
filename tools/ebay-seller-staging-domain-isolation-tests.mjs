@@ -263,11 +263,20 @@ test("route and bundle surface regress downward", () => {
   // Runtime assurance adds its authenticated POST-only evaluator plus one
   // authenticated POST-only ingestion route for the exact local
   // SELLER_OS_RUNTIME_HEALTH_V1 receipt.
+  // Production StockGuard adds exactly one separately authenticated GET-only
+  // durable reader. The general eBay Pro production isolation stays intact.
+  const productionStockReadApi = exists("app/api/runtime/stockguard-read/route.ts")
+  if (productionStockReadApi) {
+    const route = read("app/api/runtime/stockguard-read/route.ts")
+    assert.match(route, /authorizeProductionStockReadV1/)
+    assert.match(route, /productionStockReadTransportV1/)
+    assert.match(route, /export const POST = denyWrite/)
+  }
   assert.ok(
     countNamed("app/api", "route.ts") <= 101 + Number(exists("app/api/admin/ebay/assistant/revenue-engine/route.ts")) + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
-      Number(lunaQuickPickApi) + Number(productJourneyApi),
+      Number(lunaQuickPickApi) + Number(productJourneyApi) + Number(productionStockReadApi),
     "API route count regressed",
   )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
