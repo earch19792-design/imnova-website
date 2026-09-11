@@ -44,6 +44,8 @@ import { getSellerOsStockGuardRuntimeBoundary } from
   "@/lib/ebay/environment-boundaries"
 import { runCurrentLiveAuthorityRecoveryV1 } from
   "@/lib/ebay/ebay-current-live-authority-recovery-v1"
+import { authorizeProductionPopulationV1, runProductionCurrentLivePopulationV1 } from
+  "@/lib/ebay/ebay-production-current-live-population-v1"
 
 const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
   "366608128809",
@@ -104,6 +106,16 @@ function configuration() {
 }
 
 export async function POST(req: Request) {
+  if (getSellerOsStockGuardRuntimeBoundary().boundaryClassification === "PRODUCTION_CORE") {
+    if (!await authorizeProductionPopulationV1(req)) return NextResponse.json({
+      error: "PRODUCTION_POPULATION_SERVICE_IDENTITY_REQUIRED", marketplaceWrites: 0 }, { status: 403 })
+    try {
+      return NextResponse.json(await runProductionCurrentLivePopulationV1({ supabase: getSupabaseAdminClient() }))
+    } catch {
+      return NextResponse.json({ error: "PRODUCTION_CURRENT_LIVE_PRODUCER_EXECUTION_UNCONFIRMED",
+        marketplaceWrites: 0 }, { status: 503 })
+    }
+  }
   if (!commercialPreviewCronAuthorized(req)) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }

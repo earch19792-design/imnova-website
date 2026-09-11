@@ -1,0 +1,185 @@
+{
+  "CONTRACT": "PRODUCTION_STOCK_AUTHORITY_POPULATION_CLOSEOUT_V1",
+  "BASE_SHA": "ca09912ad33bb15e3b82cf0c58e48e6df85d29f6",
+  "PROJECT": "qsefoxmmypmdtwrrtnry",
+  "ACCOUNT_ALIAS": "imnova-ebay-us-primary",
+  "REQUIRED_PRODUCER_CHAIN": [
+    {
+      "transition": "CURRENT LIVE lease",
+      "runtime": "runCurrentLiveAuthorityRecoveryV1",
+      "objects": [
+        "public.claim_ebay_active_listing_sync_run"
+      ],
+      "source": "20260713079000_add_ebay_active_listing_sync_lease.sql"
+    },
+    {
+      "transition": "official read -> atomic registry + CURRENT scope",
+      "runtime": "getEbayCommercialMonitorLiveReadonly -> runCurrentLiveAuthorityRecoveryV1",
+      "objects": [
+        "public.record_ebay_current_live_authority_success_v1",
+        "public.record_ebay_current_live_authority_failure_v1",
+        "public.finish_ebay_active_listing_sync_run"
+      ],
+      "tables": [
+        "ebay_active_listings",
+        "ebay_active_listing_sync_state"
+      ],
+      "source": [
+        "20260906224852_seller_os_current_live_authority_recovery_v1.sql",
+        "20260908232657_ebay_current_live_authority_schema_compat_fix_v1.sql"
+      ]
+    },
+    {
+      "transition": "exact immutable lineage -> linkage",
+      "runtime": "reconcileRelistSupplierHandoffV1",
+      "objects": [
+        "public.resolve_relist_supplier_handoff_v1",
+        "public.is_seller_os_service_role_request_v1",
+        "public.are_seller_os_luna_linkage_components_approvable_v1"
+      ],
+      "tables": [
+        "seller_os_luna_linkage_review_candidates",
+        "seller_os_luna_linkage_decisions"
+      ],
+      "source": [
+        "20260822150720_create_seller_os_luna_linkage_approval_control_plane.sql",
+        "20260911155055_deterministic_relist_supplier_handoff_v1.sql"
+      ]
+    },
+    {
+      "transition": "CURRENT + certified linkage -> bounded stock job",
+      "runtime": "reconcileSellerOsStockIdentityV1 -> createSellerOsLunaStockObservationRepositoryV1",
+      "objects": [
+        "public.ensure_seller_os_luna_stock_check_job_v1",
+        "public.claim_seller_os_luna_stock_check_job_v1",
+        "public.verify_seller_os_luna_stock_check_lease_v1"
+      ],
+      "tables": [
+        "seller_os_luna_stock_check_jobs"
+      ],
+      "source": "20260821193830_create_seller_os_luna_stock_observation_storage.sql"
+    },
+    {
+      "transition": "exact public Luna/Portex availability -> immutable receipt",
+      "runtime": "createSellerOsLunaPublicExactStockAuthorityV1 -> createSellerOsLunaStockObservationRepositoryV1",
+      "objects": [
+        "public.ensure_seller_os_luna_stock_observation_v1",
+        "public.complete_seller_os_luna_stock_check_job_v1",
+        "public.prevent_seller_os_luna_stock_observation_mutation_v1",
+        "seller_os_luna_stock_observations_immutable"
+      ],
+      "tables": [
+        "seller_os_luna_stock_observations"
+      ],
+      "source": "20260821193830_create_seller_os_luna_stock_observation_storage.sql"
+    },
+    {
+      "transition": "all preceding CURRENT authorities -> read-only StockGuard",
+      "runtime": "readProductionStockGuardV1",
+      "route": "GET /api/runtime/stockguard-read",
+      "objects": []
+    }
+  ],
+  "MISSING_PRODUCER_OBJECTS_BEFORE": [
+    "public.claim_ebay_active_listing_sync_run",
+    "public.finish_ebay_active_listing_sync_run",
+    "public.record_ebay_current_live_authority_success_v1",
+    "public.record_ebay_current_live_authority_failure_v1",
+    "public.ensure_seller_os_luna_stock_check_job_v1",
+    "public.ensure_seller_os_luna_stock_observation_v1",
+    "public.claim_seller_os_luna_stock_check_job_v1",
+    "public.verify_seller_os_luna_stock_check_lease_v1",
+    "public.complete_seller_os_luna_stock_check_job_v1",
+    "public.resolve_relist_supplier_handoff_v1"
+  ],
+  "SOURCE_MIGRATION_IDS": [
+    "20260713079000_add_ebay_active_listing_sync_lease.sql",
+    "20260906224852_seller_os_current_live_authority_recovery_v1.sql",
+    "20260908232657_ebay_current_live_authority_schema_compat_fix_v1.sql",
+    "20260821193830_create_seller_os_luna_stock_observation_storage.sql",
+    "20260822150720_create_seller_os_luna_linkage_approval_control_plane.sql",
+    "20260911155055_deterministic_relist_supplier_handoff_v1.sql",
+    "20260712235500_create_ebay_first_luna_opportunity_queue.sql",
+    "20260713012000_optimize_ebay_luna_latest_variants.sql",
+    "20260713022000_add_luna_seller_scan_priority.sql",
+    "20260713040000_create_ebay_seller_command_center_v2.sql",
+    "20260713071000_create_ebay_manual_listing_registration.sql",
+    "20260718030000_create_same_day_pilot_orchestrator.sql"
+  ],
+  "TRANSITIVE_REQUIRED_DEPENDENCIES": [
+    "auth.role()",
+    "public.ebay_luna_opportunity_queue",
+    "public.ebay_listing_packages",
+    "public.market_radar_latest_variants",
+    "public.market_radar_latest_products",
+    "public.seller_os_luna_linkage_review_candidates",
+    "public.ebay_same_day_pilot_events",
+    "public.ebay_same_day_pilot_candidates",
+    "public.ebay_manual_listing_links",
+    "public.is_seller_os_service_role_request_v1()",
+    "public.are_seller_os_luna_linkage_components_approvable_v1(jsonb)",
+    "extensions.digest(bytea,text)",
+    "CURRENT publication completion and certified package/source identity lineage"
+  ],
+  "TARGETED_PRODUCER_INSTALL_SET": [
+    "20260911175426_production_current_live_producer_reconciliation_v1.sql"
+  ],
+  "INSTALLED_FUNCTIONS": [
+    "public.claim_ebay_active_listing_sync_run",
+    "public.finish_ebay_active_listing_sync_run",
+    "public.record_ebay_current_live_authority_success_v1",
+    "public.record_ebay_current_live_authority_failure_v1",
+    "public.get_production_stock_producer_readiness_v1",
+    "public.ensure_seller_os_luna_stock_check_job_v1",
+    "public.ensure_seller_os_luna_stock_observation_v1",
+    "public.claim_seller_os_luna_stock_check_job_v1",
+    "public.verify_seller_os_luna_stock_check_lease_v1",
+    "public.complete_seller_os_luna_stock_check_job_v1",
+    "public.prevent_seller_os_luna_stock_observation_mutation_v1"
+  ],
+  "MIGRATION_SHA256": "f93ad445debc498040991de8cf31b73ac110ea1b9a3c607e55eceb5f359a983e",
+  "TARGETED_INSTALL_SUBSET_SAFE": true,
+  "COMPLETE_PRODUCER_CHAIN_INSTALLABLE_WITH_CURRENT_SOURCE_AUTHORITIES": false,
+  "DEFERRED_FIRST_RPC": "public.resolve_relist_supplier_handoff_v1(text,text,boolean)",
+  "DEFERRED_REASON": "Historical resolver declares missing ebay_luna_opportunity_queue and ebay_listing_packages %rowtype; exact certified CURRENT package, prior listing/manual lineage and supplier catalog evidence are also absent. The historical migration additionally patches publication completion; replaying it is outside this targeted install. No empty substitute source or PREPROD data import is authorized.",
+  "MISSING_LINKAGE_PRODUCER_COLUMNS": [
+    "seller_os_luna_linkage_decisions.actor_user_id",
+    "seller_os_luna_linkage_decisions.luna_product_id",
+    "seller_os_luna_linkage_decisions.luna_variant_id",
+    "seller_os_luna_linkage_decisions.luna_sku",
+    "seller_os_luna_linkage_decisions.evidence_maximum_age_seconds",
+    "seller_os_luna_linkage_decisions.review_candidate_id",
+    "seller_os_luna_linkage_decisions.review_set_id",
+    "seller_os_luna_linkage_decisions.current_cohort_id",
+    "seller_os_luna_linkage_decisions.account_binding",
+    "seller_os_luna_linkage_decisions.listing_title",
+    "seller_os_luna_linkage_decisions.classification",
+    "seller_os_luna_linkage_decisions.linkage_mode",
+    "seller_os_luna_linkage_decisions.supplier_quantity_required",
+    "seller_os_luna_linkage_decisions.evidence_observed_at",
+    "seller_os_luna_linkage_decisions.review_observed_at",
+    "seller_os_luna_linkage_decisions.identity_evidence_provenance",
+    "seller_os_luna_linkage_decisions.evidence_freshness",
+    "seller_os_luna_linkage_decisions.provenance",
+    "seller_os_luna_linkage_decisions.decision_reference",
+    "seller_os_luna_linkage_decisions.contract_version"
+  ],
+  "TRIGGERS_REQUIRED": [
+    "seller_os_luna_stock_observations_immutable"
+  ],
+  "NEW_SCHEDULERS_REQUIRED": false,
+  "NEW_WORKERS_REQUIRED": false,
+  "NORMAL_ENTRY": "POST /api/cron/ebay-active-listing-luna-monitor, production workload identity, fixed account, empty body; returns before all legacy marketplace write branches",
+  "BOOTSTRAP_MODE": "BOUNDED_CURRENT_ONLY",
+  "BOOTSTRAP_IS_SAME_NORMAL_ENTRY": true,
+  "NORMAL_TRIGGER_SCHEDULE_CHANGED": false,
+  "EXISTING_401_AUTH_PATH_CHANGED": false,
+  "EXISTING_RLS_GRANTS_CHANGED": false,
+  "DESTRUCTIVE_DDL_COUNT": 0,
+  "PREPROD_DATA_COPIED": false,
+  "HISTORICAL_REPLAY_REQUIRED": false,
+  "EXISTING_ROW_REWRITE_REQUIRED": false,
+  "STOCKGUARD_EVALUATION_ALLOWED_BEFORE_POPULATION": false,
+  "MARKETPLACE_WRITES_ALLOWED": false,
+  "OFFICIAL_SOURCE_CONFIGURATION": "Runtime presence checked through existing getEbayCommercialMonitorLiveConfigurationState; existing orders grant is not assumed to authorize full CURRENT LIVE; no credentials copied/created."
+}

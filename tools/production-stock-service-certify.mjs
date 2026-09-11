@@ -1,13 +1,29 @@
 // Explicit one-shot production-build certification, never a scheduler/worker.
 // Uses only the build's short-lived platform workload assertion. No credential
 // is read from a file, printed, persisted, or transferred from PREPROD.
-if(process.env.SELLER_OS_STOCK_PRODUCTION_CERTIFICATION!=='1')process.exit(0)
+const population=process.env.SELLER_OS_STOCK_PRODUCTION_POPULATION==='1'
+if(!population&&process.env.SELLER_OS_STOCK_PRODUCTION_CERTIFICATION!=='1')process.exit(0)
 const project='prj_a6N1XDfeaKAiR5QmmNFYF16Nmqe5'
 if(process.env.VERCEL_ENV!=='production'||process.env.VERCEL_PROJECT_ID!==project){
  throw Error('PRODUCTION_STOCK_CERTIFICATION_BUILD_IDENTITY_REQUIRED')
 }
 const assertion=process.env.VERCEL_OIDC_TOKEN
 if(!assertion)throw Error('PRODUCTION_WORKLOAD_ASSERTION_MISSING')
+if(population){
+ const response=await fetch('https://imnova-website-z1qh.vercel.app/api/cron/ebay-active-listing-luna-monitor',{
+  method:'POST',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(55000),
+  headers:{'x-seller-os-caller':'SELLER_OS_STOCKGUARD_MONITOR_V1','x-seller-os-service-assertion':assertion}})
+ const body=await response.json()
+ const code=v=>typeof v==='string'&&/^[A-Za-z0-9_:./-]{1,180}$/.test(v)?v:null
+ console.log('PRODUCTION_STOCK_POPULATION_READBACK='+JSON.stringify({observedAt:new Date().toISOString(),
+  status:response.status,result:code(body.status??body.error),missingDependency:code(body.missingDependency),
+  missingSourceConfiguration:(body.missingSourceConfiguration??[]).map(code),
+  currentLiveAuthorityPopulated:body.currentLiveAuthorityPopulated===true,
+  bootstrapMode:code(body.bootstrapMode),marketplaceWrites:body.safety?.marketplaceWrites??0,
+  stockGuardEvaluations:body.safety?.stockGuardEvaluations??0,secretValuesIncluded:false}))
+ // No StockGuard evaluation/read while any preceding authority is absent.
+ process.exit(response.ok?0:1)
+}
 const results=[]
 for(const item of ['366643126310','366662788140',null]){
  const url=new URL('https://imnova-website-z1qh.vercel.app/api/runtime/stockguard-read')
