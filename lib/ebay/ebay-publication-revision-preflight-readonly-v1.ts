@@ -19,9 +19,13 @@ export async function readPublicationRevisionPreflightV1(packageId:string) {
   .eq('listing_package_id',packageId).eq('marketplace_account_key',accountKey).limit(2).abortSignal(AbortSignal.timeout(8000)).retry(false)
  if(pubRead.error || pubRead.data?.length!==1)throw Error('ONE_PUBLICATION_INTENT_REQUIRED')
  const pub=pubRead.data[0], revision=record(record(record(pub.sanitized_result).publicationPreparationV1).current)
- const referenceId=record(record(revision.certifiedPackage).binding).REFERENCE_ITEM_ID ?? record(revision.certifiedPackage).referenceItemId
- if(!/^\d{9,19}$/.test(String(referenceId)))throw Error('CERTIFIED_REFERENCE_ID_REQUIRED')
- const current=await readSellOneLikeThisV1({supabase:db,accountKey,packageId,referenceItemId:String(referenceId)})
+ const certified=record(revision.certifiedPackage)
+ const referenceId=record(certified.binding).REFERENCE_ITEM_ID ?? certified.referenceItemId
+ const currentOnlyWithoutReference=String(referenceId??'')==='' &&
+  record(certified.referenceImport).currentOnlyAuthorityUsed===true &&
+  record(certified.safety).legacyKeywordFallback===false
+ if(!/^\d{9,19}$/.test(String(referenceId)) && !currentOnlyWithoutReference)throw Error('CERTIFIED_REFERENCE_ID_OR_CURRENT_ONLY_AUTHORITY_REQUIRED')
+ const current=await readSellOneLikeThisV1({supabase:db,accountKey,packageId,referenceItemId:String(referenceId??'')})
  if(!current.previewRevision.valid || current.brandAuthority.value==='Unbranded' && !current.brandAuthority.supported)
   throw Error('CURRENT_PREVIEW_BINDING_OR_PRODUCT_TRUTH_UNPROVEN')
  const p=record(record(current.previewRevision.revision).preview), offer=record(p.offerPayload), policies=record(offer.listingPolicies)
