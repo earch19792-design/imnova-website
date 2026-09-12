@@ -40,6 +40,8 @@ type Row = Record<string, unknown>
 type RuntimeResult = Readonly<{ body: Row; status: number }>
 
 const CONTRACT = "AUTONOMOUS_EBAY_STOCKING_BATCH_V1"
+const RECOVERED_SHIPPING_BLOCKER =
+  "LUNA_SHIPPING_CLAIM_LEASE_EXPIRED_WITHOUT_DURABLE_RESULT"
 
 function rows(value: unknown): Row[] {
   return Array.isArray(value) ? value.map(record) : []
@@ -57,6 +59,82 @@ function numeric(value: unknown): number | null {
 function errorCode(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message.slice(0, 240) : "AUTONOMOUS_STOCKING_BATCH_RUNTIME_FAILED"
+}
+
+async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
+  supabase: SupabaseAdmin
+  accountKey: string
+}>) {
+  const blockedRead = await input.supabase.from(
+    "seller_os_autonomous_stocking_batches_v1").select("*")
+    .eq("account_key", input.accountKey).eq("status", "BLOCKED")
+    .contains("evidence", { firstStructuralBlocker: RECOVERED_SHIPPING_BLOCKER })
+    .order("started_at", { ascending: true }).limit(1).maybeSingle()
+  if (blockedRead.error) {
+    throw new Error("AUTONOMOUS_STOCKING_BATCH_BLOCKED_READ_FAILED")
+  }
+  if (!blockedRead.data) return null
+  const batch = record(blockedRead.data)
+  const blockedAt = text(record(batch.evidence).blockedAt)
+  if (!Number.isFinite(Date.parse(blockedAt))) return null
+  const claimRead = await input.supabase.from(
+    "seller_os_luna_shipping_job_claims")
+    .select("candidate_id,capture_session_id,status,last_recovered_at,expired_recovery_count")
+    .eq("account_key", input.accountKey).eq("status", "COMPLETED")
+    .gt("expired_recovery_count", 0).gte("last_recovered_at", blockedAt)
+    .order("last_recovered_at", { ascending: false }).limit(10)
+  if (claimRead.error) {
+    throw new Error("AUTONOMOUS_STOCKING_BATCH_SHIPPING_RECOVERY_READ_FAILED")
+  }
+  let recovery: Row | null = null
+  let frontierId = ""
+  for (const claim of rows(claimRead.data)) {
+    const candidateId = text(claim.candidate_id)
+    const captureSessionId = text(claim.capture_session_id)
+    if (!candidateId || !captureSessionId) continue
+    const durable = await input.supabase.from(
+      "seller_os_profitability_frontier_snapshots")
+      .select("frontier_id,frontier_payload")
+      .eq("account_key", input.accountKey)
+      .eq("shipping_status", "SHIPPING_DURABLY_PERSISTED")
+      .contains("frontier_payload", { shippingCaptureEvidence: {
+        candidateId, captureSessionId,
+      } }).limit(2)
+    if (durable.error) {
+      throw new Error("AUTONOMOUS_STOCKING_BATCH_SHIPPING_RESULT_READ_FAILED")
+    }
+    const exact = rows(durable.data).filter((entry) => {
+      const evidence = record(record(entry.frontier_payload)
+        .shippingCaptureEvidence)
+      return evidence.candidateId === candidateId
+        && evidence.captureSessionId === captureSessionId
+    })
+    if (exact.length !== 1) continue
+    recovery = claim
+    frontierId = text(exact[0].frontier_id)
+    break
+  }
+  if (!recovery || !frontierId) return null
+  const rearmed = await input.supabase.from(
+    "seller_os_autonomous_stocking_batches_v1").update({
+      status: "ACTIVE",
+      evidence: { ...record(batch.evidence), recoveredStructuralBlocker: {
+        blocker: RECOVERED_SHIPPING_BLOCKER,
+        candidateId: recovery.candidate_id,
+        captureSessionId: recovery.capture_session_id,
+        frontierId, recoveredAt: recovery.last_recovered_at,
+        automaticExpiredShippingClaimRecovery: true,
+      } },
+      updated_at: new Date().toISOString(),
+    }).eq("id", text(batch.id)).eq("account_key", input.accountKey)
+      .eq("status", "BLOCKED")
+      .contains("evidence", {
+        firstStructuralBlocker: RECOVERED_SHIPPING_BLOCKER,
+      }).select("*").maybeSingle()
+  if (rearmed.error) {
+    throw new Error("AUTONOMOUS_STOCKING_BATCH_SHIPPING_RECOVERY_REARM_FAILED")
+  }
+  return rearmed.data ? record(rearmed.data) : null
 }
 
 async function activeCount(input: Readonly<{
@@ -680,8 +758,10 @@ export async function runAutonomousEbayStockingBatchV1(input: Readonly<{
     if (missing) return null
     throw new Error("AUTONOMOUS_STOCKING_BATCH_READ_FAILED")
   }
-  if (!read.data) return null
-  const batch = record(read.data)
+  const activeBatch = read.data ??
+    await resumeBatchAfterRecoveredShippingClaimV1(input)
+  if (!activeBatch) return null
+  const batch = record(activeBatch)
   try {
     return await executeBatch({ ...input, batch })
   } catch (error) {
