@@ -304,6 +304,39 @@ export async function POST(req: Request) {
       return listingAiResponse({ success: true, capability: result.data,
         safety: { jobScans: 0, shippingClaims: 0, lunaRequests: 0, marketplaceWrites: 0 } })
     }
+    if (body.action === "record_shipping_execution_observation") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const observation = listingAiRecord(body.observation)
+      const state = observation.state === "ACTIVE" ? "ACTIVE" :
+        observation.state === "IDLE" ? "IDLE" : "UNKNOWN"
+      const result = await auth.supabase.rpc(
+        "record_seller_os_luna_shipping_execution_observation_v1", {
+          p_account_key: auth.accountKey,
+          p_worker_id: runtimeInstanceId(body.runtimeInstanceId, auth.actorId),
+          p_leader_session_id: claimAuthoritySessionId(body.leaderSessionId),
+          p_execution_state: state,
+          p_candidate_id: state === "ACTIVE" &&
+            typeof observation.candidateId === "string"
+            ? observation.candidateId : null,
+          p_snapshot_digest: state === "ACTIVE" &&
+            typeof observation.snapshotDigest === "string"
+            ? observation.snapshotDigest : null,
+          p_capture_session_id: state === "ACTIVE" &&
+            typeof observation.captureSessionId === "string"
+            ? observation.captureSessionId : null,
+          p_observed_at: typeof observation.observedAt === "string"
+            ? observation.observedAt : null,
+        })
+      if (result.error || listingAiRecord(result.data).recorded !== true) {
+        throw new Error(String(listingAiRecord(result.data).reasonCode ??
+          "SHIPPING_EXECUTION_OBSERVATION_PERSIST_FAILED"))
+      }
+      return listingAiResponse({ success: true, result: result.data,
+        safety: { durableWriteScope:
+          "SELLER_OS_LUNA_SHIPPING_EXECUTION_OBSERVATION_V1",
+          businessOutputWrites: 0, lunaPurchases: 0,
+          marketplaceWrites: 0 } })
+    }
     if (body.action === "resolve_jobs") {
       enforceListingAiRouteRateLimit(auth.actorId, "READ")
       const requested = candidateIds(body.candidateIds)
@@ -346,6 +379,7 @@ export async function POST(req: Request) {
           supabase: auth.supabase,
           accountKey: auth.accountKey,
           runtimeInstanceId: workerInstance,
+          leaderSessionId: claimAuthoritySessionId(body.leaderSessionId),
           sessionSecret: sessionSecret(), maximumJobs: 1,
         })
         console.info("SHIPPING_IDLE_CLAIM_RECEIPT_V1", JSON.stringify({

@@ -1172,6 +1172,7 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
   runtimeInstanceId: string
+  leaderSessionId: string
   sessionSecret: string
   now?: number
   maximumJobs?: 1
@@ -1211,18 +1212,19 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   let claimFailureCount = 0
   for (const job of eligible.slice(0, input.maximumJobs ?? eligible.length)) {
     const claim = await input.supabase.rpc(
-      "claim_seller_os_luna_shipping_job_v1", {
+      "claim_seller_os_luna_shipping_job_v2", {
         p_account_key: input.accountKey,
         p_candidate_id: job.identity.candidateId,
         p_snapshot_digest: job.snapshotDigest,
         p_runtime_instance_id: input.runtimeInstanceId,
         p_capture_session_id: job.captureSessionId,
+        p_leader_session_id: input.leaderSessionId,
       })
     if (claim.error) {
       claimFailureCount += 1
       continue
     }
-    const result = records(claim.data)[0]
+    const result = record(claim.data)
     if (result?.claimed === true) jobs.push(job)
     else leaseConflictCount += 1
   }

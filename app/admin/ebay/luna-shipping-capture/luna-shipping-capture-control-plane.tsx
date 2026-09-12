@@ -1611,6 +1611,12 @@ export function LunaShippingCaptureControlPlane({
               message.job?.contractVersion === CONTRACT
             ? message.job as LunaChromeShippingJobV1 : null
           activeJobStatusReady = true
+          const observation = candidate ? {
+            state: "ACTIVE", candidateId: candidate.identity.candidateId,
+            snapshotDigest: candidate.snapshotDigest,
+            captureSessionId: candidate.captureSessionId,
+            observedAt: new Date().toISOString(),
+          } : { state: "IDLE", observedAt: new Date().toISOString() }
           if (hasExactLiveTarget) {
             if (!candidate) return
             if (!exactLiveJobMatches(candidate)) {
@@ -1640,7 +1646,13 @@ export function LunaShippingCaptureControlPlane({
             return
           }
           recoveredActiveJob = candidate
-          scheduleProductionAcquisition(0)
+          void adminPost("record_shipping_execution_observation", {
+            runtimeInstanceId, leaderSessionId: claimAuthoritySessionId,
+            observation,
+          }).then(() => scheduleProductionAcquisition(0)).catch((error) => {
+            activeJobStatusReady = false
+            fail(error, "SHIPPING_EXECUTION_OBSERVATION_DURABILITY_FAILED")
+          })
           return
         }
         if (message?.type === EXTENSION_DISPATCH_RECEIVED) {
