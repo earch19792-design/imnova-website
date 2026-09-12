@@ -15,7 +15,7 @@ import { SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1 } from "../ebay/ebay-l
 import { readEbayFeeHandoffV1 } from "./ebay-fee-runtime-v1"
 import { createProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
 import { currentPackagePreviewRevisionV1 } from "./publication-package-preparation-v1"
-import {CURRENT_PUBLICATION_FACTORY_V1,currentFactoryPreparationStatusV1} from './current-publication-factory-v1'
+import {CURRENT_PUBLICATION_FACTORY_V1,currentFactoryPreparationStatusV1,currentFactoryMarkerV1} from './current-publication-factory-v1'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: boolean) => T }>(q: T) =>
@@ -26,13 +26,16 @@ const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: bool
 export async function readSellOneLikeThisV1(input: {
   supabase: SupabaseClient; accountKey: string; packageId: string; referenceItemId: string; now?: Date; existingPackagePreview?: unknown; prepublicationEvidence?: unknown;
 }) {
-  if (!UUID.test(input.packageId) || !/^\d{9,19}$/.test(input.referenceItemId)) throw Error("REFERENCE_INPUT_INVALID")
+  if (!UUID.test(input.packageId) || (input.referenceItemId !== "" && !/^\d{9,19}$/.test(input.referenceItemId))) throw Error("REFERENCE_INPUT_INVALID")
   const db = input.supabase, now = input.now ?? new Date()
   const p = await bounded(db.from("ebay_current_listing_packages_v1").select(
     "id,opportunity_id,candidate_key,account_key,factory:package_data->currentPublicationFactoryV1,ownPrice:package_data->pricing->targetPrice,category:package_data->categoryResolverV1,quantityReview:package_data->quickPickOwnerReviewV1,quantityReviewProjection:package_data->quickPickMarketTestPackageV1")
     .eq("account_key", input.accountKey).eq("id", input.packageId).limit(1)).maybeSingle()
   if (p.error || !p.data) throw Error("REFERENCE_OWN_PACKAGE_UNAVAILABLE")
   const pkg = record(p.data)
+  // A new CURRENT intake can report missing authorities before research has
+  // supplied a reference. This never counts as reference import or readiness.
+  if (!input.referenceItemId && !currentFactoryMarkerV1({currentPublicationFactoryV1:pkg.factory})) throw Error("REFERENCE_INPUT_INVALID")
   const q = await bounded(db.from("ebay_luna_opportunity_queue").select(
     "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,brandApplication:assessment->ownerLunaUnbrandedPolicyApplicationV1,productTruthDigest:assessment->productTruth->evidenceDigest,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions,shippingFamily:assessment->radarFactoryCandidateV1->>familyId")
     .eq("id", pkg.opportunity_id).eq("candidate_key", pkg.candidate_key).limit(1)).maybeSingle()
@@ -48,7 +51,7 @@ export async function readSellOneLikeThisV1(input: {
     packageId: input.packageId, sku: String(own.supplier_sku), now, readBudget: feeBudget })
     .catch(() => null).finally(() => feeBudget.close())
   const [ref, frontier, fee, policies, publication] = await Promise.all([
-    typeof planId === "string" && UUID.test(planId) ? bounded(db.from("seller_os_product_research_canonical_evidence_v2")
+    input.referenceItemId && typeof planId === "string" && UUID.test(planId) ? bounded(db.from("seller_os_product_research_canonical_evidence_v2")
       .select("plan_id,marketplace_account_key,marketplace,item_id,bounded_title_evidence,source_observation_id,structural_classification,structural_compatibility,structural_evidence")
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US").eq("plan_id", planId)
       .eq("item_id", input.referenceItemId).order("source_observation_id", { ascending: false }).limit(1)).maybeSingle()
