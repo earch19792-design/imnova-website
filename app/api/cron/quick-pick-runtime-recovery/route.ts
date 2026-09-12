@@ -155,13 +155,58 @@ export async function POST(req: Request) {
           // rejected as being a few seconds in the future.
           now: new Date(),
         })
-      const current = await readSellOneLikeThisV1({
+      const beforeArtifacts = await readSellOneLikeThisV1({
         // The CURRENT package has its own factory marker. No historical item
         // may become a category, specifics, price or exposure authority here.
         supabase, accountKey, packageId, referenceItemId: "",
       })
+      let artifactContinuation: Record<string, unknown> | null = null
+      if (beforeArtifacts.feeStructure.feeAuthorityReady === true) {
+        const authorization = req.headers.get("authorization") ?? ""
+        const protectionBypass = req.headers.get(
+          "x-vercel-protection-bypass") ?? ""
+        const response = await fetch(new URL(
+          "/api/admin/ebay/draft-only", req.url), {
+          method: "POST", cache: "no-store",
+          headers: { Authorization: authorization,
+            "Content-Type": "application/json",
+            ...(protectionBypass
+              ? { "x-vercel-protection-bypass": protectionBypass } : {}) },
+          body: JSON.stringify({
+            action: "materialize_current_prepublication_artifacts",
+            packageId,
+          }),
+          signal: AbortSignal.timeout(240_000),
+        })
+        const contentType = response.headers.get("content-type") ?? ""
+        if (!contentType.toLowerCase().includes("application/json")) {
+          throw new Error("CURRENT_PREPUBLICATION_RUNTIME_NON_JSON")
+        }
+        artifactContinuation = record(await response.json().catch(() => null))
+        if (!response.ok || artifactContinuation.success !== true) {
+          return NextResponse.json({ success: false,
+            contractVersion:
+              "CURRENT_PREPUBLICATION_SAME_LINK_CLOSEOUT_V1",
+            packageId, packageCreated: false,
+            feeAuthorityReady: true, artifactContinuation,
+            safety: { ownerRoutineApprovalRequired: false,
+              publicationCommitAllowed: false,
+              publicMarketplaceExposureAllowed: false,
+              blindRetryAllowed: false,
+              marketplaceWrites: Number(record(
+                artifactContinuation.safety).marketplaceWrites ?? 0),
+              publicationWrites: Number(record(
+                artifactContinuation.safety).publicationIntentWrites ?? 0),
+              adsWrites: 0 },
+          }, { status: response.status })
+        }
+      }
+      const current = await readSellOneLikeThisV1({
+        supabase, accountKey, packageId, referenceItemId: "",
+      })
       return NextResponse.json({
-        success: current.feeStructure.feeAuthorityReady === true,
+        success: current.feeStructure.feeAuthorityReady === true
+          && artifactContinuation?.success === true,
         contractVersion: "CURRENT_PREPUBLICATION_SAME_LINK_CLOSEOUT_V1",
         packageId,
         packageCreated: false,
@@ -189,9 +234,19 @@ export async function POST(req: Request) {
           blockers: current.blockers,
           publicationGate: current.publicationGate,
         },
+        artifactContinuation,
         safety: { ownerRoutineApprovalRequired: false,
-          marketplaceWrites: 0, publicationWrites: 0, adsWrites: 0 },
-      }, { status: current.feeStructure.feeAuthorityReady ? 200 : 503 })
+          publicationCommitAllowed: false,
+          publicMarketplaceExposureAllowed: false,
+          blindRetryAllowed: false,
+          marketplaceWrites: Number(record(
+            record(artifactContinuation).safety).marketplaceWrites ?? 0),
+          publicationWrites: Number(record(
+            record(artifactContinuation).safety)
+            .publicationIntentWrites ?? 0),
+          adsWrites: 0 },
+      }, { status: current.feeStructure.feeAuthorityReady
+          && artifactContinuation?.success === true ? 200 : 503 })
     }
     const currentKeywordHandoff =
       await reconcileCurrentFactoryKeywordContinuationsV2_1({

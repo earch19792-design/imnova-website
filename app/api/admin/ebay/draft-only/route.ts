@@ -29,7 +29,14 @@ import {
   verifyEbayCompensatedOfferRecoveryState,
   verifyEbayPublishedOffer,
   verifyEbayUnpublishedOffer,
+  verifySingleCurrentOfferV1,
 } from "@/lib/ebay/ebay-draft-only-gateway"
+import {
+  bindCurrentPrepublicationArtifactAuthorityV1,
+  evaluateCurrentPrepublicationArtifactPolicyV1,
+  readCurrentPrepublicationArtifactAuthorityV1,
+  type CurrentPrepublicationArtifactAuthorityV1,
+} from "@/lib/ebay/ebay-current-prepublication-artifact-policy-v1"
 import { registerManualEbayListing } from "@/lib/ebay/ebay-manual-listing-service"
 import { readManualListingFromTradingApi } from
   "@/lib/ebay/ebay-manual-listing-trading-readonly"
@@ -3166,6 +3173,232 @@ async function authorizeAndRunSellerOsPublisherBatchV1(
   { status: runtimeResult.status === "COMPLETED" ? 200 : 207 })
 }
 
+type CurrentPrepublicationInternalAuthorityV1 = Readonly<{
+  artifactAuthority: CurrentPrepublicationArtifactAuthorityV1
+}>
+
+async function materializeCurrentPrepublicationArtifactsV1(
+  req: Request,
+  body: JsonRecord,
+) {
+  const supabase = getSupabaseAdminClient()
+  const runtimeAuthorized = await sellerOsPostRuntimeAuthorizedV1({
+    request: req,
+    supabase,
+    environmentSecrets: [process.env.CRON_SECRET,
+      process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET],
+  })
+  if (!runtimeAuthorized) return jsonError(new Error(
+    "CURRENT_PREPUBLICATION_RUNTIME_UNAUTHORIZED"), 401)
+  const boundary = getEbayDraftWriteEnvironmentBoundary()
+  if (!boundary.productionDedicatedPreprodBound || !boundary.writeAllowed) {
+    return jsonError(new Error("CERTIFIED_PREPROD_ONLY"), 403)
+  }
+  const packageId = uuid(body.packageId)
+  if (!packageId || Object.keys(body).some((key) =>
+    key !== "packageId" && key !== "action")) {
+    return jsonError(new Error("EXACT_PACKAGE_ONLY"), 400)
+  }
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) return jsonError(new Error("EXACT_ACCOUNT_REQUIRED"), 409)
+  const [packageRead, profileRead] = await Promise.all([
+    supabase.from("ebay_listing_packages").select("*")
+      .eq("id", packageId).eq("account_key", accountKey).maybeSingle(),
+    supabase.from("ebay_account_policy_profiles").select("*")
+      .eq("account_key", accountKey).eq("marketplace_id", "EBAY_US")
+      .maybeSingle(),
+  ])
+  if (packageRead.error || !packageRead.data) return jsonError(new Error(
+    "CURRENT_EXACT_PACKAGE_NOT_FOUND"), 404)
+  if (profileRead.error || !profileRead.data) return jsonError(new Error(
+    "CURRENT_ACCOUNT_POLICY_AUTHORITY_REQUIRED"), 409)
+  let listingPackage = packageRead.data as JsonRecord
+  const opportunityRead = await supabase.from("ebay_luna_opportunity_queue")
+    .select("*").eq("id", listingPackage.opportunity_id)
+    .eq("candidate_key", listingPackage.candidate_key).maybeSingle()
+  if (opportunityRead.error || !opportunityRead.data) return jsonError(
+    new Error("CURRENT_EXACT_OPPORTUNITY_NOT_FOUND"), 404)
+  let policy = evaluateCurrentPrepublicationArtifactPolicyV1({
+    listingPackage, opportunity: opportunityRead.data,
+    accountProfile: profileRead.data, accountKey,
+  })
+  if (!policy.pass) return NextResponse.json({ success: false,
+    error: "CURRENT_PREPUBLICATION_ARTIFACT_POLICY_BLOCKED",
+    blockers: policy.blockers,
+    policy: { prepublicationArtifactWritesAllowed: false,
+      publicationCommitAllowed: false,
+      publicMarketplaceExposureAllowed: false,
+      codexRuntimeDependency: false },
+    safety: { marketplaceWrites: 0, publicationIntentWrites: 0,
+      publishOfferCalled: false, adsWrites: 0, blindRetryAllowed: false },
+  }, { status: 409 })
+  let authorityBindingWrites = 0
+  if (policy.actorBindingRequired) {
+    const bound = await supabase.from("ebay_listing_packages")
+      .update({ created_by: policy.authority.actorUserId,
+        updated_at: new Date().toISOString() })
+      .eq("id", packageId).eq("account_key", accountKey)
+      .is("created_by", null).select("*").maybeSingle()
+    if (bound.error || !bound.data
+        || bound.data.created_by !== policy.authority.actorUserId) {
+      return jsonError(new Error(
+        "CURRENT_DELEGATED_ACTOR_BINDING_FAILED"), 409)
+    }
+    authorityBindingWrites = 1
+    listingPackage = bound.data as JsonRecord
+    policy = evaluateCurrentPrepublicationArtifactPolicyV1({
+      listingPackage, opportunity: opportunityRead.data,
+      accountProfile: profileRead.data, accountKey,
+    })
+    if (!policy.pass || policy.actorBindingRequired) return jsonError(new Error(
+      "CURRENT_DELEGATED_ACTOR_READBACK_FAILED"), 409)
+  }
+  const actor = policy.authority.actorUserId
+  const sku = expectedEbayDraftOnlySku(listingPackage)
+  const existingPublications = await supabase.from(
+    "ebay_authorized_listing_publications")
+    .select("*").eq("listing_package_id", packageId)
+    .eq("marketplace_account_key", accountKey)
+    .eq("actor_user_id", actor).limit(2)
+  if (existingPublications.error || (existingPublications.data?.length ?? 0) > 1) {
+    return jsonError(new Error("CURRENT_PUBLICATION_INTENT_AMBIGUOUS"), 409)
+  }
+  let publication = existingPublications.data?.[0] as JsonRecord | undefined
+  let approval: JsonRecord = {}
+  let execution: JsonRecord = {}
+  let marketplaceWrites = 0
+  let publicationIntentWrites = 0
+  let artifactReplay = Boolean(publication)
+  let activeListingCountBefore = 0
+  if (publication) {
+    const before = await verifySingleCurrentOfferV1(
+      text(publication.offer_id), sku)
+    if (!before.safe || before.status !== "UNPUBLISHED" || before.listingId) {
+      return jsonError(new Error(
+        "CURRENT_EXISTING_ARTIFACT_READBACK_UNSAFE"), 409)
+    }
+  } else {
+    const before = await inspectEbayDraftSkuState(sku)
+    if (!before.safe || !before.inventoryAbsent || before.offerCount !== 0) {
+      return NextResponse.json({ success: false,
+        error: before.blocker ?? "CURRENT_PREWRITE_SKU_STATE_UNSAFE",
+        officialReadback: before,
+        safety: { marketplaceWrites: 0, publicationIntentWrites: 0,
+          publishOfferCalled: false, adsWrites: 0,
+          blindRetryAllowed: false } }, { status: 409 })
+    }
+    const digest = policy.authority.bindingDigest.slice("sha256:".length)
+    const approveResponse = await approveDraft({
+      packageId,
+      idempotencyKey: `current-prepublication-approval:${packageId}:${digest}`,
+      draftConfiguration: policy.draftConfiguration,
+    }, actor, { artifactAuthority: policy.authority })
+    const approved = await responseBody(approveResponse)
+    if (!approveResponse.ok || approved.success !== true) return approveResponse
+    approval = record(approved.approval)
+    const executeResponse = await executeDraft({
+      approvalId: approval.id,
+      idempotencyKey: `current-prepublication-execution:${approval.id}`,
+    }, actor)
+    const executed = await responseBody(executeResponse)
+    if (!executeResponse.ok || executed.success !== true) return executeResponse
+    execution = record(executed.execution)
+    const executionSafety = record(executed.safety)
+    marketplaceWrites += Number(executionSafety.inventoryItemCreated === true)
+      + Number(executionSafety.inventoryItemUpdated === true)
+      + Number(executionSafety.unpublishedOfferCreated === true)
+      + Number(executionSafety.offerUpdated === true)
+    const prepareResponse = await prepareFinalPublication({
+      executionId: execution.id,
+    }, actor)
+    const prepared = await responseBody(prepareResponse)
+    if (!prepareResponse.ok || prepared.success !== true) return prepareResponse
+    publication = record(prepared.publication)
+    publicationIntentWrites = 1
+    artifactReplay = approved.idempotentReplay === true
+      && executed.idempotentReplay === true
+  }
+  if (!publication?.id || publication.listing_package_id !== packageId
+      || publication.marketplace_account_key !== accountKey
+      || publication.actor_user_id !== actor
+      || publication.sku !== sku
+      || publication.phase !== "preview_ready"
+      || Number(publication.publish_attempt_count) !== 0
+      || publication.publication_idempotency_key
+      || publication.listing_id) {
+    return jsonError(new Error("CURRENT_PUBLICATION_INTENT_SCOPE_INVALID"), 409)
+  }
+  const preparation = await executeCurrentUnpublishedPreparationV1({
+    supabase, actor, accountKey, packageId,
+  })
+  marketplaceWrites += Number(preparation.inventoryWrites ?? 0)
+    + Number(preparation.offerWrites ?? 0)
+  if (!preparation.pass) return NextResponse.json({ success: false,
+    error: "CURRENT_UNPUBLISHED_PREPARATION_FAILED", preparation,
+    safety: { marketplaceWrites, publicationIntentWrites,
+      publishOfferCalled: false, adsWrites: 0, blindRetryAllowed: false },
+  }, { status: 409 })
+  const activation = await activateCurrentPreparationV1({
+    supabase, actor, accountKey, packageId,
+  })
+  if (!activation.durableReadbackPass) return NextResponse.json({
+    success: false, error: "CURRENT_PREPARATION_ACTIVATION_FAILED",
+    preparation, activation,
+    safety: { marketplaceWrites, publicationIntentWrites,
+      publishOfferCalled: false, adsWrites: 0, blindRetryAllowed: false },
+  }, { status: 409 })
+  const certification = await certifyCurrentPrepublicationV1({
+    supabase, actor, accountKey, packageId,
+  })
+  const publicationReadback = await supabase.from(
+    "ebay_authorized_listing_publications").select("*")
+    .eq("id", publication.id).eq("listing_package_id", packageId)
+    .eq("marketplace_account_key", accountKey).eq("actor_user_id", actor)
+    .maybeSingle()
+  if (publicationReadback.error || !publicationReadback.data) {
+    return jsonError(new Error("CURRENT_PUBLICATION_INTENT_READBACK_FAILED"), 503)
+  }
+  const finalPublication = publicationReadback.data as JsonRecord
+  const offerReadback = await verifySingleCurrentOfferV1(
+    text(finalPublication.offer_id), sku)
+  const exactUnpublished = offerReadback.safe
+    && offerReadback.status === "UNPUBLISHED" && !offerReadback.listingId
+    && offerReadback.offerCount === 1
+  const activeListingCountAfter = exactUnpublished ? 0 : null
+  const pass = certification.pass && exactUnpublished
+    && finalPublication.phase === "preview_ready"
+    && Number(finalPublication.publish_attempt_count) === 0
+    && !finalPublication.publication_idempotency_key
+    && !finalPublication.listing_id
+  return NextResponse.json({ success: pass,
+    contractVersion: "CURRENT_PREPUBLICATION_ARTIFACT_RUNTIME_V1",
+    packageId, sku, approvalId: approval.id ??
+      finalPublication.draft_approval_id,
+    executionId: execution.id ?? finalPublication.draft_execution_id,
+    publicationIntentId: finalPublication.id,
+    policy: { prepublicationArtifactWritesAllowed: true,
+      publicationCommitAllowed: false,
+      publicMarketplaceExposureAllowed: false,
+      ownerRoutineApprovalRequired: false,
+      codexRuntimeDependency: false,
+      delegatedActorBindingDurable: true },
+    preparation, activation, certification,
+    durableReadback: { publicationIntentExact: true, offerReadback,
+      offerUnpublished: exactUnpublished, listingId: null,
+      activeListingCountBefore, activeListingCountAfter,
+      activeListingCountDelta: activeListingCountAfter === null
+        ? null : activeListingCountAfter - activeListingCountBefore },
+    idempotency: { artifactReplay,
+      duplicateOfferCreated: false,
+      offerCount: offerReadback.offerCount,
+      blindRetryAllowed: false },
+    safety: { marketplaceWrites, publicationIntentWrites,
+      authorityBindingWrites,
+      publishOfferCalled: false, publicMarketplaceExposure: false,
+      adsWrites: 0, publicationCommitAllowed: false },
+  }, { status: pass ? 200 : 409 })
+}
+
 async function handlePost(req: Request) {
   let body: JsonRecord
   try {
@@ -3174,6 +3407,13 @@ async function handlePost(req: Request) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
   }
   const action = text(body.action)
+  if (action === "materialize_current_prepublication_artifacts") {
+    try {
+      return await materializeCurrentPrepublicationArtifactsV1(req, body)
+    } catch (error) {
+      return jsonError(error, canonicalDraftOnlyErrorHttpStatus(error))
+    }
+  }
   if(action==='publish_current') {
     const auth=await validateAdminApiRequest(req),boundary=getEbayDraftWriteEnvironmentBoundary()
     if(!auth.ok || !boundary.productionDedicatedPreprodBound || !boundary.writeAllowed)
@@ -3982,7 +4222,11 @@ async function refreshOneClickSmartStockingSource(
   }
 }
 
-async function approveDraft(body: JsonRecord, actor: string) {
+async function approveDraft(
+  body: JsonRecord,
+  actor: string,
+  internalAuthority?: CurrentPrepublicationInternalAuthorityV1,
+) {
   const packageId = uuid(body.packageId)
   const approvalKey = idempotencyKey(body.idempotencyKey)
   const submittedPackageDigest = text(body.packageDigest)
@@ -3992,10 +4236,20 @@ async function approveDraft(body: JsonRecord, actor: string) {
   const fingerprint = runtime.accountFingerprint || ""
   const oneClickRequested = text(body.authorizationMode) ===
     EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
+  const artifactAuthority = internalAuthority?.artifactAuthority
+  const currentPrepublicationRequested = Boolean(artifactAuthority)
   const batchAuthorizationRequested =
     /^batch-approval:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(approvalKey)
-  const explicitApprovalValid = oneClickRequested
+  const explicitApprovalValid = currentPrepublicationRequested
+    ? Boolean(artifactAuthority
+      && artifactAuthority.actorUserId === actor
+      && artifactAuthority.packageId === packageId
+      && artifactAuthority.publicationCommitAllowed === false
+      && artifactAuthority
+        .publicMarketplaceExposureAllowed === false
+      && artifactAuthority.blindRetryAllowed === false)
+    : oneClickRequested
     ? target === "PRODUCTION"
       && text(body.confirmation) === EBAY_ONE_CLICK_PUBLICATION_LABEL
       && text(body.confirmTarget) === "PRODUCTION"
@@ -4474,7 +4728,12 @@ async function approveDraft(body: JsonRecord, actor: string) {
       })
     }
   }
-  const approvedPayload = oneClickRequested
+  const approvedPayload = currentPrepublicationRequested
+    ? bindCurrentPrepublicationArtifactAuthorityV1(
+      readiness.payload,
+      artifactAuthority!,
+    )
+    : oneClickRequested
     ? bindOneClickControlledPublicationIntentV1({
       approvedPayload: readiness.payload,
       actorUserId: actor,
@@ -4558,6 +4817,10 @@ async function approveDraft(body: JsonRecord, actor: string) {
         ownerAuthorizationDigest: canonicalOwnerAuthorizationDigest,
       } : {}),
       ...oneClickPublicationRequirements(oneClickRequested),
+      ...(currentPrepublicationRequested ? {
+        currentPrepublicationArtifactAuthority:
+          artifactAuthority,
+      } : {}),
     },
     ...(oneClickRequested ? {
       prewriteAuthorizationCorrelation: oneClickCorrelation(
@@ -4569,6 +4832,10 @@ async function approveDraft(body: JsonRecord, actor: string) {
     safety: {
       approvedForOneUnpublishedDraft: true,
       machineContinuationToOneShotPublishAuthorized: oneClickRequested,
+      currentPrepublicationArtifactsOnly: currentPrepublicationRequested,
+      publicationCommitAllowed: false,
+      publicMarketplaceExposureAllowed: false,
+      codexRuntimeDependency: false,
       durableApprovalCreatedOnlyAfterRefreshPass:
         !oneClickRequested || Boolean(oneClickFreshness),
       finalMachinePreflightRequired: true,
@@ -4657,10 +4924,44 @@ async function executeDraft(body: JsonRecord, actor: string) {
   const approvedPayload = record(approval.approved_payload)
   const approvedOfferPayload = record(approvedPayload.offerPayload)
   const approvedSku = text(approvedPayload.sku)
+  const rawCurrentArtifactAuthority = record(record(
+    approvedPayload.compliance).currentPrepublicationArtifactAuthorityV1)
+  const currentArtifactAuthority =
+    readCurrentPrepublicationArtifactAuthorityV1(approvedPayload)
+  if (Object.keys(rawCurrentArtifactAuthority).length > 0
+      && !currentArtifactAuthority) {
+    return jsonError(new Error(
+      "CURRENT_PREPUBLICATION_ARTIFACT_AUTHORITY_INVALID"), 409)
+  }
   const currentPackageRead = await supabase.from("ebay_listing_packages")
-    .select("id,created_by,account_key,candidate_key").eq("id",approval.listing_package_id)
+    .select("*").eq("id",approval.listing_package_id)
     .eq("created_by",actor).maybeSingle()
   if (currentPackageRead.error || !currentPackageRead.data) throw new Error("CURRENT_REVISION_PACKAGE_READ_FAILED")
+  if (currentArtifactAuthority) {
+    const [opportunityRead, profileRead] = await Promise.all([
+      supabase.from("ebay_luna_opportunity_queue").select("*")
+        .eq("id", currentPackageRead.data.opportunity_id)
+        .eq("candidate_key", currentPackageRead.data.candidate_key)
+        .maybeSingle(),
+      supabase.from("ebay_account_policy_profiles").select("*")
+        .eq("account_key", currentPackageRead.data.account_key)
+        .eq("marketplace_id", "EBAY_US").maybeSingle(),
+    ])
+    const currentPolicy = opportunityRead.data && profileRead.data
+      ? evaluateCurrentPrepublicationArtifactPolicyV1({
+        listingPackage: currentPackageRead.data,
+        opportunity: opportunityRead.data,
+        accountProfile: profileRead.data,
+        accountKey: text(currentPackageRead.data.account_key),
+      }) : null
+    if (opportunityRead.error || profileRead.error || !currentPolicy?.pass
+        || currentPolicy.authority.bindingDigest !==
+          currentArtifactAuthority.bindingDigest) {
+      return jsonError(new Error(
+        "CURRENT_PREPUBLICATION_ARTIFACT_BINDING_CHANGED"), 409,
+      currentPolicy && !currentPolicy.pass ? currentPolicy.blockers : undefined)
+    }
+  }
   const currentRevisionAuthority = await readCurrentDraftPreparationV1({supabase,
     accountKey:String(currentPackageRead.data.account_key),actor,listingPackage:currentPackageRead.data})
   if (currentRevisionAuthority && !currentPreparationApprovalMatchesV1(currentRevisionAuthority,approvedPayload)) {
@@ -5106,7 +5407,12 @@ async function executeDraft(body: JsonRecord, actor: string) {
       accountFingerprint: fingerprint,
     })
   }
-  const currentPayload = oneClickIntentPresent
+  const currentPayload = currentArtifactAuthority
+    ? bindCurrentPrepublicationArtifactAuthorityV1(
+      currentBasePayload,
+      currentArtifactAuthority,
+    )
+    : oneClickIntentPresent
     ? bindOneClickControlledPublicationIntentV1({
       approvedPayload: currentBasePayload,
       actorUserId: actor,
