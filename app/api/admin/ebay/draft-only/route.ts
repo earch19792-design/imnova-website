@@ -3306,8 +3306,27 @@ async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
   execution: JsonRecord
   authority: CurrentPrepublicationArtifactAuthorityV1
 }>) {
+  const [approvalRead, executionRead] = await Promise.all([
+    input.supabase.from("ebay_draft_only_approvals").select("*")
+      .eq("id", input.approval.id).eq("actor_user_id", input.actor)
+      .eq("listing_package_id", input.authority.packageId).maybeSingle(),
+    input.supabase.from("ebay_draft_only_execution_ledger").select("*")
+      .eq("id", input.execution.id).eq("actor_user_id", input.actor)
+      .eq("listing_package_id", input.authority.packageId).maybeSingle(),
+  ])
+  if (approvalRead.error || !approvalRead.data || executionRead.error
+      || !executionRead.data
+      || executionRead.data.approval_id !== approvalRead.data.id
+      || approvalRead.data.status !== "consumed"
+      || executionRead.data.phase !== "completed"
+      || executionRead.data.offer_id == null
+      || executionRead.data.request_hash !== approvalRead.data.payload_hash) {
+    throw new Error("CURRENT_PREPUBLICATION_DURABLE_EXECUTION_REQUIRED")
+  }
+  const approval = approvalRead.data as JsonRecord
+  const execution = executionRead.data as JsonRecord
   const packageRead = await input.supabase.from("ebay_listing_packages")
-    .select("*").eq("id", input.approval.listing_package_id)
+    .select("*").eq("id", approval.listing_package_id)
     .eq("created_by", input.actor).eq("account_key", input.accountKey)
     .maybeSingle()
   const opportunityRead = packageRead.data
@@ -3326,8 +3345,8 @@ async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
     authority: input.authority,
   })
   const built = buildFinalPublicationPreview(
-    input.approval, input.execution, bootstrap.visualGate)
-  const approvedPayload = record(input.approval.approved_payload)
+    approval, execution, bootstrap.visualGate)
+  const approvedPayload = record(approval.approved_payload)
   const category = await readCategoryProductIdentifierPreflight(
     approvedPayload)
   if (!category.safe) throw new Error(category.blocker
@@ -3339,7 +3358,7 @@ async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
   if (!official.safe) throw new Error(
     "CURRENT_PREPUBLICATION_OFFICIAL_READBACK_FAILED")
   await revalidateFinalPublicationDependencies(input.supabase, {
-    approval: input.approval, execution: input.execution,
+    approval, execution,
     listingPackage: packageRead.data as JsonRecord,
     opportunity: opportunityRead.data as JsonRecord,
     sameDayPilotAuthorization: null,
@@ -3366,12 +3385,12 @@ async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
     listing_package_id: packageRead.data.id,
     opportunity_id: opportunityRead.data.id,
     marketplace_account_key: input.accountKey,
-    account_fingerprint: input.execution.account_fingerprint,
+    account_fingerprint: execution.account_fingerprint,
     sku: built.sku, offer_id: built.offerId, phase: "preview_ready",
     publish_attempt_count: 0, publication_idempotency_key: null,
     claim_token: null, listing_id: null, preview_hash: built.previewHash,
-    preview: built.preview, draft_execution_id: input.execution.id,
-    draft_approval_id: input.approval.id,
+    preview: built.preview, draft_execution_id: execution.id,
+    draft_approval_id: approval.id,
   }
   const offer = record(approvedPayload.offerPayload)
   const revision = buildPackagePreviewRevisionV1({
@@ -3386,13 +3405,13 @@ async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
   const saved = await input.supabase.rpc(
     "prepare_current_prepublication_intent_v1", {
       p_publication_id: publicationId,
-      p_draft_execution_id: input.execution.id,
+      p_draft_execution_id: execution.id,
       p_actor_user_id: input.actor,
       p_marketplace_account_key: input.accountKey,
       p_preview_hash: built.previewHash,
       p_preview: built.preview,
       p_target: "PRODUCTION",
-      p_account_fingerprint: input.execution.account_fingerprint,
+      p_account_fingerprint: execution.account_fingerprint,
       p_revision: revision,
     }).single()
   if (saved.error || !saved.data) throw new Error(databaseExceptionCode(
@@ -3502,44 +3521,85 @@ async function materializeCurrentPrepublicationArtifactsV1(
         "CURRENT_EXISTING_ARTIFACT_READBACK_UNSAFE"), 409)
     }
   } else {
-    const before = await inspectEbayDraftSkuState(sku)
-    if (!before.safe || !before.inventoryAbsent || before.offerCount !== 0) {
-      return NextResponse.json({ success: false,
-        error: before.blocker ?? "CURRENT_PREWRITE_SKU_STATE_UNSAFE",
-        officialReadback: before,
-        safety: { marketplaceWrites: 0, publicationIntentWrites: 0,
-          publishOfferCalled: false, adsWrites: 0,
-          blindRetryAllowed: false } }, { status: 409 })
-    }
     const digest = policy.authority.bindingDigest.slice("sha256:".length)
-    const approveResponse = await approveDraft({
-      packageId,
-      idempotencyKey: `current-prepub:${digest}`,
-      draftConfiguration: policy.draftConfiguration,
-    }, actor, { artifactAuthority: policy.authority })
-    const approved = await responseBody(approveResponse)
-    if (!approveResponse.ok || approved.success !== true) return approveResponse
-    approval = record(approved.approval)
-    const executeResponse = await executeDraft({
-      approvalId: approval.id,
-      idempotencyKey: `current-prepublication-execution:${approval.id}`,
-    }, actor)
-    const executed = await responseBody(executeResponse)
-    if (!executeResponse.ok || executed.success !== true) return executeResponse
-    execution = record(executed.execution)
-    const executionSafety = record(executed.safety)
-    marketplaceWrites += Number(executionSafety.inventoryItemCreated === true)
-      + Number(executionSafety.inventoryItemUpdated === true)
-      + Number(executionSafety.unpublishedOfferCreated === true)
-      + Number(executionSafety.offerUpdated === true)
+    const priorApprovalRead = await supabase.from("ebay_draft_only_approvals")
+      .select("*").eq("approval_idempotency_key",
+        `current-prepub:${digest}`).eq("actor_user_id", actor)
+      .eq("listing_package_id", packageId).maybeSingle()
+    if (priorApprovalRead.error) return jsonError(new Error(
+      "CURRENT_PREPUBLICATION_PRIOR_APPROVAL_READ_FAILED"), 503)
+    let priorExecutionReused = false
+    if (priorApprovalRead.data) {
+      const priorExecutions = await supabase.from(
+        "ebay_draft_only_execution_ledger").select("*")
+        .eq("approval_id", priorApprovalRead.data.id)
+        .eq("actor_user_id", actor).eq("listing_package_id", packageId)
+        .limit(2)
+      if (priorExecutions.error || priorExecutions.data?.length !== 1) {
+        return jsonError(new Error(
+          "CURRENT_PREPUBLICATION_PRIOR_EXECUTION_AMBIGUOUS"), 409)
+      }
+      const prior = priorExecutions.data[0]
+      const priorAuthority = readCurrentPrepublicationArtifactAuthorityV1(
+        priorApprovalRead.data.approved_payload)
+      const priorOffer = await verifySingleCurrentOfferV1(
+        text(prior.offer_id), sku)
+      if (priorApprovalRead.data.status !== "consumed"
+          || prior.phase !== "completed" || prior.lease_token
+          || prior.request_hash !== priorApprovalRead.data.payload_hash
+          || prior.sku !== sku || !priorAuthority
+          || priorAuthority.bindingDigest !== policy.authority.bindingDigest
+          || !priorOffer.safe || priorOffer.status !== "UNPUBLISHED"
+          || priorOffer.offerCount !== 1 || priorOffer.listingId) {
+        return jsonError(new Error(
+          "CURRENT_PREPUBLICATION_PRIOR_EXECUTION_NOT_RECONCILED"), 409)
+      }
+      approval = priorApprovalRead.data as JsonRecord
+      execution = prior as JsonRecord
+      priorExecutionReused = true
+    } else {
+      const before = await inspectEbayDraftSkuState(sku)
+      if (!before.safe || !before.inventoryAbsent || before.offerCount !== 0) {
+        return NextResponse.json({ success: false,
+          error: before.blocker ?? "CURRENT_PREWRITE_SKU_STATE_UNSAFE",
+          officialReadback: before,
+          safety: { marketplaceWrites: 0, publicationIntentWrites: 0,
+            publishOfferCalled: false, adsWrites: 0,
+            blindRetryAllowed: false } }, { status: 409 })
+      }
+      const approveResponse = await approveDraft({
+        packageId,
+        idempotencyKey: `current-prepub:${digest}`,
+        draftConfiguration: policy.draftConfiguration,
+      }, actor, { artifactAuthority: policy.authority })
+      const approved = await responseBody(approveResponse)
+      if (!approveResponse.ok || approved.success !== true) {
+        return approveResponse
+      }
+      approval = record(approved.approval)
+      const executeResponse = await executeDraft({
+        approvalId: approval.id,
+        idempotencyKey: `current-prepublication-execution:${approval.id}`,
+      }, actor)
+      const executed = await responseBody(executeResponse)
+      if (!executeResponse.ok || executed.success !== true) {
+        return executeResponse
+      }
+      execution = record(executed.execution)
+      const executionSafety = record(executed.safety)
+      marketplaceWrites += Number(
+        executionSafety.inventoryItemCreated === true)
+        + Number(executionSafety.inventoryItemUpdated === true)
+        + Number(executionSafety.unpublishedOfferCreated === true)
+        + Number(executionSafety.offerUpdated === true)
+    }
     const prepared = await prepareCurrentPrepublicationIntentV1({
       supabase, accountKey, actor, approval, execution,
       authority: policy.authority,
     })
     publication = record(prepared.publication)
     publicationIntentWrites = 1
-    artifactReplay = approved.idempotentReplay === true
-      && executed.idempotentReplay === true
+    artifactReplay = priorExecutionReused
   }
   if (!publication?.id || publication.listing_package_id !== packageId
       || publication.marketplace_account_key !== accountKey
