@@ -625,11 +625,31 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   })
   const stockEligibleCandidates = exactCandidates.filter((candidate) =>
     !freshOosCandidateIds.has(candidate.candidateId))
+  const currentPriority = input.candidateIds?.length ? new Set<string>()
+    : await input.supabase.from("ebay_current_listing_packages_v1")
+      .select("package_data").eq("account_key", input.accountKey)
+      .contains("package_data", { currentPublicationFactoryV1: {
+        version: "SELLER_OS_CURRENT_PUBLICATION_FACTORY_V1",
+        authorityPolicy: "CURRENT_ONLY", reuseLegacyPreparation: false,
+      } }).order("created_at", { ascending: true }).limit(20)
+      .then(({ data, error }) => new Set(error ? [] : records(data).flatMap((row) => {
+        const marker = record(record(row.package_data).currentPublicationFactoryV1)
+        const productId = text(marker.productId, 30)
+        const variantId = text(marker.variantId, 30)
+        const sku = text(marker.supplierSku, 160)
+        return productId && variantId && sku
+          ? [exactKey(productId, variantId, sku)] : []
+      })))
+  const refreshEligibleCandidates = stockEligibleCandidates.filter((candidate) =>
+    frontierShippingRefreshRequiredV1(candidate.frontier, input.now ?? Date.now()))
+    .sort((left, right) =>
+      Number(currentPriority.has(exactKey(right.lunaProductId,
+        right.lunaVariantId, right.supplierSku))) -
+      Number(currentPriority.has(exactKey(left.lunaProductId,
+        left.lunaVariantId, left.supplierSku))))
   const requested = input.candidateIds?.length
     ? [...new Set(input.candidateIds)]
-    : stockEligibleCandidates.filter((candidate) =>
-      frontierShippingRefreshRequiredV1(candidate.frontier, input.now ?? Date.now()))
-      .map((candidate) => candidate.candidateId)
+    : refreshEligibleCandidates.map((candidate) => candidate.candidateId)
       .slice(0, 2)
   if (requested.length > LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH ||
       requested.some((candidateId) => !/^sha256:[0-9a-f]{64}$/.test(candidateId))) {
