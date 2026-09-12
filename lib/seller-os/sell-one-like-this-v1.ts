@@ -38,6 +38,7 @@ export function prepareSellOneLikeThisV1(input: {
   binding: KeywordBindingV1; packageId: string; reference: Record<string, unknown>;
   truthFields: unknown; requiredTruth: unknown; aspectResolutions: unknown;
   category: unknown; keywordRead: unknown; ownPrice: unknown;
+  currentOnlyAuthority?: unknown; currentPackageAspects?: unknown;
   shipping?: Partial<CommercialComponent>; feeHandoff?: unknown; now: Date;
 }) {
   const b = input.binding, rt = record(input.requiredTruth), category = record(input.category)
@@ -54,6 +55,17 @@ export function prepareSellOneLikeThisV1(input: {
     rt.exactIdentity === true && rt.marketplaceId === "EBAY_US"
   const keyword = consumeListingPackageKeywordHandoffV1(input.keywordRead, b)
   const ref = input.reference, compatibility = record(ref.structural_compatibility)
+  const currentOnlyAuthority = record(input.currentOnlyAuthority)
+  const currentOnly = currentOnlyAuthority.status === "CURRENT_ONLY" &&
+    currentOnlyAuthority.packageId === input.packageId &&
+    currentOnlyAuthority.accountKey === b.ACCOUNT_KEY &&
+    currentOnlyAuthority.productId === b.PRODUCT_ID &&
+    currentOnlyAuthority.variantId === b.VARIANT_ID &&
+    currentOnlyAuthority.supplierSku === fact("SUPPLIER_SKU")?.VALUE &&
+    typeof currentOnlyAuthority.productTruthDigest === "string" &&
+    currentOnlyAuthority.requiredTruthEvidenceDigest === rt.evidenceDigest &&
+    currentOnlyAuthority.canonicalReady === true &&
+    currentOnlyAuthority.requiredItemSpecificsReady === true
   const referencePass = /^\d{9,19}$/.test(String(ref.item_id)) && ref.marketplace_account_key === b.ACCOUNT_KEY &&
     ref.marketplace === "EBAY_US" && ref.plan_id === record(keyword.BINDING).PLAN_ID && Boolean(ref.source_observation_id) &&
     ["CORE_FAMILY_COMPARABLE", "EXACT_COMPARABLE", "STRICT_COMPARABLE", "FAMILY_COMPARABLE"].includes(String(ref.structural_classification)) &&
@@ -90,6 +102,23 @@ export function prepareSellOneLikeThisV1(input: {
       aspects[name] = value; provenance[name] = { authority: "EXACT_PRODUCT_BATCH_RESOLUTION", evidenceDigest: ownSet.evidenceDigest, resolution: r }
     }
   }
+  // A CURRENT-only package may consume its exact canonical aspect projection
+  // after the normal factory has bound it to the same Product Truth digest and
+  // official taxonomy contract. This does not make a reference listing an
+  // authority and cannot satisfy a mismatched product/package/category.
+  const packageAspects = record(input.currentPackageAspects)
+  if (currentOnly && categoryPass && currentOnlyAuthority.categoryId ===
+      category.selectedCategoryId) {
+    for (const contract of contracts) {
+      const name = String(contract.name), value = text(packageAspects[name])
+      if (value) {
+        aspects[name] = value
+        provenance[name] = { authority: "CURRENT_CANONICAL_MARKETPLACE_READINESS",
+          evidenceDigest: currentOnlyAuthority.productTruthDigest,
+          source: "PRODUCT_TRUTH_AND_EBAY_TAXONOMY" }
+      }
+    }
+  }
   const missing = contracts.filter(c => c.required === true && !aspects[String(c.name)]).map(c => String(c.name))
   const invalid = contracts.filter(c => {
     const value = aspects[String(c.name)]
@@ -112,7 +141,7 @@ export function prepareSellOneLikeThisV1(input: {
     listingPackage: { id: input.packageId, status: "draft", package_data: { aspects, categoryId: category.selectedCategoryId } },
     keywordDecisionHandoff: input.keywordRead, keywordDecisionBinding: b, requireKeywordDecisionV2_1: true,
   }) : null
-  const blockerCodes = [...(!referencePass ? ["REFERENCE_STRUCTURE_UNPROVEN"] : []), ...(!exact ? ["OWN_PRODUCT_BINDING_UNPROVEN"] : []),
+  const blockerCodes = [...(!referencePass && !currentOnly ? ["REFERENCE_STRUCTURE_UNPROVEN"] : []), ...(!exact ? ["OWN_PRODUCT_BINDING_UNPROVEN"] : []),
     ...(!categoryPass ? ["OWN_CATEGORY_REQUIRED"] : []), ...(!specificsPass ? ["OWN_ITEM_SPECIFICS_REQUIRED"] : []),
     ...(!imagePass ? ["AUTHORIZED_PRODUCT_IMAGES_REQUIRED"] : []), ...(!ownTitle ? ["OWN_TITLE_REQUIRED"] : []), ...keyword.BLOCKERS]
   const proven = (value: unknown, reference: string | null, source: string): Partial<CommercialComponent> =>
@@ -144,7 +173,8 @@ export function prepareSellOneLikeThisV1(input: {
     keyword: keyword.INPUT_FINGERPRINT, price: input.ownPrice })
   return { contractVersion: SELL_ONE_LIKE_THIS_V1, status: pass ? "PREVIEW_READY" : "WAITING_FOR_DATA",
     referenceItemId: String(ref.item_id ?? ""), sourcePackageId: input.packageId, binding: b,
-    referenceImport: { pass: referencePass, fields, counts: {
+    referenceImport: { pass: referencePass, required: !currentOnly,
+      currentOnlyAuthorityUsed: currentOnly, fields, counts: {
       TRANSFERABLE: fields.filter(f => f.classification === "TRANSFERABLE").length,
       REQUIRES_CORROBORATION: fields.filter(f => f.classification === "REQUIRES_CORROBORATION").length,
       REJECTED: fields.filter(f => f.classification === "REJECTED").length } },

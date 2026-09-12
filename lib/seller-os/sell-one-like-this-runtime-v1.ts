@@ -29,7 +29,7 @@ export async function readSellOneLikeThisV1(input: {
   if (!UUID.test(input.packageId) || (input.referenceItemId !== "" && !/^\d{9,19}$/.test(input.referenceItemId))) throw Error("REFERENCE_INPUT_INVALID")
   const db = input.supabase, now = input.now ?? new Date()
   const p = await bounded(db.from("ebay_current_listing_packages_v1").select(
-    "id,opportunity_id,candidate_key,account_key,factory:package_data->currentPublicationFactoryV1,ownPrice:package_data->pricing->targetPrice,category:package_data->categoryResolverV1,quantityReview:package_data->quickPickOwnerReviewV1,quantityReviewProjection:package_data->quickPickMarketTestPackageV1")
+    "id,opportunity_id,candidate_key,account_key,factory:package_data->currentPublicationFactoryV1,ownPrice:package_data->pricing->targetPrice,ownAspects:package_data->aspects,category:package_data->categoryResolverV1,quantityReview:package_data->quickPickOwnerReviewV1,quantityReviewProjection:package_data->quickPickMarketTestPackageV1")
     .eq("account_key", input.accountKey).eq("id", input.packageId).limit(1)).maybeSingle()
   if (p.error || !p.data) throw Error("REFERENCE_OWN_PACKAGE_UNAVAILABLE")
   const pkg = record(p.data)
@@ -37,7 +37,7 @@ export async function readSellOneLikeThisV1(input: {
   // supplied a reference. This never counts as reference import or readiness.
   if (!input.referenceItemId && !currentFactoryMarkerV1({currentPublicationFactoryV1:pkg.factory})) throw Error("REFERENCE_INPUT_INVALID")
   const q = await bounded(db.from("ebay_luna_opportunity_queue").select(
-    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,brandApplication:assessment->ownerLunaUnbrandedPolicyApplicationV1,productTruthDigest:assessment->productTruth->evidenceDigest,truthFields:assessment->productTruth->fieldTruthV1->fields,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions,shippingFamily:assessment->radarFactoryCandidateV1->>familyId")
+    "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,brandApplication:assessment->ownerLunaUnbrandedPolicyApplicationV1,productTruthDigest:assessment->productTruth->evidenceDigest,truthFields:assessment->productTruth->fieldTruthV1->fields,canonicalReadiness:assessment->canonicalMarketplaceReadinessV1,requiredTruth:assessment->canonicalMarketplaceReadinessV1->requiredItemSpecificsTruth,aspectResolutions:assessment->marketplaceRequiredSpecificsBatchResolutionV1->resolutions,shippingFamily:assessment->radarFactoryCandidateV1->>familyId")
     .eq("id", pkg.opportunity_id).eq("candidate_key", pkg.candidate_key).limit(1)).maybeSingle()
   if (q.error || !q.data) throw Error("REFERENCE_OWN_PRODUCT_UNAVAILABLE")
   const own = record(q.data)
@@ -45,6 +45,27 @@ export async function readSellOneLikeThisV1(input: {
     VARIANT_ID: String(own.supplier_variant_id), CANDIDATE_KEY: String(own.candidate_key), OPPORTUNITY_ID: String(own.id),
     PACKAGE_ID: input.packageId }
   const keyword = await readKeywordDecisionHandoffV1({ supabase: db, binding })
+  const currentMarker = currentFactoryMarkerV1({
+    currentPublicationFactoryV1: pkg.factory })
+  const canonicalReadiness = record(own.canonicalReadiness)
+  const currentOnlyAuthority = currentMarker &&
+    currentMarker.packageId === input.packageId &&
+    currentMarker.accountKey === input.accountKey &&
+    currentMarker.productId === binding.PRODUCT_ID &&
+    currentMarker.variantId === binding.VARIANT_ID &&
+    currentMarker.supplierSku === own.supplier_sku &&
+    canonicalReadiness.productTruthDigest === own.productTruthDigest
+    ? { status: "CURRENT_ONLY", packageId: input.packageId,
+      accountKey: input.accountKey, productId: binding.PRODUCT_ID,
+      variantId: binding.VARIANT_ID, supplierSku: own.supplier_sku,
+      productTruthDigest: own.productTruthDigest,
+      requiredTruthEvidenceDigest:
+        record(canonicalReadiness.requiredItemSpecificsTruth).evidenceDigest,
+      categoryId: canonicalReadiness.categoryId,
+      canonicalReady: canonicalReadiness.ready === true,
+      requiredItemSpecificsReady:
+        canonicalReadiness.requiredItemSpecificsReady === true }
+    : null
   const planId = record(record(keyword).BINDING).PLAN_ID
   // A missing/stale keyword decision is never replaced with legacy query terms.
   const feeBudget = createProductCaseReadBudgetV1()
@@ -100,7 +121,9 @@ export async function readSellOneLikeThisV1(input: {
     : { status: "PENDING" as const, value: null, reference: null, source: "LUNA_PORTEX_SHIPPING_AUTHORITY" }
   const authority = { binding, accountKey: input.accountKey, sku: String(own.supplier_sku), packageId: input.packageId,
     reference: record(ref.data), truthFields: own.truthFields, requiredTruth: own.requiredTruth, aspectResolutions: own.aspectResolutions,
-    category: pkg.category, keywordRead: keyword, ownPrice: pkg.ownPrice, now, feeHandoff: fee, shipping,
+    category: pkg.category, keywordRead: keyword, ownPrice: pkg.ownPrice,
+    currentOnlyAuthority, currentPackageAspects: pkg.ownAspects,
+    now, feeHandoff: fee, shipping,
     sellerPolicies: policies.error ? null : policies.data }
   // Audit the supplied server-side generation without recreating its content.
   // Normal reference preparation uses the same gate on its existing read path.
