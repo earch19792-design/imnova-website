@@ -92,26 +92,20 @@ async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
     const candidateId = text(claim.candidate_id)
     const captureSessionId = text(claim.capture_session_id)
     if (!candidateId || !captureSessionId) continue
-    const durable = await input.supabase.from(
-      "seller_os_profitability_frontier_snapshots")
-      .select("frontier_id,frontier_payload")
-      .eq("account_key", input.accountKey)
-      .eq("shipping_status", "SHIPPING_DURABLY_PERSISTED")
-      .contains("frontier_payload", { shippingCaptureEvidence: {
-        candidateId, captureSessionId,
-      } }).limit(2)
+    const durable = await input.supabase.rpc(
+      "get_seller_os_luna_shipping_recovery_readback_v1", {
+        p_account_key: input.accountKey,
+        p_candidate_id: candidateId,
+        p_capture_session_id: captureSessionId,
+      })
     if (durable.error) {
       throw new Error("AUTONOMOUS_STOCKING_BATCH_SHIPPING_RESULT_READ_FAILED")
     }
-    const exact = rows(durable.data).filter((entry) => {
-      const evidence = record(record(entry.frontier_payload)
-        .shippingCaptureEvidence)
-      return evidence.candidateId === candidateId
-        && evidence.captureSessionId === captureSessionId
-    })
-    if (exact.length !== 1) continue
+    const exact = record(durable.data)
+    if (exact.exactDurableReadbackMatch !== true
+        || exact.exactResultCount !== 1) continue
     recovery = claim
-    frontierId = text(exact[0].frontier_id)
+    frontierId = text(exact.frontierId)
     break
   }
   if (!recovery || !frontierId) return null
