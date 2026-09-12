@@ -2,6 +2,7 @@
 
 import {
   canonicalDestinationMatchStatusV1, checkoutObservationV1,
+  lunaShippingAutoNavigationCapableV1,
   type CanonicalDestinationMatchStatusV1,
 } from "@/lib/ebay/luna-checkout-observation-v1"
 
@@ -1222,7 +1223,7 @@ export function LunaShippingCaptureControlPlane({
         scheduleProductionAcquisition(captureNextAttemptAt - Date.now())
         return
       }
-      if (captureProbe?.captureAvailable !== true ||
+      if (!lunaShippingAutoNavigationCapableV1(captureProbe) ||
           Date.parse(String(captureProbe?.observedAt ?? "")) < Date.now() - 300_000) {
         if (port && !captureProbeInFlight) {
           captureProbeInFlight = true
@@ -1506,10 +1507,12 @@ export function LunaShippingCaptureControlPlane({
           if (message.probe?.contract !== "LUNA_CAPTURE_READ_ONLY_PROBE_V1") return
           if (!probeRecorder.receive(message.probe)) return
           captureProbe = message.probe
+          const automaticNavigationCapable =
+            lunaShippingAutoNavigationCapableV1(captureProbe)
           setCheckoutObservation(checkoutObservationV1(message.probe.checkoutObservation))
-          setCaptureAvailable(captureProbe?.captureAvailable === true)
+          setCaptureAvailable(automaticNavigationCapable)
           void probeRecorder.flush()
-          if (captureProbe?.captureAvailable === true && !busy) {
+          if (automaticNavigationCapable && !busy) {
             if (discoveryRetryTimer !== null) {
               window.clearTimeout(discoveryRetryTimer)
               discoveryRetryTimer = null
