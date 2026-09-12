@@ -3290,7 +3290,7 @@ async function materializeCurrentPrepublicationArtifactsV1(
     const digest = policy.authority.bindingDigest.slice("sha256:".length)
     const approveResponse = await approveDraft({
       packageId,
-      idempotencyKey: `current-prepublication-approval:${packageId}:${digest}`,
+      idempotencyKey: `current-prepub:${digest}`,
       draftConfiguration: policy.draftConfiguration,
     }, actor, { artifactAuthority: policy.authority })
     const approved = await responseBody(approveResponse)
