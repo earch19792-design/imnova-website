@@ -165,6 +165,11 @@ async function completePublishedChild(input: Readonly<{
   const writeCount = Math.max(
     Number(input.child.publication_write_count ?? 0),
     Number(input.publication.publicationWrites ?? 0),
+    input.publicationRow.publish_attempt_count === 1
+      && input.publicationRow.publication_idempotency_key
+        === `publish:${input.publicationRow.id}`
+      && input.publicationRow.listing_id === input.publication.listingId
+      ? 1 : 0,
   )
   if (writeCount !== 1) {
     throw new Error("AUTONOMOUS_STOCKING_BATCH_PUBLICATION_WRITE_COUNT_INVALID")
@@ -290,6 +295,8 @@ async function executeBatch(input: Readonly<{
     const pass = replay.pass === true && replay.publicationWrites === 0
       && replay.IDEMPOTENT_REPLAY_CONFIRMED === true
       && replay.listingId === child.listing_id
+      && replay.DUPLICATE_LISTING_CREATED === false
+      && replay.DUPLICATE_OFFER_CREATED === false
     if (!pass) return { status: 409, body: {
       success: false, contractVersion: CONTRACT,
       status: "REPLAY_READBACK_REQUIRED", batchId: input.batch.id,
@@ -357,17 +364,22 @@ async function executeBatch(input: Readonly<{
     }
     child = await completePublishedChild({ ...input, child, publicationRow,
       publication })
+    const additionalWrites = Number(publication.publicationWrites ?? 0)
     return { status: 200, body: {
       success: true, contractVersion: CONTRACT,
       status: "PUBLISHED_CONFIRMED", batchId: input.batch.id,
       sequenceNo: child.sequence_no, selection: child, publication,
       PUBLICATION_COMMIT_READBACK_PASS: true,
-      PUBLICATION_WRITE_COUNT: 1, PUBLISH_OFFER_CALLED: true,
+      PUBLICATION_WRITE_COUNT: 1,
+      ADDITIONAL_PUBLICATION_WRITE_COUNT: additionalWrites,
+      PUBLISH_OFFER_CALLED: additionalWrites === 1,
+      RECONCILED_EXISTING_PUBLICATION: additionalWrites === 0,
       DUPLICATE_LISTING_CREATED: false, DUPLICATE_OFFER_CREATED: false,
       OWNER_ACTION_REQUIRED: false, CODEX_RUNTIME_DEPENDENCY: false,
       LEGACY_DEPENDENCY_COUNT: 0,
-      safety: { concurrency: 1, marketplaceWrites: 1,
-        publicationWrites: 1, adsWrites: 0, blindRetryAllowed: false },
+      safety: { concurrency: 1, marketplaceWrites: additionalWrites,
+        publicationWrites: additionalWrites, adsWrites: 0,
+        blindRetryAllowed: false },
     } }
   }
 

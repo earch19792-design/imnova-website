@@ -7,6 +7,11 @@ const ordered=(value:unknown):unknown=>Array.isArray(value)?value.map(ordered):v
  ?Object.fromEntries(Object.entries(value as JsonRecord).sort(([a],[b])=>a.localeCompare(b,'en')).map(([k,v])=>[k,ordered(v)])):value
 const digest=(value:unknown)=>`sha256:${createHash('sha256').update(JSON.stringify(ordered(value))).digest('hex')}`
 const CURRENT_FINAL_PUBLISH_CONFIRMATION='PUBLICAR LISTING EN EBAY'
+function exactSingleOfferReadback(collection:JsonRecord,input:CurrentPublicationExecutorInputV1,listingId:string){
+ return collection.safe===true && Number(collection.offerCount)===1
+  && collection.offerId===input.offerId && collection.sku===input.sku
+  && collection.status==='PUBLISHED' && collection.listingId===listingId
+}
 export type CurrentPublicationExecutorInputV1={supabase:SupabaseClient;actor:string;accountKey:string;publicationId:string;packageId:string;offerId:string;
  sku:string;packageHash:string;packageGeneration:string;previewHash:string;idempotencyKey:string;confirmation:string}
 const columns='id,actor_user_id,listing_package_id,opportunity_id,marketplace_account_key,account_fingerprint,sku,offer_id,phase,publish_attempt_count,publication_idempotency_key,claim_token,listing_id,preview,preview_hash,draft_execution_id,draft_approval_id,sanitized_result,updated_at'
@@ -46,17 +51,18 @@ export async function publishCurrentRevisionV1(input:CurrentPublicationExecutorI
   const execution=record(record(p.sanitized_result).currentPublicationExecutionV1)
   const durableReceipt=record(execution.readback),matches=record(durableReceipt.matches)
   const listingId=String(p.listing_id??'')
+  const exactSingleOffer=exactSingleOfferReadback(record(collection),input,listingId)
   const exact=Boolean(listingId && p.publication_idempotency_key===input.idempotencyKey
    && p.publish_attempt_count===1 && durableReceipt.pass===true
    && durableReceipt.listingId===listingId && inventoryReadback.safe
    && offerReadback.safe && offerReadback.listingId===listingId
-   && collection.safe && collection.status==='PUBLISHED'
-   && collection.listingId===listingId
+   && exactSingleOffer
    && ['SKU_MATCH','OFFER_ID_MATCH','TITLE_MATCH','PRICE_MATCH',
     'QUANTITY_MATCH','CATEGORY_MATCH','POLICIES_MATCH'].every(k=>matches[k]===true))
   return exact?{pass:true,publicationWrites:0,ADDITIONAL_PUBLICATION_WRITE_COUNT:0,
    listingId,LISTING_STATUS:'ACTIVE',...matches,OFFICIAL_READBACK_PASS:true,
    PUBLISHED_CONFIRMED:true,DUPLICATE_LISTING_CREATED:false,
+   DUPLICATE_OFFER_CREATED:false,
    SECOND_LISTING_CREATED:false,IDEMPOTENT_REPLAY_CONFIRMED:true,
    FINAL_PUBLICATION_STATE:'PUBLISHED_CONFIRMED',durablePhase:p.phase,
    inventoryReadback,offerReadback,collection,durableReceipt}
@@ -156,7 +162,8 @@ export async function publishCurrentRevisionV1(input:CurrentPublicationExecutorI
    const inventoryReadback=await deps.inventory(input.sku,inventory)
    const offerReadback=await deps.offer(input.offerId,input.sku,offer)
    const collection=await deps.collection(input.offerId,input.sku)
-   if(!inventoryReadback.safe || !offerReadback.safe || offerReadback.listingId!==listingId || !collection.safe || collection.listingId!==listingId)
+   const exactSingleOffer=exactSingleOfferReadback(record(collection),input,listingId)
+   if(!inventoryReadback.safe || !offerReadback.safe || offerReadback.listingId!==listingId || !exactSingleOffer)
     return {pass:false,publicationWrites:writes,listingId,blocker:'CURRENT_PUBLISHED_PAYLOAD_READBACK_MISMATCH',inventoryReadback,offerReadback,collection}
    const binding=record(record(record(recorded.data).sanitized_result).currentPublicationExecutionV1).binding
    const b=record(binding)
@@ -196,7 +203,8 @@ export async function publishCurrentRevisionV1(input:CurrentPublicationExecutorI
    const final=await read()
    if(completed.error || final.phase!=='monitor_registered' || final.listing_id!==listingId)throw Error('CURRENT_PUBLICATION_COMPLETION_READBACK_REQUIRED')
    return {pass:true,publicationWrites:writes,listingId,LISTING_STATUS:'ACTIVE',...matches,OFFICIAL_READBACK_PASS:true,
-    PUBLISHED_CONFIRMED:true,DUPLICATE_LISTING_CREATED:false,FINAL_PUBLICATION_STATE:'PUBLISHED_CONFIRMED',durablePhase:final.phase,
+    PUBLISHED_CONFIRMED:true,DUPLICATE_LISTING_CREATED:false,DUPLICATE_OFFER_CREATED:false,
+    FINAL_PUBLICATION_STATE:'PUBLISHED_CONFIRMED',durablePhase:final.phase,
     inventoryReadback,offerReadback,collection,verification:v,supplierLinkage:linked.data}
   } catch(error) {
    return {pass:false,publicationWrites:writes,listingId,blocker:error instanceof Error?error.message:'CURRENT_POST_PUBLISH_READBACK_REQUIRED',phase:(await read()).phase}
