@@ -951,6 +951,7 @@ function buildFinalPublicationPreview(
   approval: JsonRecord,
   execution: JsonRecord,
   visualPublicationGate: FinalListingReviewPublicationGate,
+  options: Readonly<{ currentArtifactOnly?: boolean }> = {},
 ) {
   const payload = record(approval.approved_payload)
   const inventoryItemPayload = record(payload.inventoryItemPayload)
@@ -964,8 +965,8 @@ function buildFinalPublicationPreview(
   const images = imageBinding.images
   const offerId = sanitizeEbayOfferId(execution.offer_id)
   const sku = text(payload.sku)
-  const publishWithStockguardContract =
-    finalPublicationStockguardContract(payload)
+  const publishWithStockguardContract = options.currentArtifactOnly
+    ? null : finalPublicationStockguardContract(payload)
   if (
     approval.status !== "consumed"
     || !approval.consumed_at
@@ -1006,7 +1007,8 @@ function buildFinalPublicationPreview(
       promotionsIncluded: false,
       volumePricingIncluded: false,
     },
-    publishWithStockguardContract,
+    ...(publishWithStockguardContract
+      ? { publishWithStockguardContract } : {}),
     permittedOperation: "publishOffer",
   }
   return { preview, previewHash: publicationPreviewHash(preview), offerId, sku }
@@ -1237,6 +1239,7 @@ async function revalidateFinalPublicationDependencies(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   context: Awaited<ReturnType<typeof loadFinalPublicationContext>>,
   approvedPayload: JsonRecord,
+  options: Readonly<{ persistAccountProfile?: boolean }> = {},
 ) {
   const offer = record(approvedPayload.offerPayload)
   const policies = record(offer.listingPolicies)
@@ -1262,14 +1265,16 @@ async function revalidateFinalPublicationDependencies(
   if (!dependencies.safe) {
     throw new Error(dependencies.blocker || "EBAY_FINAL_PUBLICATION_DEPENDENCIES_INVALID")
   }
-  const profileSaved = await saveVerifiedEbayAccountPolicyProfile({
-    supabase,
-    accountKey: context.accountKey,
-    actorUserId: text(context.execution.actor_user_id),
-    preflight,
-  })
-  if (!profileSaved) {
-    throw new Error("EBAY_FINAL_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED")
+  if (options.persistAccountProfile !== false) {
+    const profileSaved = await saveVerifiedEbayAccountPolicyProfile({
+      supabase,
+      accountKey: context.accountKey,
+      actorUserId: text(context.execution.actor_user_id),
+      preflight,
+    })
+    if (!profileSaved) {
+      throw new Error("EBAY_FINAL_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED")
+    }
   }
   return { preflight, dependencies }
 }
@@ -3345,7 +3350,7 @@ async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
     authority: input.authority,
   })
   const built = buildFinalPublicationPreview(
-    approval, execution, bootstrap.visualGate)
+    approval, execution, bootstrap.visualGate, { currentArtifactOnly: true })
   const approvedPayload = record(approval.approved_payload)
   const category = await readCategoryProductIdentifierPreflight(
     approvedPayload)
@@ -3365,7 +3370,7 @@ async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
     smartStockingPublicationAuthorization: null,
     quickPickPublicationAuthorization: null,
     runtime: ebayDraftOnlyRuntimeStatus(), accountKey: input.accountKey,
-  }, approvedPayload)
+  }, approvedPayload, { persistAccountProfile: false })
   const publicationId = randomUUID()
   const now = new Date()
   const packageData = record(packageRead.data.package_data)
