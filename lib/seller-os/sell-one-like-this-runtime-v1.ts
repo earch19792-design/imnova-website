@@ -42,7 +42,8 @@ export async function readSellOneLikeThisV1(input: {
   if (q.error || !q.data) throw Error("REFERENCE_OWN_PRODUCT_UNAVAILABLE")
   const own = record(q.data)
   const binding: KeywordBindingV1 = { ACCOUNT_KEY: input.accountKey, PRODUCT_ID: String(own.supplier_product_id),
-    VARIANT_ID: String(own.supplier_variant_id), CANDIDATE_KEY: String(own.candidate_key), OPPORTUNITY_ID: String(own.id) }
+    VARIANT_ID: String(own.supplier_variant_id), CANDIDATE_KEY: String(own.candidate_key), OPPORTUNITY_ID: String(own.id),
+    PACKAGE_ID: input.packageId }
   const keyword = await readKeywordDecisionHandoffV1({ supabase: db, binding })
   const planId = record(record(keyword).BINDING).PLAN_ID
   // A missing/stale keyword decision is never replaced with legacy query terms.

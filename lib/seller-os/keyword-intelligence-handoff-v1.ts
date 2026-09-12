@@ -16,6 +16,7 @@ export function keywordRecord(value: unknown): RecordValue {
     ? value as RecordValue : {}
 }
 const hash = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 // Transport integrity only; the authenticated SQL reader validates source freshness.
 export function keywordWireDigestV1(value: unknown): string {
   const ordered = (v: unknown): unknown => Array.isArray(v) ? v.map(ordered)
@@ -48,18 +49,30 @@ export async function readKeywordDecisionHandoffV1(input: {
 }) {
   const b = input.binding
   if (![b.ACCOUNT_KEY, b.PRODUCT_ID, b.VARIANT_ID, b.CANDIDATE_KEY, b.OPPORTUNITY_ID]
-    .every(x => typeof x === "string" && x.length > 0 && x.length <= 240)) {
+    .every(x => typeof x === "string" && x.length > 0 && x.length <= 240) ||
+      (b.PACKAGE_ID !== undefined && !UUID.test(b.PACKAGE_ID))) {
     return unavailableKeywordReadV1("KEYWORD_BINDING_REQUIRED")
   }
   const budget = input.budget ?? createProductCaseReadBudgetV1()
   try {
     const result = await budget.read({ dependency: "KEYWORD_INTELLIGENCE",
       authority: "marketplace_product_research_query_plans.keyword_intelligence_decision",
-      query: () => input.supabase.rpc("read_product_research_keyword_handoff_v1", {
-        p_account_key: b.ACCOUNT_KEY, p_product_id: b.PRODUCT_ID, p_variant_id: b.VARIANT_ID,
-        p_candidate_key: b.CANDIDATE_KEY, p_opportunity_id: b.OPPORTUNITY_ID,
-        p_plan_id: b.PLAN_ID ?? null,
-      }) })
+      query: () => b.PACKAGE_ID
+        ? input.supabase.rpc("read_current_factory_keyword_handoff_v2_1", {
+          p_account_key: b.ACCOUNT_KEY,
+          p_listing_package_id: b.PACKAGE_ID,
+          p_product_id: b.PRODUCT_ID,
+          p_variant_id: b.VARIANT_ID,
+          p_candidate_key: b.CANDIDATE_KEY,
+          p_opportunity_id: b.OPPORTUNITY_ID,
+          p_plan_id: b.PLAN_ID ?? null,
+        })
+        : input.supabase.rpc("read_product_research_keyword_handoff_v1", {
+          p_account_key: b.ACCOUNT_KEY, p_product_id: b.PRODUCT_ID,
+          p_variant_id: b.VARIANT_ID, p_candidate_key: b.CANDIDATE_KEY,
+          p_opportunity_id: b.OPPORTUNITY_ID,
+          p_plan_id: b.PLAN_ID ?? null,
+        }) })
     return result.error ? unavailableKeywordReadV1("KEYWORD_AUTHORITY_READ_UNAVAILABLE")
       : decodeKeywordReadV1(result.data)
   } catch {
