@@ -32,6 +32,12 @@ import { persistProducedEbayFeeV1, readEbayFeeHandoffV1 } from
   "@/lib/seller-os/ebay-fee-runtime-v1"
 import { readSellOneLikeThisV1 } from
   "@/lib/seller-os/sell-one-like-this-runtime-v1"
+import { publicationFeeStructureV1 } from
+  "@/lib/seller-os/publication-fee-structure-v1"
+import { knownBuyerShippingV1 } from
+  "@/lib/seller-os/publication-prevalidation-boundary-v1"
+import { keywordRecord as record } from
+  "@/lib/seller-os/keyword-intelligence-handoff-v1"
 
 function authorized(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? ""
@@ -77,10 +83,26 @@ export async function POST(req: Request) {
         supabase, accountKey, packageId, itemId: null,
         sku: "FL-NH4784642", now,
       })
-      const feeContext = currentFee?.status === "PROVEN"
+      const currentAuthority = record(currentFee?.authority)
+      const currentSource = record(currentAuthority.preSaleSourceContextV1)
+      const currentListing = record(currentSource.listing)
+      const currentFeeReady = record(currentFee).publicationSubjectMatched === true
+        && publicationFeeStructureV1({
+          authority: currentAuthority,
+          subjectMatched: true,
+          accountKey,
+          packageId,
+          sku: "FL-NH4784642",
+          categoryId: String(currentAuthority.categoryId ?? ""),
+          salePrice: Number(currentListing.price),
+          buyerShipping: knownBuyerShippingV1(
+            currentSource.fulfillmentFeeBasis),
+          now,
+        }).feeAuthorityReady
+      const feeContext = currentFeeReady
         ? null : await readEbayPackageFeeContextReadonlyV1(packageId)
-      const feeAuthority = currentFee?.status === "PROVEN"
-        ? currentFee.authority as Awaited<ReturnType<
+      const feeAuthority = currentFeeReady
+        ? currentAuthority as Awaited<ReturnType<
           typeof persistProducedEbayFeeV1
         >>
         : await persistProducedEbayFeeV1({
@@ -98,7 +120,7 @@ export async function POST(req: Request) {
         supabase, accountKey, packageId, referenceItemId: "",
       })
       return NextResponse.json({
-        success: feeAuthority.state === "PROVEN_PRE_SALE",
+        success: current.feeStructure.feeAuthorityReady === true,
         contractVersion: "CURRENT_PREPUBLICATION_SAME_LINK_CLOSEOUT_V1",
         packageId,
         packageCreated: false,
@@ -119,7 +141,8 @@ export async function POST(req: Request) {
           buyerTaxFeeClassification:
             feeAuthority.buyerTaxFeeClassification,
         },
-        feeAuthorityReused: currentFee?.status === "PROVEN",
+        feeAuthorityReady: current.feeStructure.feeAuthorityReady,
+        feeAuthorityReused: currentFeeReady,
         current: {
           status: current.status,
           blockers: current.blockers,
@@ -127,7 +150,7 @@ export async function POST(req: Request) {
         },
         safety: { ownerRoutineApprovalRequired: false,
           marketplaceWrites: 0, publicationWrites: 0, adsWrites: 0 },
-      }, { status: feeAuthority.state === "PROVEN_PRE_SALE" ? 200 : 503 })
+      }, { status: current.feeStructure.feeAuthorityReady ? 200 : 503 })
     }
     const currentKeywordHandoff =
       await reconcileCurrentFactoryKeywordContinuationsV2_1({
