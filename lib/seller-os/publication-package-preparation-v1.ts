@@ -4,19 +4,32 @@ import { canonicalEbayPackageSku } from "../ebay/ebay-sku"
 export const PACKAGE_EXPOSURE_POLICY_V1 = "SELLER_OS_PACKAGE_LISTING_EXPOSURE_V1"
 export const PACKAGE_PREVIEW_REVISION_V1 = "SELLER_OS_PACKAGE_PREVIEW_REVISION_V1"
 
-// An explicit OWNER extension of the existing one-unit exposure cap. This is
-// neither supplier stock nor publication authorization. Product Truth changes
-// invalidate the grant; unrelated title/description revisions do not.
+// An exact one-unit exposure cap. It may come from the historical explicit
+// review or the CURRENT factory's durable routine delegation. Neither source
+// proves supplier stock nor grants publication. Product Truth changes
+// invalidate the authority; unrelated receipt refreshes do not.
 export function packageExposurePolicyV1(value: unknown, binding: {
   accountKey: string; packageId: string; productId: string; variantId: string;
   sku: string; productTruthDigest: string; now: Date;
 }) {
   const p = record(value), b = record(p.binding)
+  const legacyOwnerAuthority =
+    p.sourcePolicy === "QUICK_PICK_REMOTE_OWNER_REVIEW_V1" &&
+    typeof p.authorizedBy === "string" && Boolean(p.authorizedBy) &&
+    typeof p.authorizationReference === "string" &&
+    Boolean(p.authorizationReference)
+  const currentFactoryAuthority =
+    p.sourcePolicy ===
+      "SELLER_OS_CURRENT_FACTORY_ROUTINE_EXPOSURE_AUTHORITY_V1" &&
+    p.authorizedBy === "SELLER_OS_CURRENT_PUBLICATION_FACTORY_V1" &&
+    typeof p.authorizationReference === "string" &&
+    /^CURRENT_FACTORY_GENERATION:[0-9a-f-]{36}$/.test(
+      p.authorizationReference,
+    )
   const valid = p.version === PACKAGE_EXPOSURE_POLICY_V1 && p.status === "ACTIVE" &&
     p.scope === "EXACT_NEW_PACKAGE_EXPOSURE" && p.quantity === 1 && p.supplierQuantityInferred === false &&
-    p.publicationAuthorized === false && p.sourcePolicy === "QUICK_PICK_REMOTE_OWNER_REVIEW_V1" &&
-    typeof p.authorizedBy === "string" && Boolean(p.authorizedBy) &&
-    typeof p.authorizationReference === "string" && Boolean(p.authorizationReference) &&
+    p.publicationAuthorized === false &&
+    (legacyOwnerAuthority || currentFactoryAuthority) &&
     Date.parse(String(p.authorizedAt)) <= binding.now.getTime() &&
     ["accountKey", "packageId", "productId", "variantId", "sku", "productTruthDigest"].every(k =>
       Boolean(binding[k as keyof typeof binding]) && b[k] === binding[k as keyof typeof binding]) &&

@@ -360,6 +360,9 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
   const itemSpecifics = record(intelligence.itemSpecifics)
   const conditionAuthority =
     lunaQuickPickOwnerCertifiedConditionAuthorityV1(opportunity, frontier)
+  const currentPrice = number(record(frontier.radar_price_distribution_target)
+    .targetPrice) ?? number(record(frontier.quick_pick_market_test_target)
+      .targetPrice) ?? number(opportunity.median_total_buyer_price)
   return {
     title: String(intelligence.recommendedTitle ?? titleStrategy.titleFormula
       ?? opportunity.product_title ?? "").slice(0, 80),
@@ -377,8 +380,8 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
     imageUrls: strings(candidate.imageUrls, 24),
     pricing: {
       supplierCost: number(opportunity.supplier_price),
-      targetPrice: number(record(frontier.radar_price_distribution_target)
-        .targetPrice) ?? number(opportunity.median_total_buyer_price),
+      targetPrice: currentPrice,
+      currency: "USD" as const,
     },
     evidenceSnapshot: {
       assessment,
@@ -1080,6 +1083,7 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     supplierVariantId: opportunity.supplier_variant_id,
     supplierSku: opportunity.supplier_sku,
     gtin: opportunity.gtin,
+    productTruthDigest: productTruth.truth.evidenceDigest,
     frontierId: frontier.frontier_id,
     frontierDigest: frontier.frontier_digest,
     frontierSnapshotDigest: frontier.snapshot_digest,
@@ -1138,7 +1142,9 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
   const marketTestReviewV1 = marketTestReady ? Object.freeze({
     contractVersion: "LUNA_QUICK_PICK_MARKET_TEST_PATH_V1" as const,
     finalDecision: "MARKET_TEST_READY" as const,
-    ownerAuthorizationRequired: true as const,
+    ownerAuthorizationRequired: false as const,
+    routineExposureAuthority:
+      "SELLER_OS_CURRENT_FACTORY_ROUTINE_EXPOSURE_AUTHORITY_V1" as const,
     demandEvidenceClass: "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE" as const,
     exactProductDemandClaimed: false as const,
     marketPriceSupport: "UNPROVEN" as const,
@@ -1190,6 +1196,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     taxonomyReader?: RadarMarketplaceTaxonomyReaderV1
     productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
     categoryBootstrapPass?: 0 | 1
+    skipKeywordContinuation?: boolean
   }>,
 ) {
   const opportunityRead = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -1205,8 +1212,10 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   if (!productId || !variantId || !supplierSku) {
     throw new Error("DETERMINISTIC_FACTORY_SUPPLIER_IDENTITY_REQUIRED")
   }
-  await beginCurrentPublicationPackageV1({supabase:input.supabase,accountKey:input.accountKey,
-    opportunityId:input.opportunityId,candidateKey:input.candidateKey})
+  if (input.skipKeywordContinuation !== true) {
+    await beginCurrentPublicationPackageV1({supabase:input.supabase,accountKey:input.accountKey,
+      opportunityId:input.opportunityId,candidateKey:input.candidateKey})
+  }
   const [frontierRead, duplicateRead, packageRead, providedDecisionPackageRead] =
     await Promise.all([
     input.supabase.rpc("get_seller_os_latest_profitability_frontiers_v1", {

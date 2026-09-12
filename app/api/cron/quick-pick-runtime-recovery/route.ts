@@ -24,6 +24,14 @@ import { sellerOsPostOnlyGetResponseV1,
   "@/lib/seller-os/post-only-runtime-route-v1"
 import { reconcileCurrentFactoryKeywordContinuationsV2_1 } from
   "@/lib/seller-os/current-keyword-continuation-v2-1"
+import { materializeSellerOsDeterministicFactoryCandidateV1 } from
+  "@/lib/ebay/ebay-smart-stocking-durable-factory-v1"
+import { readEbayPackageFeeContextReadonlyV1 } from
+  "@/lib/ebay/ebay-package-fee-context-readonly-v1"
+import { persistProducedEbayFeeV1, readEbayFeeHandoffV1 } from
+  "@/lib/seller-os/ebay-fee-runtime-v1"
+import { readSellOneLikeThisV1 } from
+  "@/lib/seller-os/sell-one-like-this-runtime-v1"
 
 function authorized(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? ""
@@ -46,6 +54,76 @@ export async function POST(req: Request) {
   if (!accountKey) return NextResponse.json({ success: false,
     error: "QUICK_PICK_RECOVERY_ACCOUNT_SCOPE_REQUIRED" }, { status: 500 })
   try {
+    if (req.headers.get("x-seller-os-runtime-lane") ===
+        "CURRENT_PREPUBLICATION_SAME_LINK_CLOSEOUT") {
+      const packageId = "695a862f-2385-4b6c-b996-5e4aac2ca36c"
+      const materialized =
+        await materializeSellerOsDeterministicFactoryCandidateV1({
+          supabase, accountKey,
+          opportunityId: "5acad932-7595-4659-9822-b8084ff5a107",
+          candidateKey:
+            "sha256:f574d51362e8d7869bcc139caf180abceb9f7ff72ccb84fe801d40960ca93ab2",
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+          productIdentifierPolicyReader:
+            preflightEbayCategoryProductIdentifiers,
+          skipKeywordContinuation: true,
+        })
+      if (materialized.listingPackageId !== packageId ||
+          materialized.packageCreated) {
+        throw new Error("SAME_LINK_CURRENT_PACKAGE_REUSE_REQUIRED")
+      }
+      const now = new Date()
+      const currentFee = await readEbayFeeHandoffV1({
+        supabase, accountKey, packageId, itemId: null,
+        sku: "FL-NH4784642", now,
+      })
+      const feeAuthority = currentFee?.status === "PROVEN"
+        ? currentFee.authority as Awaited<ReturnType<
+          typeof persistProducedEbayFeeV1
+        >>
+        : await persistProducedEbayFeeV1({
+          supabase, accountKey, packageId, itemId: null,
+          sku: "FL-NH4784642",
+          context: await readEbayPackageFeeContextReadonlyV1(packageId),
+          now,
+        })
+      const current = await readSellOneLikeThisV1({
+        // The CURRENT package has its own factory marker. No historical item
+        // may become a category, specifics, price or exposure authority here.
+        supabase, accountKey, packageId, referenceItemId: "",
+      })
+      return NextResponse.json({
+        success: feeAuthority.state === "PROVEN_PRE_SALE",
+        contractVersion: "CURRENT_PREPUBLICATION_SAME_LINK_CLOSEOUT_V1",
+        packageId,
+        packageCreated: false,
+        keywordContinuationSkipped: true,
+        categoryId: materialized.categoryId,
+        categoryReady: materialized.categoryReady,
+        conditionReady: materialized.conditionReady,
+        requiredItemSpecificsReady:
+          materialized.requiredItemSpecificsReady,
+        listingPolicyReady: materialized.listingPolicyReady,
+        feeAuthority: {
+          authorityId: feeAuthority.authorityId,
+          state: feeAuthority.state,
+          economicsState: feeAuthority.economicsState,
+          amount: feeAuthority.amount,
+          feeEstimateMode: feeAuthority.feeEstimateMode,
+          resolutionBlockers: feeAuthority.resolutionBlockers,
+          buyerTaxFeeClassification:
+            feeAuthority.buyerTaxFeeClassification,
+        },
+        feeAuthorityReused: currentFee?.status === "PROVEN",
+        current: {
+          status: current.status,
+          blockers: current.blockers,
+          publicationGate: current.publicationGate,
+        },
+        safety: { ownerRoutineApprovalRequired: false,
+          marketplaceWrites: 0, publicationWrites: 0, adsWrites: 0 },
+      }, { status: feeAuthority.state === "PROVEN_PRE_SALE" ? 200 : 503 })
+    }
     const currentKeywordHandoff =
       await reconcileCurrentFactoryKeywordContinuationsV2_1({
         supabase, accountKey,
