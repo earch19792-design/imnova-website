@@ -70,6 +70,22 @@ const ITEM_ID = /^\d{9,19}$/
 const LUNA_ID = /^\d{1,30}$/
 const SKU = /^[^\u0000-\u001f\u007f]{1,200}$/
 
+function isCanonicalLunaProductUrlV1(value: unknown) {
+  if (typeof value !== "string" ||
+      /[\u0000-\u0020\u007f]/.test(value)) return false
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === "https:" &&
+      (parsed.hostname === "lunaportex.com" ||
+        parsed.hostname === "www.lunaportex.com") &&
+      parsed.username === "" && parsed.password === "" && parsed.port === "" &&
+      parsed.search === "" && parsed.hash === "" &&
+      /^\/products\/[^/]+$/.test(parsed.pathname)
+  } catch {
+    return false
+  }
+}
+
 function digest(value: unknown) {
   return `sha256:${createHash("sha256").update(JSON.stringify(value))
     .digest("hex")}`
@@ -124,8 +140,8 @@ export function assertSellerOsHumanApprovedLinkageEvidenceV1(input: {
       throw new Error("SELLER_OS_APPROVED_LINKAGE_IDENTITY_INVALID")
     }
     const evidence = observed.get(componentKey(component))
-    if (!evidence || !/^https:\/\/(?:www\.)?lunaportex\.com\/products\/[A-Za-z0-9%._~-]+$/.test(
-      evidence.canonicalUrl) || !Number.isFinite(Date.parse(evidence.observedAt))) {
+    if (!evidence || !isCanonicalLunaProductUrlV1(evidence.canonicalUrl) ||
+        !Number.isFinite(Date.parse(evidence.observedAt))) {
       throw new Error("SELLER_OS_APPROVED_LINKAGE_EXACT_EVIDENCE_REQUIRED")
     }
     return Object.freeze({ ...component, canonicalUrl: evidence.canonicalUrl,
@@ -201,8 +217,7 @@ export function evaluatePublishWithStockguardContractV1(input: {
     components.length > 0 && components.every((component) =>
       LUNA_ID.test(component.productId) && LUNA_ID.test(component.variantId) &&
       SKU.test(component.supplierSku) && component.identityCertified === true &&
-      /^https:\/\/(?:www\.)?lunaportex\.com\/products\/[A-Za-z0-9%._~-]+$/.test(
-        component.canonicalLunaUrl) &&
+      isCanonicalLunaProductUrlV1(component.canonicalLunaUrl) &&
       Number.isSafeInteger(component.quantityRequiredPerBundle) &&
       component.quantityRequiredPerBundle > 0)
   const composition = Number.isSafeInteger(expectedComponentCount) &&
