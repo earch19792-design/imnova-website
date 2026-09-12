@@ -63,13 +63,15 @@ async function activeCount(input: Readonly<{
   supabase: SupabaseAdmin
   accountKey: string
 }>) {
-  const result = await input.supabase.from("ebay_active_listings")
-    .select("id", { count: "exact", head: true })
-    .eq("account_key", input.accountKey).eq("listing_status", "active")
-  if (result.error || result.count === null) {
+  const result = await input.supabase.rpc(
+    "get_autonomous_stocking_active_listing_count_v1", {
+      p_account_key: input.accountKey,
+    })
+  const count = Number(result.data)
+  if (result.error || !Number.isSafeInteger(count) || count < 0) {
     throw new Error("AUTONOMOUS_STOCKING_BATCH_ACTIVE_COUNT_READ_FAILED")
   }
-  return result.count
+  return count
 }
 
 function publicationInput(input: Readonly<{
