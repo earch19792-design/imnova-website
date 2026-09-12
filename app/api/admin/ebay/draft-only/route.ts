@@ -5,6 +5,8 @@ import { getEbayDraftWriteEnvironmentBoundary } from "@/lib/ebay/environment-bou
 import { executeCurrentUnpublishedPreparationV1 } from "@/lib/ebay/ebay-current-unpublished-preparation-server-v1"
 import { readCurrentDraftPreparationV1 } from "@/lib/ebay/ebay-current-package-preparation-server-v1"
 import { projectCurrentPreparationPackageV1, currentPreparationBindingValidV1, currentPreparationApprovalMatchesV1, currentPreparationVisualGateV1 } from "@/lib/ebay/ebay-current-package-preparation-v1"
+import { readSellOneLikeThisV1 } from "@/lib/seller-os/sell-one-like-this-runtime-v1"
+import { buildPackagePreviewRevisionV1, packageExposurePolicyV1 } from "@/lib/seller-os/publication-package-preparation-v1"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
@@ -1615,6 +1617,73 @@ async function revalidateFinalPublicationDuplicateGuard(
   return { duplicateCount: 0 as const }
 }
 
+async function loadCurrentPrepublicationBootstrapV1(input: Readonly<{
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  accountKey: string
+  actor: string
+  listingPackage: JsonRecord
+  opportunity: JsonRecord
+  authority: CurrentPrepublicationArtifactAuthorityV1
+}>) {
+  const profileRead = await input.supabase.from(
+    "ebay_account_policy_profiles").select("*")
+    .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+    .maybeSingle()
+  const policy = profileRead.data ? evaluateCurrentPrepublicationArtifactPolicyV1({
+    listingPackage: input.listingPackage, opportunity: input.opportunity,
+    accountProfile: profileRead.data, accountKey: input.accountKey,
+  }) : null
+  if (profileRead.error || !policy?.pass
+      || policy.authority.bindingDigest !== input.authority.bindingDigest
+      || policy.authority.actorUserId !== input.actor) {
+    throw new Error("CURRENT_PREPUBLICATION_ARTIFACT_BINDING_CHANGED")
+  }
+  const current = await readSellOneLikeThisV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    packageId: text(input.listingPackage.id), referenceItemId: "",
+  })
+  const certified = record(current)
+  const listing = record(certified.listingPackage)
+  const content = record(listing.content)
+  const images = Array.isArray(content.imageUrls)
+    ? content.imageUrls.filter((value): value is string =>
+      typeof value === "string" && value.startsWith("https://")) : []
+  const itemSpecifics = record(content.itemSpecifics)
+  if (certified.previewPass !== true
+      || certified.listingPackagePass !== true
+      || certified.imageHandoffPass !== true
+      || record(certified.referenceImport).currentOnlyAuthorityUsed !== true
+      || certified.competitorContaminationCount !== 0
+      || certified.unsupportedClaimCount !== 0
+      || text(certified.sourcePackageId) !== text(input.listingPackage.id)
+      || record(certified.safety).legacyKeywordFallback !== false
+      || images.length < 1 || images.length > 24
+      || new Set(images).size !== images.length
+      || !text(content.title) || !text(content.description)
+      || !text(content.categoryId) || !Object.keys(itemSpecifics).length
+      || !(typeof content.price === "number" && content.price > 0)) {
+    throw new Error("CURRENT_PREPUBLICATION_BOOTSTRAP_NOT_READY")
+  }
+  const packageData = record(input.listingPackage.package_data)
+  const listingPackage = { ...input.listingPackage, package_data: {
+    ...packageData, title: content.title, description: content.description,
+    categoryId: content.categoryId, aspects: itemSpecifics,
+    imageUrls: images, pricing: { ...record(packageData.pricing),
+      targetPrice: content.price, currency: "USD" },
+  } }
+  const visualGate: FinalListingReviewPublicationGate = {
+    required: true, allowed: true, reason: null, reviewId: null,
+    revisionId: null, attemptId: null, previewHash: null,
+    finalVisualSetLocked: true, generationControlsHidden: true,
+    readyForUnpublishedOfferAuthorization: true,
+    visualPhase: "CURRENT_CERTIFIED_FULL_SOURCE_GALLERY",
+    providerCallsSnapshot: 0, selectedAssets: images.length,
+    passedAssets: images.length,
+    source: "APPROVED_LUNA_SUPPLIER_IMAGE_AUTOMATED_QA",
+  }
+  return { listingPackage, certified, visualGate, policy }
+}
+
 async function loadPackageContext(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   packageId: string,
@@ -1625,6 +1694,7 @@ async function loadPackageContext(
   selfLineage?: ExactDraftOnlyPublicationSelfLineageV1,
   allowFinalV3ReadOnlyFallback = false,
   currentRevisionPreparation = false,
+  currentArtifactAuthority?: CurrentPrepublicationArtifactAuthorityV1,
 ) {
   const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
   if (!sellerAccountKey) throw new Error("EBAY_DRAFT_ONLY_PACKAGE_ACCOUNT_SCOPE_REQUIRED")
@@ -1649,7 +1719,15 @@ async function loadPackageContext(
   const currentPreparation = currentRevisionPreparation ? await readCurrentDraftPreparationV1({
     supabase,accountKey:sellerAccountKey,actor:actorUserId,listingPackage,
   }) : null
-  if (currentRevisionPreparation && !currentPreparation) {
+  const currentArtifactBootstrap = currentRevisionPreparation
+    && !currentPreparation && currentArtifactAuthority
+    ? await loadCurrentPrepublicationBootstrapV1({ supabase,
+      accountKey: sellerAccountKey, actor: actorUserId, listingPackage,
+      opportunity: opportunity as JsonRecord,
+      authority: currentArtifactAuthority })
+    : null
+  if (currentRevisionPreparation && !currentPreparation
+      && !currentArtifactBootstrap) {
     throw new Error("CURRENT_REVISION_PREPARATION_REQUIRED_NO_LEGACY_FALLBACK")
   }
   if (currentPreparation) {
@@ -1657,12 +1735,14 @@ async function loadPackageContext(
       throw new Error("CURRENT_REVISION_EXACT_BINDING_REQUIRED")
     }
     listingPackage = projectCurrentPreparationPackageV1(listingPackage,currentPreparation)
+  } else if (currentArtifactBootstrap) {
+    listingPackage = currentArtifactBootstrap.listingPackage
   }
   let sameDayContext: Awaited<ReturnType<
     typeof loadSameDayAuthorizedPublicationContext
   >> = null
   try {
-    sameDayContext = currentPreparation ? null : await loadSameDayAuthorizedPublicationContext({
+    sameDayContext = currentPreparation || currentArtifactBootstrap ? null : await loadSameDayAuthorizedPublicationContext({
       supabase,
       accountKey: sellerAccountKey,
       actorUserId,
@@ -1684,7 +1764,7 @@ async function loadPackageContext(
     if (!finalReviewGate.allowed) throw contextError
   }
   const effectiveOpportunity = sameDayContext?.opportunity ?? (opportunity as JsonRecord)
-  const smartStockingContext = !currentPreparation && isSmartStockingListingIntakeV1(
+  const smartStockingContext = !currentPreparation && !currentArtifactBootstrap && isSmartStockingListingIntakeV1(
     record(effectiveOpportunity.assessment),
   ) ? await resolveSmartStockingAuthorizedPublicationV1({
     supabase,
@@ -1693,7 +1773,7 @@ async function loadPackageContext(
     listingPackage: listingPackage as JsonRecord,
     opportunity: effectiveOpportunity,
   }) : null
-  const quickPickContext = !currentPreparation && !smartStockingContext &&
+  const quickPickContext = !currentPreparation && !currentArtifactBootstrap && !smartStockingContext &&
     isQuickPickCanonicalPublishPackageV1(
       record(listingPackage.package_data),
     ) ? await resolveQuickPickCanonicalPublishHandoffV1({
@@ -1818,6 +1898,7 @@ async function loadPackageContext(
   ].filter(Boolean)
   return {
     currentPreparation,
+    currentArtifactBootstrap,
     listingPackage: listingPackage as JsonRecord,
     opportunity: effectiveOpportunity,
     sameDayPilotAuthorization: sameDayContext?.authorization ?? null,
@@ -3177,6 +3258,109 @@ type CurrentPrepublicationInternalAuthorityV1 = Readonly<{
   artifactAuthority: CurrentPrepublicationArtifactAuthorityV1
 }>
 
+async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  accountKey: string
+  actor: string
+  approval: JsonRecord
+  execution: JsonRecord
+  authority: CurrentPrepublicationArtifactAuthorityV1
+}>) {
+  const packageRead = await input.supabase.from("ebay_listing_packages")
+    .select("*").eq("id", input.approval.listing_package_id)
+    .eq("created_by", input.actor).eq("account_key", input.accountKey)
+    .maybeSingle()
+  const opportunityRead = packageRead.data
+    ? await input.supabase.from("ebay_luna_opportunity_queue").select("*")
+      .eq("id", packageRead.data.opportunity_id)
+      .eq("candidate_key", packageRead.data.candidate_key).maybeSingle()
+    : { data: null, error: null }
+  if (packageRead.error || !packageRead.data || opportunityRead.error
+      || !opportunityRead.data) {
+    throw new Error("CURRENT_PREPUBLICATION_INTENT_CONTEXT_REQUIRED")
+  }
+  const bootstrap = await loadCurrentPrepublicationBootstrapV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    actor: input.actor, listingPackage: packageRead.data as JsonRecord,
+    opportunity: opportunityRead.data as JsonRecord,
+    authority: input.authority,
+  })
+  const built = buildFinalPublicationPreview(
+    input.approval, input.execution, bootstrap.visualGate)
+  const approvedPayload = record(input.approval.approved_payload)
+  const category = await readCategoryProductIdentifierPreflight(
+    approvedPayload)
+  if (!category.safe) throw new Error(category.blocker
+    ?? "CURRENT_PREPUBLICATION_CATEGORY_PREFLIGHT_FAILED")
+  const official = await readExactUnpublishedPublicationState({
+    approvedPayload,
+    offerId: built.offerId, sku: built.sku,
+  })
+  if (!official.safe) throw new Error(
+    "CURRENT_PREPUBLICATION_OFFICIAL_READBACK_FAILED")
+  await revalidateFinalPublicationDependencies(input.supabase, {
+    approval: input.approval, execution: input.execution,
+    listingPackage: packageRead.data as JsonRecord,
+    opportunity: opportunityRead.data as JsonRecord,
+    sameDayPilotAuthorization: null,
+    smartStockingPublicationAuthorization: null,
+    quickPickPublicationAuthorization: null,
+    runtime: ebayDraftOnlyRuntimeStatus(), accountKey: input.accountKey,
+  }, approvedPayload)
+  const publicationId = randomUUID()
+  const now = new Date()
+  const packageData = record(packageRead.data.package_data)
+  const productTruthDigest = text(record(record(
+    opportunityRead.data.assessment).productTruth).evidenceDigest)
+  const exposure = packageExposurePolicyV1(
+    packageData.packageExposurePolicyV1, {
+      accountKey: input.accountKey, packageId: text(packageRead.data.id),
+      productId: text(opportunityRead.data.supplier_product_id),
+      variantId: text(opportunityRead.data.supplier_variant_id),
+      sku: text(opportunityRead.data.supplier_sku), productTruthDigest, now,
+    })
+  if (!exposure.valid) throw new Error(
+    "CURRENT_ROUTINE_EXPOSURE_AUTHORITY_CHANGED")
+  const virtualPublication = {
+    id: publicationId, actor_user_id: input.actor,
+    listing_package_id: packageRead.data.id,
+    opportunity_id: opportunityRead.data.id,
+    marketplace_account_key: input.accountKey,
+    account_fingerprint: input.execution.account_fingerprint,
+    sku: built.sku, offer_id: built.offerId, phase: "preview_ready",
+    publish_attempt_count: 0, publication_idempotency_key: null,
+    claim_token: null, listing_id: null, preview_hash: built.previewHash,
+    preview: built.preview, draft_execution_id: input.execution.id,
+    draft_approval_id: input.approval.id,
+  }
+  const offer = record(approvedPayload.offerPayload)
+  const revision = buildPackagePreviewRevisionV1({
+    certified: bootstrap.certified,
+    consistency: record(bootstrap.certified).consistency,
+    publication: virtualPublication, exposure, now,
+    currentConfiguration: { target: "PRODUCTION",
+      condition: record(approvedPayload.inventoryItemPayload).condition,
+      listingPolicies: offer.listingPolicies,
+      merchantLocationKey: offer.merchantLocationKey },
+  })
+  const saved = await input.supabase.rpc(
+    "prepare_current_prepublication_intent_v1", {
+      p_publication_id: publicationId,
+      p_draft_execution_id: input.execution.id,
+      p_actor_user_id: input.actor,
+      p_marketplace_account_key: input.accountKey,
+      p_preview_hash: built.previewHash,
+      p_preview: built.preview,
+      p_target: "PRODUCTION",
+      p_account_fingerprint: input.execution.account_fingerprint,
+      p_revision: revision,
+    }).single()
+  if (saved.error || !saved.data) throw new Error(databaseExceptionCode(
+    saved.error, "CURRENT_PREPUBLICATION_INTENT_PERSIST_FAILED"))
+  return { publication: saved.data as JsonRecord, revision,
+    officialReadback: official, publicationIntentCreated: true }
+}
+
 async function materializeCurrentPrepublicationArtifactsV1(
   req: Request,
   body: JsonRecord,
@@ -3308,11 +3492,10 @@ async function materializeCurrentPrepublicationArtifactsV1(
       + Number(executionSafety.inventoryItemUpdated === true)
       + Number(executionSafety.unpublishedOfferCreated === true)
       + Number(executionSafety.offerUpdated === true)
-    const prepareResponse = await prepareFinalPublication({
-      executionId: execution.id,
-    }, actor)
-    const prepared = await responseBody(prepareResponse)
-    if (!prepareResponse.ok || prepared.success !== true) return prepareResponse
+    const prepared = await prepareCurrentPrepublicationIntentV1({
+      supabase, accountKey, actor, approval, execution,
+      authority: policy.authority,
+    })
     publication = record(prepared.publication)
     publicationIntentWrites = 1
     artifactReplay = approved.idempotentReplay === true
@@ -4527,9 +4710,13 @@ async function approveDraft(
       undefined,
       false,
       true,
+      artifactAuthority,
     )
   }
-  const visualPublicationGate = context.currentPreparation ? currentPreparationVisualGateV1(context.currentPreparation) : await loadFinalListingReviewPublicationGate({
+  const visualPublicationGate = context.currentPreparation
+    ? currentPreparationVisualGateV1(context.currentPreparation)
+    : context.currentArtifactBootstrap?.visualGate
+      ?? await loadFinalListingReviewPublicationGate({
     supabase,
     listingPackageId: packageId,
     actorId: actor,
@@ -4557,6 +4744,7 @@ async function approveDraft(
     draftConfiguration,
     target,
     accountFingerprint: fingerprint,
+    currentPrepublicationArtifactAuthority: artifactAuthority,
   })
   if (!readiness.ready) {
     if (oneClickRequested) {
@@ -4937,6 +5125,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
     .select("*").eq("id",approval.listing_package_id)
     .eq("created_by",actor).maybeSingle()
   if (currentPackageRead.error || !currentPackageRead.data) throw new Error("CURRENT_REVISION_PACKAGE_READ_FAILED")
+  let currentArtifactBootstrap: Awaited<ReturnType<
+    typeof loadCurrentPrepublicationBootstrapV1>> | null = null
   if (currentArtifactAuthority) {
     const [opportunityRead, profileRead] = await Promise.all([
       supabase.from("ebay_luna_opportunity_queue").select("*")
@@ -4961,13 +5151,23 @@ async function executeDraft(body: JsonRecord, actor: string) {
         "CURRENT_PREPUBLICATION_ARTIFACT_BINDING_CHANGED"), 409,
       currentPolicy && !currentPolicy.pass ? currentPolicy.blockers : undefined)
     }
+    currentArtifactBootstrap = await loadCurrentPrepublicationBootstrapV1({
+      supabase, accountKey: text(currentPackageRead.data.account_key), actor,
+      listingPackage: currentPackageRead.data as JsonRecord,
+      opportunity: opportunityRead.data as JsonRecord,
+      authority: currentArtifactAuthority,
+    })
   }
   const currentRevisionAuthority = await readCurrentDraftPreparationV1({supabase,
     accountKey:String(currentPackageRead.data.account_key),actor,listingPackage:currentPackageRead.data})
   if (currentRevisionAuthority && !currentPreparationApprovalMatchesV1(currentRevisionAuthority,approvedPayload)) {
     return jsonError(new Error("CURRENT_REVISION_APPROVAL_REQUIRED"),409)
   }
-  const visualPublicationGate = currentRevisionAuthority ? currentPreparationVisualGateV1(currentRevisionAuthority) : await loadFinalListingReviewPublicationGate({
+  const visualPublicationGate = currentRevisionAuthority
+    ? currentPreparationVisualGateV1(currentRevisionAuthority)
+    : currentArtifactBootstrap
+      ? currentArtifactBootstrap.visualGate
+      : await loadFinalListingReviewPublicationGate({
     supabase,
     listingPackageId: text(approval.listing_package_id),
     actorId: actor,
@@ -5292,6 +5492,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     collisionSelfLineage,
     false,
     true,
+    currentArtifactAuthority ?? undefined,
   )
   const v3Binding = record(record(approvedPayload.compliance).v3FinalSetAuthorization)
   let revalidatedExecutionEvidence:
@@ -5379,6 +5580,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
     target,
     accountFingerprint: fingerprint,
     revalidatedExecutionEvidence,
+    currentPrepublicationArtifactAuthority:
+      currentArtifactAuthority ?? undefined,
   })
   const rebuiltPayload = buildEbayDraftOnlyPayload(
     context.listingPackage,

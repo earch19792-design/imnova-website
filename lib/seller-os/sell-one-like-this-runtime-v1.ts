@@ -29,7 +29,7 @@ export async function readSellOneLikeThisV1(input: {
   if (!UUID.test(input.packageId) || (input.referenceItemId !== "" && !/^\d{9,19}$/.test(input.referenceItemId))) throw Error("REFERENCE_INPUT_INVALID")
   const db = input.supabase, now = input.now ?? new Date()
   const p = await bounded(db.from("ebay_current_listing_packages_v1").select(
-    "id,opportunity_id,candidate_key,account_key,factory:package_data->currentPublicationFactoryV1,ownPrice:package_data->pricing->targetPrice,ownAspects:package_data->aspects,category:package_data->categoryResolverV1,quantityReview:package_data->quickPickOwnerReviewV1,quantityReviewProjection:package_data->quickPickMarketTestPackageV1")
+    "id,opportunity_id,candidate_key,account_key,factory:package_data->currentPublicationFactoryV1,exposure:package_data->packageExposurePolicyV1,ownPrice:package_data->pricing->targetPrice,ownAspects:package_data->aspects,category:package_data->categoryResolverV1,quantityReview:package_data->quickPickOwnerReviewV1,quantityReviewProjection:package_data->quickPickMarketTestPackageV1")
     .eq("account_key", input.accountKey).eq("id", input.packageId).limit(1)).maybeSingle()
   if (p.error || !p.data) throw Error("REFERENCE_OWN_PACKAGE_UNAVAILABLE")
   const pkg = record(p.data)
@@ -164,7 +164,7 @@ export async function readSellOneLikeThisV1(input: {
       ? knownBuyerShippingV1(record(proof).fulfillmentFeeBasis)
       : currentBuyerShipping,now})
   const consistency = listingPipelineConsistencyV1(result, { ...authority, quantityReview, currentQuantityMaterial,
-    publicationFeeStructure:feeStructure, exposurePolicy: prep.exposurePolicy, productTruthDigest: String(own.productTruthDigest ?? ""),
+    publicationFeeStructure:feeStructure, exposurePolicy: prep.exposurePolicy ?? pkg.exposure, productTruthDigest: String(own.productTruthDigest ?? ""),
     pinnedSnapshot:record(prep.current).snapshot,pinnedPackageHash:record(prep.current).packageHash })
   const revision = currentPackagePreviewRevisionV1(prep.current, consistency, publication.data, prep.activation)
   const basePublicationGate = listingPublicationE2eGateV1(consistency, publication.error ? null : revision.publication, !publication.error)

@@ -44,6 +44,7 @@ function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) 
   const withoutImport = source
     .replace('from "./ebay-current-package-preparation-v1"', `from ${JSON.stringify(new URL("../lib/ebay/ebay-current-package-preparation-v1.ts", import.meta.url).href)}`)
     .replace('import { validateMayelContentPatchV1 } from "../seller-os/mayel-content-patch-v1"\n', "")
+    .replace('import { readCurrentPrepublicationArtifactAuthorityV1 } from "./ebay-current-prepublication-artifact-policy-v1"\n', "")
     .replace(/import \{[^}\n]*\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
     .replace(/import \{\n(?:\s+[A-Za-z0-9_]+,?\n)+\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
     .replace(/import \{\n  calculateEbayUnitEconomics,\n  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,\n  normalizeEbayUnitEconomicsConfig,\n  type EbayUnitEconomicsConfig,\n\} from "\.\/ebay-unit-economics"\n/, "")
@@ -56,7 +57,7 @@ function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) 
   const categorySource = includeCategoryProductIdentifiers
     ? `${categoryProductIdentifierSource}\n`
     : ""
-  return `${contentPatchSource}\n${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${publisherSemanticReadbackSource}\n${categorySource}${withoutImport}`
+  return `${contentPatchSource}\n${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${publisherSemanticReadbackSource}\n${categorySource}\nfunction readCurrentPrepublicationArtifactAuthorityV1() { return null }\n${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(

@@ -1,4 +1,5 @@
 import { currentPreparationBindingValidV1, currentPreparationPayloadMatchesV1 } from "./ebay-current-package-preparation-v1"
+import { readCurrentPrepublicationArtifactAuthorityV1 } from "./ebay-current-prepublication-artifact-policy-v1"
 import { createHash } from "node:crypto"
 
 import {
@@ -35,6 +36,7 @@ export type DraftOnlyReadinessInput = {
   smartStockingPublicationAuthorization?: JsonRecord | null
   quickPickPublicationAuthorization?: JsonRecord | null
   currentPreparation?: JsonRecord | null
+  currentPrepublicationArtifactAuthority?: JsonRecord | null
   revalidatedExecutionEvidence?: {
     freshSameDaySourceVerified?: boolean
     finalV3ImageTransportVerified?: boolean
@@ -574,6 +576,22 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const opportunity = input.opportunity
   const currentPreparation = input.currentPreparation ?? null
   const currentPreparationAuthorized = currentPreparationBindingValidV1(currentPreparation,listingPackage,opportunity,accountFingerprint,now)
+  const currentArtifactAuthority =
+    readCurrentPrepublicationArtifactAuthorityV1({ compliance: {
+      currentPrepublicationArtifactAuthorityV1:
+        input.currentPrepublicationArtifactAuthority } })
+  const currentArtifactAuthorized = Boolean(currentArtifactAuthority
+    && currentArtifactAuthority.accountKey === listingPackage.account_key
+    && currentArtifactAuthority.packageId === listingPackage.id
+    && currentArtifactAuthority.opportunityId === opportunity.id
+    && currentArtifactAuthority.candidateKey === listingPackage.candidate_key
+    && currentArtifactAuthority.productId === opportunity.supplier_product_id
+    && currentArtifactAuthority.variantId === opportunity.supplier_variant_id
+    && currentArtifactAuthority.supplierSku === opportunity.supplier_sku
+    && currentArtifactAuthority.productTruthDigest === record(record(
+      opportunity.assessment).productTruth).evidenceDigest
+      && currentArtifactAuthority.publicationCommitAllowed === false
+    && currentArtifactAuthority.publicMarketplaceExposureAllowed === false)
   const configuration = input.draftConfiguration
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
@@ -850,7 +868,8 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     ['hold', 'rejected', 'listed', 'archived'].includes(
       text(opportunity.queue_status),
     )) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
-  if (!currentPreparationAuthorized && !sameDayPilotAuthorized && !smartStockingPublicationAuthorized &&
+  if (!currentPreparationAuthorized && !currentArtifactAuthorized
+      && !sameDayPilotAuthorized && !smartStockingPublicationAuthorized &&
       !quickPickPublicationAuthorized) {
     if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
     if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
@@ -860,6 +879,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   }
   if (
     !currentPreparationAuthorized
+    && !currentArtifactAuthorized
     && !smartStockingPublicationAuthorized
     && !quickPickPublicationAuthorized
     && (opportunity.supplier_available !== true
@@ -868,6 +888,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (supplierPrice === null || supplierPrice <= 0) blockers.push("LUNA_COST_REQUIRED")
   if (
     !currentPreparationAuthorized
+    && !currentArtifactAuthorized
     && !quickPickPublicationAuthorized
     && !recent(opportunity.supplier_snapshot_at ?? opportunity.last_scanned_at,
       sourceMaxAge, now)
@@ -877,6 +898,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && !freshSameDaySourceVerified
     && !quickPickPublicationAuthorized
     && !currentPreparationAuthorized
+    && !currentArtifactAuthorized
   ) blockers.push("PACKAGE_SOURCE_STALE")
   if (!text(packageData.title) || text(packageData.title).length > 80) blockers.push("TITLE_INVALID")
   if (!/^\d{1,12}$/.test(categoryId)) blockers.push("CATEGORY_ID_REQUIRED")
@@ -914,7 +936,8 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   }
   if (
     !Number.isInteger(quantity) || quantity < 1
-    || (!currentPreparationAuthorized && !smartStockingPublicationAuthorized &&
+    || (!currentPreparationAuthorized && !currentArtifactAuthorized
+      && !smartStockingPublicationAuthorized &&
       !quickPickPublicationAuthorized && supplierStock === null)
     || (supplierStock !== null && quantity > supplierStock)
   ) blockers.push("QUANTITY_EXCEEDS_FRESH_STOCK")
@@ -923,7 +946,8 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
   // Non-LIVE preparation can validate content while monetary evidence is pending.
   // The independent publication gate still requires proven Shipping/fees/economics.
-  if (!currentPreparationAuthorized && (!economics.ready || !economics.passesProfitGate)) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
+  if (!currentPreparationAuthorized && !currentArtifactAuthorized
+      && (!economics.ready || !economics.passesProfitGate)) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
   if (currentPreparation && !currentPreparationAuthorized) blockers.push("CURRENT_REVISION_AUTHORITY_NOT_READY")
   for (const [key, value] of Object.entries({
     FULFILLMENT_POLICY_REQUIRED: policies.fulfillmentPolicyId,
