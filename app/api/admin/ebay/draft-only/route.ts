@@ -1789,6 +1789,14 @@ async function loadPackageContext(
   const supplierVariantId = text(effectiveOpportunity.supplier_variant_id)
   const marketRadarProductId = uuid(effectiveOpportunity.market_radar_product_id)
   const gtin = text(effectiveOpportunity.gtin)
+  const currentAuditLineagePackageIds = currentArtifactBootstrap
+    ? rows(record(record(listingPackage.package_data)
+      .currentPublicationFactoryV1).historicalReferences)
+      .filter((entry) => entry.use === "AUDIT_LINEAGE_DEDUP_ONLY")
+      .map((entry) => uuid(entry.packageId))
+      .filter((value): value is string => Boolean(value))
+      .slice(0, 20)
+    : []
   const emptyCollision = () => Promise.resolve({ data: [] as Array<{ id: string }>, error: null })
   const ebaySkuQuery = collisionSku
     ? supabase.from("ebay_active_listings").select("id").eq("ebay_sku", collisionSku).neq("listing_status", "ended").limit(1)
@@ -1805,18 +1813,40 @@ async function loadPackageContext(
   if (marketRadarQuery && supplierVariantId) {
     marketRadarQuery = marketRadarQuery.eq("supplier_variant_id", supplierVariantId)
   }
-  const candidatePackageQuery = candidateKey
-    ? supabase.from("ebay_listing_packages").select("id").eq("account_key", sellerAccountKey).eq("candidate_key", candidateKey).neq("id", packageId).in("status", ["draft", "ready_for_review", "approved"]).limit(1)
-    : emptyCollision()
-  let candidateApprovalQuery = candidateKey
-    ? supabase.from("ebay_draft_only_approvals").select("id").eq("candidate_key", candidateKey).eq("target", target).in("status", ["approved", "consumed"]).neq("listing_package_id", packageId).limit(1)
+  let candidatePackageQuery = candidateKey
+    ? supabase.from("ebay_listing_packages")
+      .select("id").eq("account_key", sellerAccountKey)
+      .eq("candidate_key", candidateKey).neq("id", packageId)
+      .in("status", ["draft", "ready_for_review", "approved"])
     : null
+  if (candidatePackageQuery && currentAuditLineagePackageIds.length) {
+    candidatePackageQuery = candidatePackageQuery.not("id", "in",
+      `(${currentAuditLineagePackageIds.join(",")})`)
+  }
+  let candidateApprovalQuery = candidateKey
+    ? supabase.from("ebay_draft_only_approvals")
+      .select("id").eq("candidate_key", candidateKey).eq("target", target)
+      .in("status", ["approved", "consumed"])
+      .neq("listing_package_id", packageId)
+    : null
+  if (candidateApprovalQuery && currentAuditLineagePackageIds.length) {
+    candidateApprovalQuery = candidateApprovalQuery.not(
+      "listing_package_id", "in",
+      `(${currentAuditLineagePackageIds.join(",")})`)
+  }
   if (candidateApprovalQuery) {
     candidateApprovalQuery = candidateApprovalQuery.or(`account_fingerprint.eq.${accountFingerprint || "__unconfigured__"},account_fingerprint.is.null`)
   }
   let gtinApprovalQuery = gtin
-    ? supabase.from("ebay_draft_only_approvals").select("id").eq("target", target).in("status", ["approved", "consumed"]).neq("listing_package_id", packageId).contains("approved_payload", { sourceEvidence: { gtin } }).limit(1)
+    ? supabase.from("ebay_draft_only_approvals")
+      .select("id").eq("target", target).in("status", ["approved", "consumed"])
+      .neq("listing_package_id", packageId)
+      .contains("approved_payload", { sourceEvidence: { gtin } })
     : null
+  if (gtinApprovalQuery && currentAuditLineagePackageIds.length) {
+    gtinApprovalQuery = gtinApprovalQuery.not("listing_package_id", "in",
+      `(${currentAuditLineagePackageIds.join(",")})`)
+  }
   if (gtinApprovalQuery) {
     gtinApprovalQuery = gtinApprovalQuery.or(`account_fingerprint.eq.${accountFingerprint || "__unconfigured__"},account_fingerprint.is.null`)
   }
@@ -1869,17 +1899,27 @@ async function loadPackageContext(
     supplierSkuQuery,
     supplierVariantQuery,
     marketRadarQuery ?? emptyCollision(),
-    candidatePackageQuery,
-    candidateApprovalQuery ?? emptyCollision(),
-    gtinApprovalQuery ?? emptyCollision(),
+    candidatePackageQuery?.limit(1) ?? emptyCollision(),
+    candidateApprovalQuery?.limit(1) ?? emptyCollision(),
+    gtinApprovalQuery?.limit(1) ?? emptyCollision(),
     gtinOpportunityQuery,
     ledgerQuery,
   ])
   const duplicateOpportunityIds = (gtinOpportunityResult.data ?? [])
     .map((row) => text(row.id))
     .filter(Boolean)
-  const gtinPackageResult = duplicateOpportunityIds.length
-    ? await supabase.from("ebay_listing_packages").select("id").eq("account_key", sellerAccountKey).in("opportunity_id", duplicateOpportunityIds).in("status", ["draft", "ready_for_review", "approved"]).limit(1)
+  let gtinPackageQuery = duplicateOpportunityIds.length
+    ? supabase.from("ebay_listing_packages").select("id")
+      .eq("account_key", sellerAccountKey)
+      .in("opportunity_id", duplicateOpportunityIds)
+      .in("status", ["draft", "ready_for_review", "approved"])
+    : null
+  if (gtinPackageQuery && currentAuditLineagePackageIds.length) {
+    gtinPackageQuery = gtinPackageQuery.not("id", "in",
+      `(${currentAuditLineagePackageIds.join(",")})`)
+  }
+  const gtinPackageResult = gtinPackageQuery
+    ? await gtinPackageQuery.limit(1)
     : { data: [] as Array<{ id: string }>, error: null }
   if (
     ebaySkuResult.error || supplierSkuResult.error || supplierVariantResult.error ||
@@ -4700,6 +4740,33 @@ async function approveDraft(
       )
     }
   } else {
+    if (currentPrepublicationRequested) {
+      const requestedPolicies = record(
+        requestedConfiguration.businessPolicies)
+      const requestedSelection = {
+        fulfillmentPolicyId: text(requestedPolicies.fulfillmentPolicyId),
+        paymentPolicyId: text(requestedPolicies.paymentPolicyId),
+        returnPolicyId: text(requestedPolicies.returnPolicyId),
+        merchantLocationKey: text(
+          requestedConfiguration.merchantLocationKey),
+      }
+      const ebayPreflight = await preflightEbayDraftOnlyMobile(
+        requestedSelection)
+      if (ebayPreflight.target !== "PRODUCTION"
+          || ebayPreflight.identity.status !== "BOUND"
+          || !ebayPreflight.privilege.usable
+          || !ebayPreflight.selectionComplete
+          || ebayPreflight.snapshotStatus !== "READY"
+          || !ebayPreflight.snapshot
+          || Object.entries(requestedSelection).some(([key, value]) =>
+            ebayPreflight.selection[key as keyof typeof requestedSelection]
+              !== value)) {
+        return jsonError(new Error(
+          "CURRENT_PREPUBLICATION_ACCOUNT_PREFLIGHT_FAILED"), 409)
+      }
+      requestedConfiguration = { ...requestedConfiguration,
+        ebayPreflightSnapshot: ebayPreflight.snapshot }
+    }
     context = await loadPackageContext(
       supabase,
       packageId,
