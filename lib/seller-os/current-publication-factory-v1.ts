@@ -33,6 +33,14 @@ export function currentFactoryMaterializationV1(seed:unknown,existing:unknown){
   accountKey:m.accountKey,packageId:m.packageId,productId:m.productId,
   variantId:m.variantId,sku:m.supplierSku,productTruthDigest,
  }:null
+ const seedAspects=record(s.aspects)
+ const conditionAuthority=record(s.conditionAuthority)
+ const conditionExact=conditionAuthority.factInvented===false &&
+  conditionAuthority.lunaProductId===m.productId &&
+  conditionAuthority.lunaVariantId===m.variantId &&
+  conditionAuthority.supplierSku===m.supplierSku &&
+  conditionAuthority.categoryId===p.categoryId &&
+  String(s.conditionId??'')===String(conditionAuthority.conditionId??'')
  return {
   currentPublicationFactoryV1:m,
   ...(binding?{packageExposurePolicyV1:{
@@ -43,7 +51,11 @@ export function currentFactoryMaterializationV1(seed:unknown,existing:unknown){
    authorizationReference:`CURRENT_FACTORY_GENERATION:${m.generation}`,
    binding,
   }}:{}),
-  ...(categoryCurrent?Object.fromEntries(['categoryId','categoryName','categoryResolverV1','taxonomyPreflight','aspects'].map(k=>[k,p[k]])):{}),
+  ...(categoryCurrent?{
+   ...Object.fromEntries(['categoryId','categoryName','categoryResolverV1','taxonomyPreflight'].map(k=>[k,p[k]])),
+   aspects:Object.keys(seedAspects).length?seedAspects:record(p.aspects),
+   ...(conditionExact?{conditionId:s.conditionId,conditionLabel:s.conditionLabel,conditionAuthority}:{}),
+  }:{}),
   // This is a proposed sale price, not an economics/fee/Shipping receipt.
   ...(typeof pricing.targetPrice==='number' && Number.isFinite(pricing.targetPrice) && pricing.targetPrice>0 && pricing.currency==='USD'
     ? {pricing:{targetPrice:pricing.targetPrice,currency:'USD',source:'CURRENT_FACTORY_PRICE_PROPOSAL',economicsProven:false}}:{}),

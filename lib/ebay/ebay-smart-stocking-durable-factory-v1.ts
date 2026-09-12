@@ -332,7 +332,11 @@ export function lunaQuickPickOwnerCertifiedConditionAuthorityV1(
     && canonicalMarketplace.supplierSku === opportunity.supplier_sku
   const categoryId = canonicalCategoryExact
     ? canonicalMarketplace.categoryId : category.categoryId
+  const exactCurrentFactoryLineage = canonicalCategoryExact
+    && exactSupplierIdentity(opportunity, frontier)
+    && exactProductTruth(opportunity).exact
   return legacyQuickPickLineage || continuedQuickPickLineage
+      || exactCurrentFactoryLineage
     ? lunaOwnerCertifiedNewMerchandiseConditionV1({
       exactProductIdentityProven: exactSupplierIdentity(opportunity, frontier)
         && exactProductTruth(opportunity).exact,
@@ -360,6 +364,14 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
   const itemSpecifics = record(intelligence.itemSpecifics)
   const conditionAuthority =
     lunaQuickPickOwnerCertifiedConditionAuthorityV1(opportunity, frontier)
+  const taxonomy = record(canonicalMarketplace.taxonomyPreflight)
+  const currentAspects = canonicalCategoryReady
+    && canonicalMarketplace.requiredItemSpecificsReady === true
+    ? {
+      ...record(taxonomy.provenValuesAutoBound),
+      ...record(taxonomy.marketplaceValuesAutoBound),
+    }
+    : {}
   const currentPrice = number(record(frontier.radar_price_distribution_target)
     .targetPrice) ?? number(record(frontier.quick_pick_market_test_target)
       .targetPrice) ?? number(opportunity.median_total_buyer_price)
@@ -370,7 +382,10 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
       ? text(canonicalMarketplace.categoryId) : text(category.categoryId),
     categoryName: canonicalCategoryReady
       ? text(canonicalMarketplace.categoryName) : text(category.categoryName),
-    aspects: record(itemSpecifics.supplierConfirmed),
+    aspects: {
+      ...record(itemSpecifics.supplierConfirmed),
+      ...currentAspects,
+    },
     ...(conditionAuthority ? {
       conditionId: conditionAuthority.conditionId,
       conditionLabel: conditionAuthority.conditionLabel,

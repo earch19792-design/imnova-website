@@ -429,6 +429,62 @@ function selectedId(
   return usable.length === 1 ? usable[0].id : ""
 }
 
+function fulfillmentFeeBasisV1(value: JsonRecord, policyId: string) {
+  const policies = Array.isArray(value.fulfillmentPolicies)
+    ? value.fulfillmentPolicies.map(record)
+    : []
+  const matches = policies.filter((policy) =>
+    policy.fulfillmentPolicyId === policyId)
+  const policy = matches.length === 1 ? matches[0] : {}
+  const geography = (raw: unknown) => {
+    const locations = record(raw)
+    const regions = (entries: unknown) => Array.isArray(entries)
+      ? entries.map((entry) => {
+        const region = record(entry)
+        return {
+          regionName: region.regionName,
+          regionType: region.regionType,
+        }
+      })
+      : null
+    return {
+      regionIncluded: regions(locations.regionIncluded),
+      regionExcluded: regions(locations.regionExcluded),
+    }
+  }
+  return {
+    policyId: policyId || null,
+    marketplaceId: policy.marketplaceId,
+    observedAt: new Date().toISOString(),
+    source: "OFFICIAL_EBAY_FULFILLMENT_POLICY",
+    shipToLocations: geography(policy.shipToLocations),
+    globalShipping: typeof policy.globalShipping === "boolean"
+      ? policy.globalShipping : null,
+    shippingOptions: (Array.isArray(policy.shippingOptions)
+      ? policy.shippingOptions : []).map((raw) => {
+      const option = record(raw)
+      return {
+        optionType: option.optionType,
+        costType: option.costType,
+        handlingCost: option.handlingCost ?? null,
+        rateTableId: option.rateTableId ?? null,
+        shippingServices: (Array.isArray(option.shippingServices)
+          ? option.shippingServices : []).map((rawService) => {
+          const service = record(rawService)
+          return {
+            shippingServiceCode: service.shippingServiceCode,
+            freeShipping: service.freeShipping ?? null,
+            shipToLocations: geography(service.shipToLocations),
+            shippingCost: service.shippingCost ?? null,
+            additionalShippingCost: service.additionalShippingCost ?? null,
+            sortOrder: service.sortOrder ?? null,
+          }
+        }),
+      }
+    }),
+  }
+}
+
 function listUrl(resource: string) {
   const url = new URL(`/sell/account/v1/${resource}`, API_ORIGIN)
   url.searchParams.set("marketplace_id", MARKETPLACE_ID)
@@ -535,6 +591,8 @@ async function executePreflight(
     ),
   }
   const selectionComplete = Object.values(selection).every(Boolean)
+  const fulfillmentFeeBasis = fulfillmentFeeBasisV1(
+    fulfillment.body, selection.fulfillmentPolicyId)
   const sellerRegistrationCompleted =
     privilege.body.sellerRegistrationCompleted === true
   const sellingLimitPresent = privilege.body.sellingLimit !== null
@@ -564,6 +622,7 @@ async function executePreflight(
     },
     options,
     selection,
+    fulfillmentFeeBasis,
     selectionComplete,
     snapshot: "",
     snapshotExpiresAt: null,
