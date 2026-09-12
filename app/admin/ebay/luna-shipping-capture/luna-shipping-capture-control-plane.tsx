@@ -586,6 +586,8 @@ export function LunaShippingCaptureControlPlane({
   const serverLeaderLeaseExpiresAtRef = useRef<number | null>(null)
   const heartbeatV2FreshUntilRef = useRef<number | null>(null)
   const flushCaptureProbeRef = useRef<(() => Promise<boolean>) | null>(null)
+  const refreshShippingExecutionObservationRef =
+    useRef<(() => void) | null>(null)
   const heartbeatNowRef = useRef<(() => void) | null>(null)
   const workerRunningRef = useRef(running)
   const workloadControllerRef = useRef<ReturnType<
@@ -1200,6 +1202,15 @@ export function LunaShippingCaptureControlPlane({
         discoveryRetryTimer = null
         attemptProductionAcquisition()
       }, Math.max(0, boundedDelay))
+    }
+
+    refreshShippingExecutionObservationRef.current = () => {
+      if (!active || !port || !extensionReady ||
+          readyPortGeneration !== currentPortGeneration) return
+      activeJobStatusReady = false
+      port.postMessage({
+        type: "SELLER_OS_GET_ACTIVE_LUNA_SHIPPING_JOB_STATUS",
+      })
     }
 
     const attemptProductionAcquisition = () => {
@@ -2463,6 +2474,7 @@ export function LunaShippingCaptureControlPlane({
       }
       leadershipAbort.abort()
       flushCaptureProbeRef.current = null
+      refreshShippingExecutionObservationRef.current = null
       triggerRef.current = null
       liveTriggerRef.current = null
       legacyRecoveryTriggerRef.current = null
@@ -2520,6 +2532,12 @@ export function LunaShippingCaptureControlPlane({
         }
         // Flush only an unrecorded read-only receipt, never emit a probe or claim.
         if (serverClaimLeaderRef.current) void flushCaptureProbeRef.current?.()
+        // The extension may answer before this tab owns the durable server lease.
+        // Refresh after each authoritative heartbeat so takeover and long idle
+        // periods cannot leave recovery gated by a stale/rejected observation.
+        if (serverClaimLeaderRef.current) {
+          refreshShippingExecutionObservationRef.current?.()
+        }
         controller?.recordProbeSuccess(
           Number(payload.backgroundRequestLatencyMs ?? 0))
       }).catch((heartbeatError) => {
