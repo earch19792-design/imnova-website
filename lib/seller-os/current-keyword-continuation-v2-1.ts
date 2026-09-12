@@ -168,6 +168,17 @@ export async function continueCurrentFactoryKeywordV2_1(input: Readonly<{
       cumulative.data?.adsWrites !== 0) {
     throw new Error("CURRENT_KEYWORD_CUMULATIVE_RECONCILIATION_FAILED")
   }
+  const headRecovery = await input.supabase.rpc(
+    "ensure_current_keyword_head_concept_recovery_v1", {
+      p_account_key: input.accountKey,
+      p_listing_package_id: identity.packageId,
+      p_plan_id: planId,
+    })
+  if (headRecovery.error || headRecovery.data?.marketplaceWrites !== 0 ||
+      headRecovery.data?.publicationWrites !== 0 ||
+      headRecovery.data?.adsWrites !== 0) {
+    throw new Error("CURRENT_KEYWORD_HEAD_CONCEPT_RECOVERY_FAILED")
+  }
   const handoffRead = await input.supabase.rpc(
     "read_current_factory_keyword_handoff_v2_1", {
       p_account_key: input.accountKey,
