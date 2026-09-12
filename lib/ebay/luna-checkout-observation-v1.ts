@@ -81,3 +81,21 @@ export function checkoutObservationV1(value: unknown) {
     markerContractDrift: null, productIdentityStatus: 'NOT_EVALUATED', quantityIdentityStatus: 'NOT_EVALUATED',
   }
 }
+
+// The certified runner creates its own checkout navigation from the exact job.
+// A missing pre-existing Shop Pay tab is therefore bootstrap-capable. Observed
+// permission, frame, injection and content-script failures remain fail-closed.
+export function lunaShippingAutoNavigationCapableV1(value: unknown) {
+  const probe = record(value)
+  if (probe.contract !== 'LUNA_CAPTURE_READ_ONLY_PROBE_V1' ||
+      probe.canonicalBindingPresent !== true) return false
+  const observation = checkoutObservationV1(probe.checkoutObservation)
+  return Boolean(observation && (
+    observation.checkoutDomReady === true ||
+    (observation.checkoutNotReadyReason === 'NO_CHECKOUT_TAB' &&
+      observation.checkoutTabFound === false &&
+      observation.checkoutInjectionRequested === false &&
+      observation.recoveryBlockedReason === null &&
+      observation.checkoutInjectionErrorCode === null)
+  ))
+}

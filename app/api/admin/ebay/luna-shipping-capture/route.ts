@@ -63,6 +63,8 @@ import {
 
 import { shippingRetryAfterAtV1 } from
   "@/lib/seller-os/economic-shipping-refresh-reclaim-loop-v1"
+import { lunaShippingAutoNavigationCapableV1 } from
+  "@/lib/ebay/luna-checkout-observation-v1"
 
 function candidateIds(value: unknown) {
   return (Array.isArray(value) ? value : [])
@@ -283,9 +285,7 @@ export async function POST(req: Request) {
     if (body.action === "capture_capability_state") {
       enforceListingAiRouteRateLimit(auth.actorId, "READ")
       const probe = listingAiRecord(body.probe)
-      const available = probe.contract === "LUNA_CAPTURE_READ_ONLY_PROBE_V1" &&
-        probe.captureAvailable === true && probe.canonicalBindingPresent === true &&
-        probe.checkoutDomReady === true
+      const available = lunaShippingAutoNavigationCapableV1(probe)
       const action = body.failure === true ? "BACKOFF" : "CAPABILITY"
       const result = await auth.supabase.rpc("gate_seller_os_shipping_capture_v1", {
         p_marketplace_account_key: auth.accountKey,

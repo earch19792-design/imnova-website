@@ -105,14 +105,23 @@ function canonicalProductUrl(value: string) {
   try { parsed = new URL(value) } catch {
     throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID")
   }
+  const path = parsed.pathname.replace(/\/$/, "")
+  const encodedHandle = path.startsWith("/products/")
+    ? path.slice("/products/".length) : ""
+  let handle = ""
+  try { handle = decodeURIComponent(encodedHandle).normalize("NFKC") }
+  catch { throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID") }
+  const handleLength = Array.from(handle).length
   if (parsed.protocol !== "https:" ||
       !new Set(["lunaportex.com", "www.lunaportex.com"]).has(parsed.hostname) ||
-      !/^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/.test(parsed.pathname) ||
+      handleLength < 2 || handleLength > 255 ||
+      /[\u0000-\u0020\u007f/\\?#]/u.test(handle) ||
+      handle === "." || handle === ".." || /[A-Z]/.test(handle) ||
       parsed.username || parsed.password || parsed.port) {
     throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID")
   }
   parsed.hostname = "www.lunaportex.com"
-  parsed.pathname = parsed.pathname.replace(/\/$/, "")
+  parsed.pathname = `/products/${encodeURIComponent(handle)}`
   parsed.search = ""
   parsed.hash = ""
   return parsed.toString()
