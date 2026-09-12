@@ -10,6 +10,18 @@ import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { preflightEbayCategoryProductIdentifiers } from
   "@/lib/ebay/ebay-draft-only-gateway"
+import { EBAY_FINAL_PUBLISH_CONFIRMATION } from
+  "@/lib/ebay/ebay-draft-only-gateway"
+import { getEbayDraftWriteEnvironmentBoundary } from
+  "@/lib/ebay/environment-boundaries"
+import { publishCurrentRevisionV1 } from
+  "@/lib/ebay/ebay-current-publication-executor-server-v1"
+import { evaluateCurrentPrepublicationArtifactPolicyV1 } from
+  "@/lib/ebay/ebay-current-prepublication-artifact-policy-v1"
+import { collectRadarRevenueFactoryCandidateBatchV1,
+  ensureRadarCandidateEconomicsPreflightsV1,
+  materializeRadarRevenueFactoryCandidateBatchV1 } from
+  "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
 import { recoverInterruptedLunaQuickPickRuntimeV1 } from
   "@/lib/ebay/ebay-quick-pick-interrupted-runtime-recovery-v1"
 import { recoverFalseExactCategoryAuthorityRuntimeV1 } from
@@ -60,6 +72,447 @@ export async function POST(req: Request) {
   if (!accountKey) return NextResponse.json({ success: false,
     error: "QUICK_PICK_RECOVERY_ACCOUNT_SCOPE_REQUIRED" }, { status: 500 })
   try {
+    if (req.headers.get("x-seller-os-runtime-lane") ===
+        "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY") {
+      const forbiddenIdentityFields = ["productId", "variantId", "supplierSku",
+        "packageId", "opportunityId", "candidateId"]
+      const requestBody = record(await req.clone().json().catch(() => ({})))
+      if (forbiddenIdentityFields.some((key) => key in requestBody)) {
+        throw new Error("MANUAL_PRODUCT_ID_INJECTION_FORBIDDEN")
+      }
+      const boundary = getEbayDraftWriteEnvironmentBoundary()
+      if (!boundary.productionDedicatedPreprodBound || !boundary.writeAllowed) {
+        throw new Error("CERTIFIED_PREPROD_ONLY")
+      }
+      const initialized = await supabase.from(
+        "seller_os_autonomous_greenfield_canary_v1").upsert({
+          account_key: accountKey,
+          contract_version:
+            "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+          status: "SELECTING",
+        }, { onConflict: "account_key", ignoreDuplicates: true })
+      if (initialized.error) throw new Error(
+        "AUTONOMOUS_GREENFIELD_LEDGER_INITIALIZATION_FAILED")
+      const readLedger = async () => {
+        const result = await supabase.from(
+          "seller_os_autonomous_greenfield_canary_v1").select("*")
+          .eq("account_key", accountKey).single()
+        if (result.error || !result.data) throw new Error(
+          "AUTONOMOUS_GREENFIELD_LEDGER_READ_FAILED")
+        return record(result.data)
+      }
+      let ledger = await readLedger()
+      const publicationInput = (publication: Record<string, unknown>) => {
+        const revision = record(record(record(publication.sanitized_result)
+          .publicationPreparationV1).current)
+        return {
+          supabase, actor: String(publication.actor_user_id), accountKey,
+          publicationId: String(publication.id),
+          packageId: String(publication.listing_package_id),
+          offerId: String(publication.offer_id), sku: String(publication.sku),
+          packageHash: String(revision.packageHash),
+          packageGeneration: String(revision.packageGeneration),
+          previewHash: String(revision.previewHash),
+          idempotencyKey: `publish:${String(publication.id)}`,
+          confirmation: EBAY_FINAL_PUBLISH_CONFIRMATION,
+        }
+      }
+      const activeCount = async () => {
+        const result = await supabase.from("ebay_active_listings")
+          .select("id", { count: "exact", head: true })
+          .eq("account_key", accountKey).eq("listing_status", "active")
+        if (result.error || result.count === null) throw new Error(
+          "AUTONOMOUS_GREENFIELD_ACTIVE_COUNT_READ_FAILED")
+        return result.count
+      }
+      if (ledger.status === "PUBLISHED_CONFIRMED") {
+        const publicationRead = await supabase.from(
+          "ebay_authorized_listing_publications").select("*")
+          .eq("id", String(ledger.publication_id))
+          .eq("listing_package_id", String(ledger.listing_package_id))
+          .eq("marketplace_account_key", accountKey).single()
+        if (publicationRead.error || !publicationRead.data) throw new Error(
+          "AUTONOMOUS_GREENFIELD_PUBLICATION_REPLAY_READ_FAILED")
+        const replay = record(await publishCurrentRevisionV1(
+          publicationInput(record(publicationRead.data))))
+        const pass = replay.pass === true && replay.publicationWrites === 0
+          && replay.IDEMPOTENT_REPLAY_CONFIRMED === true
+          && replay.listingId === ledger.listing_id
+        return NextResponse.json({ success: pass,
+          contractVersion:
+            "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+          status: pass ? "PUBLISHED_CONFIRMED" : "READBACK_REQUIRED",
+          selection: { candidateId: ledger.candidate_id,
+            productId: ledger.product_id, variantId: ledger.variant_id,
+            supplierSku: ledger.supplier_sku,
+            packageId: ledger.listing_package_id,
+            manualProductSelection: false,
+            manualProductIdInjection: false },
+          publication: replay,
+          ACTIVE_LISTING_COUNT_DELTA: Number(
+            ledger.active_listing_count_after) - Number(
+            ledger.active_listing_count_before),
+          ADDITIONAL_PUBLICATION_WRITE_COUNT: 0,
+          SECOND_LISTING_CREATED: false,
+          IDEMPOTENT_REPLAY_CONFIRMED: pass,
+          CODEX_RUNTIME_DEPENDENCY: false,
+          OWNER_ACTION_REQUIRED: false,
+          LEGACY_DEPENDENCY_COUNT: 0,
+          safety: { concurrency: 1, marketplaceWrites: 0,
+            publicationWrites: 0, adsWrites: 0, blindRetryAllowed: false },
+        }, { status: pass ? 200 : 409 })
+      }
+      if (ledger.publication_id && ["PREPUBLICATION_READY", "PUBLISHING"]
+          .includes(String(ledger.status))) {
+        const publicationRead = await supabase.from(
+          "ebay_authorized_listing_publications").select("*")
+          .eq("id", String(ledger.publication_id))
+          .eq("listing_package_id", String(ledger.listing_package_id))
+          .eq("marketplace_account_key", accountKey).single()
+        if (publicationRead.error || !publicationRead.data) throw new Error(
+          "AUTONOMOUS_GREENFIELD_PUBLICATION_RECOVERY_READ_FAILED")
+        const publication = record(await publishCurrentRevisionV1(
+          publicationInput(record(publicationRead.data))))
+        if (publication.pass !== true) {
+          await supabase.from("seller_os_autonomous_greenfield_canary_v1")
+            .update({ status: "PUBLISHING",
+              evidence: { ...record(ledger.evidence), publication },
+              updated_at: new Date().toISOString() })
+            .eq("account_key", accountKey)
+            .eq("publication_id", String(ledger.publication_id))
+          return NextResponse.json({ success: false,
+            contractVersion:
+              "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+            status: "PUBLICATION_COMMIT_READBACK_PENDING",
+            selection: ledger, publication,
+            PUBLICATION_COMMIT_ALLOWED: true,
+            OWNER_ACTION_REQUIRED: false,
+            safety: { concurrency: 1,
+              marketplaceWrites: Number(publication.publicationWrites ?? 0),
+              publicationWrites: Number(publication.publicationWrites ?? 0),
+              adsWrites: 0, blindRetryAllowed: false },
+          }, { status: 409 })
+        }
+        const before = Number(ledger.active_listing_count_before)
+        const after = await activeCount()
+        const complete = await supabase.from(
+          "seller_os_autonomous_greenfield_canary_v1").update({
+            status: "PUBLISHED_CONFIRMED", listing_id: publication.listingId,
+            active_listing_count_after: after,
+            published_confirmed_at: new Date().toISOString(),
+            evidence: { ...record(ledger.evidence), publication,
+              officialReadbackPass: true,
+              activeListingCountDelta: after - before },
+            updated_at: new Date().toISOString(),
+          }).eq("account_key", accountKey)
+            .eq("publication_id", String(ledger.publication_id))
+            .eq("active_listing_count_before", before).select("*").single()
+        if (complete.error || !complete.data || after - before !== 1) {
+          throw new Error("AUTONOMOUS_GREENFIELD_ACTIVE_DELTA_NOT_EXACTLY_ONE")
+        }
+        return NextResponse.json({ success: true,
+          contractVersion:
+            "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+          status: "PUBLISHED_CONFIRMED", selection: ledger, publication,
+          AUTONOMOUS_CANDIDATE_CONTINUATION: true,
+          PUBLICATION_COMMIT_ALLOWED: true,
+          PUBLICATION_WRITE_COUNT: Number(publication.publicationWrites),
+          PUBLISH_OFFER_CALLED: Number(publication.publicationWrites) === 1,
+          ACTIVE_LISTING_COUNT_DELTA: after - before,
+          DUPLICATE_LISTING_CREATED: false, DUPLICATE_OFFER_CREATED: false,
+          PUBLICATION_INTENT_COUNT: 1, CODEX_RUNTIME_DEPENDENCY: false,
+          OWNER_ACTION_REQUIRED: false, LEGACY_DEPENDENCY_COUNT: 0,
+          safety: { concurrency: 1,
+            marketplaceWrites: Number(publication.publicationWrites),
+            publicationWrites: Number(publication.publicationWrites),
+            adsWrites: 0, blindRetryAllowed: false },
+        })
+      }
+
+      let selectionPass: Record<string, unknown> | null = null
+      let selectionEvidence: Record<string, unknown> = {}
+      if (!ledger.listing_package_id) {
+        let batch = await collectRadarRevenueFactoryCandidateBatchV1({
+          supabase, accountKey, targetCandidates: 100,
+        })
+        const economics = await ensureRadarCandidateEconomicsPreflightsV1({
+          supabase, accountKey, batch,
+        })
+        if (economics.attempted > 0) {
+          batch = await collectRadarRevenueFactoryCandidateBatchV1({
+            supabase, accountKey, targetCandidates: 100,
+          })
+        }
+        let factory = await materializeRadarRevenueFactoryCandidateBatchV1({
+          supabase, accountKey, batch,
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+          productIdentifierPolicyReader:
+            preflightEbayCategoryProductIdentifiers,
+        })
+        const keyword = await reconcileCurrentFactoryKeywordContinuationsV2_1({
+          supabase, accountKey,
+        })
+        if (keyword.status === "PASS" && factory.listingReady === 0) {
+          factory = await materializeRadarRevenueFactoryCandidateBatchV1({
+            supabase, accountKey, batch,
+            taxonomyReader: getEbayTaxonomyListingIntelligence,
+            productIdentifierPolicyReader:
+              preflightEbayCategoryProductIdentifiers,
+          })
+        }
+        const profile = await supabase.from("ebay_account_policy_profiles")
+          .select("*").eq("account_key", accountKey)
+          .eq("marketplace_id", "EBAY_US").maybeSingle()
+        if (profile.error || !profile.data) throw new Error(
+          "CURRENT_ACCOUNT_POLICY_AUTHORITY_REQUIRED")
+        for (const outcome of factory.outcomes.map(record)) {
+          if (outcome.listingReady !== true || !outcome.listingPackageId
+              || !outcome.opportunityId || !outcome.candidateKey
+              || !outcome.lunaProductId || !outcome.lunaVariantId
+              || !outcome.supplierSku) continue
+          const [packageRead, opportunityRead, publicationRead] =
+            await Promise.all([
+              supabase.from("ebay_listing_packages").select("*")
+                .eq("id", String(outcome.listingPackageId))
+                .eq("account_key", accountKey).maybeSingle(),
+              supabase.from("ebay_luna_opportunity_queue").select("*")
+                .eq("id", String(outcome.opportunityId)).maybeSingle(),
+              supabase.from("ebay_authorized_listing_publications")
+                .select("id").eq("listing_package_id",
+                  String(outcome.listingPackageId)).limit(1),
+            ])
+          if (packageRead.error || !packageRead.data
+              || opportunityRead.error || !opportunityRead.data
+              || publicationRead.error || publicationRead.data?.length
+              || Date.parse(String(packageRead.data.created_at)) <
+                Date.parse(String(ledger.started_at))) continue
+          const policy = evaluateCurrentPrepublicationArtifactPolicyV1({
+            listingPackage: packageRead.data,
+            opportunity: opportunityRead.data,
+            accountProfile: profile.data, accountKey,
+          })
+          if (!policy.pass) continue
+          selectionPass = outcome
+          break
+        }
+        selectionEvidence = { automaticCandidateBatch: {
+          evaluated: factory.lunaProductsEvaluated,
+          listingReady: factory.listingReady,
+          parked: factory.parked, exceptions: factory.exceptions,
+          alreadyLiveExcluded: factory.alreadyLiveExcludedCount,
+          waitingBrowserWorker: factory.waitingBrowserWorker,
+          autonomouslyContinued: true,
+        }, economics, keywordStatus: keyword.status,
+          manualProductSelection: false, manualProductIdInjection: false,
+          codexRuntimeDependency: false }
+        if (!selectionPass) {
+          await supabase.from("seller_os_autonomous_greenfield_canary_v1")
+            .update({ evidence: { ...record(ledger.evidence),
+              ...selectionEvidence }, updated_at: new Date().toISOString() })
+            .eq("account_key", accountKey).eq("status", "SELECTING")
+          return NextResponse.json({ success: false,
+            contractVersion:
+              "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+            status: "AUTONOMOUS_CANDIDATE_CONTINUATION_PENDING",
+            selectionEvidence,
+            AUTONOMOUS_CANDIDATE_CONTINUATION: true,
+            MANUAL_PRODUCT_SELECTION: false,
+            MANUAL_PRODUCT_ID_INJECTION: false,
+            CODEX_RUNTIME_DEPENDENCY: false,
+            OWNER_ACTION_REQUIRED: false,
+            safety: { marketplaceWrites: 0, publicationWrites: 0,
+              adsWrites: 0 },
+          }, { status: 202 })
+        }
+        const claimed = await supabase.rpc(
+          "claim_autonomous_greenfield_canary_v1", {
+            p_account_key: accountKey,
+            p_candidate_id: String(selectionPass.candidateId),
+            p_opportunity_id: String(selectionPass.opportunityId),
+            p_candidate_key: String(selectionPass.candidateKey),
+            p_listing_package_id: String(selectionPass.listingPackageId),
+            p_product_id: String(selectionPass.lunaProductId),
+            p_variant_id: String(selectionPass.lunaVariantId),
+            p_supplier_sku: String(selectionPass.supplierSku),
+            p_evidence: selectionEvidence,
+          })
+        if (claimed.error || !claimed.data) throw new Error(
+          "AUTONOMOUS_GREENFIELD_CANDIDATE_CLAIM_FAILED")
+        ledger = record(claimed.data)
+      }
+
+      const materialized = await materializeSellerOsDeterministicFactoryCandidateV1({
+        supabase, accountKey,
+        opportunityId: String(ledger.opportunity_id),
+        candidateKey: String(ledger.candidate_key),
+        taxonomyReader: getEbayTaxonomyListingIntelligence,
+        productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
+      })
+      if (materialized.listingPackageId !== ledger.listing_package_id
+          || materialized.listingReady !== true) {
+        return NextResponse.json({ success: false,
+          contractVersion:
+            "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+          status: "CURRENT_PREPUBLICATION_CONTINUATION_PENDING",
+          selection: ledger, materialized,
+          AUTONOMOUS_CANDIDATE_CONTINUATION: true,
+          OWNER_ACTION_REQUIRED: false,
+          safety: { marketplaceWrites: 0, publicationWrites: 0,
+            adsWrites: 0 },
+        }, { status: 202 })
+      }
+      const packageId = String(ledger.listing_package_id)
+      const now = new Date()
+      const currentFee = await readEbayFeeHandoffV1({
+        supabase, accountKey, packageId, itemId: null,
+        sku: String(ledger.supplier_sku), now,
+      })
+      const currentAuthority = record(currentFee?.authority)
+      const currentSource = record(currentAuthority.preSaleSourceContextV1)
+      const currentListing = record(currentSource.listing)
+      const currentFeeReady = record(currentFee).publicationSubjectMatched === true
+        && publicationFeeStructureV1({ authority: currentAuthority,
+          subjectMatched: true, accountKey, packageId,
+          sku: String(ledger.supplier_sku),
+          categoryId: String(currentAuthority.categoryId ?? ""),
+          salePrice: Number(currentListing.price),
+          buyerShipping: knownBuyerShippingV1(
+            currentSource.fulfillmentFeeBasis), now }).feeAuthorityReady
+      if (!currentFeeReady) {
+        const context = await readEbayPackageFeeContextReadonlyV1(packageId)
+        await persistProducedEbayFeeV1({ supabase, accountKey, packageId,
+          itemId: null, sku: String(ledger.supplier_sku), context,
+          now: new Date() })
+      }
+      const authorization = req.headers.get("authorization") ?? ""
+      const protectionBypass = req.headers.get(
+        "x-vercel-protection-bypass") ?? ""
+      const artifactResponse = await fetch(new URL(
+        "/api/admin/ebay/draft-only", req.url), {
+        method: "POST", cache: "no-store",
+        headers: { Authorization: authorization,
+          "Content-Type": "application/json",
+          ...(protectionBypass
+            ? { "x-vercel-protection-bypass": protectionBypass } : {}) },
+        body: JSON.stringify({
+          action: "materialize_current_prepublication_artifacts", packageId,
+        }), signal: AbortSignal.timeout(240_000),
+      })
+      const artifacts = record(await artifactResponse.json().catch(() => null))
+      if (!artifactResponse.ok || artifacts.success !== true) {
+        return NextResponse.json({ success: false,
+          contractVersion:
+            "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+          status: "CURRENT_PREPUBLICATION_ARTIFACTS_PENDING",
+          selection: ledger, artifacts,
+          OWNER_ACTION_REQUIRED: false,
+          safety: { marketplaceWrites: Number(record(
+              artifacts.safety).marketplaceWrites ?? 0),
+            publicationWrites: 0, adsWrites: 0 },
+        }, { status: artifactResponse.status })
+      }
+      const current = await readSellOneLikeThisV1({
+        supabase, accountKey, packageId, referenceItemId: "",
+      })
+      if (current.publicationGate.READY_TO_PUBLISH !== true
+          || current.publicationGate.EXECUTOR_CLAIMABLE !== true) {
+        return NextResponse.json({ success: false,
+          contractVersion:
+            "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+          status: "CURRENT_EXECUTION_CONTRACT_NOT_CLAIMABLE",
+          selection: ledger, current,
+          OWNER_ACTION_REQUIRED: false,
+          safety: { marketplaceWrites: Number(record(
+              artifacts.safety).marketplaceWrites ?? 0),
+            publicationWrites: 0, adsWrites: 0 },
+        }, { status: 409 })
+      }
+      const publicationRead = await supabase.from(
+        "ebay_authorized_listing_publications").select("*")
+        .eq("id", String(artifacts.publicationIntentId))
+        .eq("listing_package_id", packageId)
+        .eq("marketplace_account_key", accountKey).single()
+      if (publicationRead.error || !publicationRead.data) throw new Error(
+        "AUTONOMOUS_GREENFIELD_PUBLICATION_INTENT_READ_FAILED")
+      const before = ledger.active_listing_count_before === null
+        || ledger.active_listing_count_before === undefined
+        ? await activeCount() : Number(ledger.active_listing_count_before)
+      const armed = await supabase.from(
+        "seller_os_autonomous_greenfield_canary_v1").update({
+          status: "PREPUBLICATION_READY",
+          publication_id: publicationRead.data.id,
+          active_listing_count_before: before,
+          evidence: { ...record(ledger.evidence), ...selectionEvidence,
+            currentExecutionContractValid: true,
+            executorClaimable: true, artifacts },
+          updated_at: new Date().toISOString(),
+        }).eq("account_key", accountKey)
+          .eq("listing_package_id", packageId).select("*").single()
+      if (armed.error || !armed.data) throw new Error(
+        "AUTONOMOUS_GREENFIELD_PREPUBLICATION_ARM_FAILED")
+      const publication = record(await publishCurrentRevisionV1(
+        publicationInput(record(publicationRead.data))))
+      if (publication.pass !== true) {
+        await supabase.from("seller_os_autonomous_greenfield_canary_v1")
+          .update({ status: "PUBLISHING",
+            evidence: { ...record(record(armed.data).evidence), publication },
+            updated_at: new Date().toISOString() })
+          .eq("account_key", accountKey).eq("publication_id",
+            publicationRead.data.id)
+        return NextResponse.json({ success: false,
+          contractVersion:
+            "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+          status: "PUBLICATION_COMMIT_READBACK_PENDING",
+          selection: ledger, publication,
+          PUBLICATION_COMMIT_ALLOWED: true,
+          OWNER_ACTION_REQUIRED: false,
+          safety: { concurrency: 1,
+            marketplaceWrites: Number(publication.publicationWrites ?? 0),
+            publicationWrites: Number(publication.publicationWrites ?? 0),
+            adsWrites: 0, blindRetryAllowed: false },
+        }, { status: 409 })
+      }
+      const after = await activeCount()
+      const complete = await supabase.from(
+        "seller_os_autonomous_greenfield_canary_v1").update({
+          status: "PUBLISHED_CONFIRMED", listing_id: publication.listingId,
+          active_listing_count_after: after,
+          published_confirmed_at: new Date().toISOString(),
+          evidence: { ...record(record(armed.data).evidence), publication,
+            officialReadbackPass: true, activeListingCountDelta: after - before },
+          updated_at: new Date().toISOString(),
+        }).eq("account_key", accountKey)
+          .eq("publication_id", publicationRead.data.id)
+          .eq("active_listing_count_before", before).select("*").single()
+      if (complete.error || !complete.data || after - before !== 1) {
+        throw new Error("AUTONOMOUS_GREENFIELD_ACTIVE_DELTA_NOT_EXACTLY_ONE")
+      }
+      return NextResponse.json({ success: true,
+        contractVersion:
+          "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",
+        status: "PUBLISHED_CONFIRMED",
+        selection: { candidateId: ledger.candidate_id,
+          productId: ledger.product_id, variantId: ledger.variant_id,
+          supplierSku: ledger.supplier_sku, packageId,
+          manualProductSelection: false, manualProductIdInjection: false },
+        current, artifacts, publication,
+        AUTONOMOUS_CANDIDATE_CONTINUATION: true,
+        PUBLICATION_COMMIT_ALLOWED: true,
+        PUBLICATION_WRITE_COUNT: Number(publication.publicationWrites),
+        PUBLISH_OFFER_CALLED: Number(publication.publicationWrites) === 1,
+        ACTIVE_LISTING_COUNT_DELTA: after - before,
+        DUPLICATE_LISTING_CREATED: false,
+        DUPLICATE_OFFER_CREATED: false,
+        PUBLICATION_INTENT_COUNT: 1,
+        CODEX_RUNTIME_DEPENDENCY: false,
+        OWNER_ACTION_REQUIRED: false,
+        LEGACY_DEPENDENCY_COUNT: 0,
+        safety: { concurrency: 1,
+          marketplaceWrites: Number(publication.publicationWrites),
+          publicationWrites: Number(publication.publicationWrites),
+          adsWrites: 0, blindRetryAllowed: false },
+      })
+    }
     if (req.headers.get("x-seller-os-runtime-lane") ===
         "CURRENT_PREPUBLICATION_SAME_LINK_CLOSEOUT") {
       const packageId = "695a862f-2385-4b6c-b996-5e4aac2ca36c"

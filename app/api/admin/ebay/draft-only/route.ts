@@ -1,4 +1,4 @@
-import {publishCurrentRevisionV1} from '@/lib/ebay/ebay-current-publication-executor-v1'
+import {publishCurrentRevisionV1} from '@/lib/ebay/ebay-current-publication-executor-server-v1'
 import { certifyCurrentPrepublicationV1 } from '@/lib/ebay/ebay-current-prepublication-server-v1'
 import { activateCurrentPreparationV1 } from "@/lib/ebay/ebay-current-preparation-activation-server-v1"
 import { getEbayDraftWriteEnvironmentBoundary } from "@/lib/ebay/environment-boundaries"

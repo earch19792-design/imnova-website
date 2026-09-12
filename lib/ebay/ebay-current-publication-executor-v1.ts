@@ -1,38 +1,28 @@
-import {readEbayPackageFeeContextReadonlyV1} from './ebay-package-fee-context-readonly-v1'
-import {persistProducedEbayFeeV1} from '../seller-os/ebay-fee-runtime-v1'
-import 'server-only'
-import {randomUUID} from 'node:crypto'
+import {createHash,randomUUID} from 'node:crypto'
 import type {SupabaseClient} from '@supabase/supabase-js'
-import {keywordRecord as record,keywordWireDigestV1 as digest} from '../seller-os/keyword-intelligence-handoff-v1'
-import {certifyCurrentPrepublicationV1} from './ebay-current-prepublication-server-v1'
-import {readSellOneLikeThisV1} from '../seller-os/sell-one-like-this-runtime-v1'
-import {publishEbayOfferOnce,verifyEbayPublishedOffer,verifyEbayDraftInventoryItem,verifySingleCurrentOfferV1,EBAY_FINAL_PUBLISH_CONFIRMATION} from './ebay-draft-only-gateway'
-import {registerManualEbayListing} from './ebay-manual-listing-service'
 
-type Input={supabase:SupabaseClient;actor:string;accountKey:string;publicationId:string;packageId:string;offerId:string;
+type JsonRecord=Record<string,unknown>
+const record=(value:unknown):JsonRecord=>value!==null&&typeof value==='object'&&!Array.isArray(value)?value as JsonRecord:{}
+const ordered=(value:unknown):unknown=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'
+ ?Object.fromEntries(Object.entries(value as JsonRecord).sort(([a],[b])=>a.localeCompare(b,'en')).map(([k,v])=>[k,ordered(v)])):value
+const digest=(value:unknown)=>`sha256:${createHash('sha256').update(JSON.stringify(ordered(value))).digest('hex')}`
+const CURRENT_FINAL_PUBLISH_CONFIRMATION='PUBLICAR LISTING EN EBAY'
+export type CurrentPublicationExecutorInputV1={supabase:SupabaseClient;actor:string;accountKey:string;publicationId:string;packageId:string;offerId:string;
  sku:string;packageHash:string;packageGeneration:string;previewHash:string;idempotencyKey:string;confirmation:string}
 const columns='id,actor_user_id,listing_package_id,opportunity_id,marketplace_account_key,account_fingerprint,sku,offer_id,phase,publish_attempt_count,publication_idempotency_key,claim_token,listing_id,preview,preview_hash,draft_execution_id,draft_approval_id,sanitized_result,updated_at'
 
-/** Uses the existing claim/publish/readback machine. CURRENT preparation is
- * evidence, never the OWNER grant; this request supplies the separate grant. */
-async function refreshExpiredCurrentFeeEvidenceV1(input:Input,revision:Record<string,unknown>) {
- const head=await input.supabase.from('seller_os_ebay_fee_bindings_v1').select('authority_id')
-  .eq('binding_key',`${input.accountKey}:package:${input.packageId}`).abortSignal(AbortSignal.timeout(8000)).retry(false).single()
- if(head.error)throw Error('CURRENT_FEE_HEAD_UNAVAILABLE')
- const authority=await input.supabase.from('seller_os_ebay_fee_authorities_v1').select('authority')
-  .eq('marketplace_account_key',input.accountKey).eq('authority_id',head.data.authority_id).abortSignal(AbortSignal.timeout(8000)).retry(false).single()
- if(authority.error)throw Error('CURRENT_FEE_AUTHORITY_UNAVAILABLE')
- if(Date.parse(String(record(authority.data.authority).freshUntil))>Date.now())return
- const context=await readEbayPackageFeeContextReadonlyV1(input.packageId)
- await persistProducedEbayFeeV1({supabase:input.supabase,accountKey:input.accountKey,packageId:input.packageId,itemId:null,
-  sku:String(revision.sku),context,now:new Date()})
+export type CurrentPublicationExecutorDependenciesV1={
+ refreshFees:(input:CurrentPublicationExecutorInputV1,revision:JsonRecord)=>Promise<unknown>
+ certify:(input:any)=>Promise<any>;readCurrent:(input:any)=>Promise<any>
+ publish:(input:any,fetchImpl?:typeof fetch)=>Promise<any>
+ inventory:(sku:string,payload:JsonRecord)=>Promise<any>
+ offer:(offerId:string,sku:string,payload:JsonRecord)=>Promise<any>
+ collection:(offerId:string,sku:string)=>Promise<any>
+ register:(db:SupabaseClient,input:any,actor:string,options:any)=>Promise<any>
 }
-const defaultDependencies={refreshFees:refreshExpiredCurrentFeeEvidenceV1,certify:certifyCurrentPrepublicationV1,readCurrent:readSellOneLikeThisV1,
- publish:publishEbayOfferOnce,inventory:verifyEbayDraftInventoryItem,offer:verifyEbayPublishedOffer,
- collection:verifySingleCurrentOfferV1,register:registerManualEbayListing}
-export async function publishCurrentRevisionV1(input:Input,deps=defaultDependencies) {
+export async function publishCurrentRevisionV1(input:CurrentPublicationExecutorInputV1,deps:CurrentPublicationExecutorDependenciesV1) {
  const db=input.supabase
- if(input.confirmation!==EBAY_FINAL_PUBLISH_CONFIRMATION || input.idempotencyKey!==`publish:${input.publicationId}`)throw Error('CURRENT_PUBLISH_EXPLICIT_AUTHORIZATION_REQUIRED')
+ if(input.confirmation!==CURRENT_FINAL_PUBLISH_CONFIRMATION || input.idempotencyKey!==`publish:${input.publicationId}`)throw Error('CURRENT_PUBLISH_EXPLICIT_AUTHORIZATION_REQUIRED')
  const read=async()=>{
   const r=await db.from('ebay_authorized_listing_publications').select(columns).eq('id',input.publicationId)
    .eq('actor_user_id',input.actor).eq('marketplace_account_key',input.accountKey).abortSignal(AbortSignal.timeout(8000)).retry(false).single()
@@ -43,7 +33,51 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
  if(p.listing_package_id!==input.packageId || p.sku!==input.sku || p.offer_id!==input.offerId || revision.packageHash!==input.packageHash ||
   revision.packageGeneration!==input.packageGeneration || revision.previewHash!==input.previewHash || digest(p.preview)!==input.previewHash)
   throw Error('CURRENT_PUBLISH_REQUEST_BINDING_MISMATCH')
- // Replays are readback-only. No automatic rearm, second claim or POST.
+ // A completed replay is resolved exclusively by the official Inventory API
+ // and the immutable durable receipt. It never rearms, claims or POSTs.
+ if(p.phase==='monitor_registered') {
+  const expectedInventory=record(record(revision.preview).inventoryItemPayload)
+  const expectedOffer=record(record(revision.preview).offerPayload)
+  const [inventoryReadback,offerReadback,collection]=await Promise.all([
+   deps.inventory(input.sku,expectedInventory),
+   deps.offer(input.offerId,input.sku,expectedOffer),
+   deps.collection(input.offerId,input.sku),
+  ])
+  const execution=record(record(p.sanitized_result).currentPublicationExecutionV1)
+  const durableReceipt=record(execution.readback),matches=record(durableReceipt.matches)
+  const listingId=String(p.listing_id??'')
+  const exact=Boolean(listingId && p.publication_idempotency_key===input.idempotencyKey
+   && p.publish_attempt_count===1 && durableReceipt.pass===true
+   && durableReceipt.listingId===listingId && inventoryReadback.safe
+   && offerReadback.safe && offerReadback.listingId===listingId
+   && collection.safe && collection.status==='PUBLISHED'
+   && collection.listingId===listingId
+   && ['SKU_MATCH','OFFER_ID_MATCH','TITLE_MATCH','PRICE_MATCH',
+    'QUANTITY_MATCH','CATEGORY_MATCH','POLICIES_MATCH'].every(k=>matches[k]===true))
+  return exact?{pass:true,publicationWrites:0,ADDITIONAL_PUBLICATION_WRITE_COUNT:0,
+   listingId,LISTING_STATUS:'ACTIVE',...matches,OFFICIAL_READBACK_PASS:true,
+   PUBLISHED_CONFIRMED:true,DUPLICATE_LISTING_CREATED:false,
+   SECOND_LISTING_CREATED:false,IDEMPOTENT_REPLAY_CONFIRMED:true,
+   FINAL_PUBLICATION_STATE:'PUBLISHED_CONFIRMED',durablePhase:p.phase,
+   inventoryReadback,offerReadback,collection,durableReceipt}
+  :{pass:false,publicationWrites:0,blocker:'CURRENT_COMPLETED_REPLAY_READBACK_MISMATCH',
+   phase:p.phase,inventoryReadback,offerReadback,collection,durableReceipt}
+ }
+ // A process interruption after dispatch is reconciled GET-only. A positive
+ // official Offer readback continues durable registration; an absent or
+ // ambiguous readback never becomes permission for another publish.
+ if(['publish_in_flight','outcome_unknown','published_pending_verification'].includes(String(p.phase))) {
+  const expectedOffer=record(record(revision.preview).offerPayload)
+  const official=await deps.offer(input.offerId,input.sku,expectedOffer)
+  if(official?.safe && official.listingId) {
+   return complete(String(official.listingId),200,true,0)
+  }
+  return {pass:false,publicationWrites:0,
+   blocker:'UNKNOWN_COMMIT_STATE_OFFICIAL_READBACK_NOT_PUBLISHED_UNPROVEN',
+   phase:p.phase,officialReadback:official,blindRetryAllowed:false}
+ }
+ // Every other consumed key is fail-closed. UNKNOWN is read back by the first
+ // attempt below and no path here can issue a blind retry.
  if(p.publication_idempotency_key || p.publish_attempt_count!==0 || p.phase!=='preview_ready') {
   return {pass:false,publicationWrites:0,blocker:'CURRENT_PUBLICATION_RECONCILIATION_REQUIRED',phase:p.phase}
  }
@@ -78,7 +112,7 @@ export async function publishCurrentRevisionV1(input:Input,deps=defaultDependenc
   }
   return fetch(resource,init)
  }
- let result:Awaited<ReturnType<typeof publishEbayOfferOnce>>
+ let result:any
  try {
   result=await deps.publish({offerId:input.offerId,expectedSku:input.sku,expectedInventoryItemPayload:inventory,
    expectedOfferPayload:offer,previewHash:p.preview_hash,publicationControlId:p.id,confirmPublish:input.confirmation,deferAmbiguousReadback:true},singlePublishFetch)
