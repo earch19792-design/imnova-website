@@ -1,4 +1,5 @@
-import {keywordRecord as record} from './keyword-intelligence-handoff-v1'
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import {keywordRecord as record} from './keyword-intelligence-handoff-v1.ts'
 
 export const CURRENT_PUBLICATION_FACTORY_V1='SELLER_OS_CURRENT_PUBLICATION_FACTORY_V1'
 export function currentFactoryMarkerV1(value:unknown){

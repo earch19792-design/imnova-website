@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { createProductCaseReadBudgetV1, type ProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { createProductCaseReadBudgetV1, type ProductCaseReadBudgetV1 } from "./product-case-read-budget-v1.ts"
 
 export const KEYWORD_DECISION_VERSION = "PRODUCT_RESEARCH_KEYWORD_INTELLIGENCE_V2_1"
 export const KEYWORD_READ_VERSION = "PRODUCT_RESEARCH_KEYWORD_HANDOFF_READ_V1"

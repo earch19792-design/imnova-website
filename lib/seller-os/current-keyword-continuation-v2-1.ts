@@ -6,12 +6,14 @@ import {
   buildProductResearchCommercialQueryPlanV1,
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 } from "../ebay/ebay-product-research-query-plan.ts"
-import { currentFactoryMarkerV1 } from "./current-publication-factory-v1"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { currentFactoryMarkerV1 } from "./current-publication-factory-v1.ts"
 import {
   consumeListingPackageKeywordHandoffV1,
   decodeKeywordReadV1,
   keywordRecord as record,
-} from "./keyword-intelligence-handoff-v1"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+} from "./keyword-intelligence-handoff-v1.ts"
 
 export const CURRENT_FACTORY_KEYWORD_CONTINUATION_V2_1 =
   "CURRENT_FACTORY_KEYWORD_CONTINUATION_V2_1" as const
@@ -143,6 +145,28 @@ export async function continueCurrentFactoryKeywordV2_1(input: Readonly<{
       receipt.marketplaceWrites !== 0 || receipt.publicationWrites !== 0 ||
       receipt.adsWrites !== 0) {
     throw new Error("CURRENT_KEYWORD_PLAN_READBACK_INVALID")
+  }
+  const repaired = await input.supabase.rpc(
+    "repair_current_factory_keyword_revalidation_v1", {
+      p_account_key: input.accountKey,
+      p_listing_package_id: identity.packageId,
+      p_plan_id: planId,
+    })
+  if (repaired.error || repaired.data?.marketplaceWrites !== 0 ||
+      repaired.data?.publicationWrites !== 0 ||
+      repaired.data?.adsWrites !== 0) {
+    throw new Error("CURRENT_KEYWORD_REVALIDATION_REPAIR_FAILED")
+  }
+  const cumulative = await input.supabase.rpc(
+    "reconcile_current_factory_keyword_cumulative_completion_v1", {
+      p_account_key: input.accountKey,
+      p_listing_package_id: identity.packageId,
+      p_plan_id: planId,
+    })
+  if (cumulative.error || cumulative.data?.marketplaceWrites !== 0 ||
+      cumulative.data?.publicationWrites !== 0 ||
+      cumulative.data?.adsWrites !== 0) {
+    throw new Error("CURRENT_KEYWORD_CUMULATIVE_RECONCILIATION_FAILED")
   }
   const handoffRead = await input.supabase.rpc(
     "read_current_factory_keyword_handoff_v2_1", {
