@@ -18,6 +18,8 @@ import { publishCurrentRevisionV1 } from
   "@/lib/ebay/ebay-current-publication-executor-server-v1"
 import { evaluateCurrentPrepublicationArtifactPolicyV1 } from
   "@/lib/ebay/ebay-current-prepublication-artifact-policy-v1"
+import { autonomousGreenfieldCurrentCertificationReadyV1 } from
+  "@/lib/ebay/ebay-autonomous-greenfield-current-certification-v1"
 import { collectRadarRevenueFactoryCandidateBatchV1,
   ensureRadarCandidateEconomicsPreflightsV1,
   materializeRadarRevenueFactoryCandidateBatchV1 } from
@@ -266,7 +268,8 @@ export async function POST(req: Request) {
         if (profile.error || !profile.data) throw new Error(
           "CURRENT_ACCOUNT_POLICY_AUTHORITY_REQUIRED")
         for (const outcome of factory.outcomes.map(record)) {
-          if (outcome.listingReady !== true || !outcome.listingPackageId
+          if (!autonomousGreenfieldCurrentCertificationReadyV1(outcome)
+              || !outcome.listingPackageId
               || !outcome.opportunityId || !outcome.candidateKey
               || !outcome.lunaProductId || !outcome.lunaVariantId
               || !outcome.supplierSku) continue
@@ -349,7 +352,7 @@ export async function POST(req: Request) {
         productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
       })
       if (materialized.listingPackageId !== ledger.listing_package_id
-          || materialized.listingReady !== true) {
+          || !autonomousGreenfieldCurrentCertificationReadyV1(materialized)) {
         return NextResponse.json({ success: false,
           contractVersion:
             "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY_V1",

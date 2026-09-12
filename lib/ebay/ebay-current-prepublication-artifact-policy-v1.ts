@@ -152,8 +152,16 @@ export function evaluateCurrentPrepublicationArtifactPolicyV1(input: Readonly<{
     blockers.push("CURRENT_CONDITION_AUTHORITY_REQUIRED")
   }
   const aspects = record(packageData.aspects)
+  const requiredTruth = record(canonical.requiredItemSpecificsTruth)
+  const requiredResolutions = record(requiredTruth.resolutions)
+  const requiredSpecificNames = Object.keys(requiredResolutions)
+  const requiredSpecificCount = Number(canonical.requiredItemSpecificsCount)
   if (!text(packageData.categoryId)
-      || !["Brand", "Style", "Type"].every((key) => text(aspects[key]))) {
+      || canonical.requiredItemSpecificsReady !== true
+      || !Number.isInteger(requiredSpecificCount)
+      || requiredSpecificCount < 0
+      || requiredSpecificNames.length !== requiredSpecificCount
+      || requiredSpecificNames.some((key) => !text(aspects[key]))) {
     blockers.push("CURRENT_CATEGORY_AND_REQUIRED_SPECIFICS_REQUIRED")
   }
   if (!(typeof pricing.targetPrice === "number"
