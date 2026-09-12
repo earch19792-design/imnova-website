@@ -63,10 +63,51 @@ export async function POST(req: Request) {
     if (req.headers.get("x-seller-os-runtime-lane") ===
         "CURRENT_PREPUBLICATION_SAME_LINK_CLOSEOUT") {
       const packageId = "695a862f-2385-4b6c-b996-5e4aac2ca36c"
-      const materialized =
-        await materializeSellerOsDeterministicFactoryCandidateV1({
+      const opportunityId = "5acad932-7595-4659-9822-b8084ff5a107"
+      const [packageRead, queueRead] = await Promise.all([
+        supabase.from("ebay_listing_packages")
+          .select("id,account_key,opportunity_id,package_data")
+          .eq("id", packageId).eq("account_key", accountKey)
+          .eq("opportunity_id", opportunityId).limit(1).maybeSingle(),
+        supabase.from("ebay_luna_opportunity_queue")
+          .select("id,assessment").eq("id", opportunityId)
+          .limit(1).maybeSingle(),
+      ])
+      const packageData = record(packageRead.data?.package_data)
+      const marker = record(packageData.currentPublicationFactoryV1)
+      const resolver = record(packageData.categoryResolverV1)
+      const condition = record(packageData.conditionAuthority)
+      const aspects = record(packageData.aspects)
+      const exposure = record(packageData.packageExposurePolicyV1)
+      const exposureBinding = record(exposure.binding)
+      const canonical = record(record(queueRead.data?.assessment)
+        .canonicalMarketplaceReadinessV1)
+      const settledCurrentAuthorities = !packageRead.error && !queueRead.error
+        && marker.version === "SELLER_OS_CURRENT_PUBLICATION_FACTORY_V1"
+        && marker.packageId === packageId
+        && resolver.status === "AUTO_SELECTED"
+        && resolver.listingPackageId === packageId
+        && condition.factInvented === false
+        && condition.lunaProductId === "9220850483424"
+        && condition.lunaVariantId === "53002129932512"
+        && condition.supplierSku === "FL-NH4784642"
+        && condition.categoryId === packageData.categoryId
+        && ["Brand", "Style", "Type"].every((key) =>
+          typeof aspects[key] === "string" && Boolean(aspects[key]))
+        && exposure.sourcePolicy ===
+          "SELLER_OS_CURRENT_FACTORY_ROUTINE_EXPOSURE_AUTHORITY_V1"
+        && exposure.publicationAuthorized === false
+        && exposureBinding.packageId === packageId
+        && canonical.ready === true
+        && canonical.listingPolicyReady === true
+      const materialized = settledCurrentAuthorities
+        ? { listingPackageId: packageId, packageCreated: false,
+          categoryId: packageData.categoryId, categoryReady: true,
+          conditionReady: true, requiredItemSpecificsReady: true,
+          listingPolicyReady: true }
+        : await materializeSellerOsDeterministicFactoryCandidateV1({
           supabase, accountKey,
-          opportunityId: "5acad932-7595-4659-9822-b8084ff5a107",
+          opportunityId,
           candidateKey:
             "sha256:f574d51362e8d7869bcc139caf180abceb9f7ff72ccb84fe801d40960ca93ab2",
           taxonomyReader: getEbayTaxonomyListingIntelligence,
