@@ -22,6 +22,8 @@ import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { sellerOsPostOnlyGetResponseV1,
   sellerOsPostRuntimeAuthorizedV1 } from
   "@/lib/seller-os/post-only-runtime-route-v1"
+import { reconcileCurrentFactoryKeywordContinuationsV2_1 } from
+  "@/lib/seller-os/current-keyword-continuation-v2-1"
 
 function authorized(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? ""
@@ -44,6 +46,16 @@ export async function POST(req: Request) {
   if (!accountKey) return NextResponse.json({ success: false,
     error: "QUICK_PICK_RECOVERY_ACCOUNT_SCOPE_REQUIRED" }, { status: 500 })
   try {
+    const currentKeywordHandoff =
+      await reconcileCurrentFactoryKeywordContinuationsV2_1({
+        supabase, accountKey,
+      }).catch(() => Object.freeze({
+        contractVersion: "CURRENT_FACTORY_KEYWORD_CONTINUATION_V2_1",
+        status: "FAIL" as const,
+        errorCode: "CURRENT_KEYWORD_CONTINUATION_RECONCILIATION_FAILED",
+        marketplaceWrites: 0 as const, publicationWrites: 0 as const,
+        adsWrites: 0 as const, ownerActionRequired: false as const,
+      }))
     // This bounded reconciliation runs through the already scheduled Quick Pick
     // runtime. It makes old and new eligible intake rows discoverable without
     // requiring an owner resubmission or creating another scheduler/worker.
@@ -62,8 +74,9 @@ export async function POST(req: Request) {
       const recovery = await recoverQuickPickPublisherPackagesV1({
         supabase, accountKey,
       })
-      return NextResponse.json({ success: recovery.status === "PASS",
-        recovery, productResearchHandoff,
+      return NextResponse.json({ success: recovery.status === "PASS" &&
+          currentKeywordHandoff.status === "PASS",
+        recovery, productResearchHandoff, currentKeywordHandoff,
         safety: { sellerOsRuntimeAuthority: true,
           preAuthorizationPreparationOnly: true,
           activeAuthorizedPackagesExcluded: true,
@@ -71,7 +84,8 @@ export async function POST(req: Request) {
           marketplaceWrites: 0, listingPublications: 0,
           productDecisions: 0, categorySelections: 0,
           publisherDispatches: 0 } },
-      { status: recovery.status === "PASS" ? 200 : 503 })
+      { status: recovery.status === "PASS" &&
+          currentKeywordHandoff.status === "PASS" ? 200 : 503 })
     }
     const interruptedClaims = await recoverInterruptedLunaQuickPickRuntimeV1({
       supabase, accountKey,
@@ -90,6 +104,7 @@ export async function POST(req: Request) {
       && categoryAuthority.status === "PASS"
       && publisherPackages.status === "PASS"
       && productResearchHandoff.status === "PASS"
+      && currentKeywordHandoff.status === "PASS"
     console.info("SELLER_OS_CATEGORY_AUTHORITY_RECOVERY_V1", {
       status: categoryAuthority.status,
       scannedPackageCount: categoryAuthority.scannedPackageCount,
@@ -99,7 +114,7 @@ export async function POST(req: Request) {
       marketplaceWrites: categoryAuthority.marketplaceWrites,
     })
     return NextResponse.json({ success,
-      recovery: { productResearchHandoff, interruptedClaims,
+      recovery: { currentKeywordHandoff, productResearchHandoff, interruptedClaims,
         categoryAuthority, publisherPackages },
       safety: { marketplaceWrites: 0, listingPublications: 0,
         manualFactInjection: 0, codexProductDecisions: 0,

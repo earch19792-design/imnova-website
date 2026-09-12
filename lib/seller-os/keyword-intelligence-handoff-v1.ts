@@ -7,6 +7,7 @@ export const KEYWORD_READ_VERSION = "PRODUCT_RESEARCH_KEYWORD_HANDOFF_READ_V1"
 export type KeywordBindingV1 = Readonly<{
   ACCOUNT_KEY: string; PRODUCT_ID: string; VARIANT_ID: string
   CANDIDATE_KEY: string; OPPORTUNITY_ID: string; PLAN_ID?: string
+  PACKAGE_ID?: string
 }>
 type RecordValue = Record<string, unknown>
 export function keywordRecord(value: unknown): RecordValue {
