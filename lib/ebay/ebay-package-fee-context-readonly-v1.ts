@@ -50,13 +50,19 @@ export async function readEbayPackageFeeContextReadonlyV1(packageId: string) {
       sku:q.data.supplier_sku,categoryId:String(p.data.category),price:p.data.price},new Date())
   const productTruthTitle=String(record(record(q.data.assessment).productTruth).title ?? q.data.product_title ?? "").trim()
   if(!productTruthTitle)throw Error("CURRENT_PRODUCT_TRUTH_TITLE_REQUIRED")
+  const canonical=record(record(q.data.assessment).canonicalMarketplaceReadinessV1)
   const results = await Promise.allSettled([cached ? cached.subscription : readEbaySellerStoreSubscriptionReadonly(),
     cached ? cached.accountPerformance : readEbayFeePerformanceReadonlyV1(),
     cached ? cached.officialFeePolicySnapshot : readCurrentOfficialFeePolicyV1(),
     cached ? cached.feeTaxPolicy : readSellingFeeTaxPolicyV1(),
     cached && currentCategoryAncestryV1(cached.categoryAuthority,p.data.category,new Date()) ? cached.categoryAuthority :
       readCategoryAncestry(String(p.data.category),productTruthTitle),
-    preflightEbayAccountPoliciesReadonly()])
+    preflightEbayAccountPoliciesReadonly({
+      fulfillmentPolicyId:String(canonical.fulfillmentPolicyId??""),
+      paymentPolicyId:String(canonical.paymentPolicyId??""),
+      returnPolicyId:String(canonical.returnPolicyId??""),
+      merchantLocationKey:String(canonical.merchantLocationKey??""),
+    })])
   const component = (i: number) => { const r = results[i]; return r.status === "fulfilled" ? r.value :
     { status: "UNPROVEN", errorCode: feeContextSafeErrorV1(r.reason) } }
   const categoryAuthority=record(component(4))

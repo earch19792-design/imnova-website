@@ -77,6 +77,8 @@ export async function POST(req: Request) {
         supabase, accountKey, packageId, itemId: null,
         sku: "FL-NH4784642", now,
       })
+      const feeContext = currentFee?.status === "PROVEN"
+        ? null : await readEbayPackageFeeContextReadonlyV1(packageId)
       const feeAuthority = currentFee?.status === "PROVEN"
         ? currentFee.authority as Awaited<ReturnType<
           typeof persistProducedEbayFeeV1
@@ -84,8 +86,11 @@ export async function POST(req: Request) {
         : await persistProducedEbayFeeV1({
           supabase, accountKey, packageId, itemId: null,
           sku: "FL-NH4784642",
-          context: await readEbayPackageFeeContextReadonlyV1(packageId),
-          now,
+          context: feeContext,
+          // Official reads above establish their own observation timestamps.
+          // Evaluate only after they complete so fresh evidence is never
+          // rejected as being a few seconds in the future.
+          now: new Date(),
         })
       const current = await readSellOneLikeThisV1({
         // The CURRENT package has its own factory marker. No historical item
