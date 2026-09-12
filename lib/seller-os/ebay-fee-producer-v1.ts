@@ -136,7 +136,7 @@ export function produceEbayFeeAuthorityV1(input: {accountKey:string; itemId:stri
     // rewriting an immutable package or refreshing still-current account data.
     ...(input.itemId === null ? { preSaleSourceContextV1: Object.fromEntries([
       "observedAt", "marketplaceAccountKey", "identity", "listing", "resolvedStoreContext", "subscription",
-      "accountPerformance", "officialFeePolicySnapshot", "feeTaxPolicy", "categoryAuthority", "categoryFeePolicy", "payoutCurrencyAuthority", "currentCategoryServiceAuthority",
+      "accountPerformance", "officialFeePolicySnapshot", "feeTaxPolicy", "categoryAuthority", "categoryFeePolicy", "payoutCurrencyAuthority", "currentCategoryServiceAuthority", "fulfillmentFeeBasis",
     ].filter(k=>c[k] !== undefined).map(k=>[k,c[k]])) } : {}),
     automaticFeeProducer: true, codexRuntimeDependency: false,
     buyerTaxFeeClassification: BUYER_TAX_FEE_CLASSIFICATION_V1,

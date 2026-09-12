@@ -132,9 +132,14 @@ export async function readSellOneLikeThisV1(input: {
     opportunity:{...own,assessment:{ownerLunaUnbrandedPolicyApplicationV1:own.brandApplication,canonicalMarketplaceReadinessV1:{requiredItemSpecificsTruth:own.requiredTruth}}}})
   const proof=input.prepublicationEvidence ?? prep.prepublicationEvidenceV1
   const prepublicationValid=currentPrepublicationProofV1(publication.data,proof,now)
+  const currentFeeFulfillment=record(record(record(fee).authority)
+    .preSaleSourceContextV1).fulfillmentFeeBasis
+  const currentBuyerShipping=knownBuyerShippingV1(currentFeeFulfillment)
   const feeStructure=publicationFeeStructureV1({authority:record(fee).authority,subjectMatched:record(fee).publicationSubjectMatched===true,
     accountKey:input.accountKey,packageId:input.packageId,sku:String(own.supplier_sku),categoryId:String(content.categoryId),
-    salePrice:Number(content.price),buyerShipping:prepublicationValid?knownBuyerShippingV1(record(proof).fulfillmentFeeBasis):null,now})
+    salePrice:Number(content.price),buyerShipping:prepublicationValid
+      ? knownBuyerShippingV1(record(proof).fulfillmentFeeBasis)
+      : currentBuyerShipping,now})
   const consistency = listingPipelineConsistencyV1(result, { ...authority, quantityReview, currentQuantityMaterial,
     publicationFeeStructure:feeStructure, exposurePolicy: prep.exposurePolicy, productTruthDigest: String(own.productTruthDigest ?? ""),
     pinnedSnapshot:record(prep.current).snapshot,pinnedPackageHash:record(prep.current).packageHash })
