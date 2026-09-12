@@ -20,6 +20,8 @@ import { evaluateCurrentPrepublicationArtifactPolicyV1 } from
   "@/lib/ebay/ebay-current-prepublication-artifact-policy-v1"
 import { autonomousGreenfieldCurrentCertificationReadyV1 } from
   "@/lib/ebay/ebay-autonomous-greenfield-current-certification-v1"
+import { runAutonomousEbayStockingBatchV1 } from
+  "@/lib/ebay/ebay-autonomous-stocking-batch-server-v1"
 import { collectRadarRevenueFactoryCandidateBatchV1,
   ensureRadarCandidateEconomicsPreflightsV1,
   materializeRadarRevenueFactoryCandidateBatchV1 } from
@@ -82,6 +84,11 @@ export async function POST(req: Request) {
       if (forbiddenIdentityFields.some((key) => key in requestBody)) {
         throw new Error("MANUAL_PRODUCT_ID_INJECTION_FORBIDDEN")
       }
+      const stockingBatch = await runAutonomousEbayStockingBatchV1({
+        supabase, accountKey, request: req,
+      })
+      if (stockingBatch) return NextResponse.json(stockingBatch.body,
+        { status: stockingBatch.status })
       const boundary = getEbayDraftWriteEnvironmentBoundary()
       if (!boundary.productionDedicatedPreprodBound || !boundary.writeAllowed) {
         throw new Error("CERTIFIED_PREPROD_ONLY")
