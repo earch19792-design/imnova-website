@@ -166,6 +166,9 @@ export function humanComparableReasonV1(item: JsonRecord) {
     return "Aceptado: coincide con el modelo investigado y no presenta una identidad incompatible."
   }
   if (item.comparableClass === "FUNCTIONAL_COMPARABLE") {
+    if (item.pricingAuthorityClass === "BRANDED_CATEGORY_SIGNAL_ONLY") {
+      return "Aceptado como señal de demanda de categoría; al declarar una marca propia, no determina el precio del producto genérico."
+    }
     return "Aceptado como equivalente funcional: atiende la misma intención de compra y pasó los controles de identidad."
   }
   return "Conservado como contexto de mercado; no determina por sí solo la recomendación."

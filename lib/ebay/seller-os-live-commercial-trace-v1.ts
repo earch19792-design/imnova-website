@@ -98,7 +98,7 @@ type SafeCommercialClaimV1 = Readonly<{
 
 const SAFE_PRODUCT_IDENTITIES_V1 = ["webcam", "camera", "scale", "vacuum",
   "translator", "necklace", "bracelet", "ring", "holder", "chopper",
-  "turntable", "backpack", "bag"] as const
+  "turntable", "backpack", "bag", "facial device"] as const
 
 export function buildConservativeSafeClaimSubsetV1(product: Readonly<{
   title: string
@@ -121,8 +121,9 @@ export function buildConservativeSafeClaimSubsetV1(product: Readonly<{
   }
   const identity = SAFE_PRODUCT_IDENTITIES_V1.find((term) =>
     new RegExp(`\\b${term}\\b`).test(normalizedTitle)) ?? null
-  if (identity) add(identity[0].toUpperCase() + identity.slice(1), identity,
-    "PRODUCT_IDENTITY")
+  if (identity) add(identity.split(" ").map((word) =>
+    word[0].toUpperCase() + word.slice(1)).join(" "), identity,
+  "PRODUCT_IDENTITY")
   const titleResolutions = [...new Set(normalizedTitle.match(
     /\b(?:720p|1080p|2k|4k|8k)\b/g) ?? [])]
   if (titleResolutions.length === 1) add(titleResolutions[0].toUpperCase(),
@@ -131,6 +132,8 @@ export function buildConservativeSafeClaimSubsetV1(product: Readonly<{
     "Built-In Speakers", "built in speakers", "FUNCTIONAL_DIFFERENTIATOR")
   if (/\b(?:microphone|mic)\b/.test(normalizedTitle)) add(
     "Microphone", "microphone", "FUNCTIONAL_DIFFERENTIATOR")
+  if (/\bmicrocurrent\b/.test(normalizedTitle)) add(
+    "Microcurrent", "microcurrent", "FUNCTIONAL_DIFFERENTIATOR")
   if (/\busb\s*c\b/.test(normalizedTitle) || /\busb\s*c\b/.test(normalizedUrl)) {
     add("USB-C", "usb c", "CONNECTIVITY", /\busb\s*c\b/.test(normalizedTitle)
       ? "LUNA_PRODUCT_TITLE" : "LUNA_CANONICAL_PRODUCT_URL")
@@ -140,7 +143,8 @@ export function buildConservativeSafeClaimSubsetV1(product: Readonly<{
       ? "LUNA_PRODUCT_TITLE" : "LUNA_CANONICAL_PRODUCT_URL")
   }
   for (const model of title.match(/\b(?=[A-Za-z0-9-]{5,}\b)(?=[A-Za-z0-9-]*[A-Za-z])(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]+\b/g) ?? []) {
-    if (!/^\d{3,4}p$/i.test(model) && !/^usb-?[ac]?$/i.test(model)) {
+    if (!/^\d{3,4}p$/i.test(model) && !/^usb-?[ac]?$/i.test(model) &&
+        !/^\d+-in-\d+$/i.test(model)) {
       add(model.toUpperCase(), model.toLocaleLowerCase("en-US"), "MODEL")
     }
   }
@@ -267,7 +271,9 @@ export function buildCommercialMarketProjectionV1(
   const excluded = observed.filter((entry) => entry.eligibleComparable !== true)
   const demandBearing = accepted.filter((entry) =>
     (number(entry.salesQuantity) ?? 0) > 0)
-  const pricingPool = report?.demandValidationPassed ? demandBearing : []
+  const pricingPool = report?.demandValidationPassed
+    ? demandBearing.filter((entry) => entry.pricingAuthorityEligible !== false)
+    : []
   const prices = pricingPool.flatMap((entry) => {
     const item = number(entry.price)
     const shipping = number(entry.shippingCost) ?? 0
@@ -291,6 +297,9 @@ export function buildCommercialMarketProjectionV1(
       identityMatchQuality: text(entry.identityMatchQuality, 80),
       identityEvidenceClass: text(entry.identityEvidenceClass, 120),
       comparableClass: text(entry.commercialComparableClass, 80),
+      brand: text(entry.brand, 160),
+      pricingAuthorityEligible: entry.pricingAuthorityEligible !== false,
+      pricingAuthorityClass: text(entry.pricingAuthorityClass, 120),
       exactModelToken: text(entry.exactModelToken, 80),
       verifiedSoldQuantity: number(entry.verifiedSoldQuantity) ?? 0,
       confirmedSoldQuantity: number(entry.confirmedSoldQuantity) ?? 0,

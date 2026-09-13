@@ -305,6 +305,15 @@ function normalizedIdentifier(value: unknown) {
   return cleanText(value).toLowerCase().replace(/[^a-z0-9]/g, "")
 }
 
+const NON_BRAND_AUTHORITY_VALUES = new Set([
+  "doesnotapply", "generic", "na", "notapplicable", "unbranded",
+])
+
+function normalizedBrandAuthority(value: unknown) {
+  const normalized = normalizedIdentifier(value)
+  return NON_BRAND_AUTHORITY_VALUES.has(normalized) ? "" : normalized
+}
+
 function normalizedGtinIdentifier(value: unknown) {
   const candidate = cleanText(value).replace(/[^0-9]/g, "")
   return validateGtinChecksum(candidate) ? candidate : ""
@@ -580,8 +589,9 @@ export function buildEbaySellerKeywordDemandValidation(
     const identity = buildIdentityAssessment(candidateText, title)
     const listingGtin = normalizedGtinIdentifier(entry.gtin)
     const listingEpid = normalizedIdentifier(entry.epid)
-    const listingBrand = normalizedIdentifier(entry.brand) ||
-      normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["brand"]))
+    const listingBrandValue = cleanText(entry.brand) ||
+      comparableAspectValue(entry.localizedAspects, ["brand"])
+    const listingBrand = normalizedIdentifier(listingBrandValue)
     const listingMpn = normalizedIdentifier(entry.mpn) ||
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["mpn"]))
     const listingModel = normalizedIdentifier(entry.model) ||
@@ -667,6 +677,21 @@ export function buildEbaySellerKeywordDemandValidation(
       : eligibleComparable
         ? "FUNCTIONAL_COMPARABLE" as const
         : "NON_COMPARABLE" as const
+    const candidatePricingBrand = normalizedBrandAuthority(
+      input.candidate.brand)
+    const listingPricingBrand = normalizedBrandAuthority(listingBrandValue)
+    const brandedCategorySignalOnly = commercialComparableClass ===
+        "FUNCTIONAL_COMPARABLE" && !candidatePricingBrand &&
+      Boolean(listingPricingBrand)
+    const pricingAuthorityEligible = eligibleComparable &&
+      !brandedCategorySignalOnly
+    const pricingAuthorityClass = !eligibleComparable
+      ? "NON_COMPARABLE" as const
+      : brandedCategorySignalOnly
+        ? "BRANDED_CATEGORY_SIGNAL_ONLY" as const
+        : commercialComparableClass === "EXACT_MODEL_COMPARABLE"
+          ? "EXACT_MODEL_PRICING_AUTHORITY" as const
+          : "FUNCTIONAL_PRICING_AUTHORITY" as const
     const identityEvidenceClass = packConflict
       ? "OFFER_PACK_CONFLICT"
       : offerPackUnresolved
@@ -713,7 +738,7 @@ export function buildEbaySellerKeywordDemandValidation(
       durableSoldSourceClass: cleanText(entry.durableSoldSourceClass) || null,
       realizedPriceStatus: cleanText(entry.realizedPriceStatus) || null,
       gtin: cleanText(entry.gtin) || null,
-      brand: cleanText(entry.brand) || null,
+      brand: listingBrandValue || null,
       mpn: cleanText(entry.mpn) || null,
       model: cleanText(entry.model) || null,
       lotSize: listingPack,
@@ -772,6 +797,8 @@ export function buildEbaySellerKeywordDemandValidation(
       identifierExact,
       exactModelToken,
       commercialComparableClass,
+      pricingAuthorityEligible,
+      pricingAuthorityClass,
       baseIdentifierExact,
       offerPackResolved: candidatePackKnown && listingPackKnown && !packConflict,
       softIdentityConflicts: softBrandConflict ? ["BRAND_CONFLICT_OVERRIDDEN_BY_EXACT_GTIN"] : [],
