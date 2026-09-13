@@ -163,3 +163,33 @@ export function currentBatchShippingSlotRolloverV1(input: Readonly<{
     next,
   })
 }
+
+export function hydrateCurrentBatchShippingWaitingPackagesV1(
+  input: Readonly<{
+    accountKey: string
+    factoryOutcomes: readonly unknown[]
+    packageRows: readonly unknown[]
+  }>,
+) {
+  const packages = input.packageRows.map(record).filter((row) =>
+    text(row.id) && text(row.opportunity_id) &&
+    row.account_key === input.accountKey)
+  return Object.freeze(input.factoryOutcomes.map((value) => {
+    const outcome = record(value)
+    if (outcome.reasonCode !== "WAITING_BROWSER_WORKER" ||
+        outcome.shippingJobIdentityMatch !== true ||
+        !text(outcome.opportunityId)) return outcome
+    const exact = packages.filter((row) =>
+      row.opportunity_id === outcome.opportunityId)
+    if (exact.length !== 1) {
+      throw new Error(exact.length
+        ? "AUTONOMOUS_STOCKING_SHIPPING_PACKAGE_AMBIGUOUS"
+        : "AUTONOMOUS_STOCKING_SHIPPING_PACKAGE_NOT_FOUND")
+    }
+    const existing = text(outcome.listingPackageId)
+    if (existing && existing !== exact[0].id) {
+      throw new Error("AUTONOMOUS_STOCKING_SHIPPING_PACKAGE_DRIFT")
+    }
+    return Object.freeze({ ...outcome, listingPackageId: text(exact[0].id) })
+  }))
+}

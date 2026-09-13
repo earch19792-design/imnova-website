@@ -37,7 +37,8 @@ import { keywordRecord as record } from
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { certifyCurrentBatchShippingSlotReadbackV1,
   currentBatchShippingSlotBindingV1,
-  currentBatchShippingSlotRolloverV1 } from
+  currentBatchShippingSlotRolloverV1,
+  hydrateCurrentBatchShippingWaitingPackagesV1 } from
   "@/lib/ebay/ebay-autonomous-stocking-shipping-slot-v1"
 
 type SupabaseAdmin = ReturnType<typeof getSupabaseAdminClient>
@@ -552,6 +553,29 @@ async function executeBatch(input: Readonly<{
     const priorPackages = new Set(rows(prior.data)
       .map((value) => text(value.listing_package_id)).filter(Boolean))
     let selection: Row | null = null
+    const rawFactoryOutcomes = factory.outcomes.map(record)
+    const waitingOpportunityIds = rawFactoryOutcomes.filter((outcome) =>
+      outcome.reasonCode === "WAITING_BROWSER_WORKER" &&
+      outcome.shippingJobIdentityMatch === true &&
+      text(outcome.opportunityId)).map((outcome) =>
+      text(outcome.opportunityId))
+    let hydratedFactoryOutcomes = rawFactoryOutcomes
+    if (waitingOpportunityIds.length) {
+      const packageRead = await input.supabase.from("ebay_listing_packages")
+        .select("id,opportunity_id,account_key")
+        .eq("account_key", input.accountKey)
+        .in("opportunity_id", waitingOpportunityIds)
+      if (packageRead.error) {
+        throw new Error("AUTONOMOUS_STOCKING_SHIPPING_PACKAGE_READ_FAILED")
+      }
+      hydratedFactoryOutcomes = [
+        ...hydrateCurrentBatchShippingWaitingPackagesV1({
+          accountKey: input.accountKey,
+          factoryOutcomes: rawFactoryOutcomes,
+          packageRows: rows(packageRead.data),
+        }),
+      ]
+    }
     const exactOutcome = exactShippingContinuation ? {
       candidateId: exactShippingContinuation.candidateId,
       opportunityId: exactShippingContinuation.opportunityId,
@@ -568,9 +592,9 @@ async function executeBatch(input: Readonly<{
         exactShippingContinuation.currentCertificationReady === true,
     } : null
     const currentOutcomes = exactOutcome
-      ? [exactOutcome, ...factory.outcomes.map(record).filter((outcome) =>
+      ? [exactOutcome, ...hydratedFactoryOutcomes.filter((outcome) =>
         outcome.candidateId !== exactOutcome.candidateId)]
-      : factory.outcomes.map(record)
+      : hydratedFactoryOutcomes
     for (const outcome of currentOutcomes) {
       if (!(autonomousGreenfieldCurrentCertificationReadyV1(outcome) ||
           outcome.exactShippingCurrentCertificationReady === true)
