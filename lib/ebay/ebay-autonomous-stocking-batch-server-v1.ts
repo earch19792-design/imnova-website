@@ -13,7 +13,8 @@ import { autonomousGreenfieldCurrentCertificationReadyV1 } from
   "@/lib/ebay/ebay-autonomous-greenfield-current-certification-v1"
 import { collectRadarRevenueFactoryCandidateBatchV1,
   ensureRadarCandidateEconomicsPreflightsV1,
-  materializeRadarRevenueFactoryCandidateBatchV1 } from
+  materializeRadarRevenueFactoryCandidateBatchV1,
+  resumeRadarFactoryCandidateAfterShippingV1 } from
   "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
@@ -482,6 +483,27 @@ async function executeBatch(input: Readonly<{
           publicationWrites: 0, adsWrites: 0 },
       } }
     }
+    let exactShippingContinuation: Row | null = null
+    if (exactSlot?.shippingReady) {
+      const exactReadback = record(exactSlot.readback)
+      exactShippingContinuation = record(
+        await resumeRadarFactoryCandidateAfterShippingV1({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          candidateId: text(exactReadback.canonicalCandidateId),
+          lunaProductId: text(exactReadback.productId),
+          lunaVariantId: text(exactReadback.variantId),
+          supplierSku: text(exactReadback.supplierSku),
+        }))
+      if (exactShippingContinuation.applicable !== true ||
+          exactShippingContinuation.durableReadback !== true ||
+          exactShippingContinuation.marketplaceWrites !== 0 ||
+          exactShippingContinuation.candidateId !==
+            exactReadback.canonicalCandidateId) {
+        throw new Error(
+          "AUTONOMOUS_STOCKING_EXACT_SHIPPING_CONTINUATION_INVALID")
+      }
+    }
     let batch = await collectRadarRevenueFactoryCandidateBatchV1({
       supabase: input.supabase, accountKey: input.accountKey,
       targetCandidates: 100,
@@ -568,6 +590,7 @@ async function executeBatch(input: Readonly<{
       waitingBrowserWorker: factory.waitingBrowserWorker,
       autonomouslyContinued: true,
     }, economics, keywordStatus: keyword.status,
+      exactShippingContinuation,
       manualProductSelection: false, manualProductIdInjection: false,
       codexRuntimeDependency: false }
     if (!selection) {
