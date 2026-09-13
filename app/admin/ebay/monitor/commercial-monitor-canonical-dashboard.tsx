@@ -137,6 +137,15 @@ function formatMoney(value: number | null, currency: string | null) {
   }
 }
 
+function manualLinkageUrl(listing: CommercialListingReadModel) {
+  const params = new URLSearchParams({
+    ebayItemId: listing.identity.itemId,
+  })
+  const expectedSku = listing.identity.customLabel ?? listing.identity.sku
+  if (expectedSku) params.set("expectedSku", expectedSku)
+  return `/admin/ebay/listings/register?${params.toString()}`
+}
+
 const buyerMessageLabels: Record<
   CommercialMonitorGetDto["backend"]["recentSales"]["entries"][number]["buyerMessageStatus"],
   string
@@ -320,9 +329,11 @@ export function CommercialMonitorCanonicalDashboard({
   const dashboardKpis = presentSellerOsCanonicalDashboardKpisV1(monitor)
   const livePortfolio = dashboardKpis.livePortfolio
   const canonicalLive = buildCanonicalLiveListingDashboardMetricsV1(monitor)
-  const listingsNeedingLinkage = monitor.listings.filter((listing) =>
-    listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
-    listing.stock.supplierLinkageStatus !== "CERTIFIED")
+  const listingsNeedingLinkage = [...new Map(monitor.listings
+    .filter((listing) =>
+      listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
+      listing.stock.supplierLinkageStatus !== "CERTIFIED")
+    .map((listing) => [listing.identity.itemId, listing])).values()]
   const accountTraffic = dashboardKpis.accountTraffic
   const liveAnalyticsDetail = analyticsSnapshotDetail(
     backend.trafficScopes.currentLivePortfolio,
@@ -522,15 +533,27 @@ export function CommercialMonitorCanonicalDashboard({
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {listingsNeedingLinkage.length > 0 && (
-              <article className="rounded-2xl border border-violet-200 bg-violet-50 p-5 shadow-sm">
+              <article id="seller-os-unlinked-listings" role="alert" aria-live="polite" className="scroll-mt-24 rounded-2xl border-2 border-red-500 bg-red-50 p-5 shadow-lg ring-4 ring-red-100">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className={`${type.cardLabel} text-violet-800`}>Listing necesita vinculación</p>
-                    <p className={`${type.helper} mt-1 text-slate-600`}>Seller OS no encontró una única identidad exacta. No se usó similitud de título.</p>
+                    <p className={`${type.cardLabel} flex items-center gap-2 text-red-900`}><AlertTriangle className="h-5 w-5" aria-hidden="true" />Listing necesita vinculación</p>
+                    <p className={`${type.helper} mt-1 font-semibold text-red-800`}>Seller OS no encontró una única identidad exacta. No se usó similitud de título. Localiza el listing abajo y resuélvelo.</p>
                   </div>
-                  <strong className="text-3xl font-black text-violet-800">{listingsNeedingLinkage.length}</strong>
+                  <strong className="rounded-full bg-red-700 px-3 py-1 text-2xl font-black text-white" aria-label={`${listingsNeedingLinkage.length} listings pendientes`}>{listingsNeedingLinkage.length}</strong>
                 </div>
-                <a href="/admin/ebay/listings/register" className={`${type.button} mt-3 inline-flex min-h-10 items-center rounded-lg bg-violet-700 px-3 text-white`}>Resolver</a>
+                <div className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
+                  {listingsNeedingLinkage.map((listing) => (
+                    <div key={listing.key} data-unlinked-item-id={listing.identity.itemId} className="rounded-xl border border-red-300 bg-white p-3">
+                      <p className="text-xs font-black uppercase tracking-wide text-red-800">Item ID {listing.identity.itemId}</p>
+                      <p className="mt-1 text-sm font-black text-slate-950">{listing.identity.title ?? "Título no disponible"}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-600">SKU / Custom Label: {listing.identity.customLabel ?? listing.identity.sku ?? "No disponible"}</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <a href={`https://www.ebay.com/itm/${listing.identity.itemId}`} target="_blank" rel="noreferrer" className={`${type.button} inline-flex min-h-10 items-center rounded-lg border border-red-300 px-3 text-red-900`}>Ver en eBay</a>
+                        <a href={manualLinkageUrl(listing)} className={`${type.button} inline-flex min-h-10 items-center rounded-lg bg-red-700 px-3 text-white`}>Resolver ahora</a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </article>
             )}
             <article className="rounded-2xl border border-rose-200 bg-white p-5 shadow-sm">
