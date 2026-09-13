@@ -255,20 +255,40 @@ async function latestShipping(input: Readonly<{
   productId: string
   variant: DirectedLunaVariant
 }>) {
-  const read = await input.supabase.from("seller_os_profitability_frontier_snapshots")
-    .select("shipping_status,shipping_value,calculated_at,frontier_payload")
-    .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
-    .eq("luna_product_id", input.productId).eq("luna_variant_id", input.variant.id)
-    .eq("luna_sku", input.variant.sku).order("calculated_at", { ascending: false })
-    .limit(1).maybeSingle()
+  // The immutable frontier ledger intentionally revokes direct service-role
+  // table reads. Use its bounded security-definer read contract and then apply
+  // the exact product/variant/SKU predicate in memory.
+  const read = await input.supabase.rpc(
+    "get_seller_os_latest_profitability_frontiers_v1", {
+      p_account_key: input.accountKey,
+      p_marketplace_id: "EBAY_US",
+      p_family_ids: null,
+      p_limit: 100,
+    })
   if (read.error) throw new Error("LIVE_COMMERCIAL_TRACE_SHIPPING_READ_FAILED")
-  if (!read.data) return null
-  const payload = record(read.data.frontier_payload)
+  const candidates = (Array.isArray(record(read.data).frontiers)
+    ? record(read.data).frontiers as unknown[] : [])
+    .map((outerValue) => {
+      const outer = record(outerValue)
+      return { outer, frontier: record(outer.frontier) }
+    })
+    .filter(({ frontier }) =>
+      frontier.lunaProductId === input.productId &&
+      frontier.lunaVariantId === input.variant.id &&
+      frontier.lunaSku === input.variant.sku)
+    .sort((left, right) => Date.parse(text(right.outer.calculatedAt, 80) ??
+      text(right.frontier.evaluatedAt, 80) ?? "") -
+      Date.parse(text(left.outer.calculatedAt, 80) ??
+        text(left.frontier.evaluatedAt, 80) ?? ""))
+  if (!candidates.length) return null
+  const selected = candidates[0]
+  const payload = selected.frontier
   const capture = record(payload.shippingCaptureEvidence)
-  const observedAt = text(capture.observedAt ?? read.data.calculated_at, 80)
+  const observedAt = text(capture.observedAt ?? selected.outer.calculatedAt ??
+    payload.evaluatedAt, 80)
   const age = observedAt ? Date.now() - Date.parse(observedAt) : Number.POSITIVE_INFINITY
-  const valid = read.data.shipping_status === "SHIPPING_DURABLY_PERSISTED" &&
-    number(read.data.shipping_value) !== null &&
+  const valid = payload.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
+    number(payload.shippingValue) !== null &&
     capture.quantity === 1 && capture.noPurchase === true &&
     capture.noCredentials === true && capture.canonicalDestinationMatch === true &&
     capture.lunaProductId === input.productId &&
@@ -276,7 +296,7 @@ async function latestShipping(input: Readonly<{
     capture.supplierSku === input.variant.sku &&
     Number.isFinite(age) && age >= -60_000 && age <= SHIPPING_MAX_AGE_MS
   if (!valid) return null
-  return Object.freeze({ amountUsd: number(read.data.shipping_value) as number,
+  return Object.freeze({ amountUsd: number(payload.shippingValue) as number,
     observedAt, evidenceDigest: text(capture.evidenceDigest, 100),
     acquisitionMethod: text(capture.acquisitionMethod, 120),
     canonicalDestinationMatch: true as const,
