@@ -62,6 +62,8 @@ import {
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
+import { MAYEL_GALLERY_SYNC_RETRYABLE_STATES } from
+  "@/lib/seller-os/mayel-gallery-sync-resume-v1"
 import { getSupabaseAdminClient, validateSellerOsApiRequest } from
   "@/lib/supabase-admin"
 
@@ -659,11 +661,20 @@ export async function POST(request: Request) {
       if (!ownerRole) return json({ success: false, error: "MAYEL_VISUAL_OWNER_AUTHORITY_REQUIRED" }, 403)
       const outboxId = uuid(body?.outboxId), itemId = String(body?.ebayItemId ?? "")
       if (!outboxId || !/^\d{9,20}$/.test(itemId)) return json({ success: false, error: "OUTBOX_EXACT_SCOPE_REQUIRED" }, 400)
-      const owned = await getSupabaseAdminClient().from("seller_os_ipad_outbox_v1").select("id")
-        .eq("id", outboxId).eq("item_id", itemId).eq("account_key", accountKey()).eq("actor_user_id", auth.userId).maybeSingle()
-      if (owned.error || !owned.data) return json({ success: false, error: "OUTBOX_EXACT_SCOPE_REQUIRED" }, 403)
+      const db = getSupabaseAdminClient()
+      const now = new Date().toISOString()
+      const resumable = await db.from("seller_os_ipad_outbox_v1")
+        .update({ next_attempt_at: now, updated_at: now })
+        .eq("id", outboxId).eq("item_id", itemId)
+        .eq("account_key", accountKey()).eq("kind", "IMAGE_SYNC")
+        .in("state", MAYEL_GALLERY_SYNC_RETRYABLE_STATES)
+        .or(`lease_until.is.null,lease_until.lt.${now}`)
+        .select("id").maybeSingle()
+      if (resumable.error || !resumable.data) return json({ success: false,
+        error: "OUTBOX_EXACT_SCOPE_REQUIRED" }, 409)
       const { runIpadOutboxRuntimeV1 } = await import("../../../../../lib/seller-os/ipad-sync-runtime-v1")
-      const result = await runIpadOutboxRuntimeV1({ supabase: getSupabaseAdminClient(), accountKey: accountKey(), outboxId, itemId })
+      const result = await runIpadOutboxRuntimeV1({ supabase: db,
+        accountKey: accountKey(), outboxId, itemId })
       return json({ success: true, ...result })
     }
     if (action === "READ_CURRENT_GALLERY") {

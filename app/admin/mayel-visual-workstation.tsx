@@ -129,6 +129,16 @@ type VisualTask = {
     execution?: { executionId?: string; phase?: string;
       marketplaceWriteCount?: number; appliedAndOfficiallyVerified?: boolean } | null
   }
+  gallerySyncResume?: {
+    outboxId: string
+    state: string
+    reasonCode: string | null
+    nextAttemptAt: string | null
+    leaseActive: boolean
+    canResume: boolean
+    mode: "SYNC" | "VERIFY"
+    label: string
+  } | null
 }
 
 type DelegationPredicate = {
@@ -909,6 +919,8 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation, canOperate, busy, o
 }) {
   const [discarding, setDiscarding] = useState<string | null>(null)
   const [discardMessage, setDiscardMessage] = useState("")
+  const [resumingSync, setResumingSync] = useState(false)
+  const [resumeMessage, setResumeMessage] = useState("")
   async function discard(assetId: string) {
     if (discarding || busy || !canOperate) return
     setDiscarding(assetId); setDiscardMessage("")
@@ -922,6 +934,30 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation, canOperate, busy, o
         ? "Esta propuesta tiene un envío en curso. Primero hay que confirmar su estado en eBay."
         : "No se descartó la propuesta. La vista pudo cambiar; actualiza y vuelve a intentarlo.")
     } finally { setDiscarding(null) }
+  }
+  async function resumeGallerySync() {
+    if (!task.gallerySyncResume?.canResume || resumingSync || busy) return
+    setResumingSync(true); setResumeMessage("")
+    try {
+      const result = await visualRequest(
+        "/api/admin/ebay/mayel-visual-workstation", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "RESUME_GALLERY_SYNC",
+            outboxId: task.gallerySyncResume.outboxId,
+            ebayItemId: task.ebayItemId }),
+        }) as Record<string, unknown>
+      setResumeMessage(Number(result.listingWriteCount ?? 0) > 0
+        ? "eBay recibió la actualización. Seller OS está verificando la galería oficial."
+        : result.writeOutcomeUnknown === true
+          ? "La respuesta de eBay no fue concluyente. Seller OS verificará antes de intentar otro envío."
+          : Number(result.processed ?? 0) > 0
+            ? "Seller OS comprobó eBay. Las imágenes siguen guardadas y el estado quedó actualizado."
+            : "Otro proceso está comprobando este envío. Actualiza en unos segundos.")
+      await onDone()
+    } catch {
+      setResumeMessage("eBay todavía no está disponible o el envío está siendo comprobado. Las imágenes continúan guardadas.")
+      await onDone()
+    } finally { setResumingSync(false) }
   }
   if (!task.visualManifest) return null
   const phaseB = task.phaseB
@@ -994,6 +1030,23 @@ function OwnerPreview({ task, canOwnerAuthorize, delegation, canOperate, busy, o
     </div>
     {discardMessage && <p role="status" className="mt-3 rounded-lg bg-white p-3 text-sm">{discardMessage}</p>}
     <p role="status" className={`mt-4 rounded-xl border p-3 font-semibold ${friendly.className}`}>{friendly.icon} {friendly.label}</p><p className="mt-1 text-sm text-slate-500">{friendly.action}</p>
+    {canOwnerAuthorize && task.gallerySyncResume && !applied && <section
+      className="mt-4 rounded-2xl border-2 border-emerald-500 bg-emerald-50 p-4"
+      aria-label="Reanudar sincronización de imágenes con eBay">
+      <p className="font-semibold text-emerald-950">Las imágenes aprobadas están guardadas en Seller OS.</p>
+      <p className="mt-1 text-sm text-emerald-900">{task.gallerySyncResume.reasonCode === "EBAY_QUOTA_EXHAUSTED"
+        ? "eBay no tenía cuota cuando Mayel terminó. Puedes volver a comprobar y sincronizar sin subir las imágenes otra vez."
+        : task.gallerySyncResume.mode === "VERIFY"
+          ? "Seller OS verificará primero la galería oficial y no repetirá una escritura incierta."
+          : "Puedes comprobar eBay y continuar ahora con este envío guardado."}</p>
+      <button type="button" disabled={busy || resumingSync || !task.gallerySyncResume.canResume}
+        onClick={() => void resumeGallerySync()}
+        className="mt-3 min-h-12 w-full rounded-xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-emerald-800 disabled:opacity-40">
+        {resumingSync ? "Comprobando eBay…" : task.gallerySyncResume.label}
+      </button>
+      {task.gallerySyncResume.leaseActive && <p className="mt-2 text-xs text-emerald-900">Seller OS ya está comprobando este envío.</p>}
+      {resumeMessage && <p role="status" className="mt-3 text-sm font-semibold text-emerald-950">{resumeMessage}</p>}
+    </section>}
     <details className="mt-4"><summary>Ver detalles</summary>
     <div className="mt-4 grid gap-2 rounded-xl bg-white p-3 text-xs text-[#5f645e] sm:grid-cols-2">
       <p>Cuenta eBay: {accountIdentityCurrent ? "comprobada" : "por comprobar"}</p>

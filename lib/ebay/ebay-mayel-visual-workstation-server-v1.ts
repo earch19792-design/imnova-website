@@ -10,6 +10,8 @@ import "server-only"
 
 import { createHash, randomUUID } from "node:crypto"
 import { VISUAL_OWNER_SYNC_CONFIRMATION, visualAssetSyncViewV1 } from "../seller-os/visual-asset-sync-state-v1"
+import { mayelGallerySyncResumeV1 } from
+  "../seller-os/mayel-gallery-sync-resume-v1"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { readMayelGeneratedImageV1, assertMayelGeneratedBytesV1, replaceMayelHeroIntentV1, isMayelGeneratedSourceBoundV1 } from "../seller-os/mayel-generated-image-binding-v1"
@@ -1253,7 +1255,7 @@ export async function readMayelVisualWorkstationV1(input: {
     : { data: [], error: null }
   if (assetRead.error) throw new Error("MAYEL_VISUAL_OUTPUT_READ_FAILED")
   const outboxRead = taskIds.length ? await input.supabase.from("seller_os_ipad_outbox_v1")
-    .select("id,account_key,item_id,intent,binding,state,official_readback,received_at,execution_receipt").eq("account_key", input.accountKey)
+    .select("id,account_key,actor_user_id,item_id,kind,intent,binding,state,reason_code,next_attempt_at,lease_until,dispatch_count,official_readback,received_at,updated_at,execution_receipt").eq("account_key", input.accountKey)
     .in("item_id", typedTaskRows.map(t => String(t.ebay_item_id))).in("kind", ["IMAGE_DRAFT", "IMAGE_UPLOAD", "IMAGE_SYNC"])
     .neq("state", "SUPERSEDED").limit(500) : { data: [], error: null }
   if (outboxRead.error || (outboxRead.data?.length ?? 0) >= 500) throw Error("VISUAL_SYNC_STATE_READ_FAILED")
@@ -1328,7 +1330,11 @@ export async function readMayelVisualWorkstationV1(input: {
       ? { state: pendingDecision.state === "REQUIRES_ATTENTION" ? "REQUIRES_ATTENTION" : "PENDING_EBAY_SYNC", waitingForEbay: pendingDecision.state !== "REQUIRES_ATTENTION" }
       : galleryOnly && currentContent ? { state: currentContent.state, generated: true, qaPassed: true, savedToSellerOS: true,
         approvedForEbaySync: true, serverReceiptPresent: true, officialReadback: contentSynced, readbackCompatible: contentSynced } : undefined
-    tasks.push({ currentVisualAction, autonomousOptimization: optimizationActive, latestOptimization: latestOptimization ? {
+    const gallerySyncResume = input.ownerView ? mayelGallerySyncResumeV1({
+      rows: outboxRead.data ?? [], task,
+    }) : null
+    tasks.push({ currentVisualAction, gallerySyncResume,
+      autonomousOptimization: optimizationActive, latestOptimization: latestOptimization ? {
       state: latestOptimization.state, officialReadback: latestOptimization.official_readback === true,
       label: Array.isArray(latestOptimization.actions) && latestOptimization.actions.some(a => a === "IMAGE_REORDER" || a === "IMAGE_REMOVAL") ? "Galería de imágenes" : "Texto del listing" } : null,
       currentGallerySynced, visualTaskId: String(task.id), ebayItemId: String(task.ebay_item_id),
