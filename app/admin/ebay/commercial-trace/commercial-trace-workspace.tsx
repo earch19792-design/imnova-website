@@ -24,6 +24,11 @@ import { buildCommercialTracePresentationV1, humanCommercialCodeV1,
 const DEFAULT_PRODUCT_URL = ""
 type JsonRecord = Record<string, unknown>
 
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord : {}
+}
+
 function display(value: unknown, fallback = "No demostrado") {
   if (value === null || value === undefined || value === "") return fallback
   if (typeof value === "number") return Number.isInteger(value)
@@ -205,6 +210,24 @@ function EconomicsSnapshot({ view }: {
   </section>
 }
 
+function DecisionLoopPanel({ view }: {
+  view: ReturnType<typeof buildCommercialTracePresentationV1>
+}) {
+  const loop = view.dossier.decisionLoop
+  if (!Object.keys(loop).length) return null
+  const blockers = Array.isArray(loop.blockers) ? loop.blockers.map(String) : []
+  const cta = asRecord(loop.ownerCta)
+  return <section className={cn(surface, "p-5")}>
+    <SectionTitle eyebrow="Decision loop" title={humanCommercialCodeV1(
+      loop.state === "LISTING_PACKAGE_READY"
+        ? "ADVANCE_TO_OWNER_COMMERCIAL_REVIEW" : view.result.FINAL_DECISION)}
+      icon={PackageCheck} />
+    <p className="mt-3 text-sm leading-6 text-slate-400">Estado: <strong className="text-slate-100">{display(loop.state)}</strong>. AUTO_PUBLISH está {loop.autoPublish === true ? "activado" : "desactivado"}.</p>
+    {blockers.length > 0 && <ul className="mt-3 space-y-1 text-xs text-amber-100/75">{blockers.map((blocker) => <li key={blocker}>• {humanCommercialCodeV1(blocker)}</li>)}</ul>}
+    {loop.state === "LISTING_PACKAGE_READY" && Boolean(cta.href) && <a href={String(cta.href)} className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">Publicar producto</a>}
+  </section>
+}
+
 function MarketFunnel({ view }: {
   view: ReturnType<typeof buildCommercialTracePresentationV1>
 }) {
@@ -213,7 +236,7 @@ function MarketFunnel({ view }: {
     { label: "Encontrados", value: market.found, detail: `${market.returned} devueltos por eBay` },
     { label: "Revisados", value: market.reviewed, detail: "Muestra enriquecida" },
     { label: "Aceptados", value: market.accepted,
-      detail: `${market.exact} del modelo · ${market.functional} funcionales` },
+      detail: `${market.exact} exactos · ${market.nearExact} mismo formato · ${market.functional} funcionales` },
     { label: "Descartados", value: market.excluded, detail: "Con razón documentada" },
   ]
   return <section className={cn(surface, "p-5 sm:p-6")}>
@@ -423,6 +446,7 @@ function CommercialDossier({ view, error }: {
           ["Resultados encontrados", dossier.market.found.toLocaleString("en-US")],
           ["Muestra revisada", String(dossier.market.reviewed)],
           ["Modelo exacto", String(dossier.market.exact)],
+          ["Mismo producto/formato", String(dossier.market.nearExact)],
           ["Equivalentes funcionales", String(dossier.market.functional)],
           ["Ventas confirmadas", String(dossier.market.confirmedSales)],
           ["Ventas estimadas", String(dossier.market.estimatedSales)],
@@ -436,6 +460,8 @@ function CommercialDossier({ view, error }: {
           ["Intención de compra", display(dossier.keywords.purchaseIntent)],
           ["Keywords secundarias", dossier.keywords.secondary.length ? dossier.keywords.secondary.join(", ") : "No respaldadas todavía"],
           ["Long-tail", dossier.keywords.longTail.length ? dossier.keywords.longTail.join(", ") : "No respaldadas todavía"],
+          ["Diferenciadores", dossier.keywords.differentiators.length ? dossier.keywords.differentiators.join(", ") : "No demostrados"],
+          ["Términos excluidos", dossier.keywords.unsupportedOrExcluded.length ? dossier.keywords.unsupportedOrExcluded.join(", ") : "Ninguno documentado"],
         ]} />
       </DossierSection>
 
@@ -447,7 +473,18 @@ function CommercialDossier({ view, error }: {
           ["Fees estimados", money(dossier.economics.feeEstimate)],
           ["Utilidad neta estimada", money(dossier.economics.netProfit)],
           ["Margen estimado", dossier.economics.marginPercent === null ? "No demostrado" : `${display(dossier.economics.marginPercent)}%`],
+          ["ROI estimado", dossier.economics.roiPercent === null ? "No demostrado" : `${display(dossier.economics.roiPercent)}%`],
         ]} />
+        {Object.keys(dossier.economics.floor).length > 0 && <details className="mt-4 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><summary className="cursor-pointer font-semibold text-slate-200">Ver ecuación completa del piso económico</summary><div className="mt-4"><DefinitionGrid items={[
+          ["Gate vinculante", display(dossier.economics.floor.bindingGate)],
+          ["Piso de utilidad", money(asRecord(dossier.economics.floor.candidateFloors).minimumNetProfitPrice)],
+          ["Piso de margen", money(asRecord(dossier.economics.floor.candidateFloors).minimumNetMarginPrice)],
+          ["Piso de ROI", money(asRecord(dossier.economics.floor.candidateFloors).minimumRoiPrice)],
+          ["Fee allowance", money(asRecord(dossier.economics.floor.policyAssumptions).marketplaceFeeAllowance)],
+          ["Fee fijo", money(asRecord(dossier.economics.floor.policyAssumptions).fixedOrderFee)],
+          ["Reserva publicidad", money(asRecord(dossier.economics.floor.policyAssumptions).advertisingReserve)],
+          ["Reserva devoluciones/riesgo", money(asRecord(dossier.economics.floor.policyAssumptions).returnsRiskReserve)],
+        ]} /></div><p className="mt-3 text-xs leading-5 text-slate-500">Costo y shipping son evidencia observada. Fees, reservas y floors son supuestos de política visibles; no se presentan como datos observados.</p></details>}
       </DossierSection>
 
       <DossierSection id="dossier-pricing" title="Pricing Strategy" icon={Gauge}>
@@ -458,6 +495,7 @@ function CommercialDossier({ view, error }: {
           ["Fallback de prueba", money(dossier.pricing.fallbackPrice)],
           ["Piso económico", money(dossier.pricing.minimumMarginSafePrice)],
           ["Razón comercial", dossier.pricing.rationale],
+          ["Calidad de evidencia", display(dossier.pricing.evidenceQuality.classification)],
         ]} />
       </DossierSection>
 
@@ -493,8 +531,9 @@ function CommercialDossier({ view, error }: {
   </div>
 }
 
-export function CommercialTraceWorkspace({ requestedTraceId }: {
+export function CommercialTraceWorkspace({ requestedTraceId, embedded = false }: {
   requestedTraceId: string
+  embedded?: boolean
 }) {
   const [activeTraceId, setActiveTraceId] = useState(requestedTraceId)
   const [trace, setTrace] = useState<CommercialTraceRecordV1 | null>(null)
@@ -594,7 +633,9 @@ export function CommercialTraceWorkspace({ requestedTraceId }: {
       const payload = await operation
       setActiveTraceId(payload.traceId)
       window.history.replaceState({}, "",
-        `/admin/ebay/commercial-trace?traceId=${payload.traceId}`)
+        embedded
+          ? `/admin/ebay-seller-os?traceId=${payload.traceId}`
+          : `/admin/ebay/commercial-trace?traceId=${payload.traceId}`)
       await load(payload.traceId)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message
@@ -613,18 +654,20 @@ export function CommercialTraceWorkspace({ requestedTraceId }: {
   const completed = trace?.state === "COMPLETED"
   const currentLabel = completed ? "Análisis finalizado" : view.currentStage
 
-  return <main className="min-h-screen bg-[#08111d] px-4 py-5 pb-24 text-slate-100 sm:px-7 lg:px-9">
+  return <section className={cn("bg-[#08111d] text-slate-100",
+    embedded ? "rounded-[1.8rem] border border-sky-200/15 p-3 sm:p-5"
+      : "min-h-screen px-4 py-5 pb-24 sm:px-7 lg:px-9")}>
     <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden"><div className="absolute -left-40 top-0 size-[34rem] rounded-full bg-sky-500/[0.07] blur-[120px]" /><div className="absolute -right-40 top-1/3 size-[30rem] rounded-full bg-violet-500/[0.055] blur-[130px]" /></div>
     <div className="relative mx-auto max-w-[1480px]">
-      <nav className="flex items-center justify-between text-sm text-slate-500">
+      {!embedded && <nav className="flex items-center justify-between text-sm text-slate-500">
         <a href="/admin/ebay/quick-pick" className="inline-flex min-h-10 items-center gap-2 font-medium transition-colors hover:text-white"><ArrowLeft className="size-4" />Preparar productos</a>
         <span className="hidden items-center gap-2 text-xs sm:flex"><ShieldCheck className="size-4 text-emerald-300" />Solo análisis · sin escrituras</span>
-      </nav>
+      </nav>}
 
-      <header className={cn(surface, "mt-3 overflow-hidden p-5 sm:p-7")}>
+      <header className={cn(surface, embedded ? "overflow-hidden p-5 sm:p-6" : "mt-3 overflow-hidden p-5 sm:p-7")}>
         <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl"><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-sky-200/60"><span className="size-1.5 rounded-full bg-sky-300 shadow-[0_0_10px_rgba(125,211,252,.8)]" />Live Commercial Analysis</div>
-            <h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-4xl">Una evaluación comercial que puedes seguir y auditar.</h1>
+            <h1 className={cn("mt-3 font-semibold tracking-[-0.035em] text-white", embedded ? "text-2xl sm:text-3xl" : "text-3xl sm:text-4xl")}>Una evaluación comercial que puedes seguir y auditar.</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">Seller OS identifica el producto, consulta el mercado, explica sus descartes y entrega un expediente listo para decisión del Owner.</p>
           </div>
           <div className="w-full max-w-xl"><label htmlFor="commercial-product-url" className="text-xs font-medium text-slate-400">Producto de Luna</label>
@@ -662,7 +705,7 @@ export function CommercialTraceWorkspace({ requestedTraceId }: {
         <TabsContent value="live" className="mt-4 space-y-5">
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.28fr)_minmax(20rem,.72fr)]">
             <HumanTimeline view={view} newSequences={newSequences} />
-            <div className="space-y-5"><ProductSnapshot view={view} /><EconomicsSnapshot view={view} />
+            <div className="space-y-5"><ProductSnapshot view={view} /><EconomicsSnapshot view={view} /><DecisionLoopPanel view={view} />
               <section className={cn(surface, "p-5")}><SectionTitle eyebrow="Recomendación" title={view.decision.label} icon={Sparkles} /><p className="mt-4 text-sm leading-6 text-slate-400">{view.decision.explanation}</p>{trace?.product_url && <a href={trace.product_url} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-sky-200 hover:text-white">Ver producto fuente <ExternalLink className="size-3.5" /></a>}</section>
             </div>
           </div>
@@ -682,5 +725,5 @@ export function CommercialTraceWorkspace({ requestedTraceId }: {
         <span>0 publicaciones · 0 escrituras eBay · compra deshabilitada · sin direcciones ni credenciales</span>
       </footer>
     </div>
-  </main>
+  </section>
 }

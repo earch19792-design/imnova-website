@@ -4,6 +4,8 @@ import { SellerOsDisasterRecoveryCard } from "../ebay/components/seller-os-disas
 import {
   CommercialMonitorReadonlyEntryCard as CommercialMonitorPanel,
 } from "../ebay/monitor/commercial-monitor-readonly-entry-card"
+import { CommercialTraceWorkspace } from
+  "../ebay/commercial-trace/commercial-trace-workspace"
 
 const actions = [
   {
@@ -75,7 +77,11 @@ const operationLinks = [
   },
 ]
 
-export default function EbaySellerOsHubPage() {
+export default async function EbaySellerOsHubPage({ searchParams }: {
+  searchParams: Promise<{ traceId?: string | string[] }>
+}) {
+  const requested = (await searchParams).traceId
+  const requestedTraceId = typeof requested === "string" ? requested.trim() : ""
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6 xl:pl-[248px]">
       <SellerOsDesktopNavigation active="sales" />
@@ -90,6 +96,15 @@ export default function EbaySellerOsHubPage() {
         <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">
           <p className="text-xs font-black uppercase tracking-widest text-amber-100/65">Ruta rápida</p>
           <ol className="mt-3 grid grid-cols-2 gap-2 text-center text-[13px] font-black uppercase sm:grid-cols-4"><li className="rounded-xl bg-violet-200 px-2 py-3 text-black">1<br />Descubrir</li><li className="rounded-xl bg-cyan-200 px-2 py-3 text-black">2<br />Validar</li><li className="rounded-xl bg-emerald-200 px-2 py-3 text-black">3<br />Preparar</li><li className="rounded-xl border border-white/15 px-2 py-3 text-white/65">4<br />Borrador manual</li></ol>
+        </section>
+
+        <section id="commercial-decision-loop" aria-labelledby="commercial-decision-loop-heading" className="scroll-mt-4">
+          <div className="mb-3 px-1">
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-100/60">SELLER_OS_COMMERCIAL_DECISION_LOOP_V1_1</p>
+            <h2 id="commercial-decision-loop-heading" className="mt-1 text-2xl font-black">Análisis comercial y expediente, dentro del dashboard</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">Inicia, observa y revisa el trace durable sin cambiar de pantalla. La ruta de auditoría continúa disponible para deep links.</p>
+          </div>
+          <CommercialTraceWorkspace requestedTraceId={requestedTraceId} embedded />
         </section>
 
         <div className="grid gap-3 lg:grid-cols-2">{actions.map((action, index) => <a key={action.href} href={action.href} className={`block min-w-0 rounded-3xl border p-5 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 active:scale-[0.99] ${action.tone}`}><div className="flex items-start gap-4"><span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-white text-lg font-black text-black">{index + 1}</span><div className="min-w-0"><p className="text-xs font-black uppercase tracking-widest text-white/50">{action.eyebrow}</p><h2 className="mt-2 break-words text-xl font-black">{action.title}</h2><p className="mt-2 text-sm leading-6 text-white/65">{action.copy}</p><span className="mt-4 inline-flex min-h-11 items-center rounded-full bg-white px-4 text-xs font-black text-black">{action.cta}</span></div></div></a>)}</div>

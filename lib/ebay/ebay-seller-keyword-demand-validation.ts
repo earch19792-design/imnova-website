@@ -2,7 +2,7 @@
 import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
 
 export const EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION =
-  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V4"
+  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V5"
 
 export type EbaySalesEvidenceSource =
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
@@ -91,6 +91,7 @@ export type EbayDurableSoldEvidenceRow = Readonly<{
 export type EbaySellerKeywordCandidate = {
   productName?: string | null
   productTitle?: string | null
+  identityReferenceTitle?: string | null
   variantTitle?: string | null
   supplierSku?: string | null
   categoryId?: string | null
@@ -112,14 +113,20 @@ export type EbaySellerKeywordDemandInput = {
   candidateFoundCount?: number | null
   returnedCandidateCount?: number | null
   enrichedSampleCount?: number | null
+  resolvedCategoryId?: string | null
   commercialSamplingPolicy?: {
-    strategy: "EXACT_MODEL_THEN_FUNCTIONAL_THEN_NON_COMPARABLE"
+    strategy: "EXACT_MODEL_THEN_NEAR_EXACT_THEN_FUNCTIONAL_THEN_NON_COMPARABLE"
     minimumBeforeUnproven: number
     maximumExamined: number
     batchSize: number
     stopReason: "SUFFICIENT_POSITIVE_DEMAND_EVIDENCE" |
       "BOUNDED_LIMIT_REACHED" | "ALL_RETURNED_EXAMINED"
     sufficientBeforeDemandUnproven: boolean
+    highSimilarityEnrichment?: {
+      candidateCount: number
+      maximumExamined: number
+      enrichedSampleCount: number
+    } | null
   } | null
   marketSearches?: {
     exactModel: {
@@ -306,12 +313,24 @@ function normalizedIdentifier(value: unknown) {
 }
 
 const NON_BRAND_AUTHORITY_VALUES = new Set([
-  "doesnotapply", "generic", "na", "notapplicable", "unbranded",
+  "brandless", "doesnotapply", "generic", "na", "none", "notapplicable",
+  "unknown", "unbranded",
 ])
 
 function normalizedBrandAuthority(value: unknown) {
   const normalized = normalizedIdentifier(value)
-  return NON_BRAND_AUTHORITY_VALUES.has(normalized) ? "" : normalized
+  const parts = cleanText(value).toLocaleLowerCase("en-US")
+    .split(/[^a-z0-9]+/).map(normalizedIdentifier).filter(Boolean)
+  return NON_BRAND_AUTHORITY_VALUES.has(normalized) ||
+      (parts.length > 0 && parts.every((part) =>
+        NON_BRAND_AUTHORITY_VALUES.has(part)))
+    ? "" : normalized
+}
+
+function normalizedCommercialDescriptors(value: unknown) {
+  const source = cleanText(value).toLocaleLowerCase("en-US")
+  return unique([...source.matchAll(/\b(\d{1,2})\s*(?:-|\s)?in\s*(?:-|\s)?(\d{1,2})\b/g)]
+    .map((match) => `${Number(match[1])}-in-${Number(match[2])}`))
 }
 
 function normalizedGtinIdentifier(value: unknown) {
@@ -416,7 +435,9 @@ export function assertEbaySellerKeywordReadonlyRequest(
 }
 
 function getFacts(value: unknown) {
-  const source = normalize(value)
+  // Multi-function descriptors such as "5-in-1" are commercial descriptors,
+  // not one-inch measurements.
+  const source = normalize(value).replace(/\b\d+\s+in\s+\d+\b/g, " ")
   const facts = new Map<string, string>()
   for (const match of source.matchAll(/\b(\d+(?:\.\d+)?)\s*(oz|ounce|ounces|ml|l|liter|liters|lb|lbs|pound|pounds|ct|count|counts|pack|packs|pk|pc|pcs|piece|pieces|in|inch|inches)\b/g)) {
     const unit = UNIT_ALIASES[match[2]] ?? match[2]
@@ -566,7 +587,8 @@ export function buildEbaySellerKeywordDemandValidation(
   const candidateName = cleanText(
     input.candidate.productName ?? input.candidate.productTitle
   )
-  const candidateText = [candidateName, input.candidate.variantTitle]
+  const candidateText = [cleanText(input.candidate.identityReferenceTitle) ||
+    candidateName, input.candidate.variantTitle]
     .filter(Boolean)
     .join(" ")
   const requestedAsOf = input.asOf ? new Date(input.asOf) : new Date()
@@ -574,7 +596,7 @@ export function buildEbaySellerKeywordDemandValidation(
   const soldRecencyDays = Math.max(1, numberOrZero(input.soldRecencyDays) || 90)
   const candidateGtin = normalizedGtinIdentifier(input.candidate.gtin)
   const candidateEpid = normalizedIdentifier(input.candidate.epid)
-  const candidateBrand = normalizedIdentifier(input.candidate.brand)
+  const candidateBrand = normalizedBrandAuthority(input.candidate.brand)
   const candidateMpn = normalizedIdentifier(input.candidate.mpn)
   const candidateModel = normalizedIdentifier(input.candidate.model)
   const candidatePack = numberOrNull(input.candidate.packQuantity)
@@ -584,6 +606,9 @@ export function buildEbaySellerKeywordDemandValidation(
     candidateText, input.candidate.supplierSku, input.candidate.mpn,
     input.candidate.model,
   ].filter(Boolean).join(" "))
+  const candidateReferenceTokens = unique(tokens(candidateText).filter((token) =>
+    !GENERIC_LOW_SIGNAL_TERMS.has(token)))
+  const candidateDescriptors = normalizedCommercialDescriptors(candidateText)
   const comparables = (input.comparables ?? []).map((entry, index) => {
     const title = cleanText(entry.title)
     const identity = buildIdentityAssessment(candidateText, title)
@@ -591,7 +616,7 @@ export function buildEbaySellerKeywordDemandValidation(
     const listingEpid = normalizedIdentifier(entry.epid)
     const listingBrandValue = cleanText(entry.brand) ||
       comparableAspectValue(entry.localizedAspects, ["brand"])
-    const listingBrand = normalizedIdentifier(listingBrandValue)
+    const listingBrand = normalizedBrandAuthority(listingBrandValue)
     const listingMpn = normalizedIdentifier(entry.mpn) ||
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["mpn"]))
     const listingModel = normalizedIdentifier(entry.model) ||
@@ -671,17 +696,32 @@ export function buildEbaySellerKeywordDemandValidation(
       !epidStructuredConflict && !structuredModelConflict && !offerPackUnresolved &&
       identity.conflicts.length === 0 &&
       (identifierExact || ["EXACT", "STRONG"].includes(identity.matchQuality))
+    const listingTokenSet = new Set(tokens(title))
+    const formFactorMatchedTokens = candidateReferenceTokens.filter((token) =>
+      listingTokenSet.has(token))
+    const formFactorCoverage = candidateReferenceTokens.length
+      ? formFactorMatchedTokens.length / candidateReferenceTokens.length : 0
+    const listingDescriptors = normalizedCommercialDescriptors(title)
+    const sharedDescriptor = candidateDescriptors.find((descriptor) =>
+      listingDescriptors.includes(descriptor)) ?? null
+    const sameProductFormFactor = eligibleComparable && !identifierExact &&
+      !exactModelToken && identity.matchQuality === "EXACT" && (
+        Boolean(sharedDescriptor) && formFactorMatchedTokens.length >= 2 ||
+        formFactorMatchedTokens.length >= 4 && formFactorCoverage >= 0.72)
     const commercialComparableClass = eligibleComparable &&
         (identifierExact || exactModelToken)
       ? "EXACT_MODEL_COMPARABLE" as const
+      : sameProductFormFactor
+        ? "NEAR_EXACT_PRODUCT" as const
       : eligibleComparable
         ? "FUNCTIONAL_COMPARABLE" as const
         : "NON_COMPARABLE" as const
     const candidatePricingBrand = normalizedBrandAuthority(
       input.candidate.brand)
     const listingPricingBrand = normalizedBrandAuthority(listingBrandValue)
-    const brandedCategorySignalOnly = commercialComparableClass ===
-        "FUNCTIONAL_COMPARABLE" && !candidatePricingBrand &&
+    const brandedCategorySignalOnly = ["NEAR_EXACT_PRODUCT",
+      "FUNCTIONAL_COMPARABLE"].includes(commercialComparableClass) &&
+      !candidatePricingBrand &&
       Boolean(listingPricingBrand)
     const pricingAuthorityEligible = eligibleComparable &&
       !brandedCategorySignalOnly
@@ -691,6 +731,8 @@ export function buildEbaySellerKeywordDemandValidation(
         ? "BRANDED_CATEGORY_SIGNAL_ONLY" as const
         : commercialComparableClass === "EXACT_MODEL_COMPARABLE"
           ? "EXACT_MODEL_PRICING_AUTHORITY" as const
+          : commercialComparableClass === "NEAR_EXACT_PRODUCT"
+            ? "NEAR_EXACT_PRICING_AUTHORITY" as const
           : "FUNCTIONAL_PRICING_AUTHORITY" as const
     const identityEvidenceClass = packConflict
       ? "OFFER_PACK_CONFLICT"
@@ -796,6 +838,10 @@ export function buildEbaySellerKeywordDemandValidation(
         : exactBrandMpn ? "BRAND_MPN" : null,
       identifierExact,
       exactModelToken,
+      sameProductFormFactor,
+      formFactorCoverage: Math.round(formFactorCoverage * 100),
+      formFactorMatchedTokens,
+      sharedCommercialDescriptor: sharedDescriptor,
       commercialComparableClass,
       pricingAuthorityEligible,
       pricingAuthorityClass,
@@ -1035,10 +1081,14 @@ export function buildEbaySellerKeywordDemandValidation(
   ).size
   const weightedVerifiedDemandQuantity = soldEvidence.reduce((sum, entry) =>
     sum + entry.verifiedSoldQuantity *
-      (entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE" ? 1 : 0.5), 0)
+      (entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE" ? 1
+        : entry.commercialComparableClass === "NEAR_EXACT_PRODUCT" ? 0.75
+          : 0.5), 0)
   const weightedEstimatedDemandQuantity = estimatedEvidence.reduce((sum, entry) =>
     sum + entry.estimatedSoldQuantity *
-      (entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE" ? 1 : 0.5), 0)
+      (entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE" ? 1
+        : entry.commercialComparableClass === "NEAR_EXACT_PRODUCT" ? 0.75
+          : 0.5), 0)
   const demandValidationPassed =
     (verifiedSoldSellerCount >= 2 && weightedVerifiedDemandQuantity >= 3) ||
     (estimatedSoldSellerCount >= 2 && weightedEstimatedDemandQuantity >= 3)
@@ -1084,6 +1134,7 @@ export function buildEbaySellerKeywordDemandValidation(
     soldHistoryIsLimitedRelease: true,
     listingsAnalyzed: comparables.length,
     evidenceAsOf: asOf.toISOString(),
+    resolvedCategoryId: cleanText(input.resolvedCategoryId) || null,
     soldRecencyDays,
     eligibleComparableListings: eligible.length,
     sellersAnalyzed: new Set(eligible.map((entry) => normalizedSeller(entry.sellerUsername))).size,
@@ -1120,6 +1171,8 @@ export function buildEbaySellerKeywordDemandValidation(
       strongSimilarCount: eligible.filter((entry) => !entry.identifierExact).length,
       exactModelComparableCount: comparables.filter((entry) =>
         entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE").length,
+      nearExactProductCount: comparables.filter((entry) =>
+        entry.commercialComparableClass === "NEAR_EXACT_PRODUCT").length,
       functionalComparableCount: comparables.filter((entry) =>
         entry.commercialComparableClass === "FUNCTIONAL_COMPARABLE").length,
       nonComparableCount: comparables.filter((entry) =>
@@ -1170,6 +1223,7 @@ export function buildEbaySellerKeywordDemandValidation(
       exactCompetitorTitleCopied: false,
       humanTitleReviewRequired: true,
     },
+    candidateCommercialDescriptors: candidateDescriptors,
     highestPotentialBuyerIntent: {
       ...buyerIntent,
       highestPotentialSearchIntent: primarySearchPhrase,

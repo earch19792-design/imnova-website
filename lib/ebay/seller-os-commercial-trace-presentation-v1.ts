@@ -60,17 +60,18 @@ export const COMMERCIAL_ANALYSIS_STEPS_V1 = Object.freeze([
     stages: ["PRODUCT_COST", "SHIPPING_QTY1", "LANDED_COST"] },
   { id: "market", label: "Buscando mercado en eBay",
     stages: ["MARKET_SEARCH_PROGRESS", "PRIMARY_KEYWORD_FAMILY",
-      "SECONDARY_KEYWORDS"] },
+      "SECONDARY_KEYWORDS", "KEYWORD_INTELLIGENCE"] },
   { id: "comparables", label: "Revisando productos comparables",
     stages: ["ACCEPTED_COMPARABLES", "EXCLUDED_COMPARABLES"] },
   { id: "demand", label: "Midiendo demanda",
     stages: ["DEMAND_CLASSIFICATION"] },
   { id: "pricing", label: "Calculando precio",
-    stages: ["PRICE_RANGE", "RECOMMENDED_PRICE"] },
+    stages: ["PRICE_RANGE", "PRICING_EVIDENCE_QUALITY",
+      "RECOMMENDED_PRICE"] },
   { id: "economics", label: "Evaluando margen",
     stages: ["ECONOMICS"] },
   { id: "decision", label: "Preparando recomendación",
-    stages: ["FINAL_DECISION"] },
+    stages: ["FINAL_DECISION", "DECISION_LOOP"] },
 ] as const)
 
 const CODE_LABELS: Readonly<Record<string, string>> = Object.freeze({
@@ -81,6 +82,22 @@ const CODE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   HOLD_CLAIM_CONFLICTS: "Esperar: la identidad o los claims aún no son seguros",
   HOLD_ECONOMICS_UNPROVEN: "Esperar: el margen todavía no está demostrado",
   HOLD_INSUFFICIENT_EVIDENCE: "Esperar: falta evidencia comercial suficiente",
+  HOLD_PRICING_EVIDENCE_QUALITY:
+    "Esperar: la autoridad de pricing todavía no tiene calidad suficiente",
+  PRODUCT_TRUTH_SUFFICIENT: "Falta completar la identidad segura del producto",
+  SAFE_CLAIMS_PRESENT: "Faltan claims seguros para construir el listing",
+  STOCK_VALID: "El stock disponible todavía no está validado",
+  SHIPPING_QTY1_FRESH: "Falta shipping qty=1 exacto y fresco",
+  MARKET_AUTHORITY_SUFFICIENT: "Falta evidencia de mercado suficiente",
+  PRICING_AUTHORITY_SUFFICIENT:
+    "La autoridad de pricing aún no está confirmada entre vendedores",
+  ECONOMICS_PASS: "La economía completa todavía no pasa sus floors",
+  PRIMARY_KEYWORD_COMPLETE: "Falta una familia principal respaldada",
+  TITLE_COMPLETE: "Falta un título construido solo con claims seguros",
+  ITEM_SPECIFICS_COMPLETE: "Faltan item specifics confirmados",
+  IMAGES_VALID: "Falta un conjunto de imágenes válido",
+  COMPLIANCE_CLEAR: "Existe un blocker de cumplimiento",
+  IP_CLEAR: "Existe un blocker de propiedad intelectual",
   REJECT_ECONOMICS: "Descartar por ahora: el mercado no sostiene el margen requerido",
   REJECT_COMPLIANCE: "Descartar: existe un riesgo de cumplimiento",
   ADVANCE_TO_OWNER_COMMERCIAL_REVIEW:
@@ -165,6 +182,12 @@ export function humanComparableReasonV1(item: JsonRecord) {
   if (item.comparableClass === "EXACT_MODEL_COMPARABLE") {
     return "Aceptado: coincide con el modelo investigado y no presenta una identidad incompatible."
   }
+  if (item.comparableClass === "NEAR_EXACT_PRODUCT") {
+    if (item.pricingAuthorityClass === "BRANDED_CATEGORY_SIGNAL_ONLY") {
+      return "Aceptado como producto del mismo formato físico, pero su marca solo aporta señal de categoría y no autoridad de precio para un producto genérico."
+    }
+    return "Aceptado como producto del mismo formato: comparte los rasgos materiales observados sin afirmar una identidad exacta."
+  }
   if (item.comparableClass === "FUNCTIONAL_COMPARABLE") {
     if (item.pricingAuthorityClass === "BRANDED_CATEGORY_SIGNAL_ONLY") {
       return "Aceptado como señal de demanda de categoría; al declarar una marca propia, no determina el precio del producto genérico."
@@ -196,7 +219,13 @@ function eventLists(result: JsonRecord,
       ? records(acceptedEvidence.functionalAccepted)
       : accepted.filter((item) =>
         item.comparableClass === "FUNCTIONAL_COMPARABLE")
-  return { accepted, excluded, exact, functional }
+  const nearExact = records(result.NEAR_EXACT_ACCEPTED).length
+    ? records(result.NEAR_EXACT_ACCEPTED)
+    : records(acceptedEvidence.nearExactAccepted).length
+      ? records(acceptedEvidence.nearExactAccepted)
+      : accepted.filter((item) =>
+        item.comparableClass === "NEAR_EXACT_PRODUCT")
+  return { accepted, excluded, exact, nearExact, functional }
 }
 
 function safeListingTitle(claims: readonly JsonRecord[]) {
@@ -268,7 +297,8 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
   const returned = number(marketEvidence.returnedCandidateCount) ?? 0
   const enriched = number(marketEvidence.enrichedSampleCount) ?? 0
   const reviewed = lists.accepted.length + lists.excluded.length
-  const acceptedCount = lists.exact.length + lists.functional.length
+  const acceptedCount = lists.exact.length + lists.nearExact.length +
+    lists.functional.length
   const reconciled = reviewed === acceptedCount + lists.excluded.length
   const acceptedWithConfirmed = lists.accepted.filter((item) =>
     (number(item.confirmedSoldQuantity) ?? 0) > 0)
@@ -304,6 +334,9 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
   const economicsEvidence = evidence(events, "ECONOMICS")
   const economics = Object.keys(record(result.ECONOMICS)).length
     ? record(result.ECONOMICS) : record(economicsEvidence.economics)
+  const economicFloor = Object.keys(record(result.ECONOMIC_FLOOR_EXPLANATION)).length
+    ? record(result.ECONOMIC_FLOOR_EXPLANATION)
+    : record(economicsEvidence.economicFloorExplanation)
   const pricingEvidence = evidence(events, "RECOMMENDED_PRICE")
   const recommendedPrice = number(result.RECOMMENDED_PRICE)
   const minimumMarginSafePrice = number(result.MINIMUM_MARGIN_SAFE_PRICE) ??
@@ -333,6 +366,9 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
     ? Math.round((recommendedPrice - landed) * 100) / 100 : null
   const technicalThresholds = record(marketEvidence.commercialSamplingPolicy)
   const marketSearches = record(marketEvidence.marketSearches)
+  const pricingEvidenceQuality = record(result.PRICING_EVIDENCE_QUALITY)
+  const decisionLoop = record(result.DECISION_LOOP)
+  const listingPackage = record(result.LISTING_PACKAGE)
 
   const steps = COMMERCIAL_ANALYSIS_STEPS_V1.map((step, index) => {
     const matching = events.filter((event) =>
@@ -340,7 +376,7 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
     const lastEvent = matching.at(-1)
     let message = lastEvent?.narrative ?? "Esta etapa comenzará cuando corresponda."
     if (step.id === "comparables" && reviewed > 0) {
-      message = `Revisé ${reviewed} resultados: acepté ${acceptedCount} (${lists.exact.length} del modelo y ${lists.functional.length} equivalentes funcionales) y descarté ${lists.excluded.length}.`
+      message = `Revisé ${reviewed} resultados: acepté ${acceptedCount} (${lists.exact.length} del modelo, ${lists.nearExact.length} del mismo formato y ${lists.functional.length} equivalentes funcionales) y descarté ${lists.excluded.length}.`
     } else if (step.id === "market" && found > 0) {
       message = reviewed > 0 && reviewed === enriched
         ? `Encontré ${found} resultados de mercado y completé la revisión detallada de ${reviewed}.`
@@ -373,6 +409,7 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
       conflictExplanations }),
     market: Object.freeze({ found, returned, reviewed,
       accepted: acceptedCount, exact: lists.exact.length,
+      nearExact: lists.nearExact.length,
       functional: lists.functional.length, excluded: lists.excluded.length,
       reconciled, confirmedSales, estimatedSales,
       confirmedListings: acceptedWithConfirmed.length,
@@ -384,7 +421,17 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
       competitivePosition: marketPosition(priceRange, landed),
     }),
     keywords: Object.freeze({ primary: text(result.PRIMARY_KEYWORD_FAMILY),
-      secondary: secondaryKeywords, longTail: secondaryKeywords,
+      secondary: secondaryKeywords,
+      longTail: Array.isArray(result.LONG_TAIL_KEYWORDS)
+        ? result.LONG_TAIL_KEYWORDS.filter((entry): entry is string =>
+          typeof entry === "string") : [],
+      differentiators: Array.isArray(result.PRODUCT_DIFFERENTIATORS)
+        ? result.PRODUCT_DIFFERENTIATORS.filter((entry): entry is string =>
+          typeof entry === "string") : [],
+      unsupportedOrExcluded: Array.isArray(result.UNSUPPORTED_OR_EXCLUDED_TERMS)
+        ? result.UNSUPPORTED_OR_EXCLUDED_TERMS.filter((entry): entry is string =>
+          typeof entry === "string") : [],
+      provenance: record(result.KEYWORD_PROVENANCE),
       purchaseIntent: text(result.PRIMARY_KEYWORD_FAMILY)
         ? `Personas que buscan y comparan ${text(result.PRIMARY_KEYWORD_FAMILY)} antes de comprar.`
         : null }),
@@ -392,15 +439,19 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
       feeEstimate: number(economics.estimatedEbayFees), grossSpread,
       netProfit: number(economics.estimatedNetProfit),
       marginPercent: number(economics.estimatedNetMarginPercent),
-      feesExact: economicsEvidence.feePolicyExact === true }),
+      roiPercent: number(economics.estimatedRoiPercent),
+      feesExact: economicsEvidence.feePolicyExact === true,
+      floor: economicFloor }),
     pricing: Object.freeze({ range: priceRange, recommendedPrice,
       fallbackPrice: decision.tone === "APPROVE" ? minimumMarginSafePrice : null,
       minimumMarginSafePrice,
       rationale: recommendedPrice !== null
         ? "El precio combina la evidencia utilizable del mercado con el piso económico calculado."
-        : "No se propone precio porque mercado y piso económico no sostienen todavía una recomendación segura." }),
+        : "No se propone precio porque mercado y piso económico no sostienen todavía una recomendación segura.",
+      evidenceQuality: pricingEvidenceQuality }),
     listingStrategy: Object.freeze({
-      recommendedTitle: safeListingTitle(safeClaims), category: null,
+      recommendedTitle: text(listingPackage.title) ?? safeListingTitle(safeClaims),
+      category: text(listingPackage.categoryId),
       itemSpecifics: safeClaims.filter((claim) =>
         claim.kind !== "PRODUCT_IDENTITY" && claim.kind !== "MODEL"),
       safeClaims: safeClaimValues,
@@ -433,6 +484,7 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
       gtin, mpn: text(productTruth.mpn), model,
       rawDecisionCode: text(result.FINAL_DECISION),
       thresholds: technicalThresholds, marketSearches }),
+    decisionLoop,
   })
 
   return Object.freeze({ trace, events, result, steps, progress,

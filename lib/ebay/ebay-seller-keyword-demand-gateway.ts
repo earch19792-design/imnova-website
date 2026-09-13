@@ -49,6 +49,7 @@ const MARKETPLACE_ID = "EBAY_US"
 // Deep analysis is deliberately bounded. Discovery uses one aggregate Browse
 // search and only promoted candidates may spend detail budget.
 const DEFAULT_DETAIL_SAMPLE_LIMIT = 20
+const HIGH_SIMILARITY_DETAIL_SAMPLE_LIMIT = 8
 const MINIMUM_SAMPLE_BEFORE_DEMAND_UNPROVEN = 12
 const DETAIL_SAMPLE_BATCH_SIZE = 4
 const DETAIL_CONCURRENCY = 2
@@ -668,7 +669,8 @@ export function prioritizeActiveListingsForCommercialSampling(
   })
   const rank = (classification: string) => classification ===
       "EXACT_MODEL_COMPARABLE" ? 0
-    : classification === "FUNCTIONAL_COMPARABLE" ? 1 : 2
+    : classification === "NEAR_EXACT_PRODUCT" ? 1
+      : classification === "FUNCTIONAL_COMPARABLE" ? 2 : 3
   return values.map((value, index) => ({ value, index,
     comparable: preliminary.comparableEvidence[index] }))
     .sort((left, right) =>
@@ -756,7 +758,8 @@ export async function runEbaySellerKeywordDemandValidation(
   let browseToken = ""
   let insightsToken = ""
   try {
-    await enforceBrowseQuota(4 + detailSampleLimit() * 2)
+    await enforceBrowseQuota(4 + detailSampleLimit() * 2 +
+      HIGH_SIMILARITY_DETAIL_SAMPLE_LIMIT)
     browseToken = await getApplicationToken(BROWSE_SCOPE)
     let activeSearch = await searchActiveListings(candidate, query, browseToken)
     if (activeSearch.items.length === 0 && normalizedGtin(candidate.gtin)) {
@@ -773,12 +776,38 @@ export async function runEbaySellerKeywordDemandValidation(
         browseToken
       )
     }
+    const activeSummaries = activeSearch.items.map((value) =>
+      mapComparable(value, "EBAY_BROWSE_ACTIVE_LISTING"))
+    const preliminaryExactSearch = buildEbaySellerKeywordDemandValidation({
+      candidate, comparables: activeSummaries,
+      insightsAvailability: "NOT_CONFIGURED",
+    })
+    const highSimilarityIndexes = new Set(preliminaryExactSearch.comparableEvidence
+      .map((entry, index) => entry.commercialComparableClass ===
+        "NEAR_EXACT_PRODUCT" ? index : -1).filter((index) => index >= 0))
+    const highSimilarityItems = activeSearch.items.filter((_, index) =>
+      highSimilarityIndexes.has(index))
+    const nearExactMaximumExamined = Math.min(
+      HIGH_SIMILARITY_DETAIL_SAMPLE_LIMIT, highSimilarityItems.length)
+    const nearExactComparables: EbaySellerComparableInput[] = []
+    for (let offset = 0; offset < nearExactMaximumExamined;
+      offset += DETAIL_SAMPLE_BATCH_SIZE) {
+      const batch = await mapWithConcurrency(highSimilarityItems.slice(offset,
+        Math.min(offset + DETAIL_SAMPLE_BATCH_SIZE, nearExactMaximumExamined)),
+      DETAIL_CONCURRENCY, (item) => mappedActiveComparable(item, browseToken))
+      nearExactComparables.push(...batch.map((mapped) =>
+        mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
+          ? { ...mapped, source: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE" as const }
+          : mapped))
+    }
     const prioritizedItems = prioritizeActiveListingsForCommercialSampling(
-      candidate, activeSearch.items)
+      candidate, activeSearch.items.filter((_, index) =>
+        !highSimilarityIndexes.has(index)))
     const maximumExamined = Math.min(detailSampleLimit(), prioritizedItems.length)
     const minimumBeforeUnproven = Math.min(
       MINIMUM_SAMPLE_BEFORE_DEMAND_UNPROVEN, maximumExamined)
-    const activeComparables: EbaySellerComparableInput[] = []
+    const activeComparables: EbaySellerComparableInput[] = [
+      ...nearExactComparables]
     let stopReason: "SUFFICIENT_POSITIVE_DEMAND_EVIDENCE" |
       "BOUNDED_LIMIT_REACHED" | "ALL_RETURNED_EXAMINED" =
       maximumExamined === prioritizedItems.length
@@ -910,7 +939,8 @@ export async function runEbaySellerKeywordDemandValidation(
     const functionalFound = functionalSearch
       ? numberOrNull(functionalSearch.payload.total) ?? functionalSearch.items.length
       : 0
-    const combinedMaximumExamined = maximumExamined + functionalMaximumExamined
+    const combinedMaximumExamined = nearExactMaximumExamined +
+      maximumExamined + functionalMaximumExamined
     const baseReport = buildEbaySellerKeywordDemandValidation({
       candidate,
       comparables: [...byId.values()],
@@ -918,10 +948,11 @@ export async function runEbaySellerKeywordDemandValidation(
       returnedCandidateCount: activeSearch.items.length +
         (functionalSearch?.items.length ?? 0),
       enrichedSampleCount: activeWithFunctional.length,
+      resolvedCategoryId: categoryId,
       insightsAvailability,
       durableSoldEvidenceStatus: durableSold.status,
       commercialSamplingPolicy: {
-        strategy: "EXACT_MODEL_THEN_FUNCTIONAL_THEN_NON_COMPARABLE",
+        strategy: "EXACT_MODEL_THEN_NEAR_EXACT_THEN_FUNCTIONAL_THEN_NON_COMPARABLE",
         minimumBeforeUnproven,
         maximumExamined: combinedMaximumExamined,
         batchSize: DETAIL_SAMPLE_BATCH_SIZE,
@@ -930,11 +961,17 @@ export async function runEbaySellerKeywordDemandValidation(
           stopReason !== "SUFFICIENT_POSITIVE_DEMAND_EVIDENCE"
             ? activeWithFunctional.length >= combinedMaximumExamined
             : true,
+        highSimilarityEnrichment: {
+          candidateCount: highSimilarityItems.length,
+          maximumExamined: nearExactMaximumExamined,
+          enrichedSampleCount: nearExactComparables.length,
+        },
       },
       marketSearches: {
         exactModel: { query, candidateFoundCount: exactFound,
           returnedCandidateCount: activeSearch.items.length,
-          enrichedSampleCount: activeComparables.length, maximumExamined,
+          enrichedSampleCount: activeComparables.length,
+          maximumExamined: nearExactMaximumExamined + maximumExamined,
           stopReason },
         functionalFamily: functionalSearch ? {
           query: functionalSearchQuery, candidateFoundCount: functionalFound,

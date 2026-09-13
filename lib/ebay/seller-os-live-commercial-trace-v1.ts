@@ -9,9 +9,14 @@ import type { EbaySellerKeywordCandidate, EbaySellerKeywordDemandReport } from
 import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from
   // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
   "./ebay-unit-economics.ts"
+import { buildCommercialDecisionLoopSnapshotV1_1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
+  "./seller-os-commercial-decision-loop-v1-1.ts"
 
 export const SELLER_OS_LIVE_COMMERCIAL_TRACE_V1 =
   "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1" as const
+export const SELLER_OS_COMMERCIAL_DECISION_LOOP_V1_1 =
+  "SELLER_OS_COMMERCIAL_DECISION_LOOP_V1_1" as const
 const SHIPPING_MAX_AGE_MS = 24 * 60 * 60 * 1_000
 type JsonRecord = Record<string, unknown>
 type MarketReaderV1 = (candidate: EbaySellerKeywordCandidate, options?: Readonly<{
@@ -163,10 +168,37 @@ export function buildConservativeSafeClaimSubsetV1(product: Readonly<{
     .map((value) => Object.freeze({ value,
       status: "UNVERIFIED_DO_NOT_USE" as const,
       reason: "SUPPLIER_CLAIM_CONFLICT" as const }))
+  const observedDescriptors = [...title.matchAll(
+    /\b(\d{1,2})\s*(?:-|\s)?in\s*(?:-|\s)?(\d{1,2})\b/gi)]
+    .map((match) => `${Number(match[1])}-in-${Number(match[2])}`)
+  const observedBenefitPhrases = title.split(/\bfor\b/i).slice(1)
+    .flatMap((segment) => segment.split(/[,;&|]|\band\b/i))
+    .map((value) => value.replace(/[^A-Za-z0-9 -]+/g, " ")
+      .replace(/\s+/g, " ").trim())
+    .filter((value) => value.split(" ").length >= 2 &&
+      value.split(" ").length <= 8)
+  const observedUnverifiedClaims = [...new Set([
+    ...observedDescriptors, ...observedBenefitPhrases,
+  ])].filter((value) => !claims.some((claim) =>
+    claim.normalizedValue === value.toLocaleLowerCase("en-US")))
+    .map((value) => Object.freeze({ value,
+      status: "UNVERIFIED_DO_NOT_USE" as const,
+      reason: "SOURCE_OBSERVED_NOT_IN_CONFIRMED_SAFE_SUBSET" as const }))
+  const reconciledDoNotUseClaims: Array<Readonly<{ value: string
+    status: "UNVERIFIED_DO_NOT_USE"; reason: string }>> = [...doNotUseClaims]
+  for (const claim of observedUnverifiedClaims) {
+    if (!reconciledDoNotUseClaims.some((entry) =>
+      entry.value.toLocaleLowerCase("en-US") ===
+        claim.value.toLocaleLowerCase("en-US"))) {
+      reconciledDoNotUseClaims.push(claim)
+    }
+  }
   const identitySufficient = Boolean(identity && claims.some((entry) =>
     entry.kind === "MODEL" || entry.kind === "FUNCTIONAL_DIFFERENTIATOR"))
   return Object.freeze({ safeClaims: Object.freeze(claims),
-    doNotUseClaims: Object.freeze(doNotUseClaims), identitySufficient,
+    doNotUseClaims: Object.freeze(reconciledDoNotUseClaims),
+    observedUnverifiedClaims: Object.freeze(observedUnverifiedClaims),
+    identitySufficient,
     safeMarketIdentity: claims.map((entry) => entry.value).join(" "),
     materialConflictCount: identitySufficient ? 0 : conflicts.length })
 }
@@ -264,6 +296,7 @@ export function buildFunctionalFamilySearchQueryV1(
 export function buildCommercialMarketProjectionV1(
   report: EbaySellerKeywordDemandReport | null,
   safeClaims: readonly SafeCommercialClaimV1[] = [],
+  doNotUseClaims: readonly Readonly<{ value: string }>[] = [],
 ) {
   const observed = (report?.comparableEvidence ?? []).map((entry) =>
     record(entry))
@@ -274,6 +307,47 @@ export function buildCommercialMarketProjectionV1(
   const pricingPool = report?.demandValidationPassed
     ? demandBearing.filter((entry) => entry.pricingAuthorityEligible !== false)
     : []
+  const pricedAuthority = pricingPool.filter((entry) =>
+    (number(entry.price) ?? 0) > 0)
+  const confirmedPricingAuthority = pricedAuthority.filter((entry) =>
+    (number(entry.verifiedSoldQuantity) ?? 0) > 0 &&
+    ["CONFIRMED_DURABLE_SOLD", "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"]
+      .includes(String(entry.soldHistorySource ?? "")))
+  const confirmedPricingSellers = new Set(confirmedPricingAuthority.map((entry) =>
+    String(entry.sellerUsername ?? "").trim().toLocaleLowerCase("en-US"))
+    .filter(Boolean)).size
+  const estimatedPricingAuthority = pricedAuthority.filter((entry) =>
+    (number(entry.verifiedSoldQuantity) ?? 0) === 0 &&
+    (number(entry.estimatedSoldQuantity) ?? 0) > 0)
+  const estimatedPricingSellers = new Set(estimatedPricingAuthority.map((entry) =>
+    String(entry.sellerUsername ?? "").trim().toLocaleLowerCase("en-US"))
+    .filter(Boolean)).size
+  const pricingEvidenceQuality = confirmedPricingAuthority.length >= 2 &&
+      confirmedPricingSellers >= 2
+    ? Object.freeze({ status: "SUFFICIENT" as const,
+        classification: "CONFIRMED_MULTI_SELLER_PRICING_AUTHORITY" as const,
+        strongDecisionAllowed: true, confirmedComparableCount:
+          confirmedPricingAuthority.length, confirmedSellerCount:
+          confirmedPricingSellers, estimatedComparableCount:
+          estimatedPricingAuthority.length, estimatedSellerCount:
+          estimatedPricingSellers, reason: "PRICING_CONFIRMED_ACROSS_SELLERS" })
+    : pricedAuthority.length >= 2 && estimatedPricingSellers >= 2
+      ? Object.freeze({ status: "PROVISIONAL" as const,
+          classification: "ESTIMATED_MULTI_SELLER_PRICING_SIGNAL" as const,
+          strongDecisionAllowed: false, confirmedComparableCount:
+            confirmedPricingAuthority.length, confirmedSellerCount:
+            confirmedPricingSellers, estimatedComparableCount:
+            estimatedPricingAuthority.length, estimatedSellerCount:
+            estimatedPricingSellers,
+          reason: "PRICING_DEPENDS_ON_ESTIMATED_SOLD_EVIDENCE" })
+      : Object.freeze({ status: "INSUFFICIENT" as const,
+          classification: "INSUFFICIENT_PRICING_AUTHORITY" as const,
+          strongDecisionAllowed: false, confirmedComparableCount:
+            confirmedPricingAuthority.length, confirmedSellerCount:
+            confirmedPricingSellers, estimatedComparableCount:
+            estimatedPricingAuthority.length, estimatedSellerCount:
+            estimatedPricingSellers,
+          reason: "PRICING_SAMPLE_NOT_CONFIRMED_ACROSS_SELLERS" })
   const prices = pricingPool.flatMap((entry) => {
     const item = number(entry.price)
     const shipping = number(entry.shippingCost) ?? 0
@@ -335,6 +409,8 @@ export function buildCommercialMarketProjectionV1(
   }))
   const exactModelAccepted = acceptedProjection.filter((entry) =>
     entry.comparableClass === "EXACT_MODEL_COMPARABLE")
+  const nearExactAccepted = acceptedProjection.filter((entry) =>
+    entry.comparableClass === "NEAR_EXACT_PRODUCT")
   const functionalAccepted = acceptedProjection.filter((entry) =>
     entry.comparableClass === "FUNCTIONAL_COMPARABLE")
   const confirmedSoldEvidence = [...acceptedProjection, ...excludedProjection]
@@ -353,25 +429,63 @@ export function buildCommercialMarketProjectionV1(
         : report.eligibleComparableListings > 0
           ? "COMPARABLES_OBSERVED_DEMAND_UNPROVEN"
           : "INSUFFICIENT_COMPARABLE_EVIDENCE"
+  const supportedDescriptors = (report?.candidateCommercialDescriptors ?? [])
+    .filter((descriptor) => {
+      const compact = descriptor.replace(/-/g, "\\s*(?:-|\\s)?")
+      const expression = new RegExp(`\\b${compact}\\b`, "i")
+      const sellers = new Set(accepted.filter((entry) =>
+        expression.test(String(entry.title ?? ""))).map((entry) =>
+          String(entry.sellerUsername ?? "").toLocaleLowerCase("en-US")))
+      return sellers.size >= 2
+    })
+  const productDifferentiators = Object.freeze([...new Set([
+    ...safeClaims.filter((entry) => ["FUNCTIONAL_DIFFERENTIATOR",
+      "CONNECTIVITY"].includes(entry.kind)).map((entry) => entry.value),
+    ...supportedDescriptors,
+  ])])
+  const longTailKeywords = Object.freeze([...new Set([
+    ...(structure?.secondarySearchTerms ?? []).filter((term) =>
+      term.trim().split(/\s+/).length >= 3),
+    ...(report?.activeListingKeywords ?? []).filter((entry) =>
+      entry.candidateConfirmed && entry.crossSellerSignal &&
+      entry.term.split(/\s+/).length >= 3).map((entry) => entry.term),
+  ])].slice(0, 6))
+  const unsupportedOrExcludedTerms = Object.freeze([...new Set([
+    ...doNotUseClaims.map((entry) => entry.value),
+    ...(structure?.termsToKeepExploratory ?? []),
+  ])].slice(0, 16))
   return Object.freeze({
     searchQuery: report?.searchQuery ?? null,
+    resolvedCategoryId: report?.resolvedCategoryId ?? null,
     exactModelSearchQuery: marketSearches?.exactModel.query ??
       report?.searchQuery ?? null,
     functionalSearchQuery: marketSearches?.functionalFamily?.query ?? null,
     primaryKeywordFamily: buildMaterialKeywordFamilyV1(report, safeClaims),
     secondaryKeywords: Object.freeze([...(structure?.secondarySearchTerms ?? [])]),
+    longTailKeywords,
+    productDifferentiators,
+    unsupportedOrExcludedTerms,
+    keywordProvenance: Object.freeze({
+      primary: report?.demandValidationBasis ?? "INSUFFICIENT_EVIDENCE",
+      secondary: structure?.strategyConfidence ?? "LOW_INSUFFICIENT_EVIDENCE",
+      differentiators: supportedDescriptors.length
+        ? "MULTI_SELLER_MARKET_AND_PRODUCT_TRUTH" : "PRODUCT_TRUTH",
+      excluded: "PRODUCT_TRUTH_RECONCILIATION",
+    }),
     demandClassification: demand,
     demandValidationBasis: report?.demandValidationBasis ?? "INSUFFICIENT_EVIDENCE",
     demandValidationPassed: report?.demandValidationPassed === true,
     acceptedComparables: Object.freeze(acceptedProjection),
     excludedComparables: Object.freeze(excludedProjection),
     exactModelAccepted: Object.freeze(exactModelAccepted),
+    nearExactAccepted: Object.freeze(nearExactAccepted),
     functionalAccepted: Object.freeze(functionalAccepted),
     nonComparable: Object.freeze(excludedProjection),
     confirmedSoldEvidence: Object.freeze(confirmedSoldEvidence),
     estimatedSoldEvidence: Object.freeze(estimatedSoldEvidence),
     structuredModelConflicts: Object.freeze(structuredModelConflicts),
     priceRange: range,
+    pricingEvidenceQuality,
     observedComparableCount: observed.length,
     candidateFoundCount: report?.evidenceBuckets.candidateFoundCount ?? 0,
     returnedCandidateCount: report?.evidenceBuckets.returnedCandidateCount ?? 0,
@@ -419,6 +533,39 @@ export function buildCommercialDecisionV1(input: Readonly<{
         supplierCost: input.supplierCost }, {
         estimatedOutboundShipping: input.shipping,
       })
+  const floorComponents = floor?.ready ? floor.components : null
+  const bindingFloorEntry = floorComponents ? Object.entries(floorComponents)
+    .sort((left, right) => Number(right[1]) - Number(left[1]))[0] : null
+  const bindingGate = bindingFloorEntry?.[0] === "minimumNetProfitPrice"
+    ? "PROFIT_FLOOR" : bindingFloorEntry?.[0] === "minimumNetMarginPrice"
+      ? "MARGIN_FLOOR" : bindingFloorEntry?.[0] === "minimumRoiPrice"
+        ? "ROI_FLOOR" : null
+  const floorPriceForAllowances = floor?.minimumOperatorPrice ?? null
+  const economicFloorExplanation = floor?.ready && floorPriceForAllowances !== null
+    ? Object.freeze({
+        minimumSafePrice: floorPriceForAllowances,
+        observedEvidence: Object.freeze({ productCost: round(input.supplierCost),
+          shippingQty1: input.shipping, landedCost }),
+        policyAssumptions: Object.freeze({
+          marketplaceFeeRate: floor.config.estimatedEbayFeeRate,
+          marketplaceFeeAllowance: round(floorPriceForAllowances *
+            floor.config.estimatedEbayFeeRate),
+          fixedOrderFee: floor.feePolicy.appliedFixedOrderFee,
+          advertisingReserveRate: floor.config.promotedListingsReserveRate,
+          advertisingReserve: round(floorPriceForAllowances *
+            floor.config.promotedListingsReserveRate),
+          returnsRiskReserveRate: floor.config.returnsReserveRate,
+          returnsRiskReserve: round(floorPriceForAllowances *
+            floor.config.returnsReserveRate),
+          profitFloor: floor.config.minimumNetProfit,
+          marginFloorPercent: floor.config.minimumNetMarginPercent,
+          roiFloorPercent: floor.config.minimumRoiPercent,
+        }),
+        candidateFloors: floor.components,
+        bindingGate,
+        feePolicy: floor.feePolicy,
+        equation: "sale price - product cost - shipping - marketplace fee allowance - fixed fee - advertising reserve - returns/risk reserve",
+      }) : null
   let finalDecision = "HOLD_INSUFFICIENT_EVIDENCE"
   if (input.complianceStatus === "BLOCKED") finalDecision = "REJECT_COMPLIANCE"
   else if ((input.materialClaimConflictCount ?? input.claimConflictCount) > 0) {
@@ -427,16 +574,20 @@ export function buildCommercialDecisionV1(input: Readonly<{
   else if (input.shipping === null) finalDecision = "HOLD_SHIPPING_UNPROVEN"
   else if (!input.market.demandValidationPassed) {
     finalDecision = "HOLD_DEMAND_UNPROVEN"
+  } else if (!input.market.pricingEvidenceQuality.strongDecisionAllowed) {
+    finalDecision = "HOLD_PRICING_EVIDENCE_QUALITY"
   } else if (floorPrice !== null && marketMaximum !== null &&
       floorPrice > marketMaximum) finalDecision = "REJECT_ECONOMICS"
   else if (!economics?.passesProfitGate) finalDecision = "HOLD_ECONOMICS_UNPROVEN"
   else finalDecision = "ADVANCE_TO_OWNER_COMMERCIAL_REVIEW"
-  const confidence = input.market.demandValidationBasis ===
+  const confidence = input.market.pricingEvidenceQuality.strongDecisionAllowed &&
+      input.market.demandValidationBasis ===
       "VERIFIED_HISTORICAL_MULTI_SELLER" &&
       !(input.materialClaimConflictCount ?? input.claimConflictCount)
     ? "HIGH" : input.market.demandValidationPassed ? "MEDIUM" : "LOW"
   return Object.freeze({ landedCost, minimumMarginSafePrice: floorPrice,
-    recommendedPrice, economics, finalDecision, confidence })
+    economicFloorExplanation, recommendedPrice, economics, finalDecision,
+    confidence })
 }
 
 type TraceEventWriter = (stage: string, status: "RUNNING" | "PASS" |
@@ -638,6 +789,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         safeClaimTruth.safeClaims)
       report = await reader({ productName: safeMarketIdentity,
           productTitle: safeMarketIdentity, variantTitle: variant.title,
+          identityReferenceTitle: product.title,
           supplierSku: variant.sku, gtin: variant.sourceUnitBarcode,
           model: candidateModel,
           productType: product.productType,
@@ -648,7 +800,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       marketFailure = safeCode(error)
     }
     const market = buildCommercialMarketProjectionV1(report,
-      safeClaimTruth.safeClaims)
+      safeClaimTruth.safeClaims, safeClaimTruth.doNotUseClaims)
     await emit("MARKET_SEARCH_PROGRESS", report ? "PASS" : "BLOCKED",
       report
         ? `eBay devolvió ${market.returnedCandidateCount} candidatos; ${market.observedComparableCount} fueron enriquecidos y todos quedaron contabilizados como aceptados o excluidos.`
@@ -681,10 +833,20 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         : "No se declararon keywords secundarias sin respaldo suficiente.",
       { secondaryKeywords: market.secondaryKeywords,
         manualKeywordsUsed: false })
+    await emit("KEYWORD_INTELLIGENCE", market.primaryKeywordFamily
+      ? "PASS" : "BLOCKED",
+      `Seller OS documentó familia principal, ${market.secondaryKeywords.length} términos secundarios, ${market.longTailKeywords.length} long-tail y ${market.productDifferentiators.length} diferenciadores con provenance.`,
+      { primaryKeywordFamily: market.primaryKeywordFamily,
+        secondaryKeywords: market.secondaryKeywords,
+        longTailKeywords: market.longTailKeywords,
+        productDifferentiators: market.productDifferentiators,
+        unsupportedOrExcludedTerms: market.unsupportedOrExcludedTerms,
+        provenance: market.keywordProvenance })
     await emit("ACCEPTED_COMPARABLES", "INFO",
-      `${market.exactModelAccepted.length} exact-model y ${market.functionalAccepted.length} functional comparables pasaron identidad.`,
+      `${market.exactModelAccepted.length} exact-model, ${market.nearExactAccepted.length} near-exact y ${market.functionalAccepted.length} functional comparables pasaron identidad.`,
       { acceptedComparables: market.acceptedComparables,
         exactModelAccepted: market.exactModelAccepted,
+        nearExactAccepted: market.nearExactAccepted,
         functionalAccepted: market.functionalAccepted,
         confirmedSoldEvidence: market.confirmedSoldEvidence,
         estimatedSoldEvidence: market.estimatedSoldEvidence,
@@ -706,6 +868,12 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         ? `Rango observado con comparables elegibles que traen señal de demanda: USD ${market.priceRange.minimum.toFixed(2)}–${market.priceRange.maximum.toFixed(2)}; mediana USD ${market.priceRange.median?.toFixed(2)}.`
         : "No hay una distribución de precios suficientemente sustentada para usarla en decisión.",
       { priceRange: market.priceRange })
+    await emit("PRICING_EVIDENCE_QUALITY",
+      market.pricingEvidenceQuality.strongDecisionAllowed ? "PASS" : "BLOCKED",
+      market.pricingEvidenceQuality.strongDecisionAllowed
+        ? "La autoridad de pricing está confirmada entre múltiples vendedores."
+        : "El rango permanece visible, pero no autoriza una decisión fuerte porque la muestra de pricing es insuficiente o depende de ventas estimadas.",
+      { pricingEvidenceQuality: market.pricingEvidenceQuality })
 
     const decision = buildCommercialDecisionV1({
       supplierCost: variant.sourceUnitPrice,
@@ -728,6 +896,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         : "Economía no concluyente: no se evalúa un precio no sustentado.",
       { landedCostUsd: decision.landedCost,
         economics: decision.economics,
+        economicFloorExplanation: decision.economicFloorExplanation,
         feePolicyExact: decision.economics?.feePolicy?.exactFeeClaimed ?? false })
 
     const knownUncertainties = Object.freeze([
@@ -735,6 +904,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       ...market.sourceLimitations,
       ...(!market.demandValidationPassed ? ["DEMAND_NOT_PROVEN"] : []),
       ...(!market.priceRange ? ["MARKET_PRICE_DISTRIBUTION_UNPROVEN"] : []),
+      ...(!market.pricingEvidenceQuality.strongDecisionAllowed
+        ? [market.pricingEvidenceQuality.reason] : []),
       ...(decision.economics?.feePolicy?.exactFeeClaimed === false
         ? ["EXACT_EBAY_CATEGORY_FEE_UNPROVEN"] : []),
       ...(variant.sourceInventoryQuantityExplicit !== true
@@ -744,6 +915,46 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       market.samplingSufficientBeforeDemandUnproven &&
       safeClaimTruth.identitySufficient &&
       shipping?.noPurchase === true && shipping.noCredentials === true
+    const recommendedTitle = [market.primaryKeywordFamily,
+      safeClaimTruth.safeClaims.find((entry) => entry.kind === "MODEL")?.value]
+      .filter(Boolean).join(" ").slice(0, 80) || null
+    const itemSpecifics = safeClaimTruth.safeClaims.filter((entry) =>
+      !["PRODUCT_IDENTITY", "MODEL"].includes(entry.kind))
+    const imageUrlsValid = product.imageUrls.length > 0 &&
+      product.imageUrls.every((value) => {
+        try { return new URL(value).protocol === "https:" } catch { return false }
+      })
+    const listingPackage = Object.freeze({
+      title: recommendedTitle, categoryId: market.resolvedCategoryId,
+      itemSpecifics, imageUrls: product.imageUrls,
+      sourceTraceId: traceId, publicationAuthority:
+        "EXISTING_SELLER_OS_DRAFT_ONLY_PIPELINE",
+    })
+    const decisionLoop = buildCommercialDecisionLoopSnapshotV1_1({
+      analysisComplete: true, finalDecision: decision.finalDecision,
+      productTruthSufficient: safeClaimTruth.identitySufficient,
+      safeClaimsPresent: safeClaimTruth.safeClaims.length > 0,
+      stockValid: variant.available,
+      shippingQty1Fresh: Boolean(shipping),
+      marketAuthoritySufficient: market.demandValidationPassed,
+      pricingAuthoritySufficient:
+        market.pricingEvidenceQuality.strongDecisionAllowed,
+      economicsPass: decision.economics?.passesProfitGate === true,
+      primaryKeywordComplete: Boolean(market.primaryKeywordFamily),
+      titleComplete: Boolean(recommendedTitle),
+      itemSpecificsComplete: itemSpecifics.length > 0,
+      imagesValid: imageUrlsValid,
+      complianceClear: compliance.status !== "BLOCKED",
+      ipClear: compliance.blockers.length === 0,
+      autoPublish: false,
+    })
+    await emit("DECISION_LOOP", decisionLoop.state === "LISTING_PACKAGE_READY"
+      ? "PASS" : "BLOCKED",
+      decisionLoop.state === "LISTING_PACKAGE_READY"
+        ? "El expediente y el paquete comercial están listos. AUTO_PUBLISH está desactivado; el Owner conserva el CTA Publicar producto."
+        : `El loop comercial se detuvo de forma segura en ${decisionLoop.state}; ${decisionLoop.blockers.length} requisito(s) permanecen pendientes.`,
+      { decisionLoop, listingPackage, autoPublish: false,
+        publicationWrites: 0, ebayWrites: 0 })
     await emit("FINAL_DECISION", "PASS",
       `Decisión final autónoma: ${decision.finalDecision}. Confianza ${decision.confidence}.`,
       { finalDecision: decision.finalDecision, confidence: decision.confidence,
@@ -754,6 +965,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
     const now = new Date().toISOString()
     const result = Object.freeze({
       TRACE_ID: traceId,
+      SYSTEM_VERSION: SELLER_OS_COMMERCIAL_DECISION_LOOP_V1_1,
       FINAL_DECISION: decision.finalDecision,
       CONFIDENCE: decision.confidence,
       RECOMMENDED_PRICE: decision.recommendedPrice,
@@ -764,6 +976,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       EXACT_MODEL_SEARCH_QUERY: market.exactModelSearchQuery,
       FUNCTIONAL_SEARCH_QUERY: market.functionalSearchQuery,
       EXACT_MODEL_ACCEPTED: market.exactModelAccepted,
+      NEAR_EXACT_ACCEPTED: market.nearExactAccepted,
       FUNCTIONAL_ACCEPTED: market.functionalAccepted,
       NON_COMPARABLE: market.nonComparable,
       CONFIRMED_SOLD_EVIDENCE: market.confirmedSoldEvidence,
@@ -787,11 +1000,19 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       SHIPPING_QTY1: shipping?.amountUsd ?? null,
       PRICE_RANGE: market.priceRange,
       MINIMUM_MARGIN_SAFE_PRICE: decision.minimumMarginSafePrice,
+      ECONOMIC_FLOOR_EXPLANATION: decision.economicFloorExplanation,
       ECONOMICS: decision.economics,
       SECONDARY_KEYWORDS: market.secondaryKeywords,
+      LONG_TAIL_KEYWORDS: market.longTailKeywords,
+      PRODUCT_DIFFERENTIATORS: market.productDifferentiators,
+      UNSUPPORTED_OR_EXCLUDED_TERMS: market.unsupportedOrExcludedTerms,
+      KEYWORD_PROVENANCE: market.keywordProvenance,
+      PRICING_EVIDENCE_QUALITY: market.pricingEvidenceQuality,
       DEMAND_CLASSIFICATION: market.demandClassification,
       ACCEPTED_COMPARABLES: market.acceptedComparables,
       EXCLUDED_COMPARABLES: market.excludedComparables,
+      LISTING_PACKAGE: listingPackage,
+      DECISION_LOOP: decisionLoop,
       ACCEPTANCE: {
         KEYWORD_FAMILY_INCLUDES_MATERIAL_DIFFERENTIATORS:
           Boolean(market.primaryKeywordFamily && market.primaryKeywordFamily
@@ -800,7 +1021,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
           market.samplingSufficientBeforeDemandUnproven,
         EXACT_MODEL_COMPARABLES_PRIORITIZED:
           market.commercialSamplingPolicy?.strategy ===
-            "EXACT_MODEL_THEN_FUNCTIONAL_THEN_NON_COMPARABLE",
+            "EXACT_MODEL_THEN_NEAR_EXACT_THEN_FUNCTIONAL_THEN_NON_COMPARABLE",
+        NEAR_EXACT_PRODUCT_SEPARATELY_CLASSIFIED: true,
         FUNCTIONAL_COMPARABLES_SEPARATELY_CLASSIFIED: true,
         CLAIM_CONFLICTS_VISIBLE: true,
         SAFE_CLAIM_SUBSET_SUPPORTED: safeClaimTruth.identitySufficient,
@@ -819,7 +1041,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
     })
     const completion = await input.supabase.from(
       "seller_os_live_commercial_traces_v1").update({ state: "COMPLETED",
-        current_stage: "FINAL_DECISION", event_count: sequence,
+        current_stage: "DECISION_LOOP", event_count: sequence,
         result, completed_at: now, updated_at: now }).eq("trace_id", traceId)
     if (completion.error) throw new Error(
       "LIVE_COMMERCIAL_TRACE_COMPLETION_WRITE_FAILED")
