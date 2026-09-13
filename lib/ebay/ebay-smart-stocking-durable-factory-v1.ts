@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import {beginCurrentPublicationPackageV1} from '../seller-os/current-publication-factory-server-v1'
 import {currentFactoryMarkerV1,currentFactoryMaterializationV1} from '../seller-os/current-publication-factory-v1'
+import { CURRENT_PREPUBLICATION_CONTINUATION_REQUIRED } from
+  './ebay-autonomous-greenfield-current-certification-v1'
 import { buildSmartStockingLearningProfileV1,
   updateSmartStockingDecisionSnapshotV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit extension;
@@ -1366,12 +1368,20 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     activeDuplicateCount,
     decisionPackage: decisionPackageBinding.row,
   })
-  // The old market-test projection remains diagnostic, never CURRENT
-  // publication readiness. Certification belongs to the CURRENT package gate.
-  const plan = currentFactoryMarkerV1(durableListingPackage?.package_data) ? {
+  // A CURRENT package crosses into the unpublished-artifact lane only after
+  // every upstream factory authority is ready. Never mask a real Product
+  // Truth, taxonomy, specifics, condition, policy or economics blocker with a
+  // generic certification label. Durable publication certification is emitted
+  // later by certifyCurrentPrepublicationV1 after Fee, Preview and execution
+  // authorities have also been proven.
+  const upstreamCurrentReady = proposedPlan.listingReady === true
+    && Object.values(proposedPlan.stageStatuses)
+      .every((status) => status === "READY")
+  const plan = currentFactoryMarkerV1(durableListingPackage?.package_data)
+    && upstreamCurrentReady ? {
     ...proposedPlan, listingReady:false, marketTestReady:false,
-    firstBlocker:'CURRENT_PUBLICATION_CERTIFICATION_REQUIRED',
-    blockers:['CURRENT_PUBLICATION_CERTIFICATION_REQUIRED'],
+    firstBlocker:String(CURRENT_PREPUBLICATION_CONTINUATION_REQUIRED),
+    blockers:[String(CURRENT_PREPUBLICATION_CONTINUATION_REQUIRED)],
     readiness:0,
     packageSeed:currentFactoryMaterializationV1(proposedPlan.packageSeed,durableListingPackage?.package_data),
   } : proposedPlan

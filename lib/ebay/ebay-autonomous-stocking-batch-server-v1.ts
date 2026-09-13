@@ -9,7 +9,7 @@ import { publishCurrentRevisionV1 } from
   "@/lib/ebay/ebay-current-publication-executor-server-v1"
 import { evaluateCurrentPrepublicationArtifactPolicyV1 } from
   "@/lib/ebay/ebay-current-prepublication-artifact-policy-v1"
-import { autonomousGreenfieldCurrentCertificationReadyV1 } from
+import { autonomousGreenfieldCurrentPreparationReadyV1 } from
   "@/lib/ebay/ebay-autonomous-greenfield-current-certification-v1"
 import { collectRadarRevenueFactoryCandidateBatchV1,
   ensureRadarCandidateEconomicsPreflightsV1,
@@ -18,6 +18,8 @@ import { collectRadarRevenueFactoryCandidateBatchV1,
   "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { continueLunaQuickPickRequiredSpecificsV1 } from
+  "@/lib/ebay/ebay-luna-quick-pick-required-specifics-v1"
 import { reconcileCurrentFactoryKeywordContinuationsV2_1 } from
   "@/lib/seller-os/current-keyword-continuation-v2-1"
 import { materializeSellerOsDeterministicFactoryCandidateV1 } from
@@ -600,6 +602,34 @@ async function executeBatch(input: Readonly<{
       taxonomyReader: getEbayTaxonomyListingIntelligence,
       productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
     })
+    const exactFactoryOutcome = exactSlot?.shippingReady
+      ? factory.outcomes.map(record).find((outcome) =>
+        outcome.candidateId === record(exactSlot.readback)
+          .canonicalCandidateId) : null
+    if (exactFactoryOutcome &&
+        (String(exactFactoryOutcome.reasonCode ?? "").startsWith(
+          "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")
+        || exactFactoryOutcome.reasonCode ===
+          "MARKETPLACE_CONDITION_NOT_READY")) {
+      const certificationPrerequisites =
+        await continueLunaQuickPickRequiredSpecificsV1({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          candidateKeys: [text(exactFactoryOutcome.candidateKey)],
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+          productIdentifierPolicyReader:
+            preflightEbayCategoryProductIdentifiers,
+          trigger: "DEPENDENCY_RECOVERY",
+        })
+      if (certificationPrerequisites.claimed > 0) {
+        factory = await materializeRadarRevenueFactoryCandidateBatchV1({
+          supabase: input.supabase, accountKey: input.accountKey, batch,
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+          productIdentifierPolicyReader:
+            preflightEbayCategoryProductIdentifiers,
+        })
+      }
+    }
     const keyword = await reconcileCurrentFactoryKeywordContinuationsV2_1({
       supabase: input.supabase, accountKey: input.accountKey,
     })
@@ -674,7 +704,7 @@ async function executeBatch(input: Readonly<{
         outcome.candidateId !== exactOutcome.candidateId)]
       : hydratedFactoryOutcomes
     for (const outcome of currentOutcomes) {
-      if (!(autonomousGreenfieldCurrentCertificationReadyV1(outcome) ||
+      if (!(autonomousGreenfieldCurrentPreparationReadyV1(outcome) ||
           outcome.exactShippingCurrentCertificationReady === true)
           || !outcome.listingPackageId || !outcome.opportunityId
           || !outcome.candidateKey || !outcome.lunaProductId
@@ -878,7 +908,7 @@ async function executeBatch(input: Readonly<{
       productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
     }))
   if (materialized.listingPackageId !== child.listing_package_id
-      || !autonomousGreenfieldCurrentCertificationReadyV1(materialized)) {
+      || !autonomousGreenfieldCurrentPreparationReadyV1(materialized)) {
     return { status: 202, body: {
       success: false, contractVersion: CONTRACT,
       status: "CURRENT_PREPUBLICATION_CONTINUATION_PENDING",
@@ -939,6 +969,29 @@ async function executeBatch(input: Readonly<{
           .marketplaceWrites ?? 0), publicationWrites: 0, adsWrites: 0 },
     } }
   }
+  const durableCertification = record(artifacts.certification)
+  if (artifacts.packageId !== packageId
+      || durableCertification.pass !== true
+      || durableCertification.durableReadbackPass !== true
+      || durableCertification.currentPrepublicationEvidenceBound !== true
+      || Number(durableCertification.publicationWrites) !== 0) {
+    return { status: 409, body: {
+      success: false, contractVersion: CONTRACT,
+      status: "CURRENT_PUBLICATION_CERTIFICATION_REQUIRED",
+      batchId: input.batch.id, sequenceNo: child.sequence_no,
+      selection: child, certification: durableCertification,
+      CURRENT_PUBLICATION_CERTIFICATION_AUTOMATIC: true,
+      CERTIFICATION_PACKAGE_ID_MATCH: artifacts.packageId === packageId,
+      CERTIFICATION_CURRENT: false,
+      MANUAL_CERTIFICATION: false,
+      OWNER_ACTION_REQUIRED: false,
+      CODEX_RUNTIME_DEPENDENCY: false,
+      LEGACY_CERTIFICATION_REUSED_AS_AUTHORITY: false,
+      safety: { concurrency: 1,
+        marketplaceWrites: Number(record(artifacts.safety)
+          .marketplaceWrites ?? 0), publicationWrites: 0, adsWrites: 0 },
+    } }
+  }
   const current = record(await readSellOneLikeThisV1({
     supabase: input.supabase, accountKey: input.accountKey,
     packageId, referenceItemId: "",
@@ -968,7 +1021,13 @@ async function executeBatch(input: Readonly<{
       active_listing_count_before: before,
       evidence: { ...record(child.evidence), ...selectionEvidence,
         currentExecutionContractValid: true, executorClaimable: true,
-        materialized, current, artifacts },
+        currentPublicationCertification: {
+          automatic: true, packageIdMatch: true, current: true,
+          manualCertification: false, ownerActionRequired: false,
+          codexRuntimeDependency: false,
+          legacyCertificationReusedAsAuthority: false,
+          durableReadbackPass: true,
+        }, materialized, current, artifacts },
       updated_at: new Date().toISOString(),
     }).eq("id", text(child.id)).eq("status", "SELECTED")
       .select("*").single()
