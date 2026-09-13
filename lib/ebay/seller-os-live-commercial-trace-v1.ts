@@ -89,7 +89,7 @@ type SafeCommercialClaimV1 = Readonly<{
   normalizedValue: string
   kind: "PRODUCT_IDENTITY" | "SPECIFICATION" | "FUNCTIONAL_DIFFERENTIATOR" |
     "CONNECTIVITY" | "MODEL"
-  source: "LUNA_PRODUCT_TITLE"
+  source: "LUNA_PRODUCT_TITLE" | "LUNA_CANONICAL_PRODUCT_URL"
   status: "CONFIRMED_SAFE_SUBSET"
 }>
 
@@ -100,17 +100,21 @@ const SAFE_PRODUCT_IDENTITIES_V1 = ["webcam", "camera", "scale", "vacuum",
 export function buildConservativeSafeClaimSubsetV1(product: Readonly<{
   title: string
   descriptionText?: string | null
+  sourceUrl?: string | null
 }>) {
   const title = product.title.normalize("NFKC")
   const normalizedTitle = title.toLocaleLowerCase("en-US")
     .replace(/[^a-z0-9]+/g, " ").trim()
   const conflicts = detectCommercialClaimConflictsV1(product)
   const claims: SafeCommercialClaimV1[] = []
+  const normalizedUrl = String(product.sourceUrl ?? "")
+    .toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ").trim()
   const add = (value: string, normalizedValue: string,
-    kind: SafeCommercialClaimV1["kind"]) => {
+    kind: SafeCommercialClaimV1["kind"], source:
+      SafeCommercialClaimV1["source"] = "LUNA_PRODUCT_TITLE") => {
     if (claims.some((entry) => entry.normalizedValue === normalizedValue)) return
     claims.push(Object.freeze({ value, normalizedValue, kind,
-      source: "LUNA_PRODUCT_TITLE", status: "CONFIRMED_SAFE_SUBSET" }))
+      source, status: "CONFIRMED_SAFE_SUBSET" }))
   }
   const identity = SAFE_PRODUCT_IDENTITIES_V1.find((term) =>
     new RegExp(`\\b${term}\\b`).test(normalizedTitle)) ?? null
@@ -124,8 +128,14 @@ export function buildConservativeSafeClaimSubsetV1(product: Readonly<{
     "Built-In Speakers", "built in speakers", "FUNCTIONAL_DIFFERENTIATOR")
   if (/\b(?:microphone|mic)\b/.test(normalizedTitle)) add(
     "Microphone", "microphone", "FUNCTIONAL_DIFFERENTIATOR")
-  if (/\busb\s*c\b/.test(normalizedTitle)) add("USB-C", "usb c", "CONNECTIVITY")
-  if (/\busb\s*a\b/.test(normalizedTitle)) add("USB-A", "usb a", "CONNECTIVITY")
+  if (/\busb\s*c\b/.test(normalizedTitle) || /\busb\s*c\b/.test(normalizedUrl)) {
+    add("USB-C", "usb c", "CONNECTIVITY", /\busb\s*c\b/.test(normalizedTitle)
+      ? "LUNA_PRODUCT_TITLE" : "LUNA_CANONICAL_PRODUCT_URL")
+  }
+  if (/\busb\s*a\b/.test(normalizedTitle) || /\busb\s*a\b/.test(normalizedUrl)) {
+    add("USB-A", "usb a", "CONNECTIVITY", /\busb\s*a\b/.test(normalizedTitle)
+      ? "LUNA_PRODUCT_TITLE" : "LUNA_CANONICAL_PRODUCT_URL")
+  }
   for (const model of title.match(/\b(?=[A-Za-z0-9-]{5,}\b)(?=[A-Za-z0-9-]*[A-Za-z])(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]+\b/g) ?? []) {
     if (!/^\d{3,4}p$/i.test(model) && !/^usb-?[ac]?$/i.test(model)) {
       add(model.toUpperCase(), model.toLocaleLowerCase("en-US"), "MODEL")
@@ -495,7 +505,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
           product.sourceParserVersion, rawHtmlPersisted: false })
 
     const conflicts = detectCommercialClaimConflictsV1(product)
-    const safeClaimTruth = buildConservativeSafeClaimSubsetV1(product)
+    const safeClaimTruth = buildConservativeSafeClaimSubsetV1({ ...product,
+      sourceUrl: canonicalUrl })
     await emit("CLAIM_CONFLICTS", conflicts.length
       ? safeClaimTruth.materialConflictCount ? "BLOCKED" : "INFO" : "PASS",
       conflicts.length
