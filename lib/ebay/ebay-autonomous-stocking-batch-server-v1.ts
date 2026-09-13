@@ -46,6 +46,7 @@ type RuntimeResult = Readonly<{ body: Row; status: number }>
 const CONTRACT = "AUTONOMOUS_EBAY_STOCKING_BATCH_V1"
 const RECOVERABLE_SHIPPING_BLOCKERS = Object.freeze([
   "AUTONOMOUS_STOCKING_SHIPPING_SLOT_BINDING_CONTRADICTION",
+  "AUTONOMOUS_STOCKING_SHIPPING_SLOT_ROLLOVER_READBACK_INVALID",
   "LUNA_SHIPPING_CLAIM_LEASE_EXPIRED_WITHOUT_DURABLE_RESULT",
 ])
 
@@ -606,13 +607,15 @@ async function executeBatch(input: Readonly<{
         }
         const nextExact = certifyCurrentBatchShippingSlotReadbackV1(
           rolloverReadback.data)
-        if (!nextExact.slotPresent || nextExact.shippingReady) {
+        if (!nextExact.slotPresent) {
           throw new Error(
             "AUTONOMOUS_STOCKING_SHIPPING_SLOT_ROLLOVER_READBACK_INVALID")
         }
         return { status: 202, body: {
           success: false, contractVersion: CONTRACT,
-          status: "CURRENT_EXACT_SHIPPING_CAPTURE_PENDING",
+          status: nextExact.shippingReady
+            ? "CURRENT_EXACT_SHIPPING_READY"
+            : "CURRENT_EXACT_SHIPPING_CAPTURE_PENDING",
           batchId: input.batch.id, sequenceNo: child.sequence_no,
           priorSlot: { canonicalCandidateId: rollover.priorCandidateId,
             status: rollover.retirementStatus,
