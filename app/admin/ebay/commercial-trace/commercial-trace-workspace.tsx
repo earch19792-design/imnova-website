@@ -91,6 +91,11 @@ function ProvenanceBadge({ value }: { value: unknown }) {
       <Clock3 className="size-3" />Evidencia reciente reutilizada
     </span>
   }
+  if (value === "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY") {
+    return <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-1 text-[10px] font-bold text-emerald-100">
+      <BadgeCheck className="size-3" />Historial SOLD verificado
+    </span>
+  }
   return null
 }
 
@@ -214,17 +219,35 @@ function DecisionLoopPanel({ view }: {
   view: ReturnType<typeof buildCommercialTracePresentationV1>
 }) {
   const loop = view.dossier.decisionLoop
-  if (!Object.keys(loop).length) return null
   const blockers = Array.isArray(loop.blockers) ? loop.blockers.map(String) : []
   const cta = asRecord(loop.ownerCta)
-  return <section className={cn(surface, "p-5")}>
-    <SectionTitle eyebrow="Decision loop" title={humanCommercialCodeV1(
-      loop.state === "LISTING_PACKAGE_READY"
-        ? "ADVANCE_TO_OWNER_COMMERCIAL_REVIEW" : view.result.FINAL_DECISION)}
+  const state = String(loop.state ?? (view.decision.tone === "REJECT"
+    ? "REJECT" : view.decision.tone === "HOLD" ? "HOLD" : "ANALYZING"))
+  const active = ["APPROVED_FOR_PUBLICATION", "LISTING_PACKAGE_READY"]
+    .includes(state)
+  const reason = active
+    ? "El paquete pasó los requisitos comerciales. El clic inicia el preflight existente; no omite ninguna validación."
+    : state === "REJECT"
+      ? view.decision.explanation
+      : blockers.length
+        ? blockers.map(humanCommercialCodeV1).join(" · ")
+        : state === "HOLD" ? view.decision.explanation
+          : "El análisis todavía está reuniendo la evidencia necesaria para habilitar publicación."
+  const href = typeof cta.href === "string" && cta.href
+    ? cta.href : "/admin/ebay/publish"
+  return <section id="publication-action" className={cn(surface,
+    "border-sky-200/15 bg-gradient-to-br from-[#111b29] to-[#0c1725] p-5 sm:p-6")}>
+    <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="max-w-3xl"><SectionTitle eyebrow="Acción final"
+        title="Publicar listing"
       icon={PackageCheck} />
-    <p className="mt-3 text-sm leading-6 text-slate-400">Estado: <strong className="text-slate-100">{display(loop.state)}</strong>. AUTO_PUBLISH está {loop.autoPublish === true ? "activado" : "desactivado"}.</p>
-    {blockers.length > 0 && <ul className="mt-3 space-y-1 text-xs text-amber-100/75">{blockers.map((blocker) => <li key={blocker}>• {humanCommercialCodeV1(blocker)}</li>)}</ul>}
-    {loop.state === "LISTING_PACKAGE_READY" && Boolean(cta.href) && <a href={String(cta.href)} className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">Publicar producto</a>}
+        <p className="mt-3 text-sm leading-6 text-slate-400">{reason}</p>
+        <p className="mt-2 text-xs text-slate-500">Estado comercial: <strong className="text-slate-300">{state}</strong> · AUTO_PUBLISH {loop.autoPublish === true ? "activado" : "desactivado"}</p>
+      </div>
+      {active ? <a href={href} className="inline-flex min-h-12 shrink-0 items-center justify-center rounded-xl bg-emerald-200 px-6 text-sm font-black text-emerald-950 shadow-[0_12px_34px_rgba(167,243,208,.12)] transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200/20">Publicar listing</a>
+        : <button type="button" disabled aria-describedby="publication-disabled-reason" className="inline-flex min-h-12 shrink-0 cursor-not-allowed items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] px-6 text-sm font-black text-slate-500">Publicar listing</button>}
+    </div>
+    {!active && <p id="publication-disabled-reason" className="sr-only">{reason}</p>}
   </section>
 }
 
@@ -300,23 +323,41 @@ function ClaimsPanel({ view }: {
 }
 
 function ComparableCard({ item, accepted }: { item: JsonRecord; accepted: boolean }) {
-  const confirmed = Number(item.confirmedSoldQuantity ?? 0)
+  const enrichment = asRecord(item.nearExactSoldEnrichment)
+  const isNearExact = item.comparableClass === "NEAR_EXACT_PRODUCT"
+  const directConfirmed = Math.max(Number(item.confirmedSoldQuantity ?? 0),
+    Number(item.verifiedSoldQuantity ?? 0))
+  const enrichedConfirmed = Number(enrichment.confirmedSoldQuantity ?? 0)
+  const confirmed = Math.max(directConfirmed, enrichedConfirmed)
   const estimated = Number(item.estimatedSoldQuantity ?? 0)
+  const totalPrice = item.totalPrice ?? (Number(item.price ?? 0) +
+    Number(item.shippingCost ?? 0))
+  const provenance = enrichment.provenance ?? item.soldHistorySource
+  const contributed = item.usedForPricing === true ||
+    enrichment.contributedToPricing === true
   return <article className={cn("rounded-2xl border p-4 transition-colors",
     accepted ? "border-emerald-300/10 bg-emerald-300/[0.035] hover:bg-emerald-300/[0.055]"
       : "border-rose-300/10 bg-rose-300/[0.035] hover:bg-rose-300/[0.055]") }>
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0"><p className="line-clamp-2 font-medium leading-6 text-slate-100">{display(item.title)}</p>
-        <p className="mt-1 text-xs text-slate-500">Item {itemId(item.comparableId)} · {money(item.price)}{Number(item.shippingCost) > 0 ? ` + ${money(item.shippingCost)} shipping` : ""}</p></div>
+        <p className="mt-1 text-xs text-slate-500">Item {itemId(item.comparableId)} · total {money(totalPrice)}</p></div>
       {accepted ? <CheckCircle2 className="size-5 shrink-0 text-emerald-300" />
         : <XCircle className="size-5 shrink-0 text-rose-300" />}
     </div>
     <p className={cn("mt-3 text-sm leading-5", accepted ? "text-emerald-100/75" : "text-rose-100/75")}>{humanComparableReasonV1(item)}</p>
     <div className="mt-3 flex flex-wrap gap-2">
-      {confirmed > 0 && <><ProvenanceBadge value="CONFIRMED_DURABLE_SOLD" /><span className="text-xs text-slate-400">{confirmed} venta{confirmed === 1 ? "" : "s"} confirmada{confirmed === 1 ? "" : "s"}</span></>}
+      {confirmed > 0 && <><ProvenanceBadge value={provenance} /><span className="text-xs text-slate-400">{confirmed} venta{confirmed === 1 ? "" : "s"} verificada{confirmed === 1 ? "" : "s"}</span></>}
       {confirmed === 0 && estimated > 0 && <><ProvenanceBadge value="FRESH_QUERY" /><span className="text-xs text-slate-400">{estimated} ventas estimadas</span></>}
       {confirmed === 0 && estimated === 0 && <span className="text-xs text-slate-500">Sin señal de ventas; no define pricing.</span>}
     </div>
+    {isNearExact && <dl className="mt-4 grid gap-2 rounded-xl border border-white/[0.06] bg-black/15 p-3 text-xs sm:grid-cols-3">
+      <div><dt className="text-slate-500">Similitud</dt><dd className="mt-1 font-semibold text-slate-200">{display(item.similarity ?? enrichment.similarity, "0")}%</dd></div>
+      <div><dt className="text-slate-500">Última venta</dt><dd className="mt-1 font-semibold text-slate-200">{dateTime(enrichment.lastSoldDate ?? item.lastSoldDate)}</dd></div>
+      <div><dt className="text-slate-500">Aportó a pricing</dt><dd className="mt-1 font-semibold text-slate-200">{contributed ? "Sí" : "No"}</dd></div>
+      <div><dt className="text-slate-500">SOLD confirmado</dt><dd className="mt-1 font-semibold text-slate-200">{confirmed}</dd></div>
+      <div><dt className="text-slate-500">SOLD estimado</dt><dd className="mt-1 font-semibold text-slate-200">{estimated}</dd></div>
+      <div><dt className="text-slate-500">Provenance</dt><dd className="mt-1 break-words font-semibold text-slate-200">{display(provenance)}</dd></div>
+    </dl>}
     <details className="group mt-3 text-xs text-slate-500">
       <summary className="flex min-h-9 cursor-pointer list-none items-center gap-1 font-medium text-slate-400">Provenance y datos exactos <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" /></summary>
       <dl className="grid gap-2 rounded-xl bg-black/15 p-3 sm:grid-cols-2">
@@ -392,7 +433,10 @@ function TechnicalEvidence({ view, error }: {
         ]} />
         <details className="mt-4"><summary className="cursor-pointer py-2 font-semibold text-slate-300">Thresholds, RPC y gateway evidence</summary>
           <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-black/30 p-3">{JSON.stringify({ thresholds: view.dossier.technical.thresholds,
-            marketSearches: view.dossier.technical.marketSearches }, null, 2)}</pre>
+            marketSearches: view.dossier.technical.marketSearches,
+            nearExactSoldEnrichment:
+              view.dossier.technical.nearExactSoldEnrichment,
+            rawKeywordEvidence: view.dossier.technical.rawKeywordEvidence }, null, 2)}</pre>
         </details>
         <div className="mt-5 space-y-3">{view.events.map((event) => <details key={event.sequence} className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-3">
           <summary className="cursor-pointer list-none"><span className="text-sky-200">SEQ {event.sequence}</span> · {event.stage} · {event.status} · {dateTime(event.observed_at)}</summary>
@@ -462,6 +506,7 @@ function CommercialDossier({ view, error }: {
           ["Long-tail", dossier.keywords.longTail.length ? dossier.keywords.longTail.join(", ") : "No respaldadas todavía"],
           ["Diferenciadores", dossier.keywords.differentiators.length ? dossier.keywords.differentiators.join(", ") : "No demostrados"],
           ["Términos excluidos", dossier.keywords.unsupportedOrExcluded.length ? dossier.keywords.unsupportedOrExcluded.join(", ") : "Ninguno documentado"],
+          ["Título final eBay (≤80)", display(dossier.keywords.finalEbayTitle)],
         ]} />
       </DossierSection>
 
@@ -705,7 +750,7 @@ export function CommercialTraceWorkspace({ requestedTraceId, embedded = false }:
         <TabsContent value="live" className="mt-4 space-y-5">
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.28fr)_minmax(20rem,.72fr)]">
             <HumanTimeline view={view} newSequences={newSequences} />
-            <div className="space-y-5"><ProductSnapshot view={view} /><EconomicsSnapshot view={view} /><DecisionLoopPanel view={view} />
+            <div className="space-y-5"><ProductSnapshot view={view} /><EconomicsSnapshot view={view} />
               <section className={cn(surface, "p-5")}><SectionTitle eyebrow="Recomendación" title={view.decision.label} icon={Sparkles} /><p className="mt-4 text-sm leading-6 text-slate-400">{view.decision.explanation}</p>{trace?.product_url && <a href={trace.product_url} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-sky-200 hover:text-white">Ver producto fuente <ExternalLink className="size-3.5" /></a>}</section>
             </div>
           </div>
@@ -719,6 +764,8 @@ export function CommercialTraceWorkspace({ requestedTraceId, embedded = false }:
           <CommercialDossier view={view} error={error} />
         </TabsContent>
       </Tabs>}
+
+      <div className="mt-5"><DecisionLoopPanel view={view} /></div>
 
       <footer className="mt-8 flex flex-col gap-2 border-t border-white/[0.07] py-5 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">
         <span>Actualización automática · replay durable después de refresh · reconexión segura</span>

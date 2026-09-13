@@ -50,6 +50,7 @@ const MARKETPLACE_ID = "EBAY_US"
 // search and only promoted candidates may spend detail budget.
 const DEFAULT_DETAIL_SAMPLE_LIMIT = 20
 const HIGH_SIMILARITY_DETAIL_SAMPLE_LIMIT = 8
+const NEAR_EXACT_SOLD_ENRICHMENT_LIMIT = 6
 const MINIMUM_SAMPLE_BEFORE_DEMAND_UNPROVEN = 12
 const DETAIL_SAMPLE_BATCH_SIZE = 4
 const DETAIL_CONCURRENCY = 2
@@ -887,12 +888,70 @@ export async function runEbaySellerKeywordDemandValidation(
       }
     }
 
+    const activeWithFunctional = [...activeComparables, ...functionalComparables]
+    const durableSold = await readDurableSoldEvidence(activeWithFunctional,
+      options.marketplaceAccountKey)
+    const activeWithDurable = mergeDurableSoldEvidenceV1(activeWithFunctional,
+      durableSold.rows)
+    const nearExactClassification = buildEbaySellerKeywordDemandValidation({
+      candidate, comparables: activeWithDurable,
+      insightsAvailability: "NOT_CONFIGURED",
+    })
+    const nearExactCandidates = nearExactClassification.comparableEvidence
+      .map((evidence, index) => ({ evidence,
+        comparable: activeWithDurable[index] }))
+      .filter((entry) => entry.evidence.commercialComparableClass ===
+        "NEAR_EXACT_PRODUCT")
+      .sort((left, right) =>
+        right.evidence.formFactorCoverage - left.evidence.formFactorCoverage ||
+        right.evidence.identityMatchScore - left.evidence.identityMatchScore ||
+        left.evidence.comparableId.localeCompare(right.evidence.comparableId))
+    const selectedNearExactCandidates = nearExactCandidates.slice(0,
+      NEAR_EXACT_SOLD_ENRICHMENT_LIMIT)
+    const nearExactSoldAudit = new Map<string, {
+      comparableId: string
+      similarity: number
+      totalPrice: number | null
+      confirmedSoldQuantity: number
+      estimatedSoldQuantity: number
+      lastSoldDate: string | null
+      provenance: "CONFIRMED_DURABLE_SOLD" |
+        "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" |
+        "BROWSE_ESTIMATED_SOLD" | "NONE"
+      query: string | null
+      matchedSoldComparableIds: string[]
+      result: "DURABLE_CONFIRMED" | "VERIFIED_SOLD_FOUND" |
+        "NO_VERIFIED_SOLD_FOUND" | "NOT_AVAILABLE" | "REQUEST_FAILED"
+    }>()
+    for (const entry of selectedNearExactCandidates) {
+      const confirmed = numberOrNull(entry.comparable.confirmedSoldQuantity) ?? 0
+      const estimated = numberOrNull(entry.comparable.estimatedSoldQuantity) ?? 0
+      const price = numberOrNull(entry.comparable.price)
+      const shipping = numberOrNull(entry.comparable.shippingCost) ?? 0
+      nearExactSoldAudit.set(entry.evidence.comparableId, {
+        comparableId: entry.evidence.comparableId,
+        similarity: entry.evidence.formFactorCoverage,
+        totalPrice: price === null ? null : Math.round((price + shipping) * 100) / 100,
+        confirmedSoldQuantity: confirmed,
+        estimatedSoldQuantity: estimated,
+        lastSoldDate: text(entry.comparable.lastSoldDate) || null,
+        provenance: confirmed > 0 ? "CONFIRMED_DURABLE_SOLD"
+          : estimated > 0 ? "BROWSE_ESTIMATED_SOLD" : "NONE",
+        query: null,
+        matchedSoldComparableIds: [],
+        result: confirmed > 0 ? "DURABLE_CONFIRMED" : "NOT_AVAILABLE",
+      })
+    }
+
     let insightsAvailability:
       | "AVAILABLE"
       | "NOT_CONFIGURED"
       | "NOT_ENTITLED"
       | "REQUEST_FAILED" = "NOT_CONFIGURED"
     let soldComparables: EbaySellerComparableInput[] = []
+    let nearExactSoldComparables: EbaySellerComparableInput[] = []
+    let nearExactAttemptedCount = 0
+    let nearExactRequestFailureCount = 0
     const insightsEnabled =
       process.env.EBAY_MARKETPLACE_INSIGHTS_ENABLED?.trim() === "true"
     const categoryId = inferCategoryId(
@@ -908,6 +967,68 @@ export async function runEbaySellerKeywordDemandValidation(
           mapComparable(item, "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY")
         )
         insightsAvailability = "AVAILABLE"
+        const candidatesRequiringSold = selectedNearExactCandidates.filter(
+          (entry) => (numberOrNull(entry.comparable.confirmedSoldQuantity) ?? 0) === 0)
+        nearExactAttemptedCount = candidatesRequiringSold.length
+        const enrichedSold = await mapWithConcurrency(candidatesRequiringSold,
+          DETAIL_CONCURRENCY, async (entry) => {
+            const soldQuery = buildEbaySellerKeywordSearchQuery({
+              productName: entry.comparable.title,
+            })
+            if (soldQuery.length < 3) return { entry, soldQuery, failed: true,
+              mapped: [] as EbaySellerComparableInput[] }
+            try {
+              const sold = await searchSoldHistory(soldQuery, categoryId,
+                insightsToken)
+              return { entry, soldQuery, failed: false, mapped: sold.map((item) =>
+                mapComparable(item,
+                  "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY")) }
+            } catch (error) {
+              throwIfRateLimited(error)
+              return { entry, soldQuery, failed: true,
+                mapped: [] as EbaySellerComparableInput[] }
+            }
+          })
+        for (const result of enrichedSold) {
+          const audit = nearExactSoldAudit.get(
+            result.entry.evidence.comparableId)
+          if (!audit) continue
+          if (result.failed) {
+            nearExactRequestFailureCount += 1
+            nearExactSoldAudit.set(audit.comparableId, { ...audit,
+              query: result.soldQuery || null, result: "REQUEST_FAILED" })
+            continue
+          }
+          const validation = buildEbaySellerKeywordDemandValidation({
+            candidate, comparables: result.mapped,
+            insightsAvailability: "AVAILABLE",
+          })
+          const matched = result.mapped.filter((_, index) => {
+            const evidence = validation.comparableEvidence[index]
+            return evidence?.eligibleComparable === true &&
+              evidence.pricingAuthorityEligible === true &&
+              ["EXACT_MODEL_COMPARABLE", "NEAR_EXACT_PRODUCT"]
+                .includes(evidence.commercialComparableClass)
+          })
+          nearExactSoldComparables.push(...matched)
+          const confirmedSoldQuantity = matched.reduce((sum, comparable) =>
+            sum + (numberOrNull(comparable.totalSoldQuantity) ?? 0), 0)
+          const lastSoldDate = matched.map((comparable) =>
+            text(comparable.lastSoldDate)).filter(Boolean)
+            .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null
+          nearExactSoldAudit.set(audit.comparableId, { ...audit,
+            query: result.soldQuery,
+            confirmedSoldQuantity,
+            lastSoldDate,
+            provenance: confirmedSoldQuantity > 0
+              ? "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+              : audit.provenance,
+            matchedSoldComparableIds: matched.map((comparable) =>
+              comparable.itemId ?? "").filter(Boolean),
+            result: confirmedSoldQuantity > 0 ? "VERIFIED_SOLD_FOUND"
+              : "NO_VERIFIED_SOLD_FOUND",
+          })
+        }
       } catch (error) {
         throwIfRateLimited(error)
         const code = safeErrorCode(error)
@@ -916,22 +1037,22 @@ export async function runEbaySellerKeywordDemandValidation(
           : "REQUEST_FAILED"
       }
     }
-
-    const activeWithFunctional = [...activeComparables, ...functionalComparables]
-    const durableSold = await readDurableSoldEvidence(activeWithFunctional,
-      options.marketplaceAccountKey)
-    const activeWithDurable = mergeDurableSoldEvidenceV1(activeWithFunctional,
-      durableSold.rows)
     const byId = new Map<string, EbaySellerComparableInput>()
-    for (const comparable of [...activeWithDurable, ...soldComparables]) {
-      const key = comparable.itemId || `${comparable.source}:${comparable.title}`
+    for (const comparable of [...activeWithDurable, ...soldComparables,
+      ...nearExactSoldComparables]) {
+      const key = ebayComparableLegacyItemId(comparable.itemId) ||
+        comparable.itemId || `${comparable.source}:${comparable.title}`
       const existing = byId.get(key)
       byId.set(key, existing && comparable.source ===
           "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
-        ? { ...existing, totalSoldQuantity: comparable.totalSoldQuantity,
-            lastSoldDate: comparable.lastSoldDate,
-            soldHistorySource: existing.soldHistorySource ??
-              "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" }
+        ? { ...existing, totalSoldQuantity: Math.max(
+              numberOrNull(existing.totalSoldQuantity) ?? 0,
+              numberOrNull(comparable.totalSoldQuantity) ?? 0),
+            lastSoldDate: comparable.lastSoldDate || existing.lastSoldDate,
+            soldHistorySource: existing.soldHistorySource ===
+                "CONFIRMED_DURABLE_SOLD"
+              ? "CONFIRMED_DURABLE_SOLD"
+              : "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" }
         : comparable)
     }
     const exactFound = numberOrNull(activeSearch.payload.total) ??
@@ -941,16 +1062,39 @@ export async function runEbaySellerKeywordDemandValidation(
       : 0
     const combinedMaximumExamined = nearExactMaximumExamined +
       maximumExamined + functionalMaximumExamined
+    const nearExactAuditRows = [...nearExactSoldAudit.values()]
+    const nearExactPendingCandidateCount = nearExactAuditRows.filter((entry) =>
+      ["NOT_AVAILABLE", "REQUEST_FAILED"].includes(entry.result)).length
+    const nearExactSoldEnrichmentStatus = !selectedNearExactCandidates.length
+      ? "NOT_REQUIRED" as const
+      : nearExactPendingCandidateCount === 0
+        ? "COMPLETED" as const
+        : nearExactRequestFailureCount > 0
+          ? "PARTIAL_FAILURE" as const
+          : "BLOCKED_NOT_AVAILABLE" as const
     const baseReport = buildEbaySellerKeywordDemandValidation({
       candidate,
       comparables: [...byId.values()],
-      candidateFoundCount: exactFound + functionalFound,
-      returnedCandidateCount: activeSearch.items.length +
-        (functionalSearch?.items.length ?? 0),
-      enrichedSampleCount: activeWithFunctional.length,
+      candidateFoundCount: Math.max(exactFound + functionalFound, byId.size),
+      returnedCandidateCount: Math.max(activeSearch.items.length +
+        (functionalSearch?.items.length ?? 0), byId.size),
+      enrichedSampleCount: byId.size,
       resolvedCategoryId: categoryId,
       insightsAvailability,
       durableSoldEvidenceStatus: durableSold.status,
+      nearExactSoldEnrichment: {
+        status: nearExactSoldEnrichmentStatus,
+        budgetLimit: NEAR_EXACT_SOLD_ENRICHMENT_LIMIT,
+        candidateCount: nearExactCandidates.length,
+        selectedCandidateCount: selectedNearExactCandidates.length,
+        attemptedCandidateCount: nearExactAttemptedCount,
+        durableSatisfiedCount: nearExactAuditRows.filter((entry) =>
+          entry.result === "DURABLE_CONFIRMED").length,
+        completedCandidateCount: nearExactAuditRows.length -
+          nearExactPendingCandidateCount,
+        pendingCandidateCount: nearExactPendingCandidateCount,
+        candidates: nearExactAuditRows,
+      },
       commercialSamplingPolicy: {
         strategy: "EXACT_MODEL_THEN_NEAR_EXACT_THEN_FUNCTIONAL_THEN_NON_COMPARABLE",
         minimumBeforeUnproven,

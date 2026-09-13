@@ -128,6 +128,30 @@ export type EbaySellerKeywordDemandInput = {
       enrichedSampleCount: number
     } | null
   } | null
+  nearExactSoldEnrichment?: {
+    status: "NOT_REQUIRED" | "COMPLETED" | "BLOCKED_NOT_AVAILABLE" |
+      "PARTIAL_FAILURE"
+    budgetLimit: number
+    candidateCount: number
+    selectedCandidateCount: number
+    attemptedCandidateCount: number
+    durableSatisfiedCount: number
+    completedCandidateCount: number
+    pendingCandidateCount: number
+    candidates: Array<{
+      comparableId: string
+      similarity: number
+      totalPrice: number | null
+      confirmedSoldQuantity: number
+      estimatedSoldQuantity: number
+      lastSoldDate: string | null
+      provenance: EbaySoldHistorySource
+      query: string | null
+      matchedSoldComparableIds: string[]
+      result: "DURABLE_CONFIRMED" | "VERIFIED_SOLD_FOUND" |
+        "NO_VERIFIED_SOLD_FOUND" | "NOT_AVAILABLE" | "REQUEST_FAILED"
+    }>
+  } | null
   marketSearches?: {
     exactModel: {
       query: string
@@ -674,6 +698,7 @@ export function buildEbaySellerKeywordDemandValidation(
         "CONFIRMED_DURABLE_SOLD"
       ? numberOrZero(entry.confirmedSoldQuantity) : 0
     const marketplaceInsightsSoldQuantity = entry.source ===
+        "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" || entry.soldHistorySource ===
         "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
       ? numberOrZero(entry.totalSoldQuantity) : 0
     const verifiedSoldQuantity = Math.max(durableConfirmedSoldQuantity,
@@ -1195,6 +1220,7 @@ export function buildEbaySellerKeywordDemandValidation(
       ).length,
       commercialSamplingPolicy: input.commercialSamplingPolicy ?? null,
       marketSearches: input.marketSearches ?? null,
+      nearExactSoldEnrichment: input.nearExactSoldEnrichment ?? null,
     },
     comparableEvidence: comparables,
     salesEvidenceAvailable: soldEvidence.length > 0 || estimatedEvidence.length > 0,

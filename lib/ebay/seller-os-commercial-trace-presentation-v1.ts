@@ -62,7 +62,8 @@ export const COMMERCIAL_ANALYSIS_STEPS_V1 = Object.freeze([
     stages: ["MARKET_SEARCH_PROGRESS", "PRIMARY_KEYWORD_FAMILY",
       "SECONDARY_KEYWORDS", "KEYWORD_INTELLIGENCE"] },
   { id: "comparables", label: "Revisando productos comparables",
-    stages: ["ACCEPTED_COMPARABLES", "EXCLUDED_COMPARABLES"] },
+    stages: ["ACCEPTED_COMPARABLES", "NEAR_EXACT_SOLD_ENRICHMENT",
+      "EXCLUDED_COMPARABLES"] },
   { id: "demand", label: "Midiendo demanda",
     stages: ["DEMAND_CLASSIFICATION"] },
   { id: "pricing", label: "Calculando precio",
@@ -84,6 +85,8 @@ const CODE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   HOLD_INSUFFICIENT_EVIDENCE: "Esperar: falta evidencia comercial suficiente",
   HOLD_PRICING_EVIDENCE_QUALITY:
     "Esperar: la autoridad de pricing todavía no tiene calidad suficiente",
+  NEAR_EXACT_SOLD_ENRICHMENT_NOT_COMPLETED:
+    "Falta completar el historial SOLD de los productos más similares",
   PRODUCT_TRUTH_SUFFICIENT: "Falta completar la identidad segura del producto",
   SAFE_CLAIMS_PRESENT: "Faltan claims seguros para construir el listing",
   STOCK_VALID: "El stock disponible todavía no está validado",
@@ -421,6 +424,7 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
       competitivePosition: marketPosition(priceRange, landed),
     }),
     keywords: Object.freeze({ primary: text(result.PRIMARY_KEYWORD_FAMILY),
+      finalEbayTitle: text(result.FINAL_EBAY_TITLE) ?? text(listingPackage.title),
       secondary: secondaryKeywords,
       longTail: Array.isArray(result.LONG_TAIL_KEYWORDS)
         ? result.LONG_TAIL_KEYWORDS.filter((entry): entry is string =>
@@ -483,7 +487,9 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
     technical: Object.freeze({ traceId: trace?.trace_id ?? null,
       gtin, mpn: text(productTruth.mpn), model,
       rawDecisionCode: text(result.FINAL_DECISION),
-      thresholds: technicalThresholds, marketSearches }),
+      thresholds: technicalThresholds, marketSearches,
+      rawKeywordEvidence: record(result.RAW_KEYWORD_EVIDENCE),
+      nearExactSoldEnrichment: record(result.NEAR_EXACT_SOLD_ENRICHMENT) }),
     decisionLoop,
   })
 

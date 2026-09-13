@@ -293,6 +293,116 @@ export function buildFunctionalFamilySearchQueryV1(
     .map((entry) => entry.value).join(" and ")}`
 }
 
+function normalizedKeywordTokensV1(value: unknown) {
+  return String(value ?? "").toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter((token) =>
+      token.length > 1)
+}
+
+function boundedEbayTitleV1(parts: readonly (string | null | undefined)[]) {
+  const value = [...new Set(parts.map((entry) => String(entry ?? "").trim())
+    .filter(Boolean))].join(" ").replace(/\s+/g, " ").trim()
+  if (value.length <= 80) return value || null
+  return value.slice(0, 80).replace(/\s+\S*$/, "").trim() || null
+}
+
+function comparableItemIdV1(value: unknown) {
+  const raw = String(value ?? "").trim()
+  return raw.match(/^v1\|(\d{9,19})\|\d+$/)?.[1] ?? raw
+}
+
+export function buildCommercialKeywordSynthesisV1(
+  report: EbaySellerKeywordDemandReport | null,
+  safeClaims: readonly SafeCommercialClaimV1[],
+  doNotUseClaims: readonly Readonly<{ value: string }>[] = [],
+) {
+  const eligible = (report?.comparableEvidence ?? []).filter((entry) =>
+    entry.eligibleComparable)
+  const identity = safeClaims.find((entry) => entry.kind === "PRODUCT_IDENTITY")
+  const specification = safeClaims.find((entry) => entry.kind === "SPECIFICATION")
+  const sellerSupport = (phrase: string) => {
+    const required = normalizedKeywordTokensV1(phrase)
+    if (!required.length) return 0
+    return new Set(eligible.filter((entry) => {
+      const observed = new Set(normalizedKeywordTokensV1(entry.title))
+      return required.every((token) => observed.has(token))
+    }).map((entry) => entry.sellerUsername.toLocaleLowerCase("en-US")))
+      .size
+  }
+  const safeDifferentiators = safeClaims.filter((entry) =>
+    ["FUNCTIONAL_DIFFERENTIATOR", "CONNECTIVITY"].includes(entry.kind))
+    .map((claim) => ({ claim, support: sellerSupport(claim.value) }))
+    .sort((left, right) => right.support - left.support ||
+      right.claim.value.length - left.claim.value.length)
+  const supportedDifferentiators = safeDifferentiators.filter((entry) =>
+    entry.support > 0).map((entry) => entry.claim.value)
+  const supportedDescriptors = (report?.candidateCommercialDescriptors ?? [])
+    .filter((descriptor) => sellerSupport(descriptor) >= 2)
+  let primary: string | null = null
+  if (identity && eligible.length) {
+    if (specification) {
+      primary = `${specification.value} ${identity.value}${
+        supportedDifferentiators.length ? ` with ${supportedDifferentiators
+          .slice(0, 2).join(" and ")}` : ""}`
+    } else if (supportedDifferentiators.length) {
+      primary = `${supportedDifferentiators[0]} ${identity.value}${
+        supportedDifferentiators.length > 1 ? ` with ${supportedDifferentiators
+          .slice(1, 3).join(" and ")}` : ""}`
+    } else if (sellerSupport(identity.value) >= 2) {
+      primary = identity.value
+    }
+  }
+  const phraseCandidates = identity ? [
+    ...supportedDifferentiators.flatMap((value) => [
+      `${value} ${identity.value}`,
+      `${identity.value} with ${value}`,
+    ]),
+    ...(specification ? [`${specification.value} ${identity.value}`] : []),
+    ...supportedDescriptors.map((descriptor) =>
+      `${descriptor} ${supportedDifferentiators[0] ?? ""} ${identity.value}`
+        .replace(/\s+/g, " ").trim()),
+  ] : []
+  const commerciallyUseful = (phrase: string) => {
+    const tokens = normalizedKeywordTokensV1(phrase)
+    return tokens.length >= 2 && sellerSupport(phrase) >= 2 &&
+      phrase.toLocaleLowerCase("en-US") !== primary?.toLocaleLowerCase("en-US")
+  }
+  const secondary = [...new Set(phraseCandidates.filter(commerciallyUseful))]
+    .sort((left, right) => sellerSupport(right) - sellerSupport(left) ||
+      right.length - left.length).slice(0, 5)
+  const longTail = [...new Set([
+    ...(primary && normalizedKeywordTokensV1(primary).length >= 4
+      ? [primary] : []),
+    ...phraseCandidates.filter((phrase) =>
+      normalizedKeywordTokensV1(phrase).length >= 4),
+  ].filter(commerciallyUseful))].slice(0, 6)
+  const differentiators = [...new Set([
+    ...safeDifferentiators.map((entry) => entry.claim.value),
+    ...supportedDescriptors,
+  ])]
+  const descriptorSet = new Set(supportedDescriptors.map((entry) =>
+    entry.toLocaleLowerCase("en-US")))
+  const excluded = [...new Set(doNotUseClaims.map((entry) => entry.value)
+    .filter((value) => !descriptorSet.has(value.toLocaleLowerCase("en-US"))))]
+    .slice(0, 16)
+  const model = safeClaims.find((entry) => entry.kind === "MODEL")?.value ?? null
+  return Object.freeze({
+    primaryKeywordFamily: primary,
+    secondaryCommercialKeywords: Object.freeze(secondary),
+    validatedLongTailKeywords: Object.freeze(longTail),
+    productDifferentiators: Object.freeze(differentiators),
+    unsupportedOrExcludedTerms: Object.freeze(excluded),
+    finalEbayTitle: boundedEbayTitleV1([primary, model]),
+    rawKeywordEvidence: Object.freeze({
+      generatedNgrams: Object.freeze([
+        ...(report?.recommendedListingKeywordStructure.secondarySearchTerms ?? []),
+        ...(report?.activeListingKeywords ?? []).map((entry) => entry.term),
+      ]),
+      presentationScope: "TECHNICAL_EVIDENCE_ONLY" as const,
+    }),
+  })
+}
+
 export function buildCommercialMarketProjectionV1(
   report: EbaySellerKeywordDemandReport | null,
   safeClaims: readonly SafeCommercialClaimV1[] = [],
@@ -302,11 +412,25 @@ export function buildCommercialMarketProjectionV1(
     record(entry))
   const accepted = observed.filter((entry) => entry.eligibleComparable === true)
   const excluded = observed.filter((entry) => entry.eligibleComparable !== true)
+  const nearExactSoldEnrichment = report?.evidenceBuckets
+    .nearExactSoldEnrichment ?? null
+  const nearExactEnrichmentComplete = !nearExactSoldEnrichment ||
+    nearExactSoldEnrichment.status === "NOT_REQUIRED" ||
+    nearExactSoldEnrichment.status === "COMPLETED"
   const demandBearing = accepted.filter((entry) =>
     (number(entry.salesQuantity) ?? 0) > 0)
-  const pricingPool = report?.demandValidationPassed
+  const pricingCandidates = report?.demandValidationPassed
     ? demandBearing.filter((entry) => entry.pricingAuthorityEligible !== false)
     : []
+  const verifiedPricingCandidates = pricingCandidates.filter((entry) =>
+    (number(entry.verifiedSoldQuantity) ?? 0) > 0 &&
+    ["CONFIRMED_DURABLE_SOLD", "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"]
+      .includes(String(entry.soldHistorySource ?? "")))
+  // Price authority follows SOLD provenance: confirmed durable and other
+  // verified sold history take precedence over Browse estimates. Estimated
+  // prices remain auditable but do not dilute a verified pricing set.
+  const pricingPool = verifiedPricingCandidates.length
+    ? verifiedPricingCandidates : pricingCandidates
   const pricedAuthority = pricingPool.filter((entry) =>
     (number(entry.price) ?? 0) > 0)
   const confirmedPricingAuthority = pricedAuthority.filter((entry) =>
@@ -316,13 +440,23 @@ export function buildCommercialMarketProjectionV1(
   const confirmedPricingSellers = new Set(confirmedPricingAuthority.map((entry) =>
     String(entry.sellerUsername ?? "").trim().toLocaleLowerCase("en-US"))
     .filter(Boolean)).size
-  const estimatedPricingAuthority = pricedAuthority.filter((entry) =>
+  const estimatedPricingAuthority = pricingCandidates.filter((entry) =>
+    (number(entry.price) ?? 0) > 0 &&
     (number(entry.verifiedSoldQuantity) ?? 0) === 0 &&
     (number(entry.estimatedSoldQuantity) ?? 0) > 0)
   const estimatedPricingSellers = new Set(estimatedPricingAuthority.map((entry) =>
     String(entry.sellerUsername ?? "").trim().toLocaleLowerCase("en-US"))
     .filter(Boolean)).size
-  const pricingEvidenceQuality = confirmedPricingAuthority.length >= 2 &&
+  const pricingEvidenceQuality = !nearExactEnrichmentComplete
+    ? Object.freeze({ status: "INSUFFICIENT" as const,
+        classification: "NEAR_EXACT_SOLD_ENRICHMENT_INCOMPLETE" as const,
+        strongDecisionAllowed: false, confirmedComparableCount:
+          confirmedPricingAuthority.length, confirmedSellerCount:
+          confirmedPricingSellers, estimatedComparableCount:
+          estimatedPricingAuthority.length, estimatedSellerCount:
+          estimatedPricingSellers,
+        reason: "NEAR_EXACT_SOLD_ENRICHMENT_NOT_COMPLETED" })
+    : confirmedPricingAuthority.length >= 2 &&
       confirmedPricingSellers >= 2
     ? Object.freeze({ status: "SUFFICIENT" as const,
         classification: "CONFIRMED_MULTI_SELLER_PRICING_AUTHORITY" as const,
@@ -361,11 +495,17 @@ export function buildCommercialMarketProjectionV1(
   const acceptedProjection = accepted.map((entry) => {
     const usedForPricing = pricingPool.includes(entry) &&
       (number(entry.price) ?? 0) > 0
+    const comparableId = text(entry.comparableId, 160)
+    const nearExactAudit = nearExactSoldEnrichment?.candidates.find((candidate) =>
+      candidate.comparableId === comparableId) ?? null
+    const price = number(entry.price)
+    const shippingCost = number(entry.shippingCost) ?? 0
     return Object.freeze({
-      comparableId: text(entry.comparableId, 160),
+      comparableId,
       title: text(entry.title, 500),
       itemWebUrl: text(entry.itemWebUrl, 2_000),
-      price: number(entry.price), shippingCost: number(entry.shippingCost),
+      price, shippingCost: number(entry.shippingCost),
+      totalPrice: price === null ? null : round(price + shippingCost),
       currency: text(entry.currency, 8),
       evidenceSource: text(entry.evidenceSource, 120),
       identityMatchQuality: text(entry.identityMatchQuality, 80),
@@ -375,6 +515,7 @@ export function buildCommercialMarketProjectionV1(
       pricingAuthorityEligible: entry.pricingAuthorityEligible !== false,
       pricingAuthorityClass: text(entry.pricingAuthorityClass, 120),
       exactModelToken: text(entry.exactModelToken, 80),
+      similarity: number(entry.formFactorCoverage) ?? 0,
       verifiedSoldQuantity: number(entry.verifiedSoldQuantity) ?? 0,
       confirmedSoldQuantity: number(entry.confirmedSoldQuantity) ?? 0,
       estimatedSoldQuantity: number(entry.estimatedSoldQuantity) ?? 0,
@@ -383,6 +524,12 @@ export function buildCommercialMarketProjectionV1(
       lastSoldDate: text(entry.lastSoldDate, 80),
       realizedPriceStatus: text(entry.realizedPriceStatus, 80),
       sellerUsername: text(entry.sellerUsername, 160),
+      nearExactSoldEnrichment: nearExactAudit ? Object.freeze({
+        ...nearExactAudit, contributedToPricing: usedForPricing ||
+          nearExactAudit.matchedSoldComparableIds.some((itemId) =>
+            pricingPool.some((candidate) => comparableItemIdV1(
+              candidate.comparableId) === comparableItemIdV1(itemId))),
+      }) : null,
       usedForPricing,
       pricingReason: usedForPricing ? "DEMAND_BEARING_ELIGIBLE_COMPARABLE"
         : report?.demandValidationPassed
@@ -414,12 +561,12 @@ export function buildCommercialMarketProjectionV1(
   const functionalAccepted = acceptedProjection.filter((entry) =>
     entry.comparableClass === "FUNCTIONAL_COMPARABLE")
   const confirmedSoldEvidence = [...acceptedProjection, ...excludedProjection]
-    .filter((entry) => entry.confirmedSoldQuantity > 0)
+    .filter((entry) => ("verifiedSoldQuantity" in entry &&
+      Number(entry.verifiedSoldQuantity) > 0) || entry.confirmedSoldQuantity > 0)
   const estimatedSoldEvidence = [...acceptedProjection, ...excludedProjection]
     .filter((entry) => entry.estimatedSoldQuantity > 0)
   const structuredModelConflicts = excludedProjection.filter((entry) =>
     entry.rejectionReason?.includes("STRUCTURED_MODEL_CONFLICT"))
-  const structure = report?.recommendedListingKeywordStructure
   const marketSearches = report?.evidenceBuckets.marketSearches
   const demand = !report ? "MARKET_READ_UNAVAILABLE"
     : report.demandValidationBasis === "VERIFIED_HISTORICAL_MULTI_SELLER"
@@ -429,46 +576,26 @@ export function buildCommercialMarketProjectionV1(
         : report.eligibleComparableListings > 0
           ? "COMPARABLES_OBSERVED_DEMAND_UNPROVEN"
           : "INSUFFICIENT_COMPARABLE_EVIDENCE"
-  const supportedDescriptors = (report?.candidateCommercialDescriptors ?? [])
-    .filter((descriptor) => {
-      const compact = descriptor.replace(/-/g, "\\s*(?:-|\\s)?")
-      const expression = new RegExp(`\\b${compact}\\b`, "i")
-      const sellers = new Set(accepted.filter((entry) =>
-        expression.test(String(entry.title ?? ""))).map((entry) =>
-          String(entry.sellerUsername ?? "").toLocaleLowerCase("en-US")))
-      return sellers.size >= 2
-    })
-  const productDifferentiators = Object.freeze([...new Set([
-    ...safeClaims.filter((entry) => ["FUNCTIONAL_DIFFERENTIATOR",
-      "CONNECTIVITY"].includes(entry.kind)).map((entry) => entry.value),
-    ...supportedDescriptors,
-  ])])
-  const longTailKeywords = Object.freeze([...new Set([
-    ...(structure?.secondarySearchTerms ?? []).filter((term) =>
-      term.trim().split(/\s+/).length >= 3),
-    ...(report?.activeListingKeywords ?? []).filter((entry) =>
-      entry.candidateConfirmed && entry.crossSellerSignal &&
-      entry.term.split(/\s+/).length >= 3).map((entry) => entry.term),
-  ])].slice(0, 6))
-  const unsupportedOrExcludedTerms = Object.freeze([...new Set([
-    ...doNotUseClaims.map((entry) => entry.value),
-    ...(structure?.termsToKeepExploratory ?? []),
-  ])].slice(0, 16))
+  const keywordSynthesis = buildCommercialKeywordSynthesisV1(report,
+    safeClaims, doNotUseClaims)
   return Object.freeze({
     searchQuery: report?.searchQuery ?? null,
     resolvedCategoryId: report?.resolvedCategoryId ?? null,
     exactModelSearchQuery: marketSearches?.exactModel.query ??
       report?.searchQuery ?? null,
     functionalSearchQuery: marketSearches?.functionalFamily?.query ?? null,
-    primaryKeywordFamily: buildMaterialKeywordFamilyV1(report, safeClaims),
-    secondaryKeywords: Object.freeze([...(structure?.secondarySearchTerms ?? [])]),
-    longTailKeywords,
-    productDifferentiators,
-    unsupportedOrExcludedTerms,
+    primaryKeywordFamily: keywordSynthesis.primaryKeywordFamily,
+    secondaryKeywords: keywordSynthesis.secondaryCommercialKeywords,
+    longTailKeywords: keywordSynthesis.validatedLongTailKeywords,
+    productDifferentiators: keywordSynthesis.productDifferentiators,
+    unsupportedOrExcludedTerms: keywordSynthesis.unsupportedOrExcludedTerms,
+    finalEbayTitle: keywordSynthesis.finalEbayTitle,
+    rawKeywordEvidence: keywordSynthesis.rawKeywordEvidence,
     keywordProvenance: Object.freeze({
       primary: report?.demandValidationBasis ?? "INSUFFICIENT_EVIDENCE",
-      secondary: structure?.strategyConfidence ?? "LOW_INSUFFICIENT_EVIDENCE",
-      differentiators: supportedDescriptors.length
+      secondary: report?.recommendedListingKeywordStructure
+        .strategyConfidence ?? "LOW_INSUFFICIENT_EVIDENCE",
+      differentiators: report?.candidateCommercialDescriptors?.length
         ? "MULTI_SELLER_MARKET_AND_PRODUCT_TRUTH" : "PRODUCT_TRUTH",
       excluded: "PRODUCT_TRUTH_RECONCILIATION",
     }),
@@ -486,6 +613,7 @@ export function buildCommercialMarketProjectionV1(
     structuredModelConflicts: Object.freeze(structuredModelConflicts),
     priceRange: range,
     pricingEvidenceQuality,
+    nearExactSoldEnrichment,
     observedComparableCount: observed.length,
     candidateFoundCount: report?.evidenceBuckets.candidateFoundCount ?? 0,
     returnedCandidateCount: report?.evidenceBuckets.returnedCandidateCount ?? 0,
@@ -503,6 +631,8 @@ export function buildCommercialMarketProjectionV1(
         ? ["EBAY_SOLD_HISTORY_LIMITED_RELEASE"] : []),
       ...(report?.durableSoldEvidenceStatus === "REQUEST_FAILED"
         ? ["DURABLE_SOLD_EVIDENCE_READ_FAILED"] : []),
+      ...(!nearExactEnrichmentComplete
+        ? ["NEAR_EXACT_SOLD_ENRICHMENT_NOT_COMPLETED"] : []),
       ...((report?.evidenceBuckets.candidateFoundCount ?? 0) > observed.length
         ? ["EBAY_RESULT_SET_BOUNDED_BY_GATEWAY_SAMPLE"] : []),
     ]),
@@ -814,6 +944,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         enrichedSampleCount: market.enrichedSampleCount,
         observedComparableCount: market.observedComparableCount,
         commercialSamplingPolicy: market.commercialSamplingPolicy,
+        nearExactSoldEnrichment: market.nearExactSoldEnrichment,
         samplingSufficientBeforeDemandUnproven:
           market.samplingSufficientBeforeDemandUnproven,
         sourceLimitations: market.sourceLimitations,
@@ -851,6 +982,19 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         confirmedSoldEvidence: market.confirmedSoldEvidence,
         estimatedSoldEvidence: market.estimatedSoldEvidence,
         acceptedCount: market.acceptedComparables.length })
+    await emit("NEAR_EXACT_SOLD_ENRICHMENT",
+      !market.nearExactSoldEnrichment || ["NOT_REQUIRED", "COMPLETED"]
+        .includes(market.nearExactSoldEnrichment.status) ? "PASS" : "BLOCKED",
+      !market.nearExactSoldEnrichment ||
+          market.nearExactSoldEnrichment.status === "NOT_REQUIRED"
+        ? "No había candidatos del mismo producto/formato pendientes de historial SOLD."
+        : market.nearExactSoldEnrichment.status === "COMPLETED"
+          ? `Seller OS cerró un enrichment SOLD independiente y acotado para ${market.nearExactSoldEnrichment.selectedCandidateCount} candidatos near-exact prioritarios.`
+          : "El enrichment SOLD near-exact no pudo cerrarse; pricing permanecerá en HOLD sin modificar thresholds ni inventar ventas.",
+      { nearExactSoldEnrichment: market.nearExactSoldEnrichment,
+        pricingMayClose: !market.nearExactSoldEnrichment ||
+          ["NOT_REQUIRED", "COMPLETED"].includes(
+            market.nearExactSoldEnrichment.status) })
     await emit("EXCLUDED_COMPARABLES", "INFO",
       `${market.excludedComparables.length} comparables fueron excluidos; cada uno conserva su razón.`,
       { excludedComparables: market.excludedComparables,
@@ -915,9 +1059,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       market.samplingSufficientBeforeDemandUnproven &&
       safeClaimTruth.identitySufficient &&
       shipping?.noPurchase === true && shipping.noCredentials === true
-    const recommendedTitle = [market.primaryKeywordFamily,
-      safeClaimTruth.safeClaims.find((entry) => entry.kind === "MODEL")?.value]
-      .filter(Boolean).join(" ").slice(0, 80) || null
+    const recommendedTitle = market.finalEbayTitle
     const itemSpecifics = safeClaimTruth.safeClaims.filter((entry) =>
       !["PRODUCT_IDENTITY", "MODEL"].includes(entry.kind))
     const imageUrlsValid = product.imageUrls.length > 0 &&
@@ -982,6 +1124,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       CONFIRMED_SOLD_EVIDENCE: market.confirmedSoldEvidence,
       ESTIMATED_SOLD_EVIDENCE: market.estimatedSoldEvidence,
       STRUCTURED_MODEL_CONFLICTS: market.structuredModelConflicts,
+      NEAR_EXACT_SOLD_ENRICHMENT: market.nearExactSoldEnrichment,
       KNOWN_UNCERTAINTIES: knownUncertainties,
       COMMERCIAL_TRACE_CERTIFICATION: certificationPass ? "PASS" : "FAIL",
       PRODUCT_TRUTH: { productId: product.productId, variantId: variant.id,
@@ -1006,6 +1149,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       LONG_TAIL_KEYWORDS: market.longTailKeywords,
       PRODUCT_DIFFERENTIATORS: market.productDifferentiators,
       UNSUPPORTED_OR_EXCLUDED_TERMS: market.unsupportedOrExcludedTerms,
+      FINAL_EBAY_TITLE: market.finalEbayTitle,
+      RAW_KEYWORD_EVIDENCE: market.rawKeywordEvidence,
       KEYWORD_PROVENANCE: market.keywordProvenance,
       PRICING_EVIDENCE_QUALITY: market.pricingEvidenceQuality,
       DEMAND_CLASSIFICATION: market.demandClassification,
