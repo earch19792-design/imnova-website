@@ -67,6 +67,9 @@ const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
 const DISCOVERY_RETRY_INTERVAL_MS = 30_000
+const CANONICAL_BIND_PAGE_CLASSIFICATION =
+  "SELLER_OS_LUNA_SHIPPING_CAPTURE_CONTROL"
+const CANONICAL_BIND_ORIGIN_CLASS = "AUTHORIZED_SELLER_OS_ORIGIN"
 
 function finalCanaryStartEnabled(connected: boolean,
   canonicalBindingStatusReady: boolean, canonicalDestinationBound: boolean,
@@ -314,6 +317,36 @@ type BindingStorageDiagnostic = {
   extensionIdContinuity: boolean
 }
 
+type CanonicalBindCandidateDiscovery = {
+  candidatesObserved: readonly Readonly<{
+    candidateId: string
+    lunaProductId: string
+    lunaVariantId: string
+    supplierSku: string
+    productFitStrongDurable: boolean
+    freshProductPageOos: boolean
+  }>[]
+  candidatesEligible: readonly Readonly<{
+    candidateId: string
+    lunaProductId: string
+    lunaVariantId: string
+    supplierSku: string
+    productFitStrongDurable: boolean
+    freshProductPageOos: boolean
+  }>[]
+  exactMatchPredicate: string
+  rejectionReasonPerCandidate: readonly Readonly<{
+    candidateId: string
+    rejectionReasons: readonly string[]
+  }>[]
+  currentPageClassification: string
+  expectedPageClassification: string
+  currentUrlOriginClass: string
+  contentScriptReady: string
+  profileEvidencePresent: boolean
+  finalRootCause: string
+}
+
 type RuntimeTrace = {
   authClassification: string
   noExplicitAuthFailure: boolean
@@ -544,6 +577,11 @@ export function LunaShippingCaptureControlPlane({
     useState(false)
   const [bindingStorageDiagnostic, setBindingStorageDiagnostic] =
     useState<BindingStorageDiagnostic | null>(null)
+  const [canonicalBindCandidateDiscovery,
+    setCanonicalBindCandidateDiscovery] =
+    useState<CanonicalBindCandidateDiscovery | null>(null)
+  const [canonicalBindReadbackPass, setCanonicalBindReadbackPass] =
+    useState(false)
   const [liveTraceEvents, setLiveTraceEvents] =
     useState<LunaShippingRuntimeTraceEventV1[]>([])
   const [historicalTraceEvents, setHistoricalTraceEvents] =
@@ -1415,12 +1453,25 @@ export function LunaShippingCaptureControlPlane({
       canonicalBindingRecoveryInFlight = true
       busy = true
       setRunning(true)
+      setCanonicalBindReadbackPass(false)
       setError("")
       setStatus(automatic
         ? "RESTORING_CANONICAL_DESTINATION"
         : "BINDING_CANONICAL_DESTINATION")
-      void adminPost("resolve_jobs", { candidateIds: [CANARY_ID],
-        purpose: "CANONICAL_BIND_BOOTSTRAP" }).then((payload) => {
+      void adminPost("resolve_jobs", {
+        purpose: "CANONICAL_BIND_BOOTSTRAP",
+        bindingRequestContext: {
+          currentPageClassification: window.location.pathname ===
+              "/admin/ebay/luna-shipping-capture"
+            ? CANONICAL_BIND_PAGE_CLASSIFICATION : "UNSUPPORTED_PAGE",
+          expectedPageClassification: CANONICAL_BIND_PAGE_CLASSIFICATION,
+          currentUrlOriginClass: window.location.origin ===
+              SELLER_OS_EXTENSION_ORIGIN
+            ? CANONICAL_BIND_ORIGIN_CLASS : "UNAUTHORIZED_ORIGIN",
+        },
+      }).then((payload) => {
+        setCanonicalBindCandidateDiscovery(
+          payload.candidateDiscovery as CanonicalBindCandidateDiscovery)
         const bootstrapJobs = Array.isArray(payload.jobs) ? payload.jobs : []
         const bootstrapJob = bootstrapJobs.length === 1
           ? bootstrapJobs[0] as LunaChromeShippingJobV1 : null
@@ -1575,6 +1626,9 @@ export function LunaShippingCaptureControlPlane({
           const bindingStatusAccepted = storageReadStatus === "READ_OK" &&
             new Set(["NO_BINDING_PRESENT", "PRIMARY_BINDING_VALID"])
               .has(bindingClassification)
+          setCanonicalBindReadbackPass(storageReadStatus === "READ_OK" &&
+            bindingClassification === "PRIMARY_BINDING_VALID" &&
+            message.canonicalEnvelopeValid === true)
           if (!bindingStatusAccepted) {
             canonicalBindingStatusRead = false
             setCanonicalBindingStatusReady(false)
@@ -1745,6 +1799,7 @@ export function LunaShippingCaptureControlPlane({
           if (message.success !== true ||
               message.canonicalDestinationBound !== true ||
               message.canonicalDestinationMatch !== true) {
+            setCanonicalBindReadbackPass(false)
             setCanonicalDestinationMatchStatus(canonicalDestinationMatchStatusV1(null))
             const destinationMismatch =
               message.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH"
@@ -1776,6 +1831,10 @@ export function LunaShippingCaptureControlPlane({
             canonicalUsProfileFound: true,
             shippingAddressAccepted: false,
           }))
+          sourcePort.postMessage({ type: GET_BINDING_STORAGE_DIAGNOSTIC })
+          sourcePort.postMessage({
+            type: "SELLER_OS_GET_LUNA_CANONICAL_DESTINATION_STATUS",
+          })
           attemptProductionAcquisition()
           return
         }
@@ -2770,6 +2829,26 @@ export function LunaShippingCaptureControlPlane({
       <p className="mt-2 text-xs text-white/50">
         CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH_STATUS={canonicalDestinationMatchStatus}
       </p>
+      {canonicalBindCandidateDiscovery ?
+        <section className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-4">
+          <h2 className="text-sm font-black">Discovery exacto del binding</h2>
+          <code className="mt-3 block whitespace-pre-wrap break-all text-xs text-cyan-100">
+            {`CANDIDATES_OBSERVED=${JSON.stringify(canonicalBindCandidateDiscovery.candidatesObserved)}\n` +
+              `CANDIDATES_ELIGIBLE=${JSON.stringify(canonicalBindCandidateDiscovery.candidatesEligible)}\n` +
+              `EXACT_MATCH_PREDICATE=${canonicalBindCandidateDiscovery.exactMatchPredicate}\n` +
+              `REJECTION_REASON_PER_CANDIDATE=${JSON.stringify(canonicalBindCandidateDiscovery.rejectionReasonPerCandidate)}\n` +
+              `CURRENT_PAGE_CLASSIFICATION=${canonicalBindCandidateDiscovery.currentPageClassification}\n` +
+              `EXPECTED_PAGE_CLASSIFICATION=${canonicalBindCandidateDiscovery.expectedPageClassification}\n` +
+              `CURRENT_URL_ORIGIN_CLASS=${canonicalBindCandidateDiscovery.currentUrlOriginClass}\n` +
+              `CONTENT_SCRIPT_READY=${canonicalBindCandidateDiscovery.contentScriptReady}\n` +
+              `PROFILE_EVIDENCE_PRESENT=${canonicalBindCandidateDiscovery.profileEvidencePresent}\n` +
+              `FINAL_ROOT_CAUSE=${canonicalBindCandidateDiscovery.finalRootCause}\n` +
+              `ENVELOPE_VALID=${String(bindingStorageDiagnostic?.canonicalEnvelopeValid === true)}\n` +
+              `BINDING_CLASSIFICATION=${canonicalDestinationMatchStatus === "MATCH"
+                ? "CANONICAL_DESTINATION_MATCH" : "NOT_PROVEN"}\n` +
+              `READBACK=${canonicalBindReadbackPass ? "PASS" : "PENDING"}`}
+          </code>
+        </section> : null}
       <section className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-200/[0.04] p-4">
         <h2 className="text-sm font-black">Diagnóstico real de storage</h2>
         <p className="mt-2 text-xs text-white/60">

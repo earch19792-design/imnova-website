@@ -64,6 +64,16 @@ import { LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS } from "./ebay-live-listing-s
 
 export const LUNA_SHIPPING_CANARY_CANDIDATE_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60" as const
+export const LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1 = Object.freeze({
+  contractVersion: "LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1" as const,
+  lunaProductId: "9220832493792",
+  lunaVariantId: "48809643540704",
+  supplierSku: "ITEM3734",
+})
+export const LUNA_CANONICAL_BIND_EXACT_MATCH_PREDICATE_V1 =
+  "CURRENT_ACCOUNT_CANDIDATE_ID+LUNA_PRODUCT_ID+LUNA_VARIANT_ID+SUPPLIER_SKU+PRODUCT_FIT_STRONG_DURABLE+NOT_FRESH_OOS" as const
+export const LUNA_CANONICAL_BIND_FINAL_ROOT_CAUSE_V1 =
+  "LEGACY_FAMILY_SCOPED_CANARY_ID_STALE_AFTER_CURRENT_ACCOUNT_SCOPED_IDENTITY_MIGRATION" as const
 export const LUNA_CHROME_LIVE_LISTING_CAPTURE_SCOPE_V1 =
   "LUNA_CHROME_LIVE_LISTING_CAPTURE_SCOPE_V1" as const
 
@@ -114,6 +124,85 @@ function candidateId(accountKey: string, productId: string,
   return deriveCurrentCommercialCandidateIdentityV1({
     accountKey, productId, variantId, supplierSku: sku,
   }).canonicalCandidateId
+}
+
+type LunaCanonicalBindObservedCandidateV1 = Readonly<{
+  candidateId: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  productFitStrongDurable: boolean
+  freshProductPageOos: boolean
+}>
+
+export function evaluateLunaCanonicalBindCandidateDiscoveryV1<T extends
+  LunaCanonicalBindObservedCandidateV1>(input: Readonly<{
+    accountKey: string
+    candidates: readonly T[]
+  }>) {
+  const expectedCandidateId = candidateId(input.accountKey,
+    LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.lunaProductId,
+    LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.lunaVariantId,
+    LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.supplierSku)
+  const evaluated = input.candidates.map((candidate) => {
+    const rejectionReasons: string[] = []
+    if (candidate.lunaProductId !==
+        LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.lunaProductId ||
+        candidate.lunaVariantId !==
+        LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.lunaVariantId ||
+        candidate.supplierSku !==
+        LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.supplierSku) {
+      rejectionReasons.push("EXACT_SUPPLIER_IDENTITY_MISMATCH")
+    }
+    if (candidate.candidateId !== expectedCandidateId) {
+      rejectionReasons.push("CURRENT_ACCOUNT_CANDIDATE_ID_MISMATCH")
+    }
+    if (!candidate.productFitStrongDurable) {
+      rejectionReasons.push("PRODUCT_FIT_STRONG_DURABLE_UNPROVEN")
+    }
+    if (candidate.freshProductPageOos) {
+      rejectionReasons.push("FRESH_PRODUCT_PAGE_OOS")
+    }
+    return Object.freeze({ candidate,
+      rejectionReasons: Object.freeze(rejectionReasons) })
+  })
+  const eligible = evaluated.filter((entry) =>
+    entry.rejectionReasons.length === 0).map((entry) => entry.candidate)
+  const summarize = (candidate: T) => Object.freeze({
+    candidateId: candidate.candidateId,
+    lunaProductId: candidate.lunaProductId,
+    lunaVariantId: candidate.lunaVariantId,
+    supplierSku: candidate.supplierSku,
+    productFitStrongDurable: candidate.productFitStrongDurable,
+    freshProductPageOos: candidate.freshProductPageOos,
+  })
+  const diagnostic = Object.freeze({
+    contractVersion: "LUNA_CANONICAL_BIND_CANDIDATE_DISCOVERY_V1" as const,
+    candidatesObserved: Object.freeze(evaluated.map((entry) =>
+      summarize(entry.candidate))),
+    candidatesEligible: Object.freeze(eligible.map(summarize)),
+    exactMatchPredicate: LUNA_CANONICAL_BIND_EXACT_MATCH_PREDICATE_V1,
+    rejectionReasonPerCandidate: Object.freeze(evaluated.map((entry) =>
+      Object.freeze({ ...summarize(entry.candidate),
+        rejectionReasons: entry.rejectionReasons.length
+          ? entry.rejectionReasons : Object.freeze(["NONE"]) }))),
+    contentScriptReady: "NOT_REQUIRED_SERVER_PROFILE_BINDING" as const,
+    profileEvidencePresent: SHA256.test(CANONICAL_DESTINATION.profileDigest),
+    finalRootCause: LUNA_CANONICAL_BIND_FINAL_ROOT_CAUSE_V1,
+  })
+  return Object.freeze({ diagnostic, eligible: Object.freeze(eligible) })
+}
+
+export function selectSingleLunaCanonicalBindCandidateV1<T>(
+  eligible: readonly T[],
+) {
+  if (eligible.length === 0) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_EXACT_CANDIDATE_NOT_FOUND")
+  }
+  if (eligible.length !== 1) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_EXACT_CANDIDATE_AMBIGUOUS")
+  }
+  return eligible[0]
 }
 
 function exactFrontierSourceForCandidate(
@@ -615,6 +704,9 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   candidateIds?: readonly string[]
   sessionSecret: string
   purpose?: "CANONICAL_BIND_BOOTSTRAP"
+  observeCanonicalBindDiscovery?: (diagnostic: ReturnType<
+    typeof evaluateLunaCanonicalBindCandidateDiscoveryV1>["diagnostic"]
+  ) => void
   now?: number
 }>) : Promise<readonly LunaChromeShippingJobV1[]> {
   const frontierResult = await input.supabase.rpc(
@@ -641,9 +733,9 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
         lunaVariantId, supplierSku)
       const certificationBootstrap =
         input.purpose === "CANONICAL_BIND_BOOTSTRAP" &&
-        input.candidateIds?.length === 1 &&
-        input.candidateIds[0] === LUNA_SHIPPING_CANARY_CANDIDATE_ID &&
-        resolvedCandidateId === LUNA_SHIPPING_CANARY_CANDIDATE_ID
+        lunaProductId === LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.lunaProductId &&
+        lunaVariantId === LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.lunaVariantId &&
+        supplierSku === LUNA_CANONICAL_BIND_BOOTSTRAP_IDENTITY_V1.supplierSku
       if (frontier.economicClassification === "ECONOMICALLY_DEAD" &&
           !certificationBootstrap) return []
       const snapshotDigest = text(outer.snapshotDigest, 80)
@@ -661,8 +753,8 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       candidate.frontier.productFit !== "STRONG")
       .map((candidate) => candidate.candidateId),
   })
-  const exactCandidates = frontierCandidates.filter((candidate) =>
-    resolveDurableProductFitStrongV1({
+  const productFitByCandidate = new Map(frontierCandidates.map((candidate) =>
+    [candidate.candidateId, resolveDurableProductFitStrongV1({
       accountKey: input.accountKey,
       candidateId: candidate.candidateId, familyId: candidate.familyId,
       lunaProductId: candidate.lunaProductId,
@@ -671,7 +763,9 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       frontierProductFit: candidate.frontier.productFit,
       frontierCalculatedAt: candidate.calculatedAt,
       promotion: promotions.get(candidate.candidateId),
-    }).productFitStrongDurable)
+    }).productFitStrongDurable] as const))
+  const exactCandidates = frontierCandidates.filter((candidate) =>
+    productFitByCandidate.get(candidate.candidateId) === true)
   const freshOosCandidateIds = await freshProductPageOosCandidateIds({
     supabase: input.supabase, accountKey: input.accountKey,
     candidates: exactCandidates, now: input.now ?? Date.now(),
@@ -700,19 +794,45 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
         right.lunaVariantId, right.supplierSku))) -
       Number(currentPriority.has(exactKey(left.lunaProductId,
         left.lunaVariantId, left.supplierSku))))
-  const requested = input.candidateIds?.length
-    ? [...new Set(input.candidateIds)]
-    : refreshEligibleCandidates.map((candidate) => candidate.candidateId)
-      .slice(0, 2)
-  if (requested.length > LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH ||
-      requested.some((candidateId) => !/^sha256:[0-9a-f]{64}$/.test(candidateId))) {
-    throw new Error("LUNA_SHIPPING_EXTENSION_CANDIDATE_SCOPE_INVALID")
-  }
-  if (!requested.length) return Object.freeze([])
-  const selected = requested.map((requestedId) => stockEligibleCandidates.find((candidate) =>
-    candidate.candidateId === requestedId)).filter((candidate) => Boolean(candidate))
-  if (selected.length !== requested.length) {
-    throw new Error("LUNA_SHIPPING_EXTENSION_EXACT_CANDIDATE_NOT_FOUND")
+  let selected: typeof stockEligibleCandidates
+  if (input.purpose === "CANONICAL_BIND_BOOTSTRAP") {
+    const discovery = evaluateLunaCanonicalBindCandidateDiscoveryV1({
+      accountKey: input.accountKey,
+      candidates: frontierCandidates.map((candidate) => Object.freeze({
+        candidateId: candidate.candidateId,
+        lunaProductId: candidate.lunaProductId,
+        lunaVariantId: candidate.lunaVariantId,
+        supplierSku: candidate.supplierSku,
+        productFitStrongDurable:
+          productFitByCandidate.get(candidate.candidateId) === true,
+        freshProductPageOos:
+          freshOosCandidateIds.has(candidate.candidateId),
+      })),
+    })
+    input.observeCanonicalBindDiscovery?.(discovery.diagnostic)
+    const exactId = selectSingleLunaCanonicalBindCandidateV1(
+      discovery.eligible).candidateId
+    selected = stockEligibleCandidates.filter((candidate) =>
+      candidate.candidateId === exactId)
+  } else {
+    const requested = input.candidateIds?.length
+      ? [...new Set(input.candidateIds)]
+      : refreshEligibleCandidates.map((candidate) => candidate.candidateId)
+        .slice(0, 2)
+    if (requested.length > LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH ||
+        requested.some((candidateId) =>
+          !/^sha256:[0-9a-f]{64}$/.test(candidateId))) {
+      throw new Error("LUNA_SHIPPING_EXTENSION_CANDIDATE_SCOPE_INVALID")
+    }
+    if (!requested.length) return Object.freeze([])
+    selected = requested.map((requestedId) =>
+      stockEligibleCandidates.find((candidate) =>
+        candidate.candidateId === requestedId))
+      .filter((candidate): candidate is typeof stockEligibleCandidates[number] =>
+        Boolean(candidate))
+    if (selected.length !== requested.length) {
+      throw new Error("LUNA_SHIPPING_EXTENSION_EXACT_CANDIDATE_NOT_FOUND")
+    }
   }
   const productIds = selected.map((candidate) => candidate!.lunaProductId)
   const catalogResult = await input.supabase.from("market_radar_latest_variants")

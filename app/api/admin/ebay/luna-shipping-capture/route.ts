@@ -72,6 +72,26 @@ function candidateIds(value: unknown) {
     .map((entry) => entry.trim()).filter(Boolean).slice(0, 20)
 }
 
+const CANONICAL_BIND_PAGE_CLASSIFICATION =
+  "SELLER_OS_LUNA_SHIPPING_CAPTURE_CONTROL" as const
+const CANONICAL_BIND_ORIGIN_CLASS = "AUTHORIZED_SELLER_OS_ORIGIN" as const
+
+function canonicalBindRequestContext(value: unknown) {
+  const context = listingAiRecord(value)
+  if (context.currentPageClassification !==
+        CANONICAL_BIND_PAGE_CLASSIFICATION ||
+      context.expectedPageClassification !==
+        CANONICAL_BIND_PAGE_CLASSIFICATION ||
+      context.currentUrlOriginClass !== CANONICAL_BIND_ORIGIN_CLASS) {
+    throw new Error("LUNA_CANONICAL_BIND_PAGE_CONTEXT_INVALID")
+  }
+  return Object.freeze({
+    currentPageClassification: CANONICAL_BIND_PAGE_CLASSIFICATION,
+    expectedPageClassification: CANONICAL_BIND_PAGE_CLASSIFICATION,
+    currentUrlOriginClass: CANONICAL_BIND_ORIGIN_CLASS,
+  })
+}
+
 function runtimeInstanceId(value: unknown, fallback: string) {
   const requested = typeof value === "string" ? value.trim() : ""
   const resolved = requested || fallback
@@ -340,6 +360,29 @@ export async function POST(req: Request) {
     if (body.action === "resolve_jobs") {
       enforceListingAiRouteRateLimit(auth.actorId, "READ")
       const requested = candidateIds(body.candidateIds)
+      if (body.purpose === "CANONICAL_BIND_BOOTSTRAP") {
+        const requestContext = canonicalBindRequestContext(
+          body.bindingRequestContext)
+        let candidateDiscovery: Record<string, unknown> | null = null
+        const jobs = await resolveLunaChromeShippingJobsV1({
+          supabase: auth.supabase,
+          accountKey: auth.accountKey,
+          sessionSecret: sessionSecret(),
+          purpose: "CANONICAL_BIND_BOOTSTRAP",
+          observeCanonicalBindDiscovery: (diagnostic) => {
+            candidateDiscovery = { ...diagnostic, ...requestContext }
+            console.info("CANONICAL_BIND_CANDIDATE_DISCOVERY_V1",
+              JSON.stringify(candidateDiscovery))
+          },
+        })
+        if (jobs.length !== 1 || !candidateDiscovery) {
+          throw new Error("LUNA_CANONICAL_BIND_DISCOVERY_READBACK_INVALID")
+        }
+        return listingAiResponse({ success: true, jobs,
+          candidateDiscovery,
+          safety: { readOnly: true, cookieAccess: false, credentialAccess: false,
+            lunaPurchases: 0, marketplaceWrites: 0 } })
+      }
       if (!requested.length) {
         const workerInstance = runtimeInstanceId(body.runtimeInstanceId,
           auth.actorId)
@@ -405,8 +448,6 @@ export async function POST(req: Request) {
         accountKey: auth.accountKey,
         candidateIds: requested.length ? requested : undefined,
         sessionSecret: sessionSecret(),
-        purpose: body.purpose === "CANONICAL_BIND_BOOTSTRAP"
-          ? "CANONICAL_BIND_BOOTSTRAP" : undefined,
       })
       return listingAiResponse({ success: true, jobs,
         safety: { readOnly: true, cookieAccess: false,
