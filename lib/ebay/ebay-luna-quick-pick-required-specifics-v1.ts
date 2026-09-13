@@ -81,6 +81,30 @@ function marker(value: unknown) {
     QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1 ? candidate : null
 }
 
+export function currentConditionPolicyDependencyRecoveryRequiredV1(
+  input: Readonly<{
+    trigger?: "IMMEDIATE" | "OVERNIGHT_ENRICHMENT" |
+      "DEPENDENCY_RECOVERY"
+    blockedByCondition: boolean
+    currentApplication: unknown
+    currentPolicy: unknown
+    lunaProductId: unknown
+    lunaVariantId: unknown
+    supplierSku: unknown
+  }>,
+) {
+  const policy = record(input.currentPolicy)
+  return input.trigger === "DEPENDENCY_RECOVERY"
+    && input.blockedByCondition
+    && Boolean(policy.id && policy.evidenceDigest)
+    && !validateOwnerSupplierPolicyApplicationV1(
+      input.currentApplication, {
+        lunaProductId: input.lunaProductId,
+        lunaVariantId: input.lunaVariantId,
+        supplierSku: input.supplierSku,
+      })
+}
+
 export function durableQuickPickBatchAiCallConsumedV1(
   value: unknown,
   expectedBatchId: string,
@@ -638,6 +662,17 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const autonomousUpgradeRequired = Boolean(currentMarker
       && currentMarker.autonomousResolutionContractVersion !==
         QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1)
+    const conditionPolicyDependencyRecovery =
+      currentConditionPolicyDependencyRecoveryRequiredV1({
+        trigger: input.trigger,
+        blockedByCondition,
+        currentApplication:
+          assessment.ownerSupplierMerchandisePolicyApplicationV1,
+        currentPolicy: ownerConditionPolicy,
+        lunaProductId: row.supplier_product_id,
+        lunaVariantId: row.supplier_variant_id,
+        supplierSku: row.supplier_sku,
+      })
     const priorResidualScope = unique(currentMarker?.completedAt
       && currentMarker.fullLunaPageIsPrimaryProductEvidence === true
       ? unresolvedFields(currentMarker?.unresolvedAspectsBefore)
@@ -655,7 +690,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
         && !brandEvidencePending && !incompleteClaimStale)
       || (currentMarker && !legacyScopeReconciliation
         && !autonomousUpgradeRequired && !incompleteClaimStale
-        && !overnightReevaluation && !brandEvidencePending)) continue
+        && !overnightReevaluation && !brandEvidencePending
+        && !conditionPolicyDependencyRecovery)) continue
     const now = new Date().toISOString()
     const aiCallCountBefore = Number(currentMarker?.aiCallCount ?? 0)
     const baselineUnresolvedFields = unique([
