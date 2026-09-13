@@ -606,16 +606,22 @@ async function executeBatch(input: Readonly<{
       ? factory.outcomes.map(record).find((outcome) =>
         outcome.candidateId === record(exactSlot.readback)
           .canonicalCandidateId) : null
-    if (exactFactoryOutcome &&
-        (String(exactFactoryOutcome.reasonCode ?? "").startsWith(
+    const exactPrerequisiteBlocker = text(
+      exactShippingContinuation?.firstBlocker
+        ?? exactFactoryOutcome?.reasonCode)
+    const exactPrerequisiteCandidateKey = text(
+      exactShippingContinuation?.candidateKey
+        ?? exactFactoryOutcome?.candidateKey)
+    if (exactPrerequisiteCandidateKey &&
+        (exactPrerequisiteBlocker.startsWith(
           "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")
-        || exactFactoryOutcome.reasonCode ===
+        || exactPrerequisiteBlocker ===
           "MARKETPLACE_CONDITION_NOT_READY")) {
       const certificationPrerequisites =
         await continueLunaQuickPickRequiredSpecificsV1({
           supabase: input.supabase,
           accountKey: input.accountKey,
-          candidateKeys: [text(exactFactoryOutcome.candidateKey)],
+          candidateKeys: [exactPrerequisiteCandidateKey],
           taxonomyReader: getEbayTaxonomyListingIntelligence,
           productIdentifierPolicyReader:
             preflightEbayCategoryProductIdentifiers,
@@ -628,6 +634,30 @@ async function executeBatch(input: Readonly<{
           productIdentifierPolicyReader:
             preflightEbayCategoryProductIdentifiers,
         })
+        const exactReadback = record(exactSlot?.readback)
+        const refreshedExactShippingContinuation = record(
+          await resumeRadarFactoryCandidateAfterShippingV1({
+            supabase: input.supabase,
+            accountKey: input.accountKey,
+            candidateId: text(exactReadback.canonicalCandidateId),
+            lunaProductId: text(exactReadback.productId),
+            lunaVariantId: text(exactReadback.variantId),
+            supplierSku: text(exactReadback.supplierSku),
+            taxonomyReader: getEbayTaxonomyListingIntelligence,
+            productIdentifierPolicyReader:
+              preflightEbayCategoryProductIdentifiers,
+          }))
+        if (refreshedExactShippingContinuation.applicable !== true ||
+            refreshedExactShippingContinuation.durableReadback !== true ||
+            refreshedExactShippingContinuation.marketplaceWrites !== 0 ||
+            refreshedExactShippingContinuation.candidateId !==
+              exactReadback.canonicalCandidateId ||
+            refreshedExactShippingContinuation.listingPackageId !==
+              exactPackageResolution?.listingPackageId) {
+          throw new Error(
+            "AUTONOMOUS_STOCKING_EXACT_PREREQUISITE_REFRESH_INVALID")
+        }
+        exactShippingContinuation = refreshedExactShippingContinuation
       }
     }
     const keyword = await reconcileCurrentFactoryKeywordContinuationsV2_1({
