@@ -8,8 +8,12 @@ import {
   getEbayActiveListingReadonlySyncConfiguration,
   syncEbayActiveListingsReadonly,
 } from "@/lib/ebay/ebay-active-listing-readonly-sync"
+import { getEbayCommercialMonitorLiveReadonly } from
+  "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { reconcileActiveListingProtectionRisks } from "@/lib/ebay/ebay-seller-command-center-automation"
+import { autoIngestUnmanagedEbayLiveListingsV1 } from
+  "@/lib/ebay/ebay-unmanaged-live-auto-intake-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function safeError(error: unknown) {
@@ -53,10 +57,14 @@ export async function GET(req: Request) {
       configuration: getEbayActiveListingReadonlySyncConfiguration(),
       state: current.state,
       strategy: {
-        mode: "ADMIN_MANUAL_ONLY",
+        mode: "ADMIN_SYNC_WITH_IMMEDIATE_EXACT_LINKAGE",
         cronEnabled: false,
         runAfterManualRegistration: true,
         runBeforeOperationalReview: true,
+        exactIdentityAutoLink: true,
+        ambiguousIdentityFailsClosed: true,
+        titleInferenceUsed: false,
+        ebayMarketplaceWrites: 0,
       },
     })
   } catch (error) {
@@ -75,7 +83,8 @@ export async function POST(req: Request) {
       { status: validation.status || 403 },
     )
   }
-  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  const account = getEbaySellerAccountScopeConfiguration()
+  const accountKey = account.accountKey
   if (!accountKey) {
     return NextResponse.json(
       { success: false, error: "EBAY_ACTIVE_LISTING_ACCOUNT_SCOPE_REQUIRED" },
@@ -110,6 +119,17 @@ export async function POST(req: Request) {
 
   try {
     const sync = await syncEbayActiveListingsReadonly(supabase, { syncRunId })
+    const currentLive = await getEbayCommercialMonitorLiveReadonly({
+      accountKey,
+      accountAlias: account.accountAlias,
+    })
+    const unmanagedLiveIntake = await autoIngestUnmanagedEbayLiveListingsV1(
+      supabase,
+      {
+        accountKey,
+        listings: currentLive.discovery.currentLiveListings,
+      },
+    )
     const protection = await reconcileActiveListingProtectionRisks(supabase)
     const { error: finishError } = await supabase.rpc(
       "finish_ebay_active_listing_sync_run",
@@ -121,7 +141,17 @@ export async function POST(req: Request) {
       },
     )
     if (finishError) throw new Error("EBAY_ACTIVE_LISTING_SYNC_FINISH_FAILED")
-    return NextResponse.json({ success: true, sync, protection })
+    return NextResponse.json({
+      success: true,
+      sync,
+      immediateLinkage: {
+        officialDiscoveryStatus: currentLive.discovery.status,
+        officialDiscoveryCoverage: currentLive.discovery.coverage,
+        officialDiscoveryObservedAt: currentLive.discovery.observedAt,
+        ...unmanagedLiveIntake,
+      },
+      protection,
+    })
   } catch (error) {
     const code = safeError(error)
     await supabase.rpc("finish_ebay_active_listing_sync_run", {
