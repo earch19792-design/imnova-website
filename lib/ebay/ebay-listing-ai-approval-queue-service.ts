@@ -1059,6 +1059,7 @@ async function loadRadarRevenueFactoryCandidates(
   )
   if (frontierError) return []
   return buildRadarRevenueFactoryCandidateBatchV1({
+    accountKey,
     radarPayload, frontierPayload, lunaCatalogRows: catalogRows,
     targetCandidates: 100,
   }).candidates.filter((candidate) =>

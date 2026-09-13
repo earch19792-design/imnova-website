@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto"
+import { deriveCurrentCommercialCandidateIdentityV1 } from
+  "./ebay-current-commercial-candidate-identity-v1"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -21,6 +23,7 @@ type JsonRecord = Record<string, unknown>
 
 export type SellerOsProductFitStrongRevalidationV1 = Readonly<{
   contractVersion: typeof SELLER_OS_PRODUCT_FIT_STRONG_REVALIDATION_VERSION
+  accountKey: string
   candidateId: string
   familyId: string
   lunaProductId: string
@@ -82,17 +85,16 @@ function digest(value: unknown) {
 }
 
 export function sellerOsShippingCandidateIdV1(input: Readonly<{
+  accountKey: string
   familyId: string
   lunaProductId: string
   lunaVariantId: string
   supplierSku: string
 }>) {
-  return `sha256:${createHash("sha256").update(JSON.stringify({
-    familyId: input.familyId,
-    productId: input.lunaProductId,
-    variantId: input.lunaVariantId,
-    sku: input.supplierSku,
-  })).digest("hex")}`
+  return deriveCurrentCommercialCandidateIdentityV1({
+    accountKey: input.accountKey, productId: input.lunaProductId,
+    variantId: input.lunaVariantId, supplierSku: input.supplierSku,
+  }).canonicalCandidateId
 }
 
 function normalizeTime(value: unknown, code: string) {
@@ -106,6 +108,7 @@ export function normalizeProductFitStrongRevalidationV1(
   value: SellerOsProductFitStrongRevalidationV1,
 ) : SellerOsProductFitStrongRevalidationV1 {
   const input = record(value)
+  const accountKey = safeText(input.accountKey, 200)
   const familyId = safeText(input.familyId, 120)
   const lunaProductId = safeText(input.lunaProductId, 30)
   const lunaVariantId = safeText(input.lunaVariantId, 30)
@@ -119,12 +122,13 @@ export function normalizeProductFitStrongRevalidationV1(
   const evaluatedAt = normalizeTime(input.evaluatedAt,
     "PRODUCT_FIT_REVALIDATION_EVALUATED_AT_INVALID")
   if (input.contractVersion !== SELLER_OS_PRODUCT_FIT_STRONG_REVALIDATION_VERSION ||
+      !accountKey || !ACCOUNT_KEY.test(accountKey) ||
       !familyId || !FAMILY_ID.test(familyId) ||
       !lunaProductId || !LUNA_ID.test(lunaProductId) ||
       !lunaVariantId || !LUNA_ID.test(lunaVariantId) ||
       !supplierSku || !SAFE_SKU.test(supplierSku) ||
       !candidateId || !SHA256.test(candidateId) ||
-      candidateId !== sellerOsShippingCandidateIdV1({ familyId,
+      candidateId !== sellerOsShippingCandidateIdV1({ accountKey, familyId,
         lunaProductId, lunaVariantId, supplierSku }) ||
       !PRODUCT_FITS.has(String(input.productFitBefore)) ||
       input.productFitAfter !== "STRONG" ||
@@ -141,7 +145,7 @@ export function normalizeProductFitStrongRevalidationV1(
   }
   return Object.freeze({
     contractVersion: SELLER_OS_PRODUCT_FIT_STRONG_REVALIDATION_VERSION,
-    candidateId, familyId, lunaProductId, lunaVariantId, supplierSku,
+    accountKey, candidateId, familyId, lunaProductId, lunaVariantId, supplierSku,
     productFitBefore: input.productFitBefore as
       SellerOsProductFitStrongRevalidationV1["productFitBefore"],
     productFitAfter: "STRONG",
@@ -202,6 +206,9 @@ export async function persistProductFitStrongPromotionV1(input: Readonly<{
   revalidation: SellerOsProductFitStrongRevalidationV1
 }>) {
   const promotion = buildProductFitDurablePromotionV1(input.revalidation)
+  if (promotion.accountKey !== input.accountKey) {
+    throw new Error("PRODUCT_FIT_DURABLE_ACCOUNT_MISMATCH")
+  }
   const [runId] = await accountRunIds(input)
   if (!runId) throw new Error("PRODUCT_FIT_DURABLE_RUN_UNAVAILABLE")
   const candidate = await input.supabase.from("ebay_same_day_pilot_candidates")
@@ -274,6 +281,7 @@ export async function readProductFitStrongPromotionsV1(input: Readonly<{
 }
 
 export function resolveDurableProductFitStrongV1(input: Readonly<{
+  accountKey: string
   candidateId: string
   familyId: string
   lunaProductId: string
@@ -284,7 +292,8 @@ export function resolveDurableProductFitStrongV1(input: Readonly<{
   promotion?: SellerOsProductFitDurablePromotionV1 | null
 }>) {
   const identityMatches = input.candidateId === sellerOsShippingCandidateIdV1({
-    familyId: input.familyId, lunaProductId: input.lunaProductId,
+    accountKey: input.accountKey, familyId: input.familyId,
+    lunaProductId: input.lunaProductId,
     lunaVariantId: input.lunaVariantId, supplierSku: input.supplierSku,
   })
   if (!identityMatches) throw new Error("PRODUCT_FIT_DURABLE_IDENTITY_MISMATCH")
@@ -296,7 +305,8 @@ export function resolveDurableProductFitStrongV1(input: Readonly<{
   const promotion = input.promotion
   const frontierTime = normalizeTime(input.frontierCalculatedAt,
     "PRODUCT_FIT_DURABLE_FRONTIER_TIME_INVALID")
-  if (!promotion || promotion.candidateId !== input.candidateId ||
+  if (!promotion || promotion.accountKey !== input.accountKey ||
+      promotion.candidateId !== input.candidateId ||
       promotion.familyId !== input.familyId ||
       promotion.lunaProductId !== input.lunaProductId ||
       promotion.lunaVariantId !== input.lunaVariantId ||

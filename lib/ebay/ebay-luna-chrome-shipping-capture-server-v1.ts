@@ -1,6 +1,8 @@
 import "server-only"
 
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
+import { deriveCurrentCommercialCandidateIdentityV1 } from
+  "./ebay-current-commercial-candidate-identity-v1"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -105,32 +107,48 @@ function exactKey(productId: string, variantId: string, sku: string) {
   return `${productId}\n${variantId}\n${sku}`
 }
 
-function candidateId(familyId: string, productId: string,
+function candidateId(accountKey: string, productId: string,
   variantId: string, sku: string) {
-  return `sha256:${createHash("sha256").update(JSON.stringify({
-    familyId, productId, variantId, sku,
-  })).digest("hex")}`
+  return deriveCurrentCommercialCandidateIdentityV1({
+    accountKey, productId, variantId, supplierSku: sku,
+  }).canonicalCandidateId
 }
 
 function exactFrontierSourceForCandidate(
   sources: readonly JsonRecord[],
   expectedCandidateId: string,
+  accountKey: string,
   identity: Readonly<{
     lunaProductId: string
     lunaVariantId: string
     supplierSku: string
   }>,
 ) {
-  return sources.find((outer) => {
+  const exact = sources.filter((outer) => {
     const frontier = record(outer.frontier)
     const familyId = text(frontier.familyId, 120)
     return Boolean(familyId) &&
       frontier.lunaProductId === identity.lunaProductId &&
       frontier.lunaVariantId === identity.lunaVariantId &&
       frontier.lunaSku === identity.supplierSku &&
-      candidateId(familyId!, identity.lunaProductId, identity.lunaVariantId,
+      candidateId(accountKey, identity.lunaProductId, identity.lunaVariantId,
         identity.supplierSku) === expectedCandidateId
   })
+  const ordered = exact.sort((left, right) =>
+    Date.parse(String(right.calculatedAt ?? record(right.frontier).evaluatedAt)) -
+    Date.parse(String(left.calculatedAt ?? record(left.frontier).evaluatedAt)))
+  const first = ordered[0]
+  const second = ordered[1]
+  if (first && second) {
+    const firstTime = Date.parse(String(first.calculatedAt ??
+      record(first.frontier).evaluatedAt))
+    const secondTime = Date.parse(String(second.calculatedAt ??
+      record(second.frontier).evaluatedAt))
+    if (firstTime === secondTime && first.snapshotDigest !== second.snapshotDigest) {
+      throw new Error("CURRENT_COMMERCIAL_CANDIDATE_FRONTIER_AMBIGUOUS")
+    }
+  }
+  return first
 }
 
 function canonical(value: unknown): unknown {
@@ -146,6 +164,37 @@ function canonical(value: unknown): unknown {
 function digest(value: unknown) {
   return `sha256:${createHash("sha256")
     .update(JSON.stringify(canonical(value))).digest("hex")}`
+}
+
+export function collapseCurrentCommercialFrontierCandidatesV1<T extends Readonly<{
+  candidateId: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  calculatedAt: string
+  snapshotDigest: string
+}>>(candidates: readonly T[]) {
+  const selected = new Map<string, T>()
+  for (const candidate of candidates) {
+    const previous = selected.get(candidate.candidateId)
+    if (!previous) {
+      selected.set(candidate.candidateId, candidate)
+      continue
+    }
+    if (previous.lunaProductId !== candidate.lunaProductId ||
+        previous.lunaVariantId !== candidate.lunaVariantId ||
+        previous.supplierSku !== candidate.supplierSku) {
+      throw new Error("CURRENT_COMMERCIAL_CANDIDATE_HASH_COLLISION")
+    }
+    const previousTime = Date.parse(previous.calculatedAt)
+    const candidateTime = Date.parse(candidate.calculatedAt)
+    if (previousTime === candidateTime &&
+        previous.snapshotDigest !== candidate.snapshotDigest) {
+      throw new Error("CURRENT_COMMERCIAL_CANDIDATE_FRONTIER_AMBIGUOUS")
+    }
+    if (candidateTime > previousTime) selected.set(candidate.candidateId, candidate)
+  }
+  return Object.freeze([...selected.values()])
 }
 
 async function latestSameDayRun(input: Readonly<{
@@ -576,7 +625,8 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   if (frontierResult.error) {
     throw new Error("LUNA_SHIPPING_EXTENSION_CANDIDATE_EVIDENCE_READ_FAILED")
   }
-  const frontierCandidates = records(record(frontierResult.data).frontiers)
+  const frontierCandidates = collapseCurrentCommercialFrontierCandidatesV1(
+    records(record(frontierResult.data).frontiers)
     .flatMap((outer) => {
       const frontier = record(outer.frontier)
       const familyId = text(frontier.familyId, 120)
@@ -585,7 +635,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       const supplierSku = text(frontier.lunaSku, 160)
       if (!familyId || !/^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId) ||
           !lunaProductId || !lunaVariantId || !supplierSku) return []
-      const resolvedCandidateId = candidateId(familyId, lunaProductId,
+      const resolvedCandidateId = candidateId(input.accountKey, lunaProductId,
         lunaVariantId, supplierSku)
       const certificationBootstrap =
         input.purpose === "CANONICAL_BIND_BOOTSTRAP" &&
@@ -602,7 +652,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       return [Object.freeze({ familyId, lunaProductId, lunaVariantId,
         supplierSku, frontier, outer, snapshotDigest, calculatedAt,
         candidateId: resolvedCandidateId })]
-    })
+    }))
   const promotions = await readProductFitStrongPromotionsV1({
     supabase: input.supabase, accountKey: input.accountKey,
     candidateIds: frontierCandidates.filter((candidate) =>
@@ -611,6 +661,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   })
   const exactCandidates = frontierCandidates.filter((candidate) =>
     resolveDurableProductFitStrongV1({
+      accountKey: input.accountKey,
       candidateId: candidate.candidateId, familyId: candidate.familyId,
       lunaProductId: candidate.lunaProductId,
       lunaVariantId: candidate.lunaVariantId,
@@ -1443,7 +1494,8 @@ export async function persistLunaProductPageOosV1(input: Readonly<{
     })
   if (latest.error) throw new Error("LUNA_PRODUCT_PAGE_OOS_AUTHORITY_READ_FAILED")
   const source = exactFrontierSourceForCandidate(
-    records(record(latest.data).frontiers), observation.candidateId, {
+    records(record(latest.data).frontiers), observation.candidateId,
+    input.accountKey, {
       lunaProductId: observation.lunaProductId,
       lunaVariantId: observation.lunaVariantId,
       supplierSku: observation.supplierSku,
@@ -1655,6 +1707,7 @@ export async function persistLunaChromeShippingCaptureV1(input: Readonly<{
   }
   const source = exactFrontierSourceForCandidate(
     records(record(latestResult.data).frontiers), input.capture.candidateId,
+    input.accountKey,
     authority.identity)
   const snapshotDigest = text(source?.snapshotDigest, 80)
   if (!source || !snapshotDigest || !SHA256.test(snapshotDigest)) {

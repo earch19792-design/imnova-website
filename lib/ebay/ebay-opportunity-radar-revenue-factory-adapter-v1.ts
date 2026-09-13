@@ -28,6 +28,9 @@ import type {
   RequiredSpecificsAiBatchV1,
   RequiredSpecificsBatchProductV1,
 } from "./ebay-marketplace-required-specifics-batch-resolution-v1"
+import { CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION,
+  deriveCurrentCommercialCandidateIdentityV1 } from
+  "./ebay-current-commercial-candidate-identity-v1"
 
 export const OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION =
   "OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_V1" as const
@@ -94,6 +97,7 @@ export type RadarRevenueFactoryFamilySeedV1 = Readonly<{
 
 export type RadarRevenueFactoryCandidateV1 = Readonly<{
   candidateId: string
+  accountKey: string
   familyId: string
   familyName: string
   source: "RADAR_FRONTIER_LUNA_IDENTITY" | "PRODUCT_RESEARCH_EXACT_IDENTITY" |
@@ -691,6 +695,7 @@ function frontierEconomicsReady(frontier: JsonRecord) {
 }
 
 export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
+  accountKey: string
   radarPayload: unknown
   frontierPayload: unknown
   lunaCatalogRows: readonly unknown[]
@@ -743,7 +748,10 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     const available = row.available === true &&
       (number(row.inventory_quantity) === null || Number(row.inventory_quantity) > 0)
     candidates.push(Object.freeze({
-      candidateId: digest({ familyId: seed.familyId, productId, variantId, sku }),
+      candidateId: deriveCurrentCommercialCandidateIdentityV1({
+        accountKey: input.accountKey, productId, variantId, supplierSku: sku,
+      }).canonicalCandidateId,
+      accountKey: input.accountKey,
       familyId: seed.familyId, familyName: seed.familyName,
       source: "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" as const,
       disposition: "PASS_TO_LUNA" as const,
@@ -799,7 +807,10 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     const target = getSellerOsRadarPriceDistributionEconomicsV1(frontier) ??
       getSellerOsQuickPickMarketTestEconomicsV1(frontier)
     candidates.push(Object.freeze({
-      candidateId: digest({ familyId: seed.familyId, productId, variantId, sku }),
+      candidateId: deriveCurrentCommercialCandidateIdentityV1({
+        accountKey: input.accountKey, productId, variantId, supplierSku: sku,
+      }).canonicalCandidateId,
+      accountKey: input.accountKey,
       familyId: seed.familyId, familyName: seed.familyName,
       source: "RADAR_FRONTIER_LUNA_IDENTITY" as const,
       disposition: "PASS_TO_LUNA" as const,
@@ -847,7 +858,10 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     const exact = matchClass === "EXACT_LUNA_MATCH" &&
       Boolean(matchedVariantId)
     candidates.push(Object.freeze({
-      candidateId: digest({ familyId: seed.familyId, identityHash }),
+      candidateId: digest({ accountKey: input.accountKey,
+        supplierAuthority: "LUNAPORTEX_PRODUCT_RESEARCH",
+        productResearchIdentityHash: identityHash }),
+      accountKey: input.accountKey,
       familyId: seed.familyId, familyName: seed.familyName,
       source: "PRODUCT_RESEARCH_EXACT_IDENTITY" as const,
       disposition: exact ? "PASS_TO_LUNA" as const : "REJECT" as const,
@@ -959,6 +973,7 @@ export async function collectRadarRevenueFactoryCandidateBatchV1(input: Readonly
   )
   if (radarResult.error) throw new Error("REVENUE_FACTORY_RADAR_READ_FAILED")
   const initial = buildRadarRevenueFactoryCandidateBatchV1({
+    accountKey: input.accountKey,
     radarPayload: radarResult.data, frontierPayload: null, lunaCatalogRows: [],
     allowedFamilyNames: input.allowedFamilyNames, targetCandidates: 1,
   })
@@ -1016,6 +1031,7 @@ export async function collectRadarRevenueFactoryCandidateBatchV1(input: Readonly
     }
   }
   return buildRadarRevenueFactoryCandidateBatchV1({
+    accountKey: input.accountKey,
     radarPayload: radarResult.data, frontierPayload: frontierResult.data,
     lunaCatalogRows: catalogRead.rows,
     catalogReadMetadata: catalogRead,
@@ -1304,13 +1320,159 @@ function radarShippingCandidateIdentity(
   candidate: RadarRevenueFactoryCandidateV1,
   queueRow: JsonRecord,
 ) {
-  const continuation = record(record(queueRow.assessment)
+  const assessment = record(queueRow.assessment)
+  const continuation = record(assessment
     .radarAutomaticLunaShippingContinuationV1)
+  const commercial = record(assessment.currentCommercialCandidateIdentityV1)
   return exactQueueIdentity(candidate, queueRow) &&
+    commercial.contractVersion ===
+      CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION &&
+    commercial.canonicalCandidateId === candidate.candidateId &&
+    commercial.accountKey === candidate.accountKey &&
+    commercial.marketplaceId === "EBAY_US" &&
+    commercial.supplierAuthority === "LUNAPORTEX" &&
+    commercial.productId === candidate.lunaProductId &&
+    commercial.variantId === candidate.lunaVariantId &&
+    commercial.supplierSku === candidate.supplierSku &&
     continuation.candidateId === candidate.candidateId &&
     continuation.lunaProductId === candidate.lunaProductId &&
     continuation.lunaVariantId === candidate.lunaVariantId &&
     continuation.supplierSku === candidate.supplierSku
+}
+
+function currentCommercialIdentityAssessmentV1(
+  candidate: RadarRevenueFactoryCandidateV1,
+  storageCandidateKey: string,
+  observedAliasCandidateIds: readonly string[] = [],
+) {
+  const aliases = Object.freeze([...new Set([storageCandidateKey,
+    ...observedAliasCandidateIds].filter((value) =>
+    Boolean(text(value, 200)) && value !== candidate.candidateId))].sort())
+  return Object.freeze({
+    contractVersion: CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION,
+    canonicalCandidateId: candidate.candidateId,
+    accountKey: candidate.accountKey,
+    marketplaceId: "EBAY_US" as const,
+    supplierAuthority: "LUNAPORTEX" as const,
+    productId: candidate.lunaProductId,
+    variantId: candidate.lunaVariantId,
+    supplierSku: candidate.supplierSku,
+    storageCandidateKey,
+    storageCandidateKeyIsCanonical: storageCandidateKey === candidate.candidateId,
+    reconciledAliasCandidateIds: aliases,
+    derivationInputsExcludeEvidenceLineage: true as const,
+    manualIdentityRebind: false as const,
+    codexRuntimeDependency: false as const,
+  })
+}
+
+function assessmentBoundToStorageCandidateV1(
+  candidate: RadarRevenueFactoryCandidateV1,
+  assessmentValue: unknown,
+  storageCandidateKey: string,
+  previousAssessmentValue?: unknown,
+) {
+  const assessment = record(assessmentValue)
+  const previous = record(previousAssessmentValue)
+  const observedAliases = [
+    record(previous.radarFactoryCandidateV1).candidateId,
+    record(previous.radarAutomaticLunaShippingContinuationV1).candidateId,
+    record(previous.candidate).candidateKey,
+    record(previous.productTruth).candidateKey,
+    ...((Array.isArray(record(previous.currentCommercialCandidateIdentityV1)
+      .reconciledAliasCandidateIds)
+      ? record(previous.currentCommercialCandidateIdentityV1)
+        .reconciledAliasCandidateIds : []) as unknown[]),
+  ].flatMap((value) => typeof value === "string" ? [value] : [])
+  const canonical = candidate.candidateId
+  const commercialIdentity = {
+    ...currentCommercialIdentityAssessmentV1(candidate, storageCandidateKey,
+      observedAliases),
+    reconciliationProvenance: Object.freeze({
+      queueCandidateKey: storageCandidateKey,
+      previousRadarCandidateId:
+        record(previous.radarFactoryCandidateV1).candidateId ?? null,
+      previousShippingCandidateId:
+        record(previous.radarAutomaticLunaShippingContinuationV1)
+          .candidateId ?? null,
+      canonicalCommercialIdentityMatch: true as const,
+      exactCommercialFieldsCompared: Object.freeze([
+        "ACCOUNT_KEY", "MARKETPLACE_ID", "SUPPLIER_AUTHORITY",
+        "PRODUCT_ID", "VARIANT_ID", "SUPPLIER_SKU",
+      ]),
+    }),
+  }
+  return {
+    ...assessment,
+    currentCommercialCandidateIdentityV1: commercialIdentity,
+    radarFactoryCandidateV1: {
+      ...record(assessment.radarFactoryCandidateV1),
+      candidateId: canonical, canonicalCandidateId: canonical,
+      candidateIdentityContractVersion:
+        CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION,
+    },
+    radarAutomaticLunaShippingContinuationV1: {
+      ...record(assessment.radarAutomaticLunaShippingContinuationV1),
+      candidateId: canonical, canonicalCandidateId: canonical,
+      candidateIdentityContractVersion:
+        CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION,
+    },
+    candidate: { ...record(assessment.candidate),
+      candidateKey: canonical, canonicalCandidateId: canonical },
+    productTruth: { ...record(assessment.productTruth),
+      candidateKey: canonical, canonicalCandidateId: canonical },
+  }
+}
+
+function currentCommercialIdentityContradictionV1(
+  candidate: RadarRevenueFactoryCandidateV1,
+  queueRow: JsonRecord,
+) {
+  const commercial = record(record(queueRow.assessment)
+    .currentCommercialCandidateIdentityV1)
+  if (!Object.keys(commercial).length) return false
+  return commercial.contractVersion !==
+      CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION ||
+    commercial.accountKey !== candidate.accountKey ||
+    commercial.marketplaceId !== "EBAY_US" ||
+    commercial.supplierAuthority !== "LUNAPORTEX" ||
+    commercial.productId !== candidate.lunaProductId ||
+    commercial.variantId !== candidate.lunaVariantId ||
+    commercial.supplierSku !== candidate.supplierSku
+}
+
+export function reconcileCurrentRadarShippingCandidateIdentityV1(
+  input: Readonly<{
+    candidate: RadarRevenueFactoryCandidateV1
+    queueRow: JsonRecord
+    nextAssessment: unknown
+  }>,
+) {
+  if (!exactQueueIdentity(input.candidate, input.queueRow) ||
+      currentCommercialIdentityContradictionV1(
+        input.candidate, input.queueRow)) {
+    throw new Error("CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_CONTRADICTION")
+  }
+  const storageCandidateKey = text(input.queueRow.candidate_key, 200)
+  if (!storageCandidateKey) {
+    throw new Error("CURRENT_COMMERCIAL_CANDIDATE_STORAGE_KEY_INVALID")
+  }
+  const assessment = assessmentBoundToStorageCandidateV1(
+    input.candidate, input.nextAssessment, storageCandidateKey,
+    input.queueRow.assessment)
+  const commercial = record(assessment.currentCommercialCandidateIdentityV1)
+  const aliases = Array.isArray(commercial.reconciledAliasCandidateIds)
+    ? commercial.reconciledAliasCandidateIds : []
+  return Object.freeze({
+    assessment,
+    canonicalCandidateId: input.candidate.candidateId,
+    storageCandidateKey,
+    reconciledAliasCandidateIds: Object.freeze([...aliases]),
+    canonicalCommercialIdentityMatch: true as const,
+    radarShippingIdentityDerivationAligned: true as const,
+    manualIdentityRebind: false as const,
+    codexRuntimeDependency: false as const,
+  })
 }
 
 function embeddedDecisionPackageId(queueRow: JsonRecord) {
@@ -1346,6 +1508,7 @@ function buildRadarSmartStockingQueueRowV1(
   const productTruthCore = {
     authorityClass: "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
     candidateKey: candidate.candidateId,
+    canonicalCandidateId: candidate.candidateId,
     lunaProductId: candidate.lunaProductId,
     lunaVariantId: candidate.lunaVariantId,
     supplierSku: candidate.supplierSku,
@@ -1367,10 +1530,15 @@ function buildRadarSmartStockingQueueRowV1(
   const shippingRequired = candidate.economicsNextEvidence ===
     "ACTUAL_LUNA_SHIPPING"
   const assessment = {
+    currentCommercialCandidateIdentityV1:
+      currentCommercialIdentityAssessmentV1(candidate, candidate.candidateId),
     radarFactoryCandidateV1: {
       contractVersion: "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1",
       authority: "SELLER_OS_DETERMINISTIC_FACTORY",
       candidateId: candidate.candidateId,
+      canonicalCandidateId: candidate.candidateId,
+      candidateIdentityContractVersion:
+        CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION,
       familyId: candidate.familyId,
       demandEvidenceGrain: candidate.demandEvidenceGrain,
       exactProductDemandClaimed: false,
@@ -1381,6 +1549,9 @@ function buildRadarSmartStockingQueueRowV1(
     radarAutomaticLunaShippingContinuationV1: {
       contractVersion: "RADAR_AUTOMATIC_LUNA_SHIPPING_CONTINUATION_V1",
       candidateId: candidate.candidateId,
+      canonicalCandidateId: candidate.candidateId,
+      candidateIdentityContractVersion:
+        CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION,
       lunaProductId: candidate.lunaProductId,
       lunaVariantId: candidate.lunaVariantId,
       supplierSku: candidate.supplierSku,
@@ -1394,6 +1565,7 @@ function buildRadarSmartStockingQueueRowV1(
     },
     candidate: {
       candidateKey: candidate.candidateId,
+      canonicalCandidateId: candidate.candidateId,
       marketRadarProductId: candidate.marketRadarProductId,
       supplierProductId: candidate.lunaProductId,
       supplierVariantId: candidate.lunaVariantId,
@@ -1546,9 +1718,40 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     if (existingRows.length === 1) {
       try {
         const existing = existingRows[0]
+        if (currentCommercialIdentityContradictionV1(candidate, existing)) {
+          throw new Error("CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_CONTRADICTION")
+        }
+        const packages = await input.supabase.from("ebay_listing_packages")
+          .select("id,account_key").eq("opportunity_id", existing.id).limit(2)
+        if (packages.error || rows(packages.data).some((listingPackage) =>
+          listingPackage.account_key !== input.accountKey)) {
+          throw new Error("CURRENT_COMMERCIAL_CANDIDATE_ACCOUNT_SCOPE_MISMATCH")
+        }
         if (!radarShippingCandidateIdentity(candidate, existing) ||
             !resolveSellerOsExactProductTruthV1(existing).exact) {
           const hydrated = buildRadarSmartStockingQueueRowV1(candidate)
+          const reconciliation =
+            reconcileCurrentRadarShippingCandidateIdentityV1({
+              candidate, queueRow: existing,
+              nextAssessment: hydrated.assessment,
+            })
+          const durableReconciliation = await input.supabase.rpc(
+            "reconcile_seller_os_current_candidate_identity_v1", {
+              p_account_key: input.accountKey,
+              p_opportunity_id: existing.id,
+              p_expected_canonical_candidate_id: candidate.candidateId,
+            })
+          const durableIdentity = record(durableReconciliation.data)
+          if (durableReconciliation.error ||
+              durableIdentity.canonicalCommercialIdentityMatch !== true ||
+              durableIdentity.radarShippingIdentityDerivationAligned !== true ||
+              durableIdentity.canonicalCandidateId !== candidate.candidateId ||
+              durableIdentity.duplicateCandidateCount !== 0 ||
+              durableIdentity.manualIdentityRebind !== false ||
+              durableIdentity.codexRuntimeDependency !== false) {
+            throw new Error(
+              "CURRENT_COMMERCIAL_CANDIDATE_DURABLE_RECONCILIATION_FAILED")
+          }
           const update = await input.supabase.from("ebay_luna_opportunity_queue")
             .update({
               product_title: hydrated.product_title,
@@ -1571,7 +1774,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
               keyword_structure: hydrated.keyword_structure,
               hard_gates: hydrated.hard_gates,
               evidence_guards: hydrated.evidence_guards,
-              assessment: hydrated.assessment,
+              assessment: reconciliation.assessment,
               last_scanned_at: hydrated.last_scanned_at,
               next_scan_at: hydrated.next_scan_at,
               updated_at: hydrated.updated_at,
@@ -1602,7 +1805,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         }).select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,gtin,assessment")
         .single()
       if (write.error || !write.data ||
-          !exactQueueIdentity(candidate, record(write.data))) {
+          !radarShippingCandidateIdentity(candidate, record(write.data))) {
         throw new Error("RADAR_SMART_STOCKING_DURABLE_WRITE_FAILED")
       }
       queueRows.push(record(write.data))
@@ -2454,9 +2657,29 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     throw new Error("RADAR_SHIPPING_CONTINUATION_IDENTITY_AMBIGUOUS")
   }
   const queueRow = exactRows[0]
-  const durableIdentity = record(record(queueRow.assessment)
+  const assessmentBefore = record(queueRow.assessment)
+  const durableIdentity = record(assessmentBefore
     .radarAutomaticLunaShippingContinuationV1)
-  if (durableIdentity.candidateId !== input.candidateId ||
+  const commercialIdentity = record(
+    assessmentBefore.currentCommercialCandidateIdentityV1)
+  const canonicalCandidateId = deriveCurrentCommercialCandidateIdentityV1({
+    accountKey: input.accountKey, productId: input.lunaProductId,
+    variantId: input.lunaVariantId, supplierSku: input.supplierSku,
+  }).canonicalCandidateId
+  const aliases = Array.isArray(commercialIdentity.reconciledAliasCandidateIds)
+    ? commercialIdentity.reconciledAliasCandidateIds : []
+  if (input.candidateId !== canonicalCandidateId ||
+      commercialIdentity.contractVersion !==
+        CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION ||
+      commercialIdentity.canonicalCandidateId !== canonicalCandidateId ||
+      commercialIdentity.accountKey !== input.accountKey ||
+      commercialIdentity.productId !== input.lunaProductId ||
+      commercialIdentity.variantId !== input.lunaVariantId ||
+      commercialIdentity.supplierSku !== input.supplierSku ||
+      commercialIdentity.storageCandidateKey !== queueRow.candidate_key ||
+      (queueRow.candidate_key !== canonicalCandidateId &&
+        !aliases.includes(queueRow.candidate_key)) ||
+      durableIdentity.candidateId !== input.candidateId ||
       durableIdentity.lunaProductId !== input.lunaProductId ||
       durableIdentity.lunaVariantId !== input.lunaVariantId ||
       durableIdentity.supplierSku !== input.supplierSku) {

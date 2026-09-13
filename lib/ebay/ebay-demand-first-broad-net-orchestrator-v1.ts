@@ -1837,6 +1837,7 @@ export async function discoverAndPersistSellerOsOnDemandFamilyDemandV1(
       demandKeywordDna, attributeProfile: observation.attributeProfile }],
   }] }
   const prospectiveMatch = buildRadarRevenueFactoryCandidateBatchV1({
+    accountKey: input.accountKey,
     radarPayload: prospectiveRadar, frontierPayload: { frontiers: [] },
     lunaCatalogRows: [row], targetCandidates: 2,
   })

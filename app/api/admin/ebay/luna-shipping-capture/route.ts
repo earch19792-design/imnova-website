@@ -434,7 +434,8 @@ export async function POST(req: Request) {
       const result = await persistProductFitStrongPromotionV1({
         supabase: auth.supabase,
         accountKey: auth.accountKey,
-        revalidation: listingAiRecord(body.revalidation) as
+        revalidation: { ...listingAiRecord(body.revalidation),
+          accountKey: auth.accountKey } as
           SellerOsProductFitStrongRevalidationV1,
       })
       return listingAiResponse({ success: true, result,

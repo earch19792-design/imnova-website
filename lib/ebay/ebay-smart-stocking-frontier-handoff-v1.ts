@@ -251,7 +251,7 @@ export function buildCakeTurntableFrontierHandoffV1(input: Readonly<{
   const familyIdentity = normalizeSellerOsMarketFamilyIdentityV1(
     target.familyIdentity)
   const familyId = buildSellerOsMarketFamilyIdV1(familyIdentity)
-  const candidateId = sellerOsShippingCandidateIdV1({ familyId,
+  const candidateId = sellerOsShippingCandidateIdV1({ accountKey, familyId,
     lunaProductId: target.lunaProductId,
     lunaVariantId: target.lunaVariantId, supplierSku: target.lunaSku })
   const component = configuration.components[0]

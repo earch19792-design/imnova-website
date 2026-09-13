@@ -1089,6 +1089,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
   }
   let activeRadarPayload = radarRead.data
   let currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
+    accountKey: input.accountKey,
     radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
     lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
     allowUnprovenMarketTest: true,
@@ -1140,6 +1141,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
   if (discoveryResults.some(({ result }) =>
       classifyLunaQuickPickDemandDiscoveryV1(result).startsWith("CONTINUE_"))) {
     currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
+      accountKey: input.accountKey,
       radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
       lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
       allowUnprovenMarketTest: true,
@@ -1160,6 +1162,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         entry.selected.lunaProductId, entry.selected.lunaVariantId,
         entry.selected.supplierSku))
       const single = buildRadarRevenueFactoryCandidateBatchV1({
+        accountKey: input.accountKey,
         radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
         lunaCatalogRows: entry.selectedRow ? [entry.selectedRow] : [],
         targetCandidates: 2, allowUnprovenMarketTest: true,
@@ -1204,6 +1207,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     }
     activeFrontierPayload = refreshedFrontier.data
     currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
+      accountKey: input.accountKey,
       radarPayload: activeRadarPayload, frontierPayload: refreshedFrontier.data,
       lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
       allowUnprovenMarketTest: true,

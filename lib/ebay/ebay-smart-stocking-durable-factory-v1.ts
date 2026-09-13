@@ -73,7 +73,7 @@ function unique(values: readonly string[]) {
 }
 
 const PRODUCT_TRUTH_CORE_FIELDS = new Set([
-  "authorityClass", "candidateKey", "evidenceDigest", "lunaProductId",
+  "authorityClass", "candidateKey", "canonicalCandidateId", "evidenceDigest", "lunaProductId",
   "lunaVariantId", "supplierSku", "gtin", "supplierPriceUsd", "title",
   "sourceUrl", "imageCount", "rawHtmlStored", "marketplaceWrites", "stock",
   "brand", "provenProductValues", "knownUnknownAspectNames",
