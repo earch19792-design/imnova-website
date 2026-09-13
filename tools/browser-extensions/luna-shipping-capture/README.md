@@ -4,6 +4,9 @@ Extensión MV3 separada y limitada exclusivamente a cotizaciones de envío de Lu
 
 ## Instalación única
 
+Descarga pública del artefacto actual:
+`https://imnova-seller-os-preprod.vercel.app/downloads/seller-os-luna-shipping-capture-1.0.56.zip`.
+
 1. Abre `chrome://extensions` o `edge://extensions`.
 2. Activa **Developer mode**.
 3. Selecciona **Load unpacked** y elige esta carpeta completa. No copies ni
@@ -12,7 +15,7 @@ Extensión MV3 separada y limitada exclusivamente a cotizaciones de envío de Lu
 4. La extensión abre automáticamente la página canónica de captura de Seller OS.
 
 El ID estable de la extensión es `mhpkojahbbfdgodeaecggpjaplllgclk`.
-El artefacto canónico actual es `1.0.55` y su único origen Seller OS externo es
+El artefacto canónico actual es `1.0.56` y su único origen Seller OS externo es
 `https://imnova-seller-os-preprod.vercel.app`.
 Después de instalarla, Seller OS entrega lotes acotados y la extensión procesa los
 candidatos secuencialmente. También puede recibir un único job transitorio de
@@ -48,10 +51,17 @@ no adquiere jobs si el service worker cargado todavía no anuncia esa capacidad.
 - Cada paso tiene como máximo dos intentos. Un cambio del DOM devuelve
   `LUNA_SHIPPING_DOM_CONTRACT_CHANGED`.
 
-La versión 1.0.55 separa conexión y capacidad de captura. La reanudación automática
+La versión 1.0.56 separa conexión y capacidad de captura. La reanudación automática
 requiere el probe de sólo lectura de un checkout existente y el permiso durable
 del líder. Un heartbeat no crea claims. Los 429 y las ventanas vacías conservan
 el backoff de Phase A; no hay un poller nuevo.
+
+El puerto de la página es sólo transporte y no es propietario del job. BFCache
+puede desconectarlo sin cancelar la ejecución; `pageshow` rearma el puerto. Cada
+tab o ventana de ejecución creado explícitamente por Seller OS se registra en
+`chrome.storage.session` y se cierra, con verificación, al finalizar con éxito,
+fallo, cancelación o timeout. Los tabs preexistentes del usuario no se registran
+ni se cierran.
 
 Recuperación de observación (`LUNA_CHECKOUT_OBSERVER_HANDSHAKE_V1`): el probe
 comprueba permiso y documento superior de `shop.app`, y verifica el canal de

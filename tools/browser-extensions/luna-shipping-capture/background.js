@@ -9,8 +9,9 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.55"
+const EXTENSION_BUILD_VERSION = "1.0.56"
 const WORKER_CONTROL_ALARM = "seller-os-luna-shipping-worker-control-v1"
+const JOB_TIMEOUT_ALARM = "seller-os-luna-shipping-job-timeout-v1"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -66,10 +67,13 @@ const PORT_HANDSHAKE = "SELLER_OS_LUNA_SHIPPING_PORT_HANDSHAKE_V1"
 const PORT_HANDSHAKE_ACK = "LUNA_SHIPPING_PORT_HANDSHAKE_ACK_V1"
 const PAGE_DISPATCH_COMMITTED =
   "SELLER_OS_LUNA_SHIPPING_PAGE_DISPATCH_COMMITTED"
+const CANCEL_ACTIVE_JOB = "SELLER_OS_CANCEL_LUNA_SHIPPING_JOB_V1"
+const OWNED_RUN_CONTEXTS_STORAGE_KEY =
+  "sellerOsLunaOwnedRunContextsV1"
 const MAX_RUNTIME_TRACE_EVENTS = 100
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
-const RECONNECT_GRACE_MS = 20_000
+const JOB_MAX_RUNTIME_MS = 10 * 60 * 1_000
 const CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS = 2_500
 const BIND_STEP_TIMEOUT_MS = 2_000
 const BIND_TOP_FRAME_TIMEOUT_MS = 25_000
@@ -120,7 +124,17 @@ let checkoutBootstrapAckEmitted = false
 let checkoutBootstrapAckTimer = null
 let lastCheckoutStateRank = 0
 let lastCheckoutState = null
-let disconnectCleanupTimer = null
+let activeJobTimeoutTimer = null
+let activeJobStartedAtMs = null
+let jobTerminationInProgress = false
+let lastOwnedContextCleanup = Object.freeze({
+  reason: "NOT_RUN", orphanOwnedTabsAfterRun: 0,
+  orphanOwnedWindowsAfterRun: 0,
+})
+let terminalCleanupChain = Promise.resolve(lastOwnedContextCleanup)
+const ownedRunTabs = new Map()
+const ownedRunWindows = new Map()
+let ownedRunContextsHydration = null
 let activeRuntimeTrace = null
 let canonicalBindInFlight = false
 let canonicalBindBootstrapActive = false
@@ -380,7 +394,185 @@ function markCheckoutNavigationTriggered() {
   return true
 }
 
+function consumeRuntimeLastError() {
+  return chrome.runtime?.lastError?.message ?? ""
+}
+
+function ephemeralOwnedContextStorageArea() {
+  const area = chrome.storage?.session
+  return area && typeof area.get === "function" &&
+    typeof area.set === "function" ? area : null
+}
+
+function hydrateOwnedRunContexts() {
+  if (ownedRunContextsHydration) return ownedRunContextsHydration
+  const area = ephemeralOwnedContextStorageArea()
+  if (!area) {
+    ownedRunContextsHydration = Promise.resolve()
+    return ownedRunContextsHydration
+  }
+  ownedRunContextsHydration = new Promise((resolve) => {
+    try {
+      area.get(OWNED_RUN_CONTEXTS_STORAGE_KEY, (stored) => {
+        consumeRuntimeLastError()
+        const envelope = stored?.[OWNED_RUN_CONTEXTS_STORAGE_KEY]
+        for (const entry of Array.isArray(envelope?.tabs) ? envelope.tabs : []) {
+          if (Number.isInteger(entry?.id) &&
+              typeof entry?.captureSessionId === "string") {
+            ownedRunTabs.set(entry.id, {
+              captureSessionId: entry.captureSessionId,
+              createdAt: String(entry.createdAt ?? ""),
+            })
+          }
+        }
+        for (const entry of Array.isArray(envelope?.windows)
+          ? envelope.windows : []) {
+          if (Number.isInteger(entry?.id) &&
+              typeof entry?.captureSessionId === "string") {
+            ownedRunWindows.set(entry.id, {
+              captureSessionId: entry.captureSessionId,
+              createdAt: String(entry.createdAt ?? ""),
+            })
+          }
+        }
+        resolve()
+      })
+    } catch { resolve() }
+  })
+  return ownedRunContextsHydration
+}
+
+function persistOwnedRunContexts() {
+  const area = ephemeralOwnedContextStorageArea()
+  if (!area) return Promise.resolve()
+  const envelope = {
+    version: 1,
+    tabs: [...ownedRunTabs].map(([id, metadata]) => ({ id, ...metadata })),
+    windows: [...ownedRunWindows]
+      .map(([id, metadata]) => ({ id, ...metadata })),
+  }
+  return new Promise((resolve) => {
+    try {
+      area.set({ [OWNED_RUN_CONTEXTS_STORAGE_KEY]: envelope }, () => {
+        consumeRuntimeLastError()
+        resolve()
+      })
+    } catch { resolve() }
+  })
+}
+
+async function registerOwnedRunTab(tabId, captureSessionId) {
+  if (!Number.isInteger(tabId) || typeof captureSessionId !== "string") return
+  await hydrateOwnedRunContexts()
+  ownedRunTabs.set(tabId, { captureSessionId,
+    createdAt: new Date().toISOString() })
+  await persistOwnedRunContexts()
+}
+
+async function registerOwnedRunWindow(windowId, captureSessionId) {
+  if (!Number.isInteger(windowId) || typeof captureSessionId !== "string") return
+  await hydrateOwnedRunContexts()
+  ownedRunWindows.set(windowId, { captureSessionId,
+    createdAt: new Date().toISOString() })
+  await persistOwnedRunContexts()
+}
+
+async function forgetOwnedRunTab(tabId) {
+  await hydrateOwnedRunContexts()
+  if (!ownedRunTabs.delete(tabId)) return
+  await persistOwnedRunContexts()
+}
+
+function chromeContextExists(kind, id) {
+  const api = kind === "window" ? chrome.windows : chrome.tabs
+  if (!api || typeof api.get !== "function") return Promise.resolve(false)
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (exists) => {
+      if (settled) return
+      settled = true
+      resolve(exists)
+    }
+    try {
+      const pending = api.get(id, (value) => {
+        const error = consumeRuntimeLastError()
+        finish(!error && Boolean(value))
+      })
+      pending?.then?.((value) => finish(Boolean(value)), () => finish(false))
+    } catch { finish(false) }
+  })
+}
+
+function removeChromeContext(kind, id) {
+  const api = kind === "window" ? chrome.windows : chrome.tabs
+  if (!api || typeof api.remove !== "function") return Promise.resolve(false)
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (removed) => {
+      if (settled) return
+      settled = true
+      resolve(removed)
+    }
+    try {
+      const pending = api.remove(id, () => {
+        const error = consumeRuntimeLastError()
+        finish(!error || /No (?:tab|window)/i.test(error))
+      })
+      pending?.then?.(() => finish(true), () => finish(false))
+    } catch { finish(false) }
+  })
+}
+
+async function cleanupOwnedRunContexts(reason = "TERMINAL") {
+  await hydrateOwnedRunContexts()
+  const close = async (kind, entries) => {
+    const survivors = []
+    for (const id of entries) {
+      let removed = false
+      for (let attempt = 0; attempt < 3 && !removed; attempt += 1) {
+        removed = await removeChromeContext(kind, id)
+        if (!removed) removed = !await chromeContextExists(kind, id)
+      }
+      if (removed || !await chromeContextExists(kind, id)) {
+        if (kind === "window") ownedRunWindows.delete(id)
+        else ownedRunTabs.delete(id)
+      } else survivors.push(id)
+    }
+    return survivors
+  }
+  // A whole OS-owned window is closed first. Individual owned tabs never
+  // imply ownership of the surrounding user window.
+  const orphanWindows = await close("window", [...ownedRunWindows.keys()])
+  const orphanTabs = await close("tab", [...ownedRunTabs.keys()])
+  await persistOwnedRunContexts()
+  lastOwnedContextCleanup = Object.freeze({ reason,
+    orphanOwnedTabsAfterRun: orphanTabs.length,
+    orphanOwnedWindowsAfterRun: orphanWindows.length })
+  return lastOwnedContextCleanup
+}
+
+function armActiveJobTimeout(startedAtMs = Date.now()) {
+  if (activeJobTimeoutTimer) clearTimeout(activeJobTimeoutTimer)
+  activeJobStartedAtMs = Number.isFinite(startedAtMs) ? startedAtMs : Date.now()
+  const remaining = Math.max(0,
+    JOB_MAX_RUNTIME_MS - (Date.now() - activeJobStartedAtMs))
+  activeJobTimeoutTimer = setTimeout(() => {
+    activeJobTimeoutTimer = null
+    failActiveJob("LUNA_SHIPPING_JOB_TIMEOUT")
+  }, remaining)
+  activeJobTimeoutTimer?.unref?.()
+  chrome.alarms?.create?.(JOB_TIMEOUT_ALARM, {
+    when: activeJobStartedAtMs + JOB_MAX_RUNTIME_MS,
+  })
+}
+
 function clearActiveJob() {
+  if (activeJobTimeoutTimer) clearTimeout(activeJobTimeoutTimer)
+  activeJobTimeoutTimer = null
+  activeJobStartedAtMs = null
+  try {
+    chrome.alarms?.clear?.(JOB_TIMEOUT_ALARM, () => consumeRuntimeLastError())
+  } catch { /* Alarm cleanup is best effort; activeJob remains authoritative. */ }
   resetCheckoutNavigationObserver()
   activeJob = null
   activeJobPhase = null
@@ -405,6 +597,21 @@ function clearActiveJob() {
   canonicalBindBootstrapTraceStates = new Set()
   canonicalBindBootstrapAttempted = false
   settleCanonicalBindCheckout(new Error("BIND_CHECKOUT_BOOTSTRAP_ABORTED"))
+}
+
+async function terminateActiveJob(reason) {
+  clearActiveJob()
+  activeTabId = null
+  const operation = terminalCleanupChain.then(async () => {
+    jobTerminationInProgress = true
+    try {
+      return await cleanupOwnedRunContexts(safeRuntimeReason(reason))
+    } finally {
+      jobTerminationInProgress = false
+    }
+  })
+  terminalCleanupChain = operation.catch(() => lastOwnedContextCleanup)
+  return operation
 }
 
 function finalizeCanonicalBindRuntime(bootstrapStarted) {
@@ -612,7 +819,10 @@ function recoverActiveJob(sender) {
   if (!Number.isInteger(sender.tab?.id)) return null
   const navigatedJob = decodeJobFromUrl(sender.url ?? "")
   if (activeJob && navigatedJob && !sameJob(activeJob, navigatedJob)) return null
-  if (!activeJob) activeJob = navigatedJob
+  if (!activeJob) {
+    activeJob = navigatedJob
+    if (activeJob) armActiveJobTimeout()
+  }
   if (!activeJob) return null
   const expected = exactLunaUrl(activeJob.identity.canonicalProductUrl)
   let actual = null
@@ -1402,6 +1612,7 @@ async function startJob(job, productionAutoClaim = false,
   portGeneration = null) {
   const invalidReason = jobValidationReason(job)
   if (invalidReason) throw new Error(invalidReason)
+  await terminalCleanupChain
   const exact = safeJob(job)
   const url = exact && exactLunaUrl(exact.identity.canonicalProductUrl)
   if (!exact || !url) throw new Error("JOB_IDENTITY_MISMATCH:identity.canonicalProductUrl")
@@ -1428,6 +1639,7 @@ async function startJob(job, productionAutoClaim = false,
     clearActiveJob()
   }
   activeJob = exact
+  armActiveJobTimeout()
   if (exactPreDispatchTrace) {
     activeRuntimeTrace = exactPreDispatchTrace
     for (const event of activeRuntimeTrace.events) {
@@ -1484,18 +1696,24 @@ async function navigateActiveJob(url) {
     const tab = await chrome.tabs.create({ url, active: true })
     if (!Number.isInteger(tab.id)) throw new Error("LUNA_SHIPPING_TAB_UNAVAILABLE")
     activeTabId = tab.id
+    await registerOwnedRunTab(tab.id, activeJob?.captureSessionId ?? "UNKNOWN")
   } else {
     await chrome.tabs.update(activeTabId, { url, active: true })
+    if (activeJob && ownedRunTabs.has(activeTabId)) {
+      await registerOwnedRunTab(activeTabId, activeJob.captureSessionId)
+    }
   }
 }
 
 function failActiveJob(error) {
   if (!activeJob) return
   emitRuntimeTrace("FAIL", false, safeRuntimeReason(error))
-  sellerPort?.postMessage({ type: JOB_RESULT, success: false,
-    error: safeRuntimeReason(error), lastRuntimeState,
-    capture: { candidateId: activeJob.identity.candidateId } })
-  clearActiveJob()
+  try {
+    sellerPort?.postMessage({ type: JOB_RESULT, success: false,
+      error: safeRuntimeReason(error), lastRuntimeState,
+      capture: { candidateId: activeJob.identity.candidateId } })
+  } catch { /* Terminal cleanup must outlive a disconnected UI port. */ }
+  void terminateActiveJob(error)
 }
 
 function failBindingBootstrapOrActiveJob(error) {
@@ -1649,6 +1867,8 @@ chrome.runtime.onStartup?.addListener?.(scheduleShippingWorkerRecovery)
 chrome.alarms?.onAlarm?.addListener?.((alarm) => {
   if (alarm.name === WORKER_CONTROL_ALARM) {
     void ensureShippingWorkerControlPage()
+  } else if (alarm.name === JOB_TIMEOUT_ALARM && activeJob) {
+    failActiveJob("LUNA_SHIPPING_JOB_TIMEOUT")
   }
 })
 
@@ -1675,10 +1895,6 @@ chrome.runtime.onConnectExternal.addListener((port) => {
   if (port.name !== PORT_NAME || !safeSellerSender(port.sender) || sellerPort) {
     port.disconnect()
     return
-  }
-  if (disconnectCleanupTimer) {
-    clearTimeout(disconnectCleanupTimer)
-    disconnectCleanupTimer = null
   }
   sellerPort = port
   let acceptedPortGeneration = null
@@ -1730,6 +1946,7 @@ chrome.runtime.onConnectExternal.addListener((port) => {
     if (message?.type === GET_ACTIVE_PRODUCTION_JOB_STATUS) {
       port.postMessage({ type: ACTIVE_PRODUCTION_JOB_STATUS,
         active: Boolean(activeJob),
+        lifecycle: lastOwnedContextCleanup,
         ...(activeJob ? { job: activeJob, phase: activeJobPhase,
           dispatchPendingDurableAck: Boolean(pendingExactDispatch),
           dispatchCompleted: Boolean(completedExactDispatchTraceId),
@@ -1763,14 +1980,25 @@ chrome.runtime.onConnectExternal.addListener((port) => {
           capture: { candidateId: message.job?.identity?.candidateId ?? null } })
         return
       }
+      const activeJobBeforeStart = activeJob
       void startJob(message.job, message.productionAutoClaim === true,
         false, message.requireDurableDispatchAck === true,
         message.preDispatchTrace ?? null, port, acceptedPortGeneration)
-        .catch((error) => port.postMessage({
-        type: JOB_RESULT, success: false,
-        error: error instanceof Error ? error.message : "LUNA_SHIPPING_JOB_FAILED",
-        capture: { candidateId: message.job?.identity?.candidateId ?? null },
-      }))
+        .catch((error) => {
+          if (activeJob && activeJob !== activeJobBeforeStart &&
+              sameJob(activeJob, message.job)) {
+            failActiveJob(error instanceof Error ? error.message
+              : "LUNA_SHIPPING_JOB_FAILED")
+            return
+          }
+          try {
+            port.postMessage({ type: JOB_RESULT, success: false,
+              error: error instanceof Error ? error.message
+                : "LUNA_SHIPPING_JOB_FAILED",
+              capture: { candidateId: message.job?.identity?.candidateId ?? null },
+            })
+          } catch { /* The bridge may have entered BFCache meanwhile. */ }
+        })
       return
     }
     if (message?.type === DURABLE_DISPATCH_ACK) {
@@ -1839,7 +2067,7 @@ chrome.runtime.onConnectExternal.addListener((port) => {
         emitRuntimeTrace("PRODUCTION_JOB_COMPLETED")
         emitRuntimeTrace("AUTO_NEXT")
         emitRuntimeTrace("PASS")
-        clearActiveJob()
+        void terminateActiveJob("SUCCESS_REJECT_STOCK")
         return
       }
       const safeDetails = { subtotalUsd: message.subtotalUsd,
@@ -1848,7 +2076,18 @@ chrome.runtime.onConnectExternal.addListener((port) => {
       emitRuntimeTrace("DURABLE_READBACK", true, "NONE", safeDetails)
       emitRuntimeTrace("ECONOMICS_EVALUATED", true, "NONE", safeDetails)
       emitRuntimeTrace("PASS", true, "NONE", safeDetails)
-      clearActiveJob()
+      void terminateActiveJob("SUCCESS")
+      return
+    }
+    if (message?.type === CANCEL_ACTIVE_JOB) {
+      if (!activeJob || message.captureSessionId !== activeJob.captureSessionId ||
+          message.candidateId !== activeJob.identity.candidateId) {
+        port.postMessage({ type: JOB_RESULT, success: false,
+          error: "LUNA_SHIPPING_CANCEL_IDENTITY_MISMATCH",
+          capture: { candidateId: message.candidateId ?? null } })
+        return
+      }
+      failActiveJob("LUNA_SHIPPING_JOB_CANCELLED")
       return
     }
     if (message?.type !== RESUME_ACTIVE_JOB) return
@@ -1859,19 +2098,21 @@ chrome.runtime.onConnectExternal.addListener((port) => {
         capture: { candidateId: message.job?.identity?.candidateId ?? null } })
       return
     }
+    const recoveredFromEmptyWorker = !activeJob
     activeJob = message.job
     activeJobPhase = new Set([CART_PHASE, CHECKOUT_PHASE]).has(message.phase)
       ? message.phase : "PRODUCT_PAGE"
+    if (recoveredFromEmptyWorker) armActiveJobTimeout()
     emitProgress("BRIDGE_RECONNECTED")
   })
   port.onDisconnect.addListener(() => {
+    // Reading lastError inside the callback prevents Chrome from emitting
+    // "Unchecked runtime.lastError" when BFCache closes the external port.
+    consumeRuntimeLastError()
     if (sellerPort !== port) return
     sellerPort = null
-    if (!activeJob) return
-    disconnectCleanupTimer = setTimeout(() => {
-      if (!sellerPort) clearActiveJob()
-      disconnectCleanupTimer = null
-    }, RECONNECT_GRACE_MS)
+    // The UI bridge is transport only. The job belongs to the service worker
+    // and survives BFCache, ordinary navigation, and page-port replacement.
   })
 })
 
@@ -2004,8 +2245,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         error: invalidReason ?? "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED" })
       return false
     }
+    const recoveredFromEmptyWorker = !activeJob
     activeJob = message.job
     activeTabId = sender.tab.id
+    if (recoveredFromEmptyWorker) armActiveJobTimeout()
     sendResponse({ accepted: true, captureSessionId: activeJob.captureSessionId })
     return false
   }
@@ -2132,15 +2375,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.success !== true) {
     emitRuntimeTrace("FAIL", false, typeof message.error === "string"
       ? safeRuntimeReason(message.error) : "LUNA_SHIPPING_JOB_FAILED")
-    clearActiveJob()
+    void terminateActiveJob(message.error ?? "LUNA_SHIPPING_JOB_FAILED")
   }
   return false
 })
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const owned = ownedRunTabs.has(tabId)
+  if (owned) void forgetOwnedRunTab(tabId)
   if (tabId === activeTabId) {
     activeTabId = null
-    clearActiveJob()
+    if (activeJob && !jobTerminationInProgress) {
+      failActiveJob(owned ? "LUNA_SHIPPING_OWNED_TAB_CLOSED"
+        : "LUNA_SHIPPING_ACTIVE_TAB_CLOSED")
+    }
   }
 })
 

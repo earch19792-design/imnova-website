@@ -4,7 +4,7 @@ const CHECKOUT_OBSERVATION_ONLY = false
 const checkoutBootstrapAckPromise = CHECKOUT_OBSERVATION_ONLY ? Promise.resolve(false) : new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.55" },
+      extensionBuildVersion: "1.0.56" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -2071,7 +2071,7 @@ chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
   if (message?.type === "SELLER_OS_LUNA_CHECKOUT_OBSERVER_HELLO_V1") {
     if (location.hostname !== "shop.app" || typeof message.nonce !== "string") return false
     sendResponse({ contract: "LUNA_CHECKOUT_OBSERVER_HANDSHAKE_V1", nonce: message.nonce,
-      version: "1.0.55", loaded: true })
+      version: "1.0.56", loaded: true })
     return false
   }
   if (message?.type === BIND_ELIGIBILITY_PROBE) {

@@ -1,0 +1,28 @@
+{
+  "contract": "LUNA_BROWSER_LIFECYCLE_HARDENING_V1_CHROME_REAL",
+  "observedAt": "2026-09-13T18:02:08.000Z",
+  "chromeProduct": "Chrome/145.0.7632.6",
+  "extensionId": "mhpkojahbbfdgodeaecggpjaplllgclk",
+  "extensionVersion": "1.0.56",
+  "PASS_BFCACHE_PORT_CLOSE_HANDLED": true,
+  "PASS_BFCACHE_RECONNECT": true,
+  "PASS_JOB_STATE_SURVIVES_PORT_CLOSE": true,
+  "PASS_CLEANUP_ON_SUCCESS": true,
+  "PASS_USER_TABS_PRESERVED": true,
+  "PASS_ZERO_ORPHAN_WINDOWS": true,
+  "bfcache": {
+    "pagehide": 1,
+    "pageshow": 1,
+    "persistedHide": true,
+    "persistedShow": true,
+    "reconnects": 2
+  },
+  "cleanup": {
+    "reason": "SUCCESS",
+    "orphanOwnedTabsAfterRun": 0,
+    "orphanOwnedWindowsAfterRun": 0
+  },
+  "uncheckedRuntimeErrors": [],
+  "temporaryChromeProcessesAfterCleanup": 0,
+  "commercialCertificationExecuted": false
+}

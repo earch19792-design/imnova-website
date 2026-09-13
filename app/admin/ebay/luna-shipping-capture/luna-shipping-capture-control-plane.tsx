@@ -48,7 +48,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.55"
+const EXPECTED_EXTENSION_VERSION = "1.0.56"
 const RUNTIME_TRACE_CONTRACT = "LUNA_SHIPPING_RUNTIME_TRACE_V1"
 const SELLER_OS_EXTENSION_ORIGIN = SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
@@ -2295,6 +2295,11 @@ export function LunaShippingCaptureControlPlane({
           void acquireCurrentPort(busy ? jobs[index] : jobToResume)
         }
         nextPort.onDisconnect.addListener(() => {
+          // Chrome requires runtime.lastError to be read synchronously inside
+          // the disconnect callback. BFCache can close this port normally.
+          const runtimeDisconnectError =
+            window.chrome?.runtime?.lastError?.message ?? ""
+          void runtimeDisconnectError
           if (!active || port !== nextPort) return
           if (portHandshakeTimer !== null) {
             window.clearTimeout(portHandshakeTimer)
@@ -2436,7 +2441,9 @@ export function LunaShippingCaptureControlPlane({
         reconnectGeneration += 1
         const hiddenPort = port
         port = null
-        hiddenPort?.disconnect()
+        try { hiddenPort?.disconnect() } catch {
+          // BFCache may invalidate the port before pagehide finishes.
+        }
       }
       const handlePageShow = (event: PageTransitionEvent) => {
         pageHidden = false
