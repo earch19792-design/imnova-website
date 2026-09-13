@@ -7,6 +7,9 @@ import {
   buildOfficialEbayVisualMetadata,
   buildEbaySellerKeywordDemandValidation,
   buildEbaySellerKeywordSearchQuery,
+  ebayComparableLegacyItemId,
+  mergeDurableSoldEvidenceV1,
+  type EbayDurableSoldEvidenceRow,
   type EbaySellerComparableInput,
   type EbaySellerKeywordCandidate,
 } from "./ebay-seller-keyword-demand-validation"
@@ -54,6 +57,11 @@ const EBAY_MAX_RETRIES = 3
 const TAXONOMY_CACHE_TTL_MS = 6 * 60 * 60 * 1_000
 const RATE_LIMIT_CACHE_TTL_MS = 5 * 60 * 1_000
 const BROWSE_QUOTA_RESERVE = 50
+
+type CommercialMarketReaderOptions = Readonly<{
+  functionalSearchQuery?: string | null
+  marketplaceAccountKey?: string | null
+}>
 
 export type EbayCatalogIdentityProduct = {
   epid: string | null
@@ -434,6 +442,36 @@ function normalizedGtin(value: unknown) {
   return validateGtinChecksum(candidate) ? candidate : ""
 }
 
+async function readDurableSoldEvidence(
+  comparables: readonly EbaySellerComparableInput[],
+  marketplaceAccountKey: string | null | undefined,
+) {
+  const accountKey = text(marketplaceAccountKey)
+  const itemIds = [...new Set(comparables.map((entry) =>
+    ebayComparableLegacyItemId(entry.itemId)).filter(Boolean))]
+  if (!accountKey || !itemIds.length) {
+    return { status: "NO_MATCH" as const, rows: [] }
+  }
+  try {
+    const { data, error } = await getSupabaseAdminClient()
+      .from("marketplace_sold_evidence_observations")
+      .select("item_id,source_type,source_class,confirmed_sold_quantity,sold_at,captured_at,realized_price_status")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE_ID)
+      .in("item_id", itemIds)
+      .eq("evidence_reviewed", true)
+      .gt("confirmed_sold_quantity", 0)
+      .order("captured_at", { ascending: false })
+      .limit(Math.min(1_000, Math.max(100, itemIds.length * 20)))
+    if (error) return { status: "REQUEST_FAILED" as const, rows: [] }
+    const rows = (data ?? []) as EbayDurableSoldEvidenceRow[]
+    return { status: rows.length ? "AVAILABLE" as const : "NO_MATCH" as const,
+      rows }
+  } catch {
+    return { status: "REQUEST_FAILED" as const, rows: [] }
+  }
+}
+
 function normalizedEpid(value: unknown) {
   const candidate = text(value)
   return /^\d{1,20}$/.test(candidate) ? candidate : ""
@@ -709,7 +747,8 @@ async function searchSoldHistory(
 }
 
 export async function runEbaySellerKeywordDemandValidation(
-  candidate: EbaySellerKeywordCandidate
+  candidate: EbaySellerKeywordCandidate,
+  options: CommercialMarketReaderOptions = {},
 ) {
   const query = buildEbaySellerKeywordSearchQuery(candidate)
   if (query.length < 3) throw new Error("EBAY_SEARCH_QUERY_TOO_SHORT")
@@ -717,7 +756,7 @@ export async function runEbaySellerKeywordDemandValidation(
   let browseToken = ""
   let insightsToken = ""
   try {
-    await enforceBrowseQuota(3 + detailSampleLimit())
+    await enforceBrowseQuota(4 + detailSampleLimit() * 2)
     browseToken = await getApplicationToken(BROWSE_SCOPE)
     let activeSearch = await searchActiveListings(candidate, query, browseToken)
     if (activeSearch.items.length === 0 && normalizedGtin(candidate.gtin)) {
@@ -762,6 +801,63 @@ export async function runEbaySellerKeywordDemandValidation(
       }
     }
 
+    const exactItemIds = new Set(activeComparables.map((entry) =>
+      ebayComparableLegacyItemId(entry.itemId)).filter(Boolean))
+    const functionalSearchQuery = text(options.functionalSearchQuery).slice(0, 180)
+    let functionalSearch: Awaited<ReturnType<typeof searchActiveListings>> | null = null
+    let functionalComparables: EbaySellerComparableInput[] = []
+    let functionalMaximumExamined = 0
+    let functionalStopReason: "BOUNDED_LIMIT_REACHED" | "ALL_RETURNED_EXAMINED" =
+      "ALL_RETURNED_EXAMINED"
+    if (functionalSearchQuery && functionalSearchQuery !== query) {
+      const forbiddenIdentifiers = [candidate.gtin, candidate.epid,
+        candidate.supplierSku, candidate.mpn, candidate.model]
+        .map((value) => text(value).toLocaleLowerCase("en-US")
+          .replace(/[^a-z0-9]+/g, ""))
+        .filter((value) => value.length >= 4)
+      const normalizedFunctionalQuery = functionalSearchQuery
+        .toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, "")
+      if (forbiddenIdentifiers.some((value) =>
+        normalizedFunctionalQuery.includes(value))) {
+        throw new Error("FUNCTIONAL_SEARCH_QUERY_CONTAINS_EXACT_IDENTIFIER")
+      }
+      const functionalCandidate = { ...candidate,
+        productName: functionalSearchQuery, productTitle: functionalSearchQuery,
+        variantTitle: null, supplierSku: null, gtin: null, epid: null,
+        mpn: null, model: null }
+      functionalSearch = await searchActiveListings(functionalCandidate,
+        functionalSearchQuery, browseToken)
+      const functionalSummaries = functionalSearch.items.map((value) =>
+        mapComparable(value, "EBAY_BROWSE_ACTIVE_LISTING"))
+      const preliminaryFunctional = buildEbaySellerKeywordDemandValidation({
+        candidate, comparables: functionalSummaries,
+        insightsAvailability: "NOT_CONFIGURED",
+      })
+      const functionalOnly = functionalSearch.items.filter((value, index) => {
+        const itemId = ebayComparableLegacyItemId(
+          functionalSummaries[index]?.itemId)
+        return !exactItemIds.has(itemId) &&
+          preliminaryFunctional.comparableEvidence[index]
+            ?.commercialComparableClass !== "EXACT_MODEL_COMPARABLE"
+      })
+      const prioritizedFunctional = prioritizeActiveListingsForCommercialSampling(
+        candidate, functionalOnly)
+      functionalMaximumExamined = Math.min(detailSampleLimit(),
+        prioritizedFunctional.length)
+      functionalStopReason = functionalMaximumExamined < prioritizedFunctional.length
+        ? "BOUNDED_LIMIT_REACHED" : "ALL_RETURNED_EXAMINED"
+      for (let offset = 0; offset < functionalMaximumExamined;
+        offset += DETAIL_SAMPLE_BATCH_SIZE) {
+        const batch = await mapWithConcurrency(prioritizedFunctional.slice(offset,
+          Math.min(offset + DETAIL_SAMPLE_BATCH_SIZE, functionalMaximumExamined)),
+        DETAIL_CONCURRENCY, (item) => mappedActiveComparable(item, browseToken))
+        functionalComparables.push(...batch.map((mapped) =>
+          mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
+            ? { ...mapped, source: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE" as const }
+            : mapped))
+      }
+    }
+
     let insightsAvailability:
       | "AVAILABLE"
       | "NOT_CONFIGURED"
@@ -792,29 +888,61 @@ export async function runEbaySellerKeywordDemandValidation(
       }
     }
 
+    const activeWithFunctional = [...activeComparables, ...functionalComparables]
+    const durableSold = await readDurableSoldEvidence(activeWithFunctional,
+      options.marketplaceAccountKey)
+    const activeWithDurable = mergeDurableSoldEvidenceV1(activeWithFunctional,
+      durableSold.rows)
     const byId = new Map<string, EbaySellerComparableInput>()
-    for (const comparable of [...activeComparables, ...soldComparables]) {
+    for (const comparable of [...activeWithDurable, ...soldComparables]) {
       const key = comparable.itemId || `${comparable.source}:${comparable.title}`
-      byId.set(key, comparable)
+      const existing = byId.get(key)
+      byId.set(key, existing && comparable.source ===
+          "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+        ? { ...existing, totalSoldQuantity: comparable.totalSoldQuantity,
+            lastSoldDate: comparable.lastSoldDate,
+            soldHistorySource: existing.soldHistorySource ??
+              "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" }
+        : comparable)
     }
+    const exactFound = numberOrNull(activeSearch.payload.total) ??
+      activeSearch.items.length
+    const functionalFound = functionalSearch
+      ? numberOrNull(functionalSearch.payload.total) ?? functionalSearch.items.length
+      : 0
+    const combinedMaximumExamined = maximumExamined + functionalMaximumExamined
     const baseReport = buildEbaySellerKeywordDemandValidation({
       candidate,
       comparables: [...byId.values()],
-      candidateFoundCount:
-        numberOrNull(activeSearch.payload.total) ?? activeSearch.items.length,
-      returnedCandidateCount: activeSearch.items.length,
-      enrichedSampleCount: activeComparables.length,
+      candidateFoundCount: exactFound + functionalFound,
+      returnedCandidateCount: activeSearch.items.length +
+        (functionalSearch?.items.length ?? 0),
+      enrichedSampleCount: activeWithFunctional.length,
       insightsAvailability,
+      durableSoldEvidenceStatus: durableSold.status,
       commercialSamplingPolicy: {
         strategy: "EXACT_MODEL_THEN_FUNCTIONAL_THEN_NON_COMPARABLE",
         minimumBeforeUnproven,
-        maximumExamined,
+        maximumExamined: combinedMaximumExamined,
         batchSize: DETAIL_SAMPLE_BATCH_SIZE,
         stopReason,
         sufficientBeforeDemandUnproven:
           stopReason !== "SUFFICIENT_POSITIVE_DEMAND_EVIDENCE"
-            ? activeComparables.length >= maximumExamined
+            ? activeWithFunctional.length >= combinedMaximumExamined
             : true,
+      },
+      marketSearches: {
+        exactModel: { query, candidateFoundCount: exactFound,
+          returnedCandidateCount: activeSearch.items.length,
+          enrichedSampleCount: activeComparables.length, maximumExamined,
+          stopReason },
+        functionalFamily: functionalSearch ? {
+          query: functionalSearchQuery, candidateFoundCount: functionalFound,
+          returnedCandidateCount: functionalSearch.items.length,
+          enrichedSampleCount: functionalComparables.length,
+          maximumExamined: functionalMaximumExamined,
+          stopReason: functionalStopReason,
+        } : null,
       },
     })
     return baseReport

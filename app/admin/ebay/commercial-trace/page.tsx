@@ -127,6 +127,12 @@ function CommercialTraceContent() {
     ["CONFIDENCE", result.CONFIDENCE],
     ["RECOMMENDED_PRICE", money(result.RECOMMENDED_PRICE)],
     ["PRIMARY_KEYWORD_FAMILY", result.PRIMARY_KEYWORD_FAMILY],
+    ["EXACT_MODEL_SEARCH_QUERY", result.EXACT_MODEL_SEARCH_QUERY],
+    ["FUNCTIONAL_SEARCH_QUERY", result.FUNCTIONAL_SEARCH_QUERY],
+    ["EXACT_MODEL_ACCEPTED", list(result.EXACT_MODEL_ACCEPTED).length],
+    ["FUNCTIONAL_ACCEPTED", list(result.FUNCTIONAL_ACCEPTED).length],
+    ["STRUCTURED_MODEL_CONFLICTS",
+      list(result.STRUCTURED_MODEL_CONFLICTS).length],
     ["LANDED_COST", money(result.LANDED_COST)],
     ["ACCEPTED_COMPARABLE_COUNT", result.ACCEPTED_COMPARABLE_COUNT],
     ["EXCLUDED_COMPARABLE_COUNT", result.EXCLUDED_COMPARABLE_COUNT],
@@ -185,12 +191,14 @@ function CommercialTraceContent() {
           <div className="mt-3 space-y-3">{accepted.map((item, index) => <article key={`${item.comparableId}:${index}`}
             className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.06] p-4">
             <p className="font-bold">{display(item.title)}</p><p className="mt-2 text-sm text-white/65">{money(item.price)} + shipping {money(item.shippingCost)} · {display(item.comparableClass)} · {display(item.identityMatchQuality)}</p>
+            <p className="mt-2 text-xs text-white/65">SOLD_HISTORY_SOURCE: {display(item.soldHistorySource)} · CONFIRMED: {display(item.confirmedSoldQuantity)} · ESTIMATED: {display(item.estimatedSoldQuantity)} · LAST_SOLD_DATE: {display(item.lastSoldDate)} · REALIZED_PRICE_STATUS: {display(item.realizedPriceStatus)}</p>
             <p className="mt-2 text-xs text-emerald-100/65">Pricing: {display(item.pricingReason)}</p>
           </article>)}{!accepted.length && <p className="text-sm text-white/50">Ningún comparable aceptado todavía.</p>}</div></div>
         <div><h2 className="text-xl font-black">Comparables excluidos ({excluded.length})</h2>
           <div className="mt-3 space-y-3">{excluded.map((item, index) => <article key={`${item.comparableId}:${index}`}
             className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4">
             <p className="font-bold">{display(item.title)}</p><p className="mt-2 text-sm text-white/65">{money(item.price)} · {display(item.comparableClass)} · {display(item.identityMatchQuality)}</p>
+            <p className="mt-2 text-xs text-white/65">SOLD_HISTORY_SOURCE: {display(item.soldHistorySource)} · CONFIRMED: {display(item.confirmedSoldQuantity)} · ESTIMATED: {display(item.estimatedSoldQuantity)} · LAST_SOLD_DATE: {display(item.lastSoldDate)} · REALIZED_PRICE_STATUS: {display(item.realizedPriceStatus)}</p>
             <p className="mt-2 text-xs font-black text-rose-100">Razón: {display(item.rejectionReason)}</p>
           </article>)}{!excluded.length && <p className="text-sm text-white/50">Ningún comparable excluido todavía.</p>}</div></div>
       </section>

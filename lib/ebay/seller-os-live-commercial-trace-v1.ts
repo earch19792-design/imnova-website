@@ -14,7 +14,10 @@ export const SELLER_OS_LIVE_COMMERCIAL_TRACE_V1 =
   "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1" as const
 const SHIPPING_MAX_AGE_MS = 24 * 60 * 60 * 1_000
 type JsonRecord = Record<string, unknown>
-type MarketReaderV1 = (candidate: EbaySellerKeywordCandidate) =>
+type MarketReaderV1 = (candidate: EbaySellerKeywordCandidate, options?: Readonly<{
+  functionalSearchQuery?: string | null
+  marketplaceAccountKey?: string | null
+}>) =>
   Promise<EbaySellerKeywordDemandReport>
 
 function record(value: unknown): JsonRecord {
@@ -236,6 +239,24 @@ export function buildMaterialKeywordFamilyV1(
   return `${specification.value} ${identity.value} with ${selected.join(" and ")}`
 }
 
+export function buildFunctionalFamilySearchQueryV1(
+  safeClaims: readonly SafeCommercialClaimV1[],
+) {
+  const identity = safeClaims.find((entry) => entry.kind === "PRODUCT_IDENTITY")
+  const specification = safeClaims.find((entry) => entry.kind === "SPECIFICATION")
+  const priority = (claim: SafeCommercialClaimV1) =>
+    claim.normalizedValue === "built in speakers" ? 3
+      : claim.normalizedValue === "microphone" ? 2 : 1
+  const differentiators = safeClaims.filter((entry) =>
+    entry.kind === "FUNCTIONAL_DIFFERENTIATOR")
+    .sort((left, right) => priority(right) - priority(left))
+    .slice(0, 2)
+  if (!identity || !differentiators.length) return null
+  const prefix = specification ? `${specification.value} ` : ""
+  return `${prefix}${identity.value} with ${differentiators
+    .map((entry) => entry.value).join(" and ")}`
+}
+
 export function buildCommercialMarketProjectionV1(
   report: EbaySellerKeywordDemandReport | null,
   safeClaims: readonly SafeCommercialClaimV1[] = [],
@@ -272,7 +293,12 @@ export function buildCommercialMarketProjectionV1(
       comparableClass: text(entry.commercialComparableClass, 80),
       exactModelToken: text(entry.exactModelToken, 80),
       verifiedSoldQuantity: number(entry.verifiedSoldQuantity) ?? 0,
+      confirmedSoldQuantity: number(entry.confirmedSoldQuantity) ?? 0,
       estimatedSoldQuantity: number(entry.estimatedSoldQuantity) ?? 0,
+      soldHistorySource: text(entry.soldHistorySource, 120),
+      soldHistorySourceDetail: text(entry.durableSoldSourceType, 160),
+      lastSoldDate: text(entry.lastSoldDate, 80),
+      realizedPriceStatus: text(entry.realizedPriceStatus, 80),
       sellerUsername: text(entry.sellerUsername, 160),
       usedForPricing,
       pricingReason: usedForPricing ? "DEMAND_BEARING_ELIGIBLE_COMPARABLE"
@@ -290,9 +316,26 @@ export function buildCommercialMarketProjectionV1(
     identityMatchQuality: text(entry.identityMatchQuality, 80),
     identityEvidenceClass: text(entry.identityEvidenceClass, 120),
     comparableClass: text(entry.commercialComparableClass, 80),
+    confirmedSoldQuantity: number(entry.confirmedSoldQuantity) ?? 0,
+    estimatedSoldQuantity: number(entry.estimatedSoldQuantity) ?? 0,
+    soldHistorySource: text(entry.soldHistorySource, 120),
+    soldHistorySourceDetail: text(entry.durableSoldSourceType, 160),
+    lastSoldDate: text(entry.lastSoldDate, 80),
+    realizedPriceStatus: text(entry.realizedPriceStatus, 80),
     rejectionReason: comparableRejectionReason(entry),
   }))
+  const exactModelAccepted = acceptedProjection.filter((entry) =>
+    entry.comparableClass === "EXACT_MODEL_COMPARABLE")
+  const functionalAccepted = acceptedProjection.filter((entry) =>
+    entry.comparableClass === "FUNCTIONAL_COMPARABLE")
+  const confirmedSoldEvidence = [...acceptedProjection, ...excludedProjection]
+    .filter((entry) => entry.confirmedSoldQuantity > 0)
+  const estimatedSoldEvidence = [...acceptedProjection, ...excludedProjection]
+    .filter((entry) => entry.estimatedSoldQuantity > 0)
+  const structuredModelConflicts = excludedProjection.filter((entry) =>
+    entry.rejectionReason?.includes("STRUCTURED_MODEL_CONFLICT"))
   const structure = report?.recommendedListingKeywordStructure
+  const marketSearches = report?.evidenceBuckets.marketSearches
   const demand = !report ? "MARKET_READ_UNAVAILABLE"
     : report.demandValidationBasis === "VERIFIED_HISTORICAL_MULTI_SELLER"
       ? "VERIFIED_MULTI_SELLER_DEMAND"
@@ -303,6 +346,9 @@ export function buildCommercialMarketProjectionV1(
           : "INSUFFICIENT_COMPARABLE_EVIDENCE"
   return Object.freeze({
     searchQuery: report?.searchQuery ?? null,
+    exactModelSearchQuery: marketSearches?.exactModel.query ??
+      report?.searchQuery ?? null,
+    functionalSearchQuery: marketSearches?.functionalFamily?.query ?? null,
     primaryKeywordFamily: buildMaterialKeywordFamilyV1(report, safeClaims),
     secondaryKeywords: Object.freeze([...(structure?.secondarySearchTerms ?? [])]),
     demandClassification: demand,
@@ -310,6 +356,12 @@ export function buildCommercialMarketProjectionV1(
     demandValidationPassed: report?.demandValidationPassed === true,
     acceptedComparables: Object.freeze(acceptedProjection),
     excludedComparables: Object.freeze(excludedProjection),
+    exactModelAccepted: Object.freeze(exactModelAccepted),
+    functionalAccepted: Object.freeze(functionalAccepted),
+    nonComparable: Object.freeze(excludedProjection),
+    confirmedSoldEvidence: Object.freeze(confirmedSoldEvidence),
+    estimatedSoldEvidence: Object.freeze(estimatedSoldEvidence),
+    structuredModelConflicts: Object.freeze(structuredModelConflicts),
     priceRange: range,
     observedComparableCount: observed.length,
     candidateFoundCount: report?.evidenceBuckets.candidateFoundCount ?? 0,
@@ -326,6 +378,8 @@ export function buildCommercialMarketProjectionV1(
     sourceLimitations: Object.freeze([
       ...(report?.soldHistoryIsLimitedRelease
         ? ["EBAY_SOLD_HISTORY_LIMITED_RELEASE"] : []),
+      ...(report?.durableSoldEvidenceStatus === "REQUEST_FAILED"
+        ? ["DURABLE_SOLD_EVIDENCE_READ_FAILED"] : []),
       ...((report?.evidenceBuckets.candidateFoundCount ?? 0) > observed.length
         ? ["EBAY_RESULT_SET_BOUNDED_BY_GATEWAY_SAMPLE"] : []),
     ]),
@@ -568,12 +622,18 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       const reader = input.marketReader ?? (await import(
         "./ebay-seller-keyword-demand-gateway")).runEbaySellerKeywordDemandValidation
       const safeMarketIdentity = safeClaimTruth.safeMarketIdentity || product.title
+      const candidateModel = safeClaimTruth.safeClaims.find((entry) =>
+        entry.kind === "MODEL")?.value ?? null
+      const functionalSearchQuery = buildFunctionalFamilySearchQueryV1(
+        safeClaimTruth.safeClaims)
       report = await reader({ productName: safeMarketIdentity,
           productTitle: safeMarketIdentity, variantTitle: variant.title,
           supplierSku: variant.sku, gtin: variant.sourceUnitBarcode,
+          model: candidateModel,
           productType: product.productType,
           description: safeClaimTruth.safeClaims.map((entry) => entry.value)
-            .join(" ") })
+            .join(" ") }, { functionalSearchQuery,
+          marketplaceAccountKey: input.accountKey })
     } catch (error) {
       marketFailure = safeCode(error)
     }
@@ -584,6 +644,9 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         ? `eBay devolvió ${market.returnedCandidateCount} candidatos; ${market.observedComparableCount} fueron enriquecidos y todos quedaron contabilizados como aceptados o excluidos.`
         : `La lectura de mercado no estuvo disponible (${marketFailure}); no se fabricó demanda ni precio.`,
       { searchQuery: market.searchQuery,
+        exactModelSearchQuery: market.exactModelSearchQuery,
+        functionalSearchQuery: market.functionalSearchQuery,
+        marketSearches: report?.evidenceBuckets.marketSearches ?? null,
         candidateFoundCount: market.candidateFoundCount,
         returnedCandidateCount: market.returnedCandidateCount,
         enrichedSampleCount: market.enrichedSampleCount,
@@ -609,12 +672,17 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       { secondaryKeywords: market.secondaryKeywords,
         manualKeywordsUsed: false })
     await emit("ACCEPTED_COMPARABLES", "INFO",
-      `${market.acceptedComparables.length} comparables pasaron identidad; exact-model y functional permanecen clasificados por separado.`,
+      `${market.exactModelAccepted.length} exact-model y ${market.functionalAccepted.length} functional comparables pasaron identidad.`,
       { acceptedComparables: market.acceptedComparables,
+        exactModelAccepted: market.exactModelAccepted,
+        functionalAccepted: market.functionalAccepted,
+        confirmedSoldEvidence: market.confirmedSoldEvidence,
+        estimatedSoldEvidence: market.estimatedSoldEvidence,
         acceptedCount: market.acceptedComparables.length })
     await emit("EXCLUDED_COMPARABLES", "INFO",
       `${market.excludedComparables.length} comparables fueron excluidos; cada uno conserva su razón.`,
       { excludedComparables: market.excludedComparables,
+        structuredModelConflicts: market.structuredModelConflicts,
         excludedCount: market.excludedComparables.length,
         everyObservedComparableAccountedFor:
           market.everyObservedComparableAccountedFor })
@@ -683,6 +751,14 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       LANDED_COST: decision.landedCost,
       ACCEPTED_COMPARABLE_COUNT: market.acceptedComparables.length,
       EXCLUDED_COMPARABLE_COUNT: market.excludedComparables.length,
+      EXACT_MODEL_SEARCH_QUERY: market.exactModelSearchQuery,
+      FUNCTIONAL_SEARCH_QUERY: market.functionalSearchQuery,
+      EXACT_MODEL_ACCEPTED: market.exactModelAccepted,
+      FUNCTIONAL_ACCEPTED: market.functionalAccepted,
+      NON_COMPARABLE: market.nonComparable,
+      CONFIRMED_SOLD_EVIDENCE: market.confirmedSoldEvidence,
+      ESTIMATED_SOLD_EVIDENCE: market.estimatedSoldEvidence,
+      STRUCTURED_MODEL_CONFLICTS: market.structuredModelConflicts,
       KNOWN_UNCERTAINTIES: knownUncertainties,
       COMMERCIAL_TRACE_CERTIFICATION: certificationPass ? "PASS" : "FAIL",
       PRODUCT_TRUTH: { productId: product.productId, variantId: variant.id,
