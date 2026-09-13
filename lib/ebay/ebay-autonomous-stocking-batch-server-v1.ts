@@ -38,7 +38,8 @@ import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { certifyCurrentBatchShippingSlotReadbackV1,
   currentBatchShippingSlotBindingV1,
   currentBatchShippingSlotRolloverV1,
-  hydrateCurrentBatchShippingWaitingPackagesV1 } from
+  hydrateCurrentBatchShippingWaitingPackagesV1,
+  resolveCurrentBatchSlotExactPackageV1 } from
   "@/lib/ebay/ebay-autonomous-stocking-shipping-slot-v1"
 
 type SupabaseAdmin = ReturnType<typeof getSupabaseAdminClient>
@@ -49,6 +50,7 @@ const CONTRACT = "AUTONOMOUS_EBAY_STOCKING_BATCH_V1"
 const RECOVERABLE_SHIPPING_BLOCKERS = Object.freeze([
   "AUTONOMOUS_STOCKING_SHIPPING_SLOT_BINDING_CONTRADICTION",
   "AUTONOMOUS_STOCKING_SHIPPING_SLOT_ROLLOVER_READBACK_INVALID",
+  "AUTONOMOUS_STOCKING_SHIPPING_PACKAGE_AMBIGUOUS",
   "LUNA_SHIPPING_CLAIM_LEASE_EXPIRED_WITHOUT_DURABLE_RESULT",
 ])
 
@@ -68,6 +70,38 @@ function numeric(value: unknown): number | null {
 function errorCode(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message.slice(0, 240) : "AUTONOMOUS_STOCKING_BATCH_RUNTIME_FAILED"
+}
+
+async function readCurrentBatchExactPackageResolutionV1(input: Readonly<{
+  supabase: SupabaseAdmin
+  accountKey: string
+  slotReadback: unknown
+  priorResolution?: unknown
+}>) {
+  const slot = record(input.slotReadback)
+  const opportunityId = text(slot.opportunityId)
+  if (!opportunityId || !text(slot.listingPackageId)) {
+    throw new Error("AUTONOMOUS_STOCKING_EXACT_SLOT_PACKAGE_NOT_FOUND")
+  }
+  const [opportunityRead, packageRead] = await Promise.all([
+    input.supabase.from("ebay_luna_opportunity_queue").select(
+      "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment")
+      .eq("id", opportunityId).maybeSingle(),
+    input.supabase.from("ebay_listing_packages").select(
+      "id,opportunity_id,candidate_key,account_key,status,package_data,created_at,updated_at")
+      .eq("account_key", input.accountKey)
+      .eq("opportunity_id", opportunityId),
+  ])
+  if (opportunityRead.error || !opportunityRead.data || packageRead.error) {
+    throw new Error("AUTONOMOUS_STOCKING_EXACT_PACKAGE_READ_FAILED")
+  }
+  return resolveCurrentBatchSlotExactPackageV1({
+    accountKey: input.accountKey,
+    slotBinding: slot,
+    opportunity: opportunityRead.data,
+    packageRows: rows(packageRead.data),
+    priorResolution: input.priorResolution,
+  })
 }
 
 async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
@@ -103,6 +137,15 @@ async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
   const exact = certifyCurrentBatchShippingSlotReadbackV1(slotRead.data)
   if (!exact.slotPresent || !exact.shippingReady) return null
   const readback = record(exact.readback)
+  const exactPackageResolution =
+    recoveredBlocker === "AUTONOMOUS_STOCKING_SHIPPING_PACKAGE_AMBIGUOUS"
+      ? await readCurrentBatchExactPackageResolutionV1({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        slotReadback: readback,
+        priorResolution: record(batch.evidence)
+          .currentBatchSlotExactPackageResolutionV1,
+      }) : null
   const rearmed = await input.supabase.from(
     "seller_os_autonomous_stocking_batches_v1").update({
       status: "ACTIVE",
@@ -113,8 +156,11 @@ async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
         frontierId: readback.frontierId,
         shippingReceiptCommercialIdentityMatch: true,
         foreignReceiptAdopted: false,
-        automaticExpiredShippingClaimRecovery: true,
-      } },
+        automaticExpiredShippingClaimRecovery: recoveredBlocker ===
+          "LUNA_SHIPPING_CLAIM_LEASE_EXPIRED_WITHOUT_DURABLE_RESULT",
+      }, ...(exactPackageResolution ? {
+        currentBatchSlotExactPackageResolutionV1: exactPackageResolution,
+      } : {}) },
       updated_at: new Date().toISOString(),
     }).eq("id", text(batch.id)).eq("account_key", input.accountKey)
       .eq("status", "BLOCKED")
@@ -485,8 +531,17 @@ async function executeBatch(input: Readonly<{
       } }
     }
     let exactShippingContinuation: Row | null = null
+    let exactPackageResolution: Row | null = null
     if (exactSlot?.shippingReady) {
       const exactReadback = record(exactSlot.readback)
+      exactPackageResolution = record(
+        await readCurrentBatchExactPackageResolutionV1({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          slotReadback: exactReadback,
+          priorResolution: record(input.batch.evidence)
+            .currentBatchSlotExactPackageResolutionV1,
+        }))
       exactShippingContinuation = record(
         await resumeRadarFactoryCandidateAfterShippingV1({
           supabase: input.supabase,
@@ -503,7 +558,9 @@ async function executeBatch(input: Readonly<{
           exactShippingContinuation.durableReadback !== true ||
           exactShippingContinuation.marketplaceWrites !== 0 ||
           exactShippingContinuation.candidateId !==
-            exactReadback.canonicalCandidateId) {
+            exactReadback.canonicalCandidateId ||
+          exactShippingContinuation.listingPackageId !==
+            exactPackageResolution.listingPackageId) {
         throw new Error(
           "AUTONOMOUS_STOCKING_EXACT_SHIPPING_CONTINUATION_INVALID")
       }
@@ -554,12 +611,16 @@ async function executeBatch(input: Readonly<{
       .map((value) => text(value.listing_package_id)).filter(Boolean))
     let selection: Row | null = null
     const rawFactoryOutcomes = factory.outcomes.map(record)
-    const waitingOpportunityIds = rawFactoryOutcomes.filter((outcome) =>
+    const exactCandidateId = exactSlot?.shippingReady
+      ? text(record(exactSlot.readback).canonicalCandidateId) : ""
+    const nonExactFactoryOutcomes = rawFactoryOutcomes.filter((outcome) =>
+      !exactCandidateId || outcome.candidateId !== exactCandidateId)
+    const waitingOpportunityIds = nonExactFactoryOutcomes.filter((outcome) =>
       outcome.reasonCode === "WAITING_BROWSER_WORKER" &&
       outcome.shippingJobIdentityMatch === true &&
       text(outcome.opportunityId)).map((outcome) =>
       text(outcome.opportunityId))
-    let hydratedFactoryOutcomes = rawFactoryOutcomes
+    let hydratedFactoryOutcomes = nonExactFactoryOutcomes
     if (waitingOpportunityIds.length) {
       const packageRead = await input.supabase.from("ebay_listing_packages")
         .select("id,opportunity_id,account_key")
@@ -571,7 +632,7 @@ async function executeBatch(input: Readonly<{
       hydratedFactoryOutcomes = [
         ...hydrateCurrentBatchShippingWaitingPackagesV1({
           accountKey: input.accountKey,
-          factoryOutcomes: rawFactoryOutcomes,
+          factoryOutcomes: nonExactFactoryOutcomes,
           packageRows: rows(packageRead.data),
         }),
       ]
@@ -638,6 +699,7 @@ async function executeBatch(input: Readonly<{
       autonomouslyContinued: true,
     }, economics, keywordStatus: keyword.status,
       exactShippingContinuation,
+      exactPackageResolution,
       manualProductSelection: false, manualProductIdInjection: false,
       codexRuntimeDependency: false }
     if (!selection) {
