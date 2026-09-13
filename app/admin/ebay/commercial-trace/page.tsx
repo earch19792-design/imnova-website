@@ -119,6 +119,8 @@ function CommercialTraceContent() {
     event.stage === "EXCLUDED_COMPARABLES"
       ? list(record(event.evidence).excludedComparables) : []), [events])
   const conflicts = list(result.CLAIM_CONFLICTS)
+  const safeClaims = list(result.SAFE_CLAIM_SUBSET)
+  const doNotUseClaims = list(result.DO_NOT_USE_CLAIMS)
   const summary: Array<readonly [string, unknown]> = [
     ["TRACE_ID", trace?.trace_id],
     ["FINAL_DECISION", result.FINAL_DECISION],
@@ -182,13 +184,13 @@ function CommercialTraceContent() {
         <div><h2 className="text-xl font-black">Comparables aceptados ({accepted.length})</h2>
           <div className="mt-3 space-y-3">{accepted.map((item, index) => <article key={`${item.comparableId}:${index}`}
             className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.06] p-4">
-            <p className="font-bold">{display(item.title)}</p><p className="mt-2 text-sm text-white/65">{money(item.price)} + shipping {money(item.shippingCost)} · {display(item.identityMatchQuality)}</p>
+            <p className="font-bold">{display(item.title)}</p><p className="mt-2 text-sm text-white/65">{money(item.price)} + shipping {money(item.shippingCost)} · {display(item.comparableClass)} · {display(item.identityMatchQuality)}</p>
             <p className="mt-2 text-xs text-emerald-100/65">Pricing: {display(item.pricingReason)}</p>
           </article>)}{!accepted.length && <p className="text-sm text-white/50">Ningún comparable aceptado todavía.</p>}</div></div>
         <div><h2 className="text-xl font-black">Comparables excluidos ({excluded.length})</h2>
           <div className="mt-3 space-y-3">{excluded.map((item, index) => <article key={`${item.comparableId}:${index}`}
             className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4">
-            <p className="font-bold">{display(item.title)}</p><p className="mt-2 text-sm text-white/65">{money(item.price)} · {display(item.identityMatchQuality)}</p>
+            <p className="font-bold">{display(item.title)}</p><p className="mt-2 text-sm text-white/65">{money(item.price)} · {display(item.comparableClass)} · {display(item.identityMatchQuality)}</p>
             <p className="mt-2 text-xs font-black text-rose-100">Razón: {display(item.rejectionReason)}</p>
           </article>)}{!excluded.length && <p className="text-sm text-white/50">Ningún comparable excluido todavía.</p>}</div></div>
       </section>
@@ -196,6 +198,8 @@ function CommercialTraceContent() {
       <section className="mt-8 rounded-3xl border border-white/10 bg-white/[0.035] p-5">
         <h2 className="text-xl font-black">Conflictos y dudas conocidas</h2>
         {conflicts.length ? <ul className="mt-3 space-y-2 text-sm">{conflicts.map((item) => <li key={String(item.code)} className="rounded-xl bg-rose-300/[0.07] p-3"><strong>{display(item.code)}</strong>: {display(item.evidence)}</li>)}</ul> : <p className="mt-3 text-sm text-white/55">Sin conflictos visibles en el resultado actual.</p>}
+        <p className="mt-4 text-sm text-emerald-100"><strong>Claims seguros:</strong> {safeClaims.length ? safeClaims.map((item) => display(item.value)).join(", ") : "No demostrados"}</p>
+        <p className="mt-2 text-sm text-rose-100"><strong>UNVERIFIED / DO_NOT_USE:</strong> {doNotUseClaims.length ? doNotUseClaims.map((item) => display(item.value)).join(", ") : "Ninguno"}</p>
         <p className="mt-4 text-sm text-white/65"><strong>KNOWN_UNCERTAINTIES:</strong> {display(result.KNOWN_UNCERTAINTIES)}</p>
       </section>
 

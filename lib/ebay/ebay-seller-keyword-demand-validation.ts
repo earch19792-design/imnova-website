@@ -91,6 +91,15 @@ export type EbaySellerKeywordDemandInput = {
   candidateFoundCount?: number | null
   returnedCandidateCount?: number | null
   enrichedSampleCount?: number | null
+  commercialSamplingPolicy?: {
+    strategy: "EXACT_MODEL_THEN_FUNCTIONAL_THEN_NON_COMPARABLE"
+    minimumBeforeUnproven: number
+    maximumExamined: number
+    batchSize: number
+    stopReason: "SUFFICIENT_POSITIVE_DEMAND_EVIDENCE" |
+      "BOUNDED_LIMIT_REACHED" | "ALL_RETURNED_EXAMINED"
+    sufficientBeforeDemandUnproven: boolean
+  } | null
   asOf?: string | Date | null
   soldRecencyDays?: number | null
   insightsAvailability?:
@@ -265,6 +274,13 @@ function tokens(value: unknown) {
     .split(/\s+/)
     .map((token) => UNIT_ALIASES[token] ?? token)
     .filter((token) => token.length > 1 && !STOP_WORDS.has(token))
+}
+
+function commercialModelTokens(value: unknown) {
+  return unique(normalize(value).split(/\s+/).map((token) =>
+    token.replace(/[^a-z0-9]/g, "")).filter((token) =>
+    token.length >= 5 && /[a-z]/.test(token) && /\d/.test(token) &&
+    !/^\d{3,4}p$/.test(token) && !/^usb\d*$/.test(token)))
 }
 
 function unique<T>(values: T[]) {
@@ -478,6 +494,10 @@ export function buildEbaySellerKeywordDemandValidation(
   const candidatePack = numberOrNull(input.candidate.packQuantity)
   const candidateSize = normalizedIdentifier(input.candidate.size)
   const candidateColor = normalizedIdentifier(input.candidate.color)
+  const candidateModelTokens = commercialModelTokens([
+    candidateText, input.candidate.supplierSku, input.candidate.mpn,
+    input.candidate.model,
+  ].filter(Boolean).join(" "))
   const comparables = (input.comparables ?? []).map((entry, index) => {
     const title = cleanText(entry.title)
     const identity = buildIdentityAssessment(candidateText, title)
@@ -514,6 +534,11 @@ export function buildEbaySellerKeywordDemandValidation(
     const softBrandConflict = Boolean(
       exactGtin && candidateBrand && listingBrand && candidateBrand !== listingBrand
     )
+    const listingModelTokens = new Set(commercialModelTokens([
+      title, listingMpn, entry.model,
+    ].filter(Boolean).join(" ")))
+    const exactModelToken = candidateModelTokens.find((token) =>
+      listingModelTokens.has(token)) ?? null
     const baseIdentifierExact = !gtinConflict && !epidConflict &&
       (exactGtin || exactEpid || exactBrandMpn)
     // GTIN and ePID normally identify the catalog product, while brand + MPN/model
@@ -540,6 +565,12 @@ export function buildEbaySellerKeywordDemandValidation(
       !epidStructuredConflict && !offerPackUnresolved &&
       identity.conflicts.length === 0 &&
       (identifierExact || ["EXACT", "STRONG"].includes(identity.matchQuality))
+    const commercialComparableClass = eligibleComparable &&
+        (identifierExact || exactModelToken)
+      ? "EXACT_MODEL_COMPARABLE" as const
+      : eligibleComparable
+        ? "FUNCTIONAL_COMPARABLE" as const
+        : "NON_COMPARABLE" as const
     const identityEvidenceClass = packConflict
       ? "OFFER_PACK_CONFLICT"
       : offerPackUnresolved
@@ -632,6 +663,8 @@ export function buildEbaySellerKeywordDemandValidation(
       identifierMatchType: exactGtin ? "GTIN" : exactEpid ? "EPID"
         : exactBrandMpn ? "BRAND_MPN" : null,
       identifierExact,
+      exactModelToken,
+      commercialComparableClass,
       baseIdentifierExact,
       offerPackResolved: candidatePackKnown && listingPackKnown && !packConflict,
       softIdentityConflicts: softBrandConflict ? ["BRAND_CONFLICT_OVERRIDDEN_BY_EXACT_GTIN"] : [],
@@ -862,12 +895,19 @@ export function buildEbaySellerKeywordDemandValidation(
   const estimatedSoldSellerCount = new Set(
     estimatedEvidence.map((entry) => normalizedSeller(entry.sellerUsername))
   ).size
+  const weightedVerifiedDemandQuantity = soldEvidence.reduce((sum, entry) =>
+    sum + entry.verifiedSoldQuantity *
+      (entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE" ? 1 : 0.5), 0)
+  const weightedEstimatedDemandQuantity = estimatedEvidence.reduce((sum, entry) =>
+    sum + entry.estimatedSoldQuantity *
+      (entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE" ? 1 : 0.5), 0)
   const demandValidationPassed =
-    (verifiedSoldSellerCount >= 2 && totalVerifiedSoldQuantity >= 3) ||
-    (estimatedSoldSellerCount >= 2 && totalEstimatedSoldQuantity >= 3)
-  const demandValidationBasis = verifiedSoldSellerCount >= 2 && totalVerifiedSoldQuantity >= 3
+    (verifiedSoldSellerCount >= 2 && weightedVerifiedDemandQuantity >= 3) ||
+    (estimatedSoldSellerCount >= 2 && weightedEstimatedDemandQuantity >= 3)
+  const demandValidationBasis = verifiedSoldSellerCount >= 2 &&
+      weightedVerifiedDemandQuantity >= 3
     ? "VERIFIED_HISTORICAL_MULTI_SELLER"
-    : estimatedSoldSellerCount >= 2 && totalEstimatedSoldQuantity >= 3
+    : estimatedSoldSellerCount >= 2 && weightedEstimatedDemandQuantity >= 3
       ? "ESTIMATED_MULTI_SELLER_SIGNAL"
       : "INSUFFICIENT_EVIDENCE"
   const pendingGuards = [
@@ -910,6 +950,8 @@ export function buildEbaySellerKeywordDemandValidation(
     sellersAnalyzed: new Set(eligible.map((entry) => normalizedSeller(entry.sellerUsername))).size,
     totalVerifiedSoldQuantity,
     totalEstimatedSoldQuantity,
+    weightedVerifiedDemandQuantity,
+    weightedEstimatedDemandQuantity,
     verifiedSoldSellerCount,
     estimatedSoldSellerCount,
     staleVerifiedSoldListingCount: staleSoldEvidence.length,
@@ -937,6 +979,12 @@ export function buildEbaySellerKeywordDemandValidation(
           : numberOrZero(input.enrichedSampleCount)),
       ),
       strongSimilarCount: eligible.filter((entry) => !entry.identifierExact).length,
+      exactModelComparableCount: comparables.filter((entry) =>
+        entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE").length,
+      functionalComparableCount: comparables.filter((entry) =>
+        entry.commercialComparableClass === "FUNCTIONAL_COMPARABLE").length,
+      nonComparableCount: comparables.filter((entry) =>
+        entry.commercialComparableClass === "NON_COMPARABLE").length,
       identifierExactActiveCount: eligible.filter((entry) =>
         entry.identifierExact && entry.evidenceSource !== "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
       ).length,
@@ -953,6 +1001,7 @@ export function buildEbaySellerKeywordDemandValidation(
       conflictingCount: comparables.filter((entry) =>
         entry.identityEvidenceClass === "IDENTITY_CONFLICT"
       ).length,
+      commercialSamplingPolicy: input.commercialSamplingPolicy ?? null,
     },
     comparableEvidence: comparables,
     salesEvidenceAvailable: soldEvidence.length > 0 || estimatedEvidence.length > 0,

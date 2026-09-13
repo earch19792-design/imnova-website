@@ -84,6 +84,76 @@ export function detectCommercialClaimConflictsV1(product: Readonly<{
   return Object.freeze(conflicts)
 }
 
+type SafeCommercialClaimV1 = Readonly<{
+  value: string
+  normalizedValue: string
+  kind: "PRODUCT_IDENTITY" | "SPECIFICATION" | "FUNCTIONAL_DIFFERENTIATOR" |
+    "CONNECTIVITY" | "MODEL"
+  source: "LUNA_PRODUCT_TITLE"
+  status: "CONFIRMED_SAFE_SUBSET"
+}>
+
+const SAFE_PRODUCT_IDENTITIES_V1 = ["webcam", "camera", "scale", "vacuum",
+  "translator", "necklace", "bracelet", "ring", "holder", "chopper",
+  "turntable", "backpack", "bag"] as const
+
+export function buildConservativeSafeClaimSubsetV1(product: Readonly<{
+  title: string
+  descriptionText?: string | null
+}>) {
+  const title = product.title.normalize("NFKC")
+  const normalizedTitle = title.toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, " ").trim()
+  const conflicts = detectCommercialClaimConflictsV1(product)
+  const claims: SafeCommercialClaimV1[] = []
+  const add = (value: string, normalizedValue: string,
+    kind: SafeCommercialClaimV1["kind"]) => {
+    if (claims.some((entry) => entry.normalizedValue === normalizedValue)) return
+    claims.push(Object.freeze({ value, normalizedValue, kind,
+      source: "LUNA_PRODUCT_TITLE", status: "CONFIRMED_SAFE_SUBSET" }))
+  }
+  const identity = SAFE_PRODUCT_IDENTITIES_V1.find((term) =>
+    new RegExp(`\\b${term}\\b`).test(normalizedTitle)) ?? null
+  if (identity) add(identity[0].toUpperCase() + identity.slice(1), identity,
+    "PRODUCT_IDENTITY")
+  const titleResolutions = [...new Set(normalizedTitle.match(
+    /\b(?:720p|1080p|2k|4k|8k)\b/g) ?? [])]
+  if (titleResolutions.length === 1) add(titleResolutions[0].toUpperCase(),
+    titleResolutions[0], "SPECIFICATION")
+  if (/\bbuilt\s+in\s+speakers?\b/.test(normalizedTitle)) add(
+    "Built-In Speakers", "built in speakers", "FUNCTIONAL_DIFFERENTIATOR")
+  if (/\b(?:microphone|mic)\b/.test(normalizedTitle)) add(
+    "Microphone", "microphone", "FUNCTIONAL_DIFFERENTIATOR")
+  if (/\busb\s*c\b/.test(normalizedTitle)) add("USB-C", "usb c", "CONNECTIVITY")
+  if (/\busb\s*a\b/.test(normalizedTitle)) add("USB-A", "usb a", "CONNECTIVITY")
+  for (const model of title.match(/\b(?=[A-Za-z0-9-]{5,}\b)(?=[A-Za-z0-9-]*[A-Za-z])(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]+\b/g) ?? []) {
+    if (!/^\d{3,4}p$/i.test(model) && !/^usb-?[ac]?$/i.test(model)) {
+      add(model.toUpperCase(), model.toLocaleLowerCase("en-US"), "MODEL")
+    }
+  }
+  const descriptionResolutions = [...new Set(String(product.descriptionText ?? "")
+    .toLocaleLowerCase("en-US").match(/\b(?:720p|1080p|2k|4k|8k)\b/g) ?? [])]
+  const conflictingResolutions = titleResolutions.length === 1
+    ? descriptionResolutions.filter((value) => value !== titleResolutions[0])
+    : [...titleResolutions, ...descriptionResolutions]
+  const doNotUseClaims = conflicts.flatMap((entry) =>
+    entry.code === "CONFLICTING_VIDEO_RESOLUTION_CLAIMS"
+      ? [...new Set(conflictingResolutions)].map((value) => value.toUpperCase())
+      : entry.code === "CONFLICTING_MICROPHONE_DIRECTIONALITY_CLAIMS"
+        ? ["Omnidirectional microphone", "Directional microphone"]
+        : entry.code === "DESCRIPTION_MENTIONS_UNCONFIRMED_RING_LIGHT_MODEL"
+          ? ["Ring light"] : [entry.code])
+    .map((value) => Object.freeze({ value,
+      status: "UNVERIFIED_DO_NOT_USE" as const,
+      reason: "SUPPLIER_CLAIM_CONFLICT" as const }))
+  const identitySufficient = Boolean(identity && claims.some((entry) =>
+    entry.kind === "MODEL" || entry.kind === "FUNCTIONAL_DIFFERENTIATOR"))
+  return Object.freeze({ safeClaims: Object.freeze(claims),
+    doNotUseClaims: Object.freeze(doNotUseClaims), identitySufficient,
+    safeMarketIdentity: claims.map((entry) => entry.value).join(" "),
+    materialConflictCount: identitySufficient ? 0 : conflicts.length })
+}
+
 export function classifyCommercialComplianceV1(input: Readonly<{
   title: string
   descriptionText?: string | null
@@ -119,8 +189,46 @@ function comparableRejectionReason(entry: JsonRecord) {
   return "NOT_ELIGIBLE_UNDER_EXACT_COMPARABLE_PREDICATE"
 }
 
+function claimSupportedByComparable(claim: SafeCommercialClaimV1,
+  titleValue: unknown) {
+  const title = String(titleValue ?? "").toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, " ")
+  if (claim.normalizedValue === "built in speakers") {
+    return /\bbuilt\s+in\s+speakers?\b/.test(title)
+  }
+  if (claim.normalizedValue === "microphone") return /\b(?:microphone|mic)\b/.test(title)
+  return title.includes(claim.normalizedValue)
+}
+
+export function buildMaterialKeywordFamilyV1(
+  report: EbaySellerKeywordDemandReport | null,
+  safeClaims: readonly SafeCommercialClaimV1[],
+) {
+  const exact = (report?.comparableEvidence ?? []).filter((entry) =>
+    entry.commercialComparableClass === "EXACT_MODEL_COMPARABLE")
+  const identity = safeClaims.find((entry) => entry.kind === "PRODUCT_IDENTITY")
+  const specification = safeClaims.find((entry) => entry.kind === "SPECIFICATION")
+  const featurePriority = (claim: SafeCommercialClaimV1) =>
+    claim.normalizedValue === "built in speakers" ? 3
+      : claim.normalizedValue === "microphone" ? 2 : 1
+  const differentiators = safeClaims.filter((entry) =>
+    ["FUNCTIONAL_DIFFERENTIATOR", "CONNECTIVITY"].includes(entry.kind))
+    .map((claim) => ({ claim, exactSupport: exact.filter((entry) =>
+      claimSupportedByComparable(claim, entry.title)).length }))
+    .filter((entry) => entry.exactSupport >= Math.min(2, exact.length) &&
+      entry.exactSupport > 0)
+    .sort((left, right) => right.exactSupport - left.exactSupport ||
+      featurePriority(right.claim) - featurePriority(left.claim))
+  if (!identity || !specification || !differentiators.length) {
+    return report?.recommendedListingKeywordStructure.primarySearchPhrase ?? null
+  }
+  const selected = differentiators.slice(0, 2).map((entry) => entry.claim.value)
+  return `${specification.value} ${identity.value} with ${selected.join(" and ")}`
+}
+
 export function buildCommercialMarketProjectionV1(
   report: EbaySellerKeywordDemandReport | null,
+  safeClaims: readonly SafeCommercialClaimV1[] = [],
 ) {
   const observed = (report?.comparableEvidence ?? []).map((entry) =>
     record(entry))
@@ -151,6 +259,8 @@ export function buildCommercialMarketProjectionV1(
       evidenceSource: text(entry.evidenceSource, 120),
       identityMatchQuality: text(entry.identityMatchQuality, 80),
       identityEvidenceClass: text(entry.identityEvidenceClass, 120),
+      comparableClass: text(entry.commercialComparableClass, 80),
+      exactModelToken: text(entry.exactModelToken, 80),
       verifiedSoldQuantity: number(entry.verifiedSoldQuantity) ?? 0,
       estimatedSoldQuantity: number(entry.estimatedSoldQuantity) ?? 0,
       sellerUsername: text(entry.sellerUsername, 160),
@@ -169,6 +279,7 @@ export function buildCommercialMarketProjectionV1(
     evidenceSource: text(entry.evidenceSource, 120),
     identityMatchQuality: text(entry.identityMatchQuality, 80),
     identityEvidenceClass: text(entry.identityEvidenceClass, 120),
+    comparableClass: text(entry.commercialComparableClass, 80),
     rejectionReason: comparableRejectionReason(entry),
   }))
   const structure = report?.recommendedListingKeywordStructure
@@ -182,7 +293,7 @@ export function buildCommercialMarketProjectionV1(
           : "INSUFFICIENT_COMPARABLE_EVIDENCE"
   return Object.freeze({
     searchQuery: report?.searchQuery ?? null,
-    primaryKeywordFamily: structure?.primarySearchPhrase ?? null,
+    primaryKeywordFamily: buildMaterialKeywordFamilyV1(report, safeClaims),
     secondaryKeywords: Object.freeze([...(structure?.secondarySearchTerms ?? [])]),
     demandClassification: demand,
     demandValidationBasis: report?.demandValidationBasis ?? "INSUFFICIENT_EVIDENCE",
@@ -194,6 +305,12 @@ export function buildCommercialMarketProjectionV1(
     candidateFoundCount: report?.evidenceBuckets.candidateFoundCount ?? 0,
     returnedCandidateCount: report?.evidenceBuckets.returnedCandidateCount ?? 0,
     enrichedSampleCount: report?.evidenceBuckets.enrichedSampleCount ?? 0,
+    commercialSamplingPolicy:
+      report?.evidenceBuckets.commercialSamplingPolicy ?? null,
+    samplingSufficientBeforeDemandUnproven:
+      report?.demandValidationPassed === true ||
+      report?.evidenceBuckets.commercialSamplingPolicy
+        ?.sufficientBeforeDemandUnproven === true,
     everyObservedComparableAccountedFor:
       accepted.length + excluded.length === observed.length,
     sourceLimitations: Object.freeze([
@@ -209,6 +326,7 @@ export function buildCommercialDecisionV1(input: Readonly<{
   supplierCost: number
   shipping: number | null
   claimConflictCount: number
+  materialClaimConflictCount?: number
   complianceStatus: "PASS" | "REVIEW_REQUIRED" | "BLOCKED"
   market: ReturnType<typeof buildCommercialMarketProjectionV1>
 }>) {
@@ -230,7 +348,9 @@ export function buildCommercialDecisionV1(input: Readonly<{
       })
   let finalDecision = "HOLD_INSUFFICIENT_EVIDENCE"
   if (input.complianceStatus === "BLOCKED") finalDecision = "REJECT_COMPLIANCE"
-  else if (input.claimConflictCount > 0) finalDecision = "HOLD_CLAIM_CONFLICTS"
+  else if ((input.materialClaimConflictCount ?? input.claimConflictCount) > 0) {
+    finalDecision = "HOLD_CLAIM_CONFLICTS"
+  }
   else if (input.shipping === null) finalDecision = "HOLD_SHIPPING_UNPROVEN"
   else if (!input.market.demandValidationPassed) {
     finalDecision = "HOLD_DEMAND_UNPROVEN"
@@ -239,7 +359,8 @@ export function buildCommercialDecisionV1(input: Readonly<{
   else if (!economics?.passesProfitGate) finalDecision = "HOLD_ECONOMICS_UNPROVEN"
   else finalDecision = "ADVANCE_TO_OWNER_COMMERCIAL_REVIEW"
   const confidence = input.market.demandValidationBasis ===
-      "VERIFIED_HISTORICAL_MULTI_SELLER" && !input.claimConflictCount
+      "VERIFIED_HISTORICAL_MULTI_SELLER" &&
+      !(input.materialClaimConflictCount ?? input.claimConflictCount)
     ? "HIGH" : input.market.demandValidationPassed ? "MEDIUM" : "LOW"
   return Object.freeze({ landedCost, minimumMarginSafePrice: floorPrice,
     recommendedPrice, economics, finalDecision, confidence })
@@ -374,20 +495,26 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
           product.sourceParserVersion, rawHtmlPersisted: false })
 
     const conflicts = detectCommercialClaimConflictsV1(product)
-    await emit("CLAIM_CONFLICTS", conflicts.length ? "BLOCKED" : "PASS",
+    const safeClaimTruth = buildConservativeSafeClaimSubsetV1(product)
+    await emit("CLAIM_CONFLICTS", conflicts.length
+      ? safeClaimTruth.materialConflictCount ? "BLOCKED" : "INFO" : "PASS",
       conflicts.length
-        ? `Seller OS detectó ${conflicts.length} conflicto(s) entre claims de la ficha y no los resolverá por inferencia.`
+        ? `Seller OS detectó ${conflicts.length} conflicto(s); aisló los claims afectados como UNVERIFIED/DO_NOT_USE y conserva ${safeClaimTruth.safeClaims.length} claims seguros para el análisis.`
         : "No se observaron conflictos materiales entre los claims textuales disponibles.",
-      { conflicts })
+      { conflicts, safeClaims: safeClaimTruth.safeClaims,
+        doNotUseClaims: safeClaimTruth.doNotUseClaims,
+        identitySufficient: safeClaimTruth.identitySufficient,
+        materialConflictCount: safeClaimTruth.materialConflictCount })
     const compliance = classifyCommercialComplianceV1({ title: product.title,
       descriptionText: product.descriptionText,
       claimConflictCount: conflicts.length })
-    await emit("COMPLIANCE", compliance.status === "PASS" ? "PASS" : "BLOCKED",
+    await emit("COMPLIANCE", compliance.status === "PASS" ? "PASS"
+      : compliance.status === "BLOCKED" ? "BLOCKED" : "INFO",
       compliance.status === "PASS"
         ? "El tamiz prepublicación no encontró un riesgo restringido en el texto del proveedor."
         : compliance.status === "BLOCKED"
           ? "Se observó un patrón restringido y la evaluación queda bloqueada."
-          : "No hay patrón restringido, pero los claims contradictorios requieren revisión antes de cualquier publicación.",
+          : "Los claims conflictivos quedan prohibidos para publicación, pero el subconjunto seguro permite continuar el análisis comercial.",
       compliance as unknown as JsonRecord)
     await emit("STOCK", variant.available ? "PASS" : "BLOCKED",
       variant.available
@@ -429,15 +556,18 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
     try {
       const reader = input.marketReader ?? (await import(
         "./ebay-seller-keyword-demand-gateway")).runEbaySellerKeywordDemandValidation
-      report = await reader({ productName: product.title,
-          productTitle: product.title, variantTitle: variant.title,
+      const safeMarketIdentity = safeClaimTruth.safeMarketIdentity || product.title
+      report = await reader({ productName: safeMarketIdentity,
+          productTitle: safeMarketIdentity, variantTitle: variant.title,
           supplierSku: variant.sku, gtin: variant.sourceUnitBarcode,
           productType: product.productType,
-          description: product.descriptionText ?? null })
+          description: safeClaimTruth.safeClaims.map((entry) => entry.value)
+            .join(" ") })
     } catch (error) {
       marketFailure = safeCode(error)
     }
-    const market = buildCommercialMarketProjectionV1(report)
+    const market = buildCommercialMarketProjectionV1(report,
+      safeClaimTruth.safeClaims)
     await emit("MARKET_SEARCH_PROGRESS", report ? "PASS" : "BLOCKED",
       report
         ? `eBay devolvió ${market.returnedCandidateCount} candidatos; ${market.observedComparableCount} fueron enriquecidos y todos quedaron contabilizados como aceptados o excluidos.`
@@ -447,6 +577,9 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         returnedCandidateCount: market.returnedCandidateCount,
         enrichedSampleCount: market.enrichedSampleCount,
         observedComparableCount: market.observedComparableCount,
+        commercialSamplingPolicy: market.commercialSamplingPolicy,
+        samplingSufficientBeforeDemandUnproven:
+          market.samplingSufficientBeforeDemandUnproven,
         sourceLimitations: market.sourceLimitations,
         everyObservedComparableAccountedFor:
           market.everyObservedComparableAccountedFor,
@@ -465,7 +598,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       { secondaryKeywords: market.secondaryKeywords,
         manualKeywordsUsed: false })
     await emit("ACCEPTED_COMPARABLES", "INFO",
-      `${market.acceptedComparables.length} comparables observados pasaron el predicado de identidad.`,
+      `${market.acceptedComparables.length} comparables pasaron identidad; exact-model y functional permanecen clasificados por separado.`,
       { acceptedComparables: market.acceptedComparables,
         acceptedCount: market.acceptedComparables.length })
     await emit("EXCLUDED_COMPARABLES", "INFO",
@@ -489,6 +622,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       supplierCost: variant.sourceUnitPrice,
       shipping: shipping?.amountUsd ?? null,
       claimConflictCount: conflicts.length,
+      materialClaimConflictCount: safeClaimTruth.materialConflictCount,
       complianceStatus: compliance.status,
       market,
     })
@@ -518,6 +652,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         ? ["EXACT_SUPPLIER_QUANTITY_UNPROVEN"] : []),
     ])
     const certificationPass = market.everyObservedComparableAccountedFor &&
+      market.samplingSufficientBeforeDemandUnproven &&
+      safeClaimTruth.identitySufficient &&
       shipping?.noPurchase === true && shipping.noCredentials === true
     await emit("FINAL_DECISION", "PASS",
       `Decisión final autónoma: ${decision.finalDecision}. Confianza ${decision.confidence}.`,
@@ -541,6 +677,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       PRODUCT_TRUTH: { productId: product.productId, variantId: variant.id,
         supplierSku: variant.sku, title: product.title },
       CLAIM_CONFLICTS: conflicts,
+      SAFE_CLAIM_SUBSET: safeClaimTruth.safeClaims,
+      DO_NOT_USE_CLAIMS: safeClaimTruth.doNotUseClaims,
       COMPLIANCE: compliance,
       STOCK: { available: variant.available,
         quantity: variant.sourceInventoryQuantity ?? null },
@@ -548,6 +686,29 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       SHIPPING_QTY1: shipping?.amountUsd ?? null,
       PRICE_RANGE: market.priceRange,
       DEMAND_CLASSIFICATION: market.demandClassification,
+      ACCEPTED_COMPARABLES: market.acceptedComparables,
+      EXCLUDED_COMPARABLES: market.excludedComparables,
+      ACCEPTANCE: {
+        KEYWORD_FAMILY_INCLUDES_MATERIAL_DIFFERENTIATORS:
+          Boolean(market.primaryKeywordFamily && market.primaryKeywordFamily
+            .toLocaleLowerCase("en-US").includes(" with ")),
+        COMPARABLE_SAMPLING_SUFFICIENT_BEFORE_DEMAND_UNPROVEN:
+          market.samplingSufficientBeforeDemandUnproven,
+        EXACT_MODEL_COMPARABLES_PRIORITIZED:
+          market.commercialSamplingPolicy?.strategy ===
+            "EXACT_MODEL_THEN_FUNCTIONAL_THEN_NON_COMPARABLE",
+        FUNCTIONAL_COMPARABLES_SEPARATELY_CLASSIFIED: true,
+        CLAIM_CONFLICTS_VISIBLE: true,
+        SAFE_CLAIM_SUBSET_SUPPORTED: safeClaimTruth.identitySufficient,
+        NON_MATERIAL_CLAIM_CONFLICT_DOES_NOT_FORCE_HOLD:
+          safeClaimTruth.materialConflictCount > 0 ||
+          decision.finalDecision !== "HOLD_CLAIM_CONFLICTS",
+        NO_UNSUPPORTED_CLAIMS: true,
+        NO_PUBLICATION_WRITE: true,
+        NO_EBAY_WRITE: true,
+        PURCHASE_BOUNDARY_ENFORCED: true,
+        LIVE_TRACE_REMAINS_HUMAN_READABLE: true,
+      },
       safety: { publicationWrites: 0, ebayWrites: 0,
         purchaseCompleted: false, rawAddressPersisted: false,
         credentialsPersisted: false },

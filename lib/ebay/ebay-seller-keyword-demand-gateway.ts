@@ -45,7 +45,9 @@ const MARKETPLACE_INSIGHTS_SCOPE =
 const MARKETPLACE_ID = "EBAY_US"
 // Deep analysis is deliberately bounded. Discovery uses one aggregate Browse
 // search and only promoted candidates may spend detail budget.
-const DEFAULT_DETAIL_SAMPLE_LIMIT = 5
+const DEFAULT_DETAIL_SAMPLE_LIMIT = 20
+const MINIMUM_SAMPLE_BEFORE_DEMAND_UNPROVEN = 12
+const DETAIL_SAMPLE_BATCH_SIZE = 4
 const DETAIL_CONCURRENCY = 2
 const EBAY_REQUEST_TIMEOUT_MS = 8_000
 const EBAY_MAX_RETRIES = 3
@@ -149,7 +151,7 @@ function numberOrNull(value: unknown) {
 
 function detailSampleLimit() {
   const configured = Number(process.env.EBAY_LISTING_INTELLIGENCE_DETAIL_SAMPLE_LIMIT)
-  return Number.isInteger(configured) ? Math.max(1, Math.min(configured, 10))
+  return Number.isInteger(configured) ? Math.max(12, Math.min(configured, 30))
     : DEFAULT_DETAIL_SAMPLE_LIMIT
 }
 
@@ -615,6 +617,32 @@ async function mappedActiveComparable(value: unknown, token: string) {
   return mapped
 }
 
+export function prioritizeActiveListingsForCommercialSampling(
+  candidate: EbaySellerKeywordCandidate,
+  values: unknown[],
+) {
+  const summaries = values.map((value) =>
+    mapComparable(value, "EBAY_BROWSE_ACTIVE_LISTING"))
+  const preliminary = buildEbaySellerKeywordDemandValidation({
+    candidate,
+    comparables: summaries,
+    insightsAvailability: "NOT_CONFIGURED",
+  })
+  const rank = (classification: string) => classification ===
+      "EXACT_MODEL_COMPARABLE" ? 0
+    : classification === "FUNCTIONAL_COMPARABLE" ? 1 : 2
+  return values.map((value, index) => ({ value, index,
+    comparable: preliminary.comparableEvidence[index] }))
+    .sort((left, right) =>
+      rank(left.comparable.commercialComparableClass) -
+        rank(right.comparable.commercialComparableClass) ||
+      right.comparable.estimatedSoldQuantity -
+        left.comparable.estimatedSoldQuantity ||
+      right.comparable.identityMatchScore - left.comparable.identityMatchScore ||
+      left.index - right.index)
+    .map((entry) => entry.value)
+}
+
 /**
  * Resolves an authoritative legacy listing ID through the official Browse
  * compatibility endpoint. This is an identity read, never a keyword guess.
@@ -706,15 +734,33 @@ export async function runEbaySellerKeywordDemandValidation(
         browseToken
       )
     }
-    const activeComparables = (await mapWithConcurrency(
-      activeSearch.items.slice(0, detailSampleLimit()),
-      DETAIL_CONCURRENCY,
-      (item) => mappedActiveComparable(item, browseToken)
-    )).map((mapped) => {
-      return mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
-        ? { ...mapped, source: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE" as const }
-        : mapped
-    })
+    const prioritizedItems = prioritizeActiveListingsForCommercialSampling(
+      candidate, activeSearch.items)
+    const maximumExamined = Math.min(detailSampleLimit(), prioritizedItems.length)
+    const minimumBeforeUnproven = Math.min(
+      MINIMUM_SAMPLE_BEFORE_DEMAND_UNPROVEN, maximumExamined)
+    const activeComparables: EbaySellerComparableInput[] = []
+    let stopReason: "SUFFICIENT_POSITIVE_DEMAND_EVIDENCE" |
+      "BOUNDED_LIMIT_REACHED" | "ALL_RETURNED_EXAMINED" =
+      maximumExamined === prioritizedItems.length
+        ? "ALL_RETURNED_EXAMINED" : "BOUNDED_LIMIT_REACHED"
+    for (let offset = 0; offset < maximumExamined;
+      offset += DETAIL_SAMPLE_BATCH_SIZE) {
+      const batch = await mapWithConcurrency(prioritizedItems.slice(offset,
+        Math.min(offset + DETAIL_SAMPLE_BATCH_SIZE, maximumExamined)),
+      DETAIL_CONCURRENCY, (item) => mappedActiveComparable(item, browseToken))
+      activeComparables.push(...batch.map((mapped) =>
+        mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
+          ? { ...mapped, source: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE" as const }
+          : mapped))
+      if (activeComparables.length >= minimumBeforeUnproven &&
+          buildEbaySellerKeywordDemandValidation({ candidate,
+            comparables: activeComparables,
+            insightsAvailability: "NOT_CONFIGURED" }).demandValidationPassed) {
+        stopReason = "SUFFICIENT_POSITIVE_DEMAND_EVIDENCE"
+        break
+      }
+    }
 
     let insightsAvailability:
       | "AVAILABLE"
@@ -751,7 +797,7 @@ export async function runEbaySellerKeywordDemandValidation(
       const key = comparable.itemId || `${comparable.source}:${comparable.title}`
       byId.set(key, comparable)
     }
-    return buildEbaySellerKeywordDemandValidation({
+    const baseReport = buildEbaySellerKeywordDemandValidation({
       candidate,
       comparables: [...byId.values()],
       candidateFoundCount:
@@ -759,7 +805,19 @@ export async function runEbaySellerKeywordDemandValidation(
       returnedCandidateCount: activeSearch.items.length,
       enrichedSampleCount: activeComparables.length,
       insightsAvailability,
+      commercialSamplingPolicy: {
+        strategy: "EXACT_MODEL_THEN_FUNCTIONAL_THEN_NON_COMPARABLE",
+        minimumBeforeUnproven,
+        maximumExamined,
+        batchSize: DETAIL_SAMPLE_BATCH_SIZE,
+        stopReason,
+        sufficientBeforeDemandUnproven:
+          stopReason !== "SUFFICIENT_POSITIVE_DEMAND_EVIDENCE"
+            ? activeComparables.length >= maximumExamined
+            : true,
+      },
     })
+    return baseReport
   } finally {
     browseToken = ""
     insightsToken = ""
