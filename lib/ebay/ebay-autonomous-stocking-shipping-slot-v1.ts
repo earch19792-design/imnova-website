@@ -27,6 +27,10 @@ export type AutonomousStockingShippingSlotBindingV1 = Readonly<{
   codexRuntimeDependency: false
 }>
 
+const TERMINAL_COMMERCIAL_SLOT_STATUSES = new Set([
+  "PARKED", "PARKED_ECONOMICS", "EXCLUDED_ALREADY_LIVE",
+])
+
 export function currentBatchShippingSlotBindingV1(input: Readonly<{
   accountKey: string
   factoryOutcomes: readonly unknown[]
@@ -130,5 +134,32 @@ export function certifyCurrentBatchShippingSlotReadbackV1(
     shippingReady: ready,
     priorityCandidateId: ready ? null : candidateId,
     readback: Object.freeze({ ...readback }),
+  })
+}
+
+export function currentBatchShippingSlotRolloverV1(input: Readonly<{
+  accountKey: string
+  factoryOutcomes: readonly unknown[]
+  readySlotReadback: unknown
+}>) {
+  const readback = record(input.readySlotReadback)
+  if (readback.shippingReady !== true) return null
+  const priorCandidateId = text(readback.canonicalCandidateId)
+  const prior = input.factoryOutcomes.map(record).find((outcome) =>
+    outcome.candidateId === priorCandidateId) ?? null
+  if (!prior || !TERMINAL_COMMERCIAL_SLOT_STATUSES.has(
+      text(prior.status)) || prior.listingReady === true ||
+      !text(prior.reasonCode) ||
+      text(prior.reasonCode) === "WAITING_BROWSER_WORKER") return null
+  const next = currentBatchShippingSlotBindingV1({
+    accountKey: input.accountKey,
+    factoryOutcomes: input.factoryOutcomes,
+  })
+  if (!next || next.canonicalCandidateId === priorCandidateId) return null
+  return Object.freeze({
+    priorCandidateId,
+    retirementStatus: text(prior.status),
+    retirementReason: text(prior.reasonCode),
+    next,
   })
 }

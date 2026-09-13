@@ -1,0 +1,8 @@
+create index autonomous_stocking_shipping_attempt_batch_idx
+  on public.seller_os_autonomous_stocking_shipping_slot_attempts_v1(batch_id);
+
+create index autonomous_stocking_shipping_attempt_opportunity_idx
+  on public.seller_os_autonomous_stocking_shipping_slot_attempts_v1(opportunity_id);
+
+create index autonomous_stocking_shipping_attempt_package_idx
+  on public.seller_os_autonomous_stocking_shipping_slot_attempts_v1(listing_package_id);

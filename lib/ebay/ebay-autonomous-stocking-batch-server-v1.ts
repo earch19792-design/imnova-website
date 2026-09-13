@@ -35,7 +35,8 @@ import { keywordRecord as record } from
   "@/lib/seller-os/keyword-intelligence-handoff-v1"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { certifyCurrentBatchShippingSlotReadbackV1,
-  currentBatchShippingSlotBindingV1 } from
+  currentBatchShippingSlotBindingV1,
+  currentBatchShippingSlotRolloverV1 } from
   "@/lib/ebay/ebay-autonomous-stocking-shipping-slot-v1"
 
 type SupabaseAdmin = ReturnType<typeof getSupabaseAdminClient>
@@ -569,6 +570,65 @@ async function executeBatch(input: Readonly<{
       manualProductSelection: false, manualProductIdInjection: false,
       codexRuntimeDependency: false }
     if (!selection) {
+      const rollover = exactSlot?.shippingReady
+        ? currentBatchShippingSlotRolloverV1({
+          accountKey: input.accountKey,
+          factoryOutcomes: factory.outcomes,
+          readySlotReadback: exactSlot.readback,
+        }) : null
+      if (rollover) {
+        const rolled = await input.supabase.rpc(
+          "rollover_autonomous_stocking_batch_shipping_slot_v1", {
+            p_account_key: input.accountKey,
+            p_batch_id: text(input.batch.id),
+            p_child_id: text(child.id),
+            p_prior_candidate_id: rollover.priorCandidateId,
+            p_retirement_status: rollover.retirementStatus,
+            p_retirement_reason: rollover.retirementReason,
+            p_canonical_candidate_id: rollover.next.canonicalCandidateId,
+            p_opportunity_id: rollover.next.opportunityId,
+            p_listing_package_id: rollover.next.listingPackageId,
+            p_product_id: rollover.next.productId,
+            p_variant_id: rollover.next.variantId,
+            p_supplier_sku: rollover.next.supplierSku,
+          })
+        if (rolled.error || !rolled.data) {
+          throw new Error(
+            "AUTONOMOUS_STOCKING_SHIPPING_SLOT_ROLLOVER_FAILED")
+        }
+        const rolloverReadback = await input.supabase.rpc(
+          "get_autonomous_stocking_batch_shipping_slot_readback_v1", {
+            p_account_key: input.accountKey,
+            p_batch_id: text(input.batch.id),
+          })
+        if (rolloverReadback.error) {
+          throw new Error("AUTONOMOUS_STOCKING_SHIPPING_SLOT_READ_FAILED")
+        }
+        const nextExact = certifyCurrentBatchShippingSlotReadbackV1(
+          rolloverReadback.data)
+        if (!nextExact.slotPresent || nextExact.shippingReady) {
+          throw new Error(
+            "AUTONOMOUS_STOCKING_SHIPPING_SLOT_ROLLOVER_READBACK_INVALID")
+        }
+        return { status: 202, body: {
+          success: false, contractVersion: CONTRACT,
+          status: "CURRENT_EXACT_SHIPPING_CAPTURE_PENDING",
+          batchId: input.batch.id, sequenceNo: child.sequence_no,
+          priorSlot: { canonicalCandidateId: rollover.priorCandidateId,
+            status: rollover.retirementStatus,
+            reasonCode: rollover.retirementReason },
+          shippingSlot: nextExact.readback,
+          AUTONOMOUS_CANDIDATE_CONTINUATION: true,
+          TARGET_ACTIVE_CAPTURE_COUNT:
+            record(nextExact.readback).targetActiveCaptureCount,
+          FOREIGN_RECEIPT_ADOPTED: false,
+          MANUAL_IDENTITY_REBIND: false,
+          CODEX_RUNTIME_DEPENDENCY: false,
+          OWNER_ACTION_REQUIRED: false,
+          safety: { concurrency: 1, marketplaceWrites: 0,
+            publicationWrites: 0, adsWrites: 0 },
+        } }
+      }
       const slot = currentBatchShippingSlotBindingV1({
         accountKey: input.accountKey,
         factoryOutcomes: factory.outcomes,
