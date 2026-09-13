@@ -39,19 +39,36 @@ export function currentBatchShippingSlotBindingV1(input: Readonly<{
     text(outcome.opportunityId) && text(outcome.listingPackageId) &&
     text(outcome.lunaProductId) && text(outcome.lunaVariantId) &&
     text(outcome.supplierSku))
-  const outcome = Object.keys(existing).length
-    ? waiting.find((candidate) =>
-      candidate.candidateId === existing.canonicalCandidateId &&
-      candidate.opportunityId === existing.opportunityId &&
-      candidate.listingPackageId === existing.listingPackageId &&
-      candidate.lunaProductId === existing.productId &&
-      candidate.lunaVariantId === existing.variantId &&
-      candidate.supplierSku === existing.supplierSku) ?? null
-    : waiting[0] ?? null
-  if (!outcome) {
-    if (Object.keys(existing).length) {
-      throw new Error("AUTONOMOUS_STOCKING_SHIPPING_SLOT_BINDING_CONTRADICTION")
+  let outcome: JsonRecord | null = waiting[0] ?? null
+  if (Object.keys(existing).length) {
+    const existingCanonical = deriveCurrentCommercialCandidateIdentityV1({
+      accountKey: input.accountKey,
+      productId: text(existing.productId),
+      variantId: text(existing.variantId),
+      supplierSku: text(existing.supplierSku),
+    })
+    if (existingCanonical.canonicalCandidateId !==
+        existing.canonicalCandidateId) {
+      throw new Error(
+        "AUTONOMOUS_STOCKING_SHIPPING_SLOT_BINDING_CONTRADICTION")
     }
+    const sameCandidate = waiting.find((candidate) =>
+      candidate.candidateId === existing.canonicalCandidateId) ?? null
+    if (sameCandidate && (sameCandidate.opportunityId !==
+        existing.opportunityId || sameCandidate.listingPackageId !==
+        existing.listingPackageId || sameCandidate.lunaProductId !==
+        existing.productId || sameCandidate.lunaVariantId !==
+        existing.variantId || sameCandidate.supplierSku !==
+        existing.supplierSku)) {
+      throw new Error(
+        "AUTONOMOUS_STOCKING_SHIPPING_SLOT_BINDING_CONTRADICTION")
+    }
+    // Once exact Shipping is durable the candidate normally leaves the
+    // WAITING_BROWSER_WORKER set. Absence from that set is progression, not a
+    // request to switch the already durable batch slot to another candidate.
+    outcome = sameCandidate
+  }
+  if (!outcome) {
     return null
   }
   const canonical = deriveCurrentCommercialCandidateIdentityV1({
