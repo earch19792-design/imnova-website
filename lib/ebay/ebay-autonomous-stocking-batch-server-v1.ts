@@ -75,14 +75,29 @@ function errorCode(error: unknown): string {
 async function readCurrentBatchExactPackageResolutionV1(input: Readonly<{
   supabase: SupabaseAdmin
   accountKey: string
+  batchId: string
   slotReadback: unknown
   priorResolution?: unknown
 }>) {
-  const slot = record(input.slotReadback)
-  const opportunityId = text(slot.opportunityId)
-  if (!opportunityId || !text(slot.listingPackageId)) {
-    throw new Error("AUTONOMOUS_STOCKING_EXACT_SLOT_PACKAGE_NOT_FOUND")
+  let slot = record(input.slotReadback)
+  if (!text(slot.opportunityId) || !text(slot.listingPackageId)) {
+    const bindingRead = await input.supabase.from(
+      "seller_os_autonomous_stocking_batch_shipping_slots_v1")
+      .select("batch_id,account_key,canonical_candidate_id,opportunity_id,listing_package_id,product_id,variant_id,supplier_sku")
+      .eq("batch_id", input.batchId).eq("account_key", input.accountKey)
+      .maybeSingle()
+    const binding = record(bindingRead.data)
+    if (bindingRead.error || !binding.batch_id ||
+        text(slot.canonicalCandidateId) !== binding.canonical_candidate_id ||
+        text(slot.productId) !== binding.product_id ||
+        text(slot.variantId) !== binding.variant_id ||
+        text(slot.supplierSku) !== binding.supplier_sku) {
+      throw new Error("AUTONOMOUS_STOCKING_EXACT_SLOT_PACKAGE_NOT_FOUND")
+    }
+    slot = { ...slot, opportunityId: binding.opportunity_id,
+      listingPackageId: binding.listing_package_id }
   }
+  const opportunityId = text(slot.opportunityId)
   const [opportunityRead, packageRead] = await Promise.all([
     input.supabase.from("ebay_luna_opportunity_queue").select(
       "id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment")
@@ -142,6 +157,7 @@ async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
       ? await readCurrentBatchExactPackageResolutionV1({
         supabase: input.supabase,
         accountKey: input.accountKey,
+        batchId: text(batch.id),
         slotReadback: readback,
         priorResolution: record(batch.evidence)
           .currentBatchSlotExactPackageResolutionV1,
@@ -538,6 +554,7 @@ async function executeBatch(input: Readonly<{
         await readCurrentBatchExactPackageResolutionV1({
           supabase: input.supabase,
           accountKey: input.accountKey,
+          batchId: text(input.batch.id),
           slotReadback: exactReadback,
           priorResolution: record(input.batch.evidence)
             .currentBatchSlotExactPackageResolutionV1,
