@@ -43,8 +43,10 @@ type Row = Record<string, unknown>
 type RuntimeResult = Readonly<{ body: Row; status: number }>
 
 const CONTRACT = "AUTONOMOUS_EBAY_STOCKING_BATCH_V1"
-const RECOVERED_SHIPPING_BLOCKER =
-  "LUNA_SHIPPING_CLAIM_LEASE_EXPIRED_WITHOUT_DURABLE_RESULT"
+const RECOVERABLE_SHIPPING_BLOCKERS = Object.freeze([
+  "AUTONOMOUS_STOCKING_SHIPPING_SLOT_BINDING_CONTRADICTION",
+  "LUNA_SHIPPING_CLAIM_LEASE_EXPIRED_WITHOUT_DURABLE_RESULT",
+])
 
 function rows(value: unknown): Row[] {
   return Array.isArray(value) ? value.map(record) : []
@@ -68,16 +70,24 @@ async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
   supabase: SupabaseAdmin
   accountKey: string
 }>) {
-  const blockedRead = await input.supabase.from(
-    "seller_os_autonomous_stocking_batches_v1").select("*")
-    .eq("account_key", input.accountKey).eq("status", "BLOCKED")
-    .contains("evidence", { firstStructuralBlocker: RECOVERED_SHIPPING_BLOCKER })
-    .order("started_at", { ascending: true }).limit(1).maybeSingle()
-  if (blockedRead.error) {
-    throw new Error("AUTONOMOUS_STOCKING_BATCH_BLOCKED_READ_FAILED")
+  let batch: Row | null = null
+  let recoveredBlocker = ""
+  for (const blocker of RECOVERABLE_SHIPPING_BLOCKERS) {
+    const blockedRead = await input.supabase.from(
+      "seller_os_autonomous_stocking_batches_v1").select("*")
+      .eq("account_key", input.accountKey).eq("status", "BLOCKED")
+      .contains("evidence", { firstStructuralBlocker: blocker })
+      .order("started_at", { ascending: true }).limit(1).maybeSingle()
+    if (blockedRead.error) {
+      throw new Error("AUTONOMOUS_STOCKING_BATCH_BLOCKED_READ_FAILED")
+    }
+    if (blockedRead.data) {
+      batch = record(blockedRead.data)
+      recoveredBlocker = blocker
+      break
+    }
   }
-  if (!blockedRead.data) return null
-  const batch = record(blockedRead.data)
+  if (!batch || !recoveredBlocker) return null
   const slotRead = await input.supabase.rpc(
     "get_autonomous_stocking_batch_shipping_slot_readback_v1", {
       p_account_key: input.accountKey,
@@ -93,7 +103,7 @@ async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
     "seller_os_autonomous_stocking_batches_v1").update({
       status: "ACTIVE",
       evidence: { ...record(batch.evidence), recoveredStructuralBlocker: {
-        blocker: RECOVERED_SHIPPING_BLOCKER,
+        blocker: recoveredBlocker,
         candidateId: readback.canonicalCandidateId,
         captureSessionId: readback.captureSessionId,
         frontierId: readback.frontierId,
@@ -105,7 +115,7 @@ async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
     }).eq("id", text(batch.id)).eq("account_key", input.accountKey)
       .eq("status", "BLOCKED")
       .contains("evidence", {
-        firstStructuralBlocker: RECOVERED_SHIPPING_BLOCKER,
+        firstStructuralBlocker: recoveredBlocker,
       }).select("*").maybeSingle()
   if (rearmed.error) {
     throw new Error("AUTONOMOUS_STOCKING_BATCH_SHIPPING_RECOVERY_REARM_FAILED")
