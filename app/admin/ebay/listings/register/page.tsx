@@ -57,11 +57,39 @@ type ProductOption = {
   listing_workspace_resolvable_gates: string[]
 }
 
+type TargetListing = {
+  itemId: string
+  title: string
+  ebaySku: string | null
+  listingStatus: string
+  lastObservedAt: string | null
+  primaryImageUrl: string | null
+  ebayUrl: string
+  linked: boolean
+}
+
+type CertifiedIdentity = {
+  sourceDecisionId: string
+  sourceItemId: string
+  sourceListingTitle: string | null
+  sourceEbaySku: string | null
+  lunaProductId: string
+  lunaVariantId: string
+  lunaSku: string
+  productTitle: string | null
+  variantTitle: string | null
+  supplierQuantityRequired: number
+  decisionAt: string
+  exactPrimaryImageMatch: boolean
+}
+
 type ApiPayload = {
   success?: boolean
   error?: string
   registrations?: Registration[]
   templates?: ListingTemplate[]
+  targetListing?: TargetListing | null
+  certifiedIdentities?: CertifiedIdentity[]
   registration?: Registration
   verification?: {
     status?: "verified" | "pending_manual_verification"
@@ -77,6 +105,12 @@ type ApiPayload = {
     status?: string
     reasonCode?: string | null
   } | null
+  resolution?: {
+    status?: string
+    productId?: string
+    variantId?: string
+    supplierSku?: string
+  }
   configuration?: {
     accountKey?: string | null
     accountAlias?: string | null
@@ -239,6 +273,28 @@ function errorLabel(code: string) {
       "Falta configurar la identidad o fingerprint de la cuenta oficial de eBay.",
     MANUAL_LISTING_OFFICIAL_ACCOUNT_IDENTITY_INCONSISTENT:
       "El User ID esperado y el fingerprint configurado no corresponden a la misma cuenta.",
+    MANUAL_LISTING_CERTIFIED_IDENTITY_CONFIRMATION_REQUIRED:
+      "Confirma explícitamente la identidad Luna antes de vincular.",
+    MANUAL_LISTING_CERTIFIED_IDENTITY_SOURCE_NOT_FOUND:
+      "La identidad Luna certificada seleccionada ya no está disponible.",
+    MANUAL_LISTING_CERTIFIED_IDENTITY_SOURCE_INVALID:
+      "La identidad Luna seleccionada no es una certificación exacta vigente.",
+    MANUAL_LISTING_CERTIFIED_IDENTITY_TARGET_CONFLICT:
+      "Este Item ID ya tiene una decisión de identidad diferente. No se modificó.",
+    MANUAL_LISTING_CERTIFIED_IDENTITY_TARGET_NOT_FOUND:
+      "El Item ID ya no aparece en los listings activos del OS.",
+    MANUAL_LISTING_CERTIFIED_IDENTITY_TARGET_NOT_CURRENT:
+      "La lectura oficial del listing está vencida o no está activa. Sincroniza y vuelve a intentar.",
+    MANUAL_LISTING_CERTIFIED_IDENTITY_TARGET_SKU_MISMATCH:
+      "El Custom label cambió entre la lectura oficial y la vinculación. Sincroniza y vuelve a intentar.",
+    MANUAL_LISTING_CURRENT_LUNA_IDENTITY_NOT_UNIQUE:
+      "La identidad actual en Luna no es única; el OS bloqueó la vinculación.",
+    MANUAL_LISTING_EBAY_READONLY_VERIFICATION_UNAVAILABLE:
+      "eBay no respondió a la verificación oficial de solo lectura. Vuelve a intentar.",
+    MANUAL_LISTING_EBAY_ITEM_NOT_OWNED:
+      "El Item ID no pertenece a la cuenta oficial configurada.",
+    MANUAL_LISTING_EBAY_ITEM_NOT_ACTIVE:
+      "El Item ID no está activo o no tiene Custom label en eBay.",
     LUNA_DIRECTED_IMPORT_URL_INVALID:
       "Pega una URL HTTPS de producto válida de lunaportex.com.",
     LUNA_DIRECTED_IMPORT_PRODUCT_INVALID:
@@ -301,7 +357,11 @@ export default function RegisterManualEbayListingPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [helperProducts, setHelperProducts] = useState<ProductOption[]>([])
+  const [targetListing, setTargetListing] = useState<TargetListing | null>(null)
+  const [certifiedIdentities, setCertifiedIdentities] = useState<CertifiedIdentity[]>([])
   const [helperLoading, setHelperLoading] = useState(true)
+  const [resolvingIdentity, setResolvingIdentity] = useState("")
+  const [showAllCertified, setShowAllCertified] = useState(false)
   const [helperError, setHelperError] = useState("")
   const [productSearch, setProductSearch] = useState("")
   const [lunaProductUrl, setLunaProductUrl] = useState("")
@@ -332,14 +392,33 @@ export default function RegisterManualEbayListingPage() {
         left.product_title.localeCompare(right.product_title, "es"))
       .slice(0, 8)
   }, [helperProducts, productSearch])
+  const recommendedIdentity = useMemo(() => {
+    const matches = certifiedIdentities.filter((identity) =>
+      identity.exactPrimaryImageMatch)
+    return matches.length === 1 ? matches[0] : null
+  }, [certifiedIdentities])
+  const visibleCertifiedIdentities = useMemo(() => {
+    const search = productSearch.trim().toLocaleLowerCase("es")
+    if (!search && !showAllCertified) return []
+    return certifiedIdentities.filter((identity) =>
+      identity.sourceDecisionId !== recommendedIdentity?.sourceDecisionId &&
+      (!search || [
+        identity.productTitle,
+        identity.variantTitle,
+        identity.lunaSku,
+        identity.sourceListingTitle,
+        identity.sourceItemId,
+      ].some((value) => value?.toLocaleLowerCase("es").includes(search))))
+  }, [certifiedIdentities, productSearch, recommendedIdentity, showAllCertified])
 
   const apiRequest = useCallback(async (
     method: "GET" | "POST",
     body?: Record<string, unknown>,
+    query = "",
   ) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("admin_token_required")
-    const response = await fetch("/api/admin/ebay/listings/register", {
+    const response = await fetch(`/api/admin/ebay/listings/register${query}`, {
       method,
       cache: "no-store",
       headers: {
@@ -358,9 +437,15 @@ export default function RegisterManualEbayListingPage() {
   const loadRegistrations = useCallback(async () => {
     setError("")
     try {
-      const payload = await apiRequest("GET")
+      const requestedItemId = new URLSearchParams(window.location.search)
+        .get("ebayItemId")
+      const query = requestedItemId && /^\d{9,20}$/.test(requestedItemId)
+        ? `?ebayItemId=${encodeURIComponent(requestedItemId)}` : ""
+      const payload = await apiRequest("GET", undefined, query)
       setRegistrations(payload.registrations ?? [])
       setTemplates(payload.templates ?? [])
+      setTargetListing(payload.targetListing ?? null)
+      setCertifiedIdentities(payload.certifiedIdentities ?? [])
       setAccountKey(
         payload.configuration?.accountAlias ??
         payload.configuration?.accountKey ??
@@ -387,12 +472,15 @@ export default function RegisterManualEbayListingPage() {
     try {
       const { data, error: sessionError } = await supabase.auth.getSession()
       if (sessionError || !data.session) throw new Error("admin_token_required")
-      const response = await fetch("/api/admin/ebay/command-center", {
+      const response = await fetch(
+        "/api/admin/ebay/luna-opportunity-queue?fullQueue=1",
+        {
         cache: "no-store",
         headers: {
           Authorization: `Bearer ${data.session.access_token}`,
         },
-      })
+        },
+      )
       const payload = await response.json() as CommandCenterPayload
       if (!response.ok || !payload.success) {
         throw new Error(payload.error || "COMMAND_CENTER_STATE_READ_FAILED")
@@ -542,6 +630,34 @@ export default function RegisterManualEbayListingPage() {
     }
   }
 
+  async function resolveCertifiedIdentity(identity: CertifiedIdentity) {
+    if (!targetListing || resolvingIdentity) return
+    const confirmed = window.confirm(
+      `¿Confirmas que el listing eBay ${targetListing.itemId} es exactamente el producto Luna ${identity.lunaSku}? Esta acción no usa similitud de título.`,
+    )
+    if (!confirmed) return
+    setResolvingIdentity(identity.sourceDecisionId)
+    setError("")
+    setMessage("")
+    try {
+      const payload = await apiRequest("POST", {
+        action: "resolve_existing_certified_identity",
+        ebayItemId: targetListing.itemId,
+        sourceDecisionId: identity.sourceDecisionId,
+        confirmation: "VINCULAR_IDENTIDAD_LUNA_CERTIFICADA",
+      })
+      setMessage(
+        `Listing ${targetListing.itemId} vinculado a ${payload.resolution?.supplierSku ?? identity.lunaSku}. StockGuard fue actualizado.`,
+      )
+      await loadRegistrations()
+    } catch (requestError) {
+      const code = requestError instanceof Error ? requestError.message : ""
+      setError(errorLabel(code))
+    } finally {
+      setResolvingIdentity("")
+    }
+  }
+
   function formFromRegistration(row: Registration): FormState {
     return {
       ...emptyForm,
@@ -616,6 +732,37 @@ export default function RegisterManualEbayListingPage() {
           {accountScopeReason && <p className="mt-2 text-xs text-rose-100/70">Motivo de configuración: {errorLabel(`MANUAL_LISTING_${accountScopeReason}`)}</p>}
         </section>}
 
+        {targetListing ? <section role="region" aria-label="Listing seleccionado para vincular" className="rounded-3xl border-2 border-rose-400 bg-rose-500/[0.14] p-5 shadow-[0_0_34px_rgba(244,63,94,0.16)] md:p-7">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            {targetListing.primaryImageUrl ? <img src={targetListing.primaryImageUrl} alt="Imagen oficial del listing seleccionado" className="h-24 w-24 shrink-0 rounded-2xl border border-rose-100/25 bg-white object-contain" /> : null}
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-rose-100">Listing que vas a vincular</p>
+              <h2 className="mt-2 text-xl font-black leading-7 text-white">{targetListing.title}</h2>
+              <p className="mt-3 break-all font-mono text-sm font-black text-rose-50">Item ID {targetListing.itemId}</p>
+              <p className="mt-1 break-all text-sm text-rose-50/80">Custom label actual: <strong>{targetListing.ebaySku || "Sin Custom label"}</strong></p>
+              <p className="mt-1 text-xs text-rose-100/65">Última lectura oficial: {dateTime(targetListing.lastObservedAt)}</p>
+            </div>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${targetListing.linked ? "bg-emerald-200 text-emerald-950" : "bg-rose-100 text-rose-950"}`}>
+              {targetListing.linked ? "VINCULADO" : "FALTA VINCULAR"}
+            </span>
+          </div>
+          <a href={targetListing.ebayUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex min-h-11 items-center justify-center rounded-xl border border-rose-100/30 px-4 text-sm font-black text-rose-50">
+            Ver este listing en eBay ↗
+          </a>
+          {recommendedIdentity && !targetListing.linked ? <div className="mt-5 rounded-2xl border-2 border-emerald-300/50 bg-emerald-300/[0.10] p-4">
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100">Identidad encontrada para confirmar</p>
+            <h3 className="mt-2 font-black text-white">{recommendedIdentity.productTitle || recommendedIdentity.sourceListingTitle || recommendedIdentity.lunaSku}</h3>
+            <p className="mt-2 text-sm text-emerald-50/80">SKU Luna: <strong>{recommendedIdentity.lunaSku}</strong> · certificada antes en eBay {recommendedIdentity.sourceItemId}</p>
+            <p className="mt-2 text-xs leading-5 text-white/55">Se destacó porque ambos registros conservan exactamente la misma imagen oficial. Esto sólo facilita encontrarla: tú confirmas la identidad y el OS vuelve a verificar eBay antes de guardar.</p>
+            <button type="button" disabled={Boolean(resolvingIdentity)} onClick={() => void resolveCertifiedIdentity(recommendedIdentity)} className="mt-4 min-h-14 w-full rounded-2xl bg-emerald-300 px-4 text-sm font-black text-emerald-950 disabled:opacity-50">
+              {resolvingIdentity === recommendedIdentity.sourceDecisionId ? "Verificando en eBay y vinculando…" : `Confirmar y vincular a ${recommendedIdentity.lunaSku}`}
+            </button>
+          </div> : null}
+        </section> : !loading && form.ebayItemId ? <section role="alert" className="rounded-3xl border-2 border-rose-400 bg-rose-500/[0.12] p-5 text-rose-50">
+          <p className="font-black">No se encontró el Item ID {form.ebayItemId} en la lectura activa oficial.</p>
+          <p className="mt-2 text-sm text-rose-100/75">Actualiza listings en Seller OS y vuelve a abrir “Resolver ahora”.</p>
+        </section> : null}
+
         <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.07] p-5 text-sm leading-6 text-amber-50/80">
           <p className="font-black text-amber-100">Qué aprende el OS</p>
           <p className="mt-2">
@@ -625,6 +772,9 @@ export default function RegisterManualEbayListingPage() {
             manuales del navegador en defaults confiables.
           </p>
         </section>
+
+        {error ? <p role="alert" className="rounded-2xl border border-rose-300/25 bg-rose-300/[0.08] p-4 text-sm font-bold text-rose-100">{error}</p> : null}
+        {message ? <p role="status" className="rounded-2xl border border-emerald-300/25 bg-emerald-300/[0.08] p-4 text-sm font-bold text-emerald-100">{message}</p> : null}
 
         {hasProductContext ? <form
           className="grid gap-6"
@@ -695,9 +845,6 @@ export default function RegisterManualEbayListingPage() {
             </div>
           </section>
 
-          {error ? <p role="alert" className="rounded-2xl border border-rose-300/25 bg-rose-300/[0.08] p-4 text-sm font-bold text-rose-100">{error}</p> : null}
-          {message ? <p role="status" className="rounded-2xl border border-emerald-300/25 bg-emerald-300/[0.08] p-4 text-sm font-bold text-emerald-100">{message}</p> : null}
-
           <button
             type="submit"
             disabled={saving || loading || accountScopeConfigured !== true}
@@ -717,7 +864,7 @@ export default function RegisterManualEbayListingPage() {
           <ol aria-label="Progreso para vincular listing" className="mt-5 grid grid-cols-3 gap-2 text-center text-xs font-black">
             <li aria-current="step" className="rounded-2xl bg-cyan-200 px-2 py-3 text-black"><span className="block text-lg">1</span>Elegir producto</li>
             <li className="rounded-2xl border border-white/15 px-2 py-3 text-white/55"><span className="block text-lg">2</span>Confirmar paquete y SKU</li>
-            <li className="rounded-2xl border border-white/15 px-2 py-3 text-white/55"><span className="block text-lg">3</span>Pegar Item ID</li>
+            <li className={`rounded-2xl border px-2 py-3 ${form.ebayItemId ? "border-emerald-200/30 bg-emerald-200/[0.08] text-emerald-100" : "border-white/15 text-white/55"}`}><span className="block text-lg">3</span>{form.ebayItemId ? "Item ID localizado" : "Pegar Item ID"}</li>
           </ol>
 
           <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4">
@@ -732,11 +879,30 @@ export default function RegisterManualEbayListingPage() {
                 autoComplete="off"
               />
             </label>
-            <p className="mt-2 text-xs leading-5 text-white/45">No ingreses todavía el Item ID. Primero debemos reservar y verificar el Custom label/SKU correcto.</p>
+            <p className="mt-2 text-xs leading-5 text-white/45">{form.ebayItemId ? `El Item ID ${form.ebayItemId} ya está localizado arriba. Ahora elige su identidad Luna exacta.` : "Primero debemos reservar y verificar el Custom label/SKU correcto."}</p>
+            {!productSearch.trim() ? <button type="button" onClick={() => setShowAllCertified((current) => !current)} className="mt-3 min-h-10 rounded-xl border border-white/15 px-3 text-xs font-black text-white/70">
+              {showAllCertified ? "Ocultar otras identidades" : "Buscar otra identidad Luna"}
+            </button> : null}
           </div>
 
           {helperLoading ? <p role="status" className="mt-4 rounded-2xl border border-white/10 p-4 text-sm text-white/60">Buscando productos disponibles…</p> : null}
           {helperError ? <div role="alert" className="mt-4 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-4 text-sm text-rose-50"><p>{helperError}</p><div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => void loadHelperProducts()} className="min-h-11 rounded-xl bg-white px-3 font-black text-black">Reintentar</button><a href="/admin/ebay/opportunity-queue" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-rose-100/25 px-3 text-center font-black">Abrir cola</a></div></div> : null}
+
+          {targetListing && !targetListing.linked && visibleCertifiedIdentities.length ? <section className="mt-4 rounded-2xl border border-white/15 bg-white/[0.03] p-4">
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-white/65">Otras identidades Luna certificadas</p>
+            <p className="mt-2 text-xs leading-5 text-white/55">Elige únicamente si es exactamente el mismo producto y variante. El OS no decide por el título ni por la foto.</p>
+            <div className="mt-3 grid gap-3">
+              {visibleCertifiedIdentities.map((identity) => <article key={identity.sourceDecisionId} className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                <h3 className="font-black leading-5">{identity.productTitle || identity.sourceListingTitle || identity.lunaSku}</h3>
+                <p className="mt-1 text-xs text-white/55">Variante: {identity.variantTitle || identity.lunaVariantId}</p>
+                <p className="mt-1 break-all text-xs text-white/70">SKU Luna: <strong>{identity.lunaSku}</strong></p>
+                <p className="mt-1 text-xs text-white/45">Identidad certificada antes en eBay {identity.sourceItemId}</p>
+                <button type="button" disabled={Boolean(resolvingIdentity)} onClick={() => void resolveCertifiedIdentity(identity)} className="mt-3 min-h-12 w-full rounded-2xl bg-rose-200 px-4 text-sm font-black text-rose-950 disabled:opacity-50">
+                  {resolvingIdentity === identity.sourceDecisionId ? "Verificando en eBay y vinculando…" : `Vincular este listing a ${identity.lunaSku}`}
+                </button>
+              </article>)}
+            </div>
+          </section> : null}
 
           {!helperLoading && !helperError ? <div className="mt-4 grid gap-3">
             {visibleHelperProducts.map((product) => {

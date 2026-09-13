@@ -10,9 +10,11 @@ import {
 } from "@/lib/ebay/ebay-manual-listing-domain"
 import {
   getManualListingRegistrationConfiguration,
+  getManualEbayListingResolutionContext,
   isSafeManualListingErrorCode,
   listManualEbayListingRegistrations,
   registerManualEbayListing,
+  resolveManualEbayListingWithCertifiedIdentity,
 } from "@/lib/ebay/ebay-manual-listing-service"
 import {
   getSupabaseAdminClient,
@@ -64,6 +66,12 @@ function failure(code: string, status: number) {
   )
 }
 
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
 async function authenticate(req: Request) {
   try {
     return await validateAdminApiRequest(req)
@@ -87,26 +95,30 @@ export async function GET(req: Request) {
   }
 
   try {
-    const requestedLimit = Number(
-      new URL(req.url).searchParams.get("limit") ?? 50,
-    )
+    const searchParams = new URL(req.url).searchParams
+    const requestedLimit = Number(searchParams.get("limit") ?? 50)
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
       : 50
     const configuration = getManualListingRegistrationConfiguration()
+    const supabase = getSupabaseAdminClient()
     const result = configuration.accountScopeConfigured
-      ? await listManualEbayListingRegistrations(
-          getSupabaseAdminClient(),
-          limit,
-        )
+      ? await listManualEbayListingRegistrations(supabase, limit)
       : {
           accountKey: null,
           registrations: [],
           templates: [],
         }
+    const resolutionContext = configuration.accountScopeConfigured
+      ? await getManualEbayListingResolutionContext(
+          supabase,
+          searchParams.get("ebayItemId"),
+        )
+      : { targetListing: null, certifiedIdentities: [] }
     return NextResponse.json({
       success: true,
       ...result,
+      ...resolutionContext,
       configuration,
       reusableDefaultsPolicy: {
         allowedFields: reusableListingDefaultFields,
@@ -152,7 +164,34 @@ export async function POST(req: Request) {
   }
 
   try {
-    const parsedInput = parseManualListingRegistrationInput(await req.json())
+    const body = object(await req.json())
+    if (body.action === "resolve_existing_certified_identity") {
+      if (body.confirmation !== "VINCULAR_IDENTIDAD_LUNA_CERTIFICADA") {
+        return failure(
+          "MANUAL_LISTING_CERTIFIED_IDENTITY_CONFIRMATION_REQUIRED",
+          400,
+        )
+      }
+      const result = await resolveManualEbayListingWithCertifiedIdentity(
+        getSupabaseAdminClient(),
+        {
+          ebayItemId: String(body.ebayItemId ?? ""),
+          sourceDecisionId: String(body.sourceDecisionId ?? ""),
+          actorUserId: auth.userId,
+        },
+      )
+      return NextResponse.json({
+        success: true,
+        ...result,
+        safety: {
+          ebayWriteUsed: false,
+          canPublish: false,
+          titleInferenceUsed: false,
+          humanExactIdentityConfirmationRequired: true,
+        },
+      })
+    }
+    const parsedInput = parseManualListingRegistrationInput(body)
     const input = {
       ...parsedInput,
       // Product identity is resolved from the opportunity and its bound handoff.

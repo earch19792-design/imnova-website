@@ -64,6 +64,13 @@ const exposedManualSuccessorDatabaseErrors = new Set([
   "MANUAL_LIVE_SUCCESSOR_DUPLICATE_OR_HISTORY_MISMATCH",
   "MANUAL_LIVE_SUCCESSOR_PREDECESSOR_NOT_EXACT",
   "MANUAL_LIVE_SUCCESSOR_LINEAGE_RETIREMENT_FAILED",
+  "MANUAL_LISTING_CERTIFIED_IDENTITY_SOURCE_INVALID",
+  "MANUAL_LISTING_CERTIFIED_IDENTITY_SOURCE_NOT_FOUND",
+  "MANUAL_LISTING_CERTIFIED_IDENTITY_TARGET_CONFLICT",
+  "MANUAL_LISTING_CERTIFIED_IDENTITY_TARGET_NOT_FOUND",
+  "MANUAL_LISTING_CERTIFIED_IDENTITY_TARGET_NOT_CURRENT",
+  "MANUAL_LISTING_CERTIFIED_IDENTITY_TARGET_SKU_MISMATCH",
+  "MANUAL_LISTING_CURRENT_LUNA_IDENTITY_NOT_UNIQUE",
 ])
 
 export function isSafeManualListingErrorCode(value: unknown): value is string {
@@ -741,6 +748,192 @@ export async function listManualEbayListingRegistrations(
     accountKey,
     registrations: registrationsResult.data ?? [],
     templates: templatesResult.data ?? [],
+  }
+}
+
+export async function getManualEbayListingResolutionContext(
+  supabase: SupabaseClient,
+  ebayItemId: string | null,
+) {
+  const accountKey = getManualListingAccountKey()
+  const itemId = text(ebayItemId)
+  if (itemId && !/^\d{9,20}$/.test(itemId)) {
+    throw new Error("MANUAL_LISTING_ITEM_ID_INVALID")
+  }
+  const targetRead = itemId
+    ? supabase.from("ebay_active_listings")
+      .select("id,ebay_item_id,title,ebay_sku,listing_status,last_ebay_sync_at,raw_payload")
+      .eq("account_key", accountKey)
+      .eq("ebay_item_id", itemId)
+      .maybeSingle()
+    : Promise.resolve({ data: null, error: null })
+  const [targetResult, decisionsResult] = await Promise.all([
+    targetRead,
+    supabase.from("seller_os_luna_linkage_decisions")
+      .select("decision_id,decision,decision_version,decision_at,ebay_item_id,ebay_sku,listing_title,luna_product_id,luna_variant_id,luna_sku,components")
+      .eq("account_key", accountKey)
+      .eq("marketplace_id", "EBAY_US")
+      .order("decision_version", { ascending: false })
+      .limit(250),
+  ])
+  if (targetResult.error) {
+    throw new Error("MANUAL_LISTING_ACTIVE_TARGET_READ_FAILED")
+  }
+  if (decisionsResult.error) {
+    throw new Error("MANUAL_LISTING_CERTIFIED_IDENTITIES_READ_FAILED")
+  }
+  const latestByItem = new Map<string, JsonRecord>()
+  for (const value of decisionsResult.data ?? []) {
+    const row = value as JsonRecord
+    const sourceItemId = text(row.ebay_item_id)
+    if (sourceItemId && !latestByItem.has(sourceItemId)) {
+      latestByItem.set(sourceItemId, row)
+    }
+  }
+  const sourceItemIds = [...latestByItem.keys()].filter((value) =>
+    value !== itemId)
+  const sourceListingsResult = sourceItemIds.length
+    ? await supabase.from("ebay_active_listings")
+      .select("ebay_item_id,raw_payload")
+      .eq("account_key", accountKey)
+      .in("ebay_item_id", sourceItemIds)
+      .limit(250)
+    : { data: [], error: null }
+  const sourcePrimaryImages = new Map((sourceListingsResult.data ?? [])
+    .flatMap((listing) => {
+      const sourceItemId = text(listing.ebay_item_id)
+      const primaryImageUrl = text(record(listing.raw_payload).primaryImageUrl)
+      return sourceItemId && primaryImageUrl
+        ? [[sourceItemId, primaryImageUrl] as const] : []
+    }))
+  const targetPrimaryImageUrl = text(record(targetResult.data?.raw_payload)
+    .primaryImageUrl)
+  const identities = new Map<string, JsonRecord>()
+  for (const row of latestByItem.values()) {
+    const productId = text(row.luna_product_id)
+    const variantId = text(row.luna_variant_id)
+    const supplierSku = text(row.luna_sku)
+    const sourceItemId = text(row.ebay_item_id)
+    if (row.decision !== "APPROVE_EXACT_LINKAGE" || !productId ||
+        !variantId || !supplierSku || !sourceItemId || sourceItemId === itemId) {
+      continue
+    }
+    const components = Array.isArray(row.components) ? row.components : []
+    const component = components.length === 1 ? record(components[0]) : {}
+    const supplierQuantityRequired =
+      Number(component.supplierQuantityRequired)
+    if (components.length !== 1 || supplierQuantityRequired !== 1) continue
+    const identityKey = `${productId}:${variantId}:${supplierSku}`
+    if (!identities.has(identityKey)) {
+      identities.set(identityKey, {
+        sourceDecisionId: row.decision_id,
+        sourceItemId,
+        sourceListingTitle: row.listing_title,
+        sourceEbaySku: row.ebay_sku,
+        lunaProductId: productId,
+        lunaVariantId: variantId,
+        lunaSku: supplierSku,
+        productTitle: text(component.productTitle),
+        variantTitle: text(component.variantTitle),
+        supplierQuantityRequired,
+        decisionAt: row.decision_at,
+        exactPrimaryImageMatch: Boolean(
+          targetPrimaryImageUrl &&
+          sourcePrimaryImages.get(sourceItemId) === targetPrimaryImageUrl,
+        ),
+      })
+    }
+  }
+  const target = targetResult.data
+  return {
+    targetListing: target ? {
+      itemId: target.ebay_item_id,
+      title: target.title,
+      ebaySku: target.ebay_sku,
+      listingStatus: target.listing_status,
+      lastObservedAt: target.last_ebay_sync_at,
+      primaryImageUrl: targetPrimaryImageUrl,
+      ebayUrl: `https://www.ebay.com/itm/${target.ebay_item_id}`,
+      linked: latestByItem.get(target.ebay_item_id)?.decision ===
+        "APPROVE_EXACT_LINKAGE",
+    } : null,
+    certifiedIdentities: [...identities.values()].sort((left, right) =>
+      Number(Boolean(right.exactPrimaryImageMatch)) -
+        Number(Boolean(left.exactPrimaryImageMatch))),
+  }
+}
+
+export async function resolveManualEbayListingWithCertifiedIdentity(
+  supabase: SupabaseClient,
+  input: Readonly<{
+    ebayItemId: string
+    sourceDecisionId: string
+    actorUserId: string
+  }>,
+) {
+  const accountKey = getManualListingAccountKey()
+  if (!/^\d{9,20}$/.test(input.ebayItemId) ||
+      !/^luna-linkage-decision-v1:sha256:[0-9a-f]{64}$/.test(
+        input.sourceDecisionId,
+      ) || !/^[0-9a-f-]{36}$/.test(input.actorUserId)) {
+    throw new Error("MANUAL_LISTING_CERTIFIED_IDENTITY_SOURCE_INVALID")
+  }
+  const trading = getTradingManualListingReadonlyConfiguration()
+  if (!trading.configured || !trading.identityBound) {
+    throw new Error("MANUAL_LISTING_OFFICIAL_ACCOUNT_IDENTITY_REQUIRED")
+  }
+  let observed: TradingManualListingResult
+  try {
+    observed = await readManualListingFromTradingApi(input.ebayItemId)
+  } catch {
+    throw new Error("MANUAL_LISTING_EBAY_READONLY_VERIFICATION_UNAVAILABLE")
+  }
+  if (observed.ownership === "identity_mismatch") {
+    throw new Error("MANUAL_LISTING_OFFICIAL_ACCOUNT_IDENTITY_INCONSISTENT")
+  }
+  if (observed.ownership === "not_owned") {
+    throw new Error("MANUAL_LISTING_EBAY_ITEM_NOT_OWNED")
+  }
+  if (observed.ownership !== "verified" || !observed.ebaySku) {
+    throw new Error("MANUAL_LISTING_EBAY_ITEM_NOT_ACTIVE")
+  }
+  const { data, error } = await supabase.rpc(
+    "resolve_manual_existing_certified_identity_v1",
+    {
+      p_account_key: accountKey,
+      p_item_id: input.ebayItemId,
+      p_source_decision_id: input.sourceDecisionId,
+      p_actor_user_id: input.actorUserId,
+      p_observed_ebay_sku: observed.ebaySku,
+      p_observed_at: observed.observedAt,
+    },
+  )
+  if (error) {
+    throw new Error(safeDatabaseErrorCode(
+      error,
+      "MANUAL_LISTING_CERTIFIED_IDENTITY_WRITE_FAILED",
+    ))
+  }
+  const resolution = record(data)
+  if (resolution.status !== "CERTIFIED") {
+    const reason = text(resolution.reason)
+    throw new Error(reason && /^MANUAL_LISTING_[A-Z0-9_]+$/.test(reason)
+      ? reason : "MANUAL_LISTING_CERTIFIED_IDENTITY_WRITE_FAILED")
+  }
+  const stockGuardRefresh = await refreshCertifiedManualListingStockGuard(
+    supabase,
+    { accountKey, ebayItemId: input.ebayItemId },
+  )
+  return {
+    resolution,
+    officialListing: {
+      itemId: observed.itemId,
+      title: observed.title,
+      ebaySku: observed.ebaySku,
+      listingStatus: observed.listingStatus,
+      observedAt: observed.observedAt,
+    },
+    stockGuardRefresh,
   }
 }
 
