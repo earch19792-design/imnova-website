@@ -3,6 +3,8 @@ import "server-only"
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { deriveCurrentCommercialCandidateIdentityV1 } from
   "./ebay-current-commercial-candidate-identity-v1"
+import { certifyCurrentBatchShippingSlotReadbackV1 } from
+  "./ebay-autonomous-stocking-shipping-slot-v1"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -1228,11 +1230,24 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   now?: number
   maximumJobs?: 1
 }>): Promise<LunaChromeShippingJobAcquisitionV1> {
+  const batchSlotResult = await input.supabase.rpc(
+    "get_autonomous_stocking_batch_shipping_slot_readback_v1", {
+      p_account_key: input.accountKey,
+      p_batch_id: null,
+    })
+  if (batchSlotResult.error) {
+    throw new Error("LUNA_SHIPPING_BATCH_SLOT_AUTHORITY_UNAVAILABLE")
+  }
+  const batchSlot = certifyCurrentBatchShippingSlotReadbackV1(
+    batchSlotResult.data)
+  const batchPriorityCandidateIds = batchSlot.priorityCandidateId
+    ? Object.freeze([batchSlot.priorityCandidateId]) : undefined
   let eligible: readonly LunaChromeShippingJobV1[] = Object.freeze([])
   let standardDiscoveryError: unknown = null
   try {
     eligible = await resolveLunaChromeShippingJobsV1({
       supabase: input.supabase, accountKey: input.accountKey,
+      candidateIds: batchPriorityCandidateIds,
       sessionSecret: input.sessionSecret, now: input.now,
     })
   } catch (error) {
@@ -1241,7 +1256,10 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     // not strand a durable LIVE economic shipping job.
     standardDiscoveryError = error
   }
-  if (input.maximumJobs === 1) {
+  if (standardDiscoveryError && batchPriorityCandidateIds) {
+    throw standardDiscoveryError
+  }
+  if (input.maximumJobs === 1 && !batchPriorityCandidateIds) {
     // Existing claims provide the class turn; no timer, counter or new worker.
     // LIVE economic claims carry freshness_generation; frontier claims do not.
     const history = eligible.length ? await input.supabase
@@ -1279,14 +1297,20 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     if (result?.claimed === true) jobs.push(job)
     else leaseConflictCount += 1
   }
-  const economic = await acquireEconomicLiveListingShippingJobsV1({
-    supabase: input.supabase, accountKey: input.accountKey,
-    runtimeInstanceId: input.runtimeInstanceId,
-    sessionSecret: input.sessionSecret,
-    limit: input.maximumJobs === 1 ? 0 : Math.min(SELLER_OS_ECONOMIC_SHIPPING_BATCH_LIMIT_V1,
-      Math.max(0, (input.maximumJobs ?? LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH) - jobs.length)),
-    now: input.now,
-  })
+  const economic = batchPriorityCandidateIds
+    ? Object.freeze({ jobs: Object.freeze([]), eligiblePendingJobCount: 0,
+      claimedJobCount: 0, reusedEvidenceCount: 0,
+      leaseConflictCount: 0, claimFailureCount: 0 })
+    : await acquireEconomicLiveListingShippingJobsV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      runtimeInstanceId: input.runtimeInstanceId,
+      sessionSecret: input.sessionSecret,
+      limit: input.maximumJobs === 1 ? 0 : Math.min(
+        SELLER_OS_ECONOMIC_SHIPPING_BATCH_LIMIT_V1,
+        Math.max(0, (input.maximumJobs ??
+          LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH) - jobs.length)),
+      now: input.now,
+    })
   jobs.push(...economic.jobs)
   leaseConflictCount += economic.leaseConflictCount
   claimFailureCount += economic.claimFailureCount

@@ -34,6 +34,9 @@ import { knownBuyerShippingV1 } from
 import { keywordRecord as record } from
   "@/lib/seller-os/keyword-intelligence-handoff-v1"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { certifyCurrentBatchShippingSlotReadbackV1,
+  currentBatchShippingSlotBindingV1 } from
+  "@/lib/ebay/ebay-autonomous-stocking-shipping-slot-v1"
 
 type SupabaseAdmin = ReturnType<typeof getSupabaseAdminClient>
 type Row = Record<string, unknown>
@@ -75,48 +78,27 @@ async function resumeBatchAfterRecoveredShippingClaimV1(input: Readonly<{
   }
   if (!blockedRead.data) return null
   const batch = record(blockedRead.data)
-  const blockedAt = text(record(batch.evidence).blockedAt)
-  if (!Number.isFinite(Date.parse(blockedAt))) return null
-  const claimRead = await input.supabase.from(
-    "seller_os_luna_shipping_job_claims")
-    .select("candidate_id,capture_session_id,status,last_recovered_at,expired_recovery_count")
-    .eq("account_key", input.accountKey).eq("status", "COMPLETED")
-    .gt("expired_recovery_count", 0).gte("last_recovered_at", blockedAt)
-    .order("last_recovered_at", { ascending: false }).limit(10)
-  if (claimRead.error) {
+  const slotRead = await input.supabase.rpc(
+    "get_autonomous_stocking_batch_shipping_slot_readback_v1", {
+      p_account_key: input.accountKey,
+      p_batch_id: text(batch.id),
+    })
+  if (slotRead.error) {
     throw new Error("AUTONOMOUS_STOCKING_BATCH_SHIPPING_RECOVERY_READ_FAILED")
   }
-  let recovery: Row | null = null
-  let frontierId = ""
-  for (const claim of rows(claimRead.data)) {
-    const candidateId = text(claim.candidate_id)
-    const captureSessionId = text(claim.capture_session_id)
-    if (!candidateId || !captureSessionId) continue
-    const durable = await input.supabase.rpc(
-      "get_seller_os_luna_shipping_recovery_readback_v1", {
-        p_account_key: input.accountKey,
-        p_candidate_id: candidateId,
-        p_capture_session_id: captureSessionId,
-      })
-    if (durable.error) {
-      throw new Error("AUTONOMOUS_STOCKING_BATCH_SHIPPING_RESULT_READ_FAILED")
-    }
-    const exact = record(durable.data)
-    if (exact.exactDurableReadbackMatch !== true
-        || exact.exactResultCount !== 1) continue
-    recovery = claim
-    frontierId = text(exact.frontierId)
-    break
-  }
-  if (!recovery || !frontierId) return null
+  const exact = certifyCurrentBatchShippingSlotReadbackV1(slotRead.data)
+  if (!exact.slotPresent || !exact.shippingReady) return null
+  const readback = record(exact.readback)
   const rearmed = await input.supabase.from(
     "seller_os_autonomous_stocking_batches_v1").update({
       status: "ACTIVE",
       evidence: { ...record(batch.evidence), recoveredStructuralBlocker: {
         blocker: RECOVERED_SHIPPING_BLOCKER,
-        candidateId: recovery.candidate_id,
-        captureSessionId: recovery.capture_session_id,
-        frontierId, recoveredAt: recovery.last_recovered_at,
+        candidateId: readback.canonicalCandidateId,
+        captureSessionId: readback.captureSessionId,
+        frontierId: readback.frontierId,
+        shippingReceiptCommercialIdentityMatch: true,
+        foreignReceiptAdopted: false,
         automaticExpiredShippingClaimRecovery: true,
       } },
       updated_at: new Date().toISOString(),
@@ -457,6 +439,37 @@ async function executeBatch(input: Readonly<{
 
   let selectionEvidence: Row = {}
   if (!child.listing_package_id) {
+    const existingSlot = record(record(child.evidence).currentShippingSlotV1)
+    let exactSlot: ReturnType<
+      typeof certifyCurrentBatchShippingSlotReadbackV1> | null = null
+    if (Object.keys(existingSlot).length) {
+      const slotRead = await input.supabase.rpc(
+        "get_autonomous_stocking_batch_shipping_slot_readback_v1", {
+          p_account_key: input.accountKey,
+          p_batch_id: text(input.batch.id),
+        })
+      if (slotRead.error) {
+        throw new Error("AUTONOMOUS_STOCKING_SHIPPING_SLOT_READ_FAILED")
+      }
+      exactSlot = certifyCurrentBatchShippingSlotReadbackV1(slotRead.data)
+      if (!exactSlot.slotPresent) {
+        throw new Error("AUTONOMOUS_STOCKING_SHIPPING_SLOT_DURABILITY_MISMATCH")
+      }
+      if (!exactSlot.shippingReady) return { status: 202, body: {
+        success: false, contractVersion: CONTRACT,
+        status: "CURRENT_EXACT_SHIPPING_CAPTURE_PENDING",
+        batchId: input.batch.id, sequenceNo: child.sequence_no,
+        shippingSlot: exactSlot.readback,
+        TARGET_ACTIVE_CAPTURE_COUNT:
+          record(exactSlot.readback).targetActiveCaptureCount,
+        FOREIGN_RECEIPT_ADOPTED: false,
+        MANUAL_IDENTITY_REBIND: false,
+        CODEX_RUNTIME_DEPENDENCY: false,
+        OWNER_ACTION_REQUIRED: false,
+        safety: { concurrency: 1, marketplaceWrites: 0,
+          publicationWrites: 0, adsWrites: 0 },
+      } }
+    }
     let batch = await collectRadarRevenueFactoryCandidateBatchV1({
       supabase: input.supabase, accountKey: input.accountKey,
       targetCandidates: 100,
@@ -507,6 +520,8 @@ async function executeBatch(input: Readonly<{
           || !outcome.listingPackageId || !outcome.opportunityId
           || !outcome.candidateKey || !outcome.lunaProductId
           || !outcome.lunaVariantId || !outcome.supplierSku
+          || exactSlot?.shippingReady && outcome.candidateId !==
+            record(exactSlot.readback).canonicalCandidateId
           || priorCandidates.has(text(outcome.candidateId))
           || priorPackages.has(text(outcome.listingPackageId))) continue
       const [packageRead, opportunityRead, publicationRead] =
@@ -544,6 +559,57 @@ async function executeBatch(input: Readonly<{
       manualProductSelection: false, manualProductIdInjection: false,
       codexRuntimeDependency: false }
     if (!selection) {
+      const slot = currentBatchShippingSlotBindingV1({
+        accountKey: input.accountKey,
+        factoryOutcomes: factory.outcomes,
+        existingBinding: Object.keys(existingSlot).length
+          ? existingSlot : undefined,
+      })
+      if (slot && !Object.keys(existingSlot).length) {
+        const binding = await input.supabase.rpc(
+          "bind_autonomous_stocking_batch_shipping_slot_v1", {
+            p_account_key: input.accountKey,
+            p_batch_id: text(input.batch.id),
+            p_child_id: text(child.id),
+            p_canonical_candidate_id: slot.canonicalCandidateId,
+            p_opportunity_id: slot.opportunityId,
+            p_listing_package_id: slot.listingPackageId,
+            p_product_id: slot.productId,
+            p_variant_id: slot.variantId,
+            p_supplier_sku: slot.supplierSku,
+          })
+        if (binding.error || !binding.data) {
+          throw new Error("AUTONOMOUS_STOCKING_SHIPPING_SLOT_BIND_FAILED")
+        }
+        const readback = await input.supabase.rpc(
+          "get_autonomous_stocking_batch_shipping_slot_readback_v1", {
+            p_account_key: input.accountKey,
+            p_batch_id: text(input.batch.id),
+          })
+        if (readback.error) {
+          throw new Error("AUTONOMOUS_STOCKING_SHIPPING_SLOT_READ_FAILED")
+        }
+        const exact = certifyCurrentBatchShippingSlotReadbackV1(readback.data)
+        if (!exact.slotPresent) {
+          throw new Error("AUTONOMOUS_STOCKING_SHIPPING_SLOT_DURABILITY_MISMATCH")
+        }
+        return { status: 202, body: {
+          success: false, contractVersion: CONTRACT,
+          status: exact.shippingReady
+            ? "CURRENT_EXACT_SHIPPING_READY_REEVALUATION_PENDING"
+            : "CURRENT_EXACT_SHIPPING_CAPTURE_PENDING",
+          batchId: input.batch.id, sequenceNo: child.sequence_no,
+          shippingSlot: exact.readback,
+          TARGET_ACTIVE_CAPTURE_COUNT:
+            record(exact.readback).targetActiveCaptureCount,
+          FOREIGN_RECEIPT_ADOPTED: false,
+          MANUAL_IDENTITY_REBIND: false,
+          CODEX_RUNTIME_DEPENDENCY: false,
+          OWNER_ACTION_REQUIRED: false,
+          safety: { concurrency: 1, marketplaceWrites: 0,
+            publicationWrites: 0, adsWrites: 0 },
+        } }
+      }
       await input.supabase.from(
         "seller_os_autonomous_stocking_batch_children_v1").update({
           evidence: { ...record(child.evidence), ...selectionEvidence },
