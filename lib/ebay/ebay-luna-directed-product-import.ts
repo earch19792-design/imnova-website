@@ -30,6 +30,7 @@ export type DirectedLunaProduct = {
   productType: string | null
   canonicalUrl: string
   imageUrls: string[]
+  descriptionText?: string | null
   variants: DirectedLunaVariant[]
   sourceMode?: "PUBLIC_READ_ONLY_PRODUCT_PAGE" | "AUTHENTICATED_SERVER_HTTP" |
     "AUTHENTICATED_WEB_SESSION"
@@ -37,6 +38,22 @@ export type DirectedLunaProduct = {
   sourceParserVersion?: string
   sourceEvidenceFingerprint?: string
   sourceCurrency?: string | null
+}
+
+function plainDescription(value: unknown) {
+  const html = text(value)
+  if (!html) return null
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;|&#34;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 20_000) || null
 }
 
 function record(value: unknown): JsonRecord {
@@ -210,6 +227,7 @@ export async function fetchDirectedLunaProduct(
     productType: text(payload.type),
     canonicalUrl: parsedUrl.canonicalUrl,
     imageUrls,
+    descriptionText: plainDescription(payload.description),
     variants,
     sourceMode: "PUBLIC_READ_ONLY_PRODUCT_PAGE",
     sourceParserVersion: SELLER_OS_LUNA_PUBLIC_PRODUCT_PARSER_VERSION,
