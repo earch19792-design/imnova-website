@@ -31,6 +31,8 @@ import type {
 import { CURRENT_COMMERCIAL_CANDIDATE_IDENTITY_VERSION,
   deriveCurrentCommercialCandidateIdentityV1 } from
   "./ebay-current-commercial-candidate-identity-v1"
+import { autonomousGreenfieldCurrentCertificationReadyV1 } from
+  "./ebay-autonomous-greenfield-current-certification-v1"
 
 export const OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION =
   "OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_V1" as const
@@ -2637,6 +2639,8 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     supplierSku: string
     materializeCandidate?: DurableFactoryMaterializerV1
     continuePriceDistribution?: typeof continueRadarCandidatePriceDistributionV1
+    taxonomyReader?: RadarMarketplaceTaxonomyReaderV1
+    productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
   }>,
 ) {
   const queueRead = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -2703,6 +2707,8 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     opportunityId: String(queueRow.id),
     candidateKey: String(queueRow.candidate_key),
     decisionPackageId: embeddedDecisionPackageId(queueRow),
+    taxonomyReader: input.taxonomyReader,
+    productIdentifierPolicyReader: input.productIdentifierPolicyReader,
   })
   const stages = record(result.stageStatuses)
   const economicsReady = stages.ECONOMICS_READY === "READY"
@@ -2720,6 +2726,8 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     listingReady: result.listingReady === true,
     marketTestReady: result.marketTestReady === true,
     firstBlocker: result.firstBlocker ?? null,
+    currentCertificationReady:
+      autonomousGreenfieldCurrentCertificationReadyV1(result),
     priceDistributionAcquired: priceContinuation.applicable === true,
     priceDistributionContinuation:
       priceContinuation.continuation ?? null,
@@ -2756,6 +2764,7 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
   }
   return Object.freeze({ applicable: true as const, ...continuation,
     opportunityId: String(queueRow.id),
+    candidateKey: String(queueRow.candidate_key),
     listingPackageId: result.listingPackageId,
     durableReadback: true as const,
     dollarCheck: Object.freeze({ triggered: result.listingReady === true }),

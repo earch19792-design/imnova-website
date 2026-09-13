@@ -494,6 +494,9 @@ async function executeBatch(input: Readonly<{
           lunaProductId: text(exactReadback.productId),
           lunaVariantId: text(exactReadback.variantId),
           supplierSku: text(exactReadback.supplierSku),
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+          productIdentifierPolicyReader:
+            preflightEbayCategoryProductIdentifiers,
         }))
       if (exactShippingContinuation.applicable !== true ||
           exactShippingContinuation.durableReadback !== true ||
@@ -549,8 +552,28 @@ async function executeBatch(input: Readonly<{
     const priorPackages = new Set(rows(prior.data)
       .map((value) => text(value.listing_package_id)).filter(Boolean))
     let selection: Row | null = null
-    for (const outcome of factory.outcomes.map(record)) {
-      if (!autonomousGreenfieldCurrentCertificationReadyV1(outcome)
+    const exactOutcome = exactShippingContinuation ? {
+      candidateId: exactShippingContinuation.candidateId,
+      opportunityId: exactShippingContinuation.opportunityId,
+      listingPackageId: exactShippingContinuation.listingPackageId,
+      candidateKey: exactShippingContinuation.candidateKey,
+      lunaProductId: exactShippingContinuation.lunaProductId,
+      lunaVariantId: exactShippingContinuation.lunaVariantId,
+      supplierSku: exactShippingContinuation.supplierSku,
+      status: exactShippingContinuation.parkedEconomics === true
+        ? "PARKED_ECONOMICS" : "PARKED",
+      reasonCode: exactShippingContinuation.firstBlocker,
+      listingReady: exactShippingContinuation.listingReady,
+      exactShippingCurrentCertificationReady:
+        exactShippingContinuation.currentCertificationReady === true,
+    } : null
+    const currentOutcomes = exactOutcome
+      ? [exactOutcome, ...factory.outcomes.map(record).filter((outcome) =>
+        outcome.candidateId !== exactOutcome.candidateId)]
+      : factory.outcomes.map(record)
+    for (const outcome of currentOutcomes) {
+      if (!(autonomousGreenfieldCurrentCertificationReadyV1(outcome) ||
+          outcome.exactShippingCurrentCertificationReady === true)
           || !outcome.listingPackageId || !outcome.opportunityId
           || !outcome.candidateKey || !outcome.lunaProductId
           || !outcome.lunaVariantId || !outcome.supplierSku
@@ -597,7 +620,7 @@ async function executeBatch(input: Readonly<{
       const rollover = exactSlot?.shippingReady
         ? currentBatchShippingSlotRolloverV1({
           accountKey: input.accountKey,
-          factoryOutcomes: factory.outcomes,
+          factoryOutcomes: currentOutcomes,
           readySlotReadback: exactSlot.readback,
         }) : null
       if (rollover) {
@@ -657,7 +680,7 @@ async function executeBatch(input: Readonly<{
       }
       const slot = currentBatchShippingSlotBindingV1({
         accountKey: input.accountKey,
-        factoryOutcomes: factory.outcomes,
+        factoryOutcomes: currentOutcomes,
         existingBinding: Object.keys(existingSlot).length
           ? existingSlot : undefined,
       })
