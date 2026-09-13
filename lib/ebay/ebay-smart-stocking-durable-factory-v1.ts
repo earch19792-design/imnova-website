@@ -1374,9 +1374,18 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   // generic certification label. Durable publication certification is emitted
   // later by certifyCurrentPrepublicationV1 after Fee, Preview and execution
   // authorities have also been proven.
-  const upstreamCurrentReady = proposedPlan.listingReady === true
-    && Object.values(proposedPlan.stageStatuses)
-      .every((status) => status === "READY")
+  const upstreamCurrentPathReady = (
+    proposedPlan.listingReady === true
+      && proposedPlan.stageStatuses.LISTING_READY === "READY"
+  ) || (
+    proposedPlan.marketTestReady === true
+      && proposedPlan.stageStatuses.MARKET_TEST_READY === "READY"
+  )
+  const upstreamCurrentReady = upstreamCurrentPathReady
+    && proposedPlan.blockers.length === 0
+    && proposedPlan.stageStatuses.PRODUCT_TRUTH_READY === "READY"
+    && proposedPlan.stageStatuses.ECONOMICS_READY === "READY"
+    && proposedPlan.stageStatuses.LISTING_PACKAGE_READY === "READY"
   const plan = currentFactoryMarkerV1(durableListingPackage?.package_data)
     && upstreamCurrentReady ? {
     ...proposedPlan, listingReady:false, marketTestReady:false,

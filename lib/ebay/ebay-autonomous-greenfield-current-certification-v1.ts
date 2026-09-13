@@ -5,11 +5,10 @@ function record(value: unknown): JsonRecord {
     ? value as JsonRecord : {}
 }
 
-const READY_FACTORY_STAGES = Object.freeze([
+const READY_COMMON_FACTORY_STAGES = Object.freeze([
   "PRODUCT_TRUTH_READY",
   "ECONOMICS_READY",
   "LISTING_PACKAGE_READY",
-  "LISTING_READY",
 ])
 
 export const CURRENT_PREPUBLICATION_CONTINUATION_REQUIRED =
@@ -30,8 +29,12 @@ export function autonomousGreenfieldCurrentPreparationReadyV1(
   if (candidate.listingReady === true) return true
   const blocker = candidate.reasonCode ?? candidate.firstBlocker
   const stages = record(candidate.stages ?? candidate.stageStatuses)
+  const currentPathReady = stages.LISTING_READY === "READY"
+    || stages.MARKET_TEST_READY === "READY"
   return blocker === CURRENT_PREPUBLICATION_CONTINUATION_REQUIRED
-    && READY_FACTORY_STAGES.every((stage) => stages[stage] === "READY")
+    && currentPathReady
+    && READY_COMMON_FACTORY_STAGES.every((stage) =>
+      stages[stage] === "READY")
     && candidate.productTruthExactIdentityMatch === true
     && candidate.productTruthDurable === true
     && candidate.productTruthReadbackMatch === true
