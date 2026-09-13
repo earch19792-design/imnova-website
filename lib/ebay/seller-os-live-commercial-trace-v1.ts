@@ -554,6 +554,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       `Identidad exacta encontrada: ${product.title}; variante ${variant.title}; SKU ${variant.sku}.`,
       { productId: product.productId, variantId: variant.id,
         supplierSku: variant.sku, title: product.title,
+        gtin: variant.sourceUnitBarcode, productType: product.productType,
         variantTitle: variant.title, imageCount: product.imageUrls.length,
         sourceMode: product.sourceMode, sourceParserVersion:
           product.sourceParserVersion, rawHtmlPersisted: false })
@@ -762,7 +763,11 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       KNOWN_UNCERTAINTIES: knownUncertainties,
       COMMERCIAL_TRACE_CERTIFICATION: certificationPass ? "PASS" : "FAIL",
       PRODUCT_TRUTH: { productId: product.productId, variantId: variant.id,
-        supplierSku: variant.sku, title: product.title },
+        supplierSku: variant.sku, title: product.title,
+        variantTitle: variant.title, gtin: variant.sourceUnitBarcode,
+        model: safeClaimTruth.safeClaims.find((entry) =>
+          entry.kind === "MODEL")?.value ?? null,
+        productType: product.productType, imageCount: product.imageUrls.length },
       CLAIM_CONFLICTS: conflicts,
       SAFE_CLAIM_SUBSET: safeClaimTruth.safeClaims,
       DO_NOT_USE_CLAIMS: safeClaimTruth.doNotUseClaims,
@@ -772,6 +777,9 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       PRODUCT_COST: variant.sourceUnitPrice,
       SHIPPING_QTY1: shipping?.amountUsd ?? null,
       PRICE_RANGE: market.priceRange,
+      MINIMUM_MARGIN_SAFE_PRICE: decision.minimumMarginSafePrice,
+      ECONOMICS: decision.economics,
+      SECONDARY_KEYWORDS: market.secondaryKeywords,
       DEMAND_CLASSIFICATION: market.demandClassification,
       ACCEPTED_COMPARABLES: market.acceptedComparables,
       EXCLUDED_COMPARABLES: market.excludedComparables,
