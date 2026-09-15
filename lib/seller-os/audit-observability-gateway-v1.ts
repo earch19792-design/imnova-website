@@ -8,6 +8,7 @@ import { createProductCaseReadBudgetV1, ProductCaseCriticalReadFailureV1,
   type ProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
 import { readKeywordDecisionHandoffV1, consumeListingPackageKeywordHandoffV1, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
 import { envelopeFromProductCaseV1 } from "./listing-commercial-envelope-v1"
+import { buildCanonicalLunaSkuIdentityV1 } from "../ebay/seller-os-structured-product-identity-v1"
 
 export const SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1 =
   "SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1" as const
@@ -106,6 +107,120 @@ function freshness(observedAt: string | null, freshUntil: string | null,
   if (freshUntil && Date.parse(freshUntil) <= now.getTime()) return "STALE" as const
   return "CURRENT" as const
 }
+
+function canonicalTraceQueueRow(trace: Row): Row | null {
+  const result = record(trace.result)
+  const truth = record(result.PRODUCT_TRUTH)
+  const identity = record(first(result.CANONICAL_SKU_IDENTITY,
+    truth.canonicalSkuIdentity))
+  const productId = text(first(trace.supplier_product_id, truth.productId), 180)
+  const variantId = text(first(trace.supplier_variant_id, truth.variantId), 180)
+  const supplierSku = text(truth.supplierSku, 180)
+  const canonical = buildCanonicalLunaSkuIdentityV1({ productId,
+    variantId, supplierSku })
+  if (canonical.status !== "PROVEN" || identity.status !== "PROVEN" ||
+      identity.key !== canonical.key || identity.productId !== productId ||
+      identity.variantId !== variantId || identity.supplierSku !== supplierSku) {
+    return null
+  }
+  return { candidate_key: canonical.key, supplier_product_id: productId,
+    supplier_variant_id: variantId, supplier_sku: supplierSku,
+    product_title: text(truth.title, 500),
+    assessment: { productTruth: truth },
+    source_trace_id: text(trace.trace_id, 80),
+    source_observed_at: first(trace.completed_at, trace.updated_at,
+      trace.started_at), completed_at: trace.completed_at }
+}
+
+async function resolveCompletedCommercialTraceIdentity(input: Readonly<{
+  supabase: SupabaseClient; accountKey: string; supplierSku: string }>,
+  budget: ProductCaseReadBudgetV1) {
+  const read = await budget.read({ dependency: "IDENTITY_COMMERCIAL_TRACE",
+    authority: "seller_os_live_commercial_traces_v1", critical: true,
+    retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
+    query: () => input.supabase.from("seller_os_live_commercial_traces_v1")
+      .select("trace_id,supplier_product_id,supplier_variant_id,product_url,state,result,completed_at,updated_at,started_at")
+      .eq("account_key", input.accountKey).eq("state", "COMPLETED")
+      .order("completed_at", { ascending: false, nullsFirst: false }).limit(50) })
+  assertRead("COMMERCIAL_TRACE_IDENTITY", read)
+  const matches = rows(read.data).map(canonicalTraceQueueRow).filter(
+    (row): row is Row => Boolean(row && row.supplier_sku === input.supplierSku))
+  const identities = new Set(matches.map((row) =>
+    `${row.supplier_product_id}:${row.supplier_variant_id}:${row.supplier_sku}`))
+  if (identities.size > 1) return { contradiction: "IDENTITY_RESOLUTION_AMBIGUOUS" }
+  if (!matches.length) return { contradiction: null }
+  return { contradiction: null, queue: matches[0] }
+}
+
+async function resolveLatestCompleteLunaSnapshotIdentity(input: Readonly<{
+  supabase: SupabaseClient; identityType: "LUNA_PRODUCT_ID" | "SUPPLIER_SKU";
+  identity: string
+}>, budget: ProductCaseReadBudgetV1) {
+  const snapshotRead = await budget.read({ dependency: "IDENTITY_LUNA_SNAPSHOT",
+    authority: "luna_catalog_snapshots_v1", critical: true,
+    retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
+    query: () => input.supabase.from("luna_catalog_snapshots_v1")
+      .select("snapshot_id,snapshot_status,snapshot_completed_at,identity_engine_version,preflight_contract_version")
+      .eq("snapshot_status", "COMPLETE")
+      .order("snapshot_completed_at", { ascending: false }).limit(1)
+      .maybeSingle() })
+  assertRead("LUNA_SNAPSHOT", snapshotRead)
+  const snapshot = record(snapshotRead.data)
+  const snapshotId = text(snapshot.snapshot_id, 120)
+  if (!snapshotId) return { found: false as const, contradiction: null }
+  const column = input.identityType === "LUNA_PRODUCT_ID"
+    ? "product_id" : "sku"
+  const variantRead = await budget.read({ dependency: "IDENTITY_LUNA_VARIANT",
+    authority: "luna_catalog_snapshot_variants_v1", critical: true,
+    retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
+    query: () => input.supabase.from("luna_catalog_snapshot_variants_v1")
+      .select("*").eq("snapshot_id", snapshotId).eq(column, input.identity)
+      .order("product_id").order("variant_id").limit(3) })
+  assertRead("LUNA_VARIANT", variantRead)
+  const matches = rows(variantRead.data)
+  if (!matches.length) return { found: false as const, contradiction: null }
+  if (matches.length !== 1) return { found: true as const,
+    contradiction: "IDENTITY_RESOLUTION_AMBIGUOUS" as const }
+  const row = matches[0]
+  const preflightStatus = text(row.preflight_status, 80)
+  if (preflightStatus !== "PREFLIGHT_PASS") {
+    const failure = preflightStatus === "SOURCE_IDENTITY_BLOCKED"
+      ? "LUNA_SOURCE_IDENTITY_BLOCKED"
+      : preflightStatus === "CONTRADICTED" ? "LUNA_IDENTITY_CONTRADICTED"
+        : preflightStatus === "SEMANTIC_IDENTITY_INCOMPLETE"
+          ? "LUNA_SEMANTIC_IDENTITY_INCOMPLETE"
+          : "LUNA_PREFLIGHT_STATUS_UNPROVEN"
+    return { found: true as const, contradiction: failure }
+  }
+  const canonical = buildCanonicalLunaSkuIdentityV1({
+    productId: text(row.product_id, 180),
+    variantId: text(row.variant_id, 180),
+    supplierSku: text(row.sku, 180),
+  })
+  if (canonical.status !== "PROVEN") return { found: true as const,
+    contradiction: "LUNA_SOURCE_IDENTITY_BLOCKED" as const }
+  // This is a read-only projection for the audit consumer. It deliberately
+  // has no opportunity id and never creates a legacy queue row.
+  return { found: true as const, contradiction: null,
+    queue: { candidate_key: canonical.key,
+      supplier_product_id: canonical.productId,
+      supplier_variant_id: canonical.variantId,
+      supplier_sku: canonical.supplierSku,
+      product_title: text(row.title, 500),
+      supplier_price: row.price ?? null,
+      supplier_available: row.availability ?? null,
+      supplier_snapshot_at: row.observed_at ?? null,
+      source_observed_at: row.observed_at ?? null,
+      source_fingerprint: text(row.source_fingerprint, 180),
+      source_snapshot_id: snapshotId,
+      assessment: { structuredProductIdentity: row.identity_result,
+        preflightStatus, preflightReasons: row.preflight_reasons ?? [] } },
+    identitySource: { authority: "luna_catalog_snapshot_variants_v1",
+      snapshotId, observedAt: row.observed_at ?? snapshot.snapshot_completed_at,
+      preflightStatus, sourceFingerprint: text(row.source_fingerprint, 180),
+      identityEngineVersion: text(snapshot.identity_engine_version, 120),
+      preflightContractVersion: text(snapshot.preflight_contract_version, 120) } }
+}
 function cleanDetailMode(value: unknown): SellerOsAuditDetailModeV1 {
   return value === "EVIDENCE" || value === "TRACE" ? value : "SUMMARY"
 }
@@ -140,6 +255,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
   let activeRow: Row = {}
   let productCaseRow: Row = {}
   let exactLink: Row | null = null
+  let identitySource: Row | null = null
   if (input.identityType === "PRODUCT_CASE_ID") {
     const read = await budget.read({ dependency: "IDENTITY_PRODUCT_CASE",
       authority: "seller_os_prelinked_launch_candidates", critical: true,
@@ -171,6 +287,19 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
         .select("*").eq(column, identity).order("updated_at", { ascending: false })
         .limit(3) })
     assertRead("QUEUE", read); queueRows = rows(read.data)
+    if (queueRows.length === 0) {
+      const snapshotResolved = await resolveLatestCompleteLunaSnapshotIdentity({
+        supabase: input.supabase, identityType: input.identityType,
+        identity }, budget)
+      if (snapshotResolved.contradiction) return {
+        contradiction: snapshotResolved.contradiction }
+      if (snapshotResolved.queue) {
+        queueRows = [snapshotResolved.queue]
+        identitySource = snapshotResolved.identitySource
+      } else if (snapshotResolved.found) {
+        return { contradiction: "CANONICAL_PRODUCT_IDENTITY_NOT_FOUND" }
+      }
+    }
   } else if (input.identityType === "LISTING_PACKAGE_ID") {
     if (!UUID.test(identity)) throw new Error("AUDIT_PACKAGE_ID_INVALID")
     const read = await budget.read({ dependency: "IDENTITY_PACKAGE",
@@ -239,6 +368,17 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
       assertRead("QUEUE", queueRead); queueRows = rows(queueRead.data)
     }
   }
+  // A completed Commercial Trace is a current identity authority in its own
+  // right.  When the legacy opportunity queue has no row for a supplier SKU,
+  // resolve only from a trace that carries an exact, proven product/variant/SKU
+  // identity.  Never infer this from title, URL or recency alone.
+  if (input.identityType === "SUPPLIER_SKU" && queueRows.length === 0) {
+    const traceResolved = await resolveCompletedCommercialTraceIdentity({
+      supabase: input.supabase, accountKey: input.accountKey,
+      supplierSku: identity }, budget)
+    if (traceResolved.contradiction) return traceResolved
+    if (traceResolved.queue) queueRows = [traceResolved.queue]
+  }
   const candidateIds = distinct(queueRows.map((row) => text(row.candidate_key, 100)))
   if (candidateIds.length !== 1) return { contradiction: candidateIds.length > 1
     ? "IDENTITY_RESOLUTION_AMBIGUOUS" : "CANONICAL_PRODUCT_IDENTITY_NOT_FOUND" }
@@ -261,7 +401,7 @@ async function resolveProductIdentity(input: Readonly<{ supabase: SupabaseClient
   packageRow = record(packageRead.data)
   activeRow = record(activeRead.data)
   return { contradiction: null, queue, packageRow, activeRow, productCaseRow,
-    exactLink,
+    exactLink, identitySource,
     candidateId: candidateIds[0] }
 }
 
@@ -331,6 +471,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
       databaseBusinessWrites: 0, marketplaceWrites: 0 },
   })
   const queue = resolved.queue ?? {}
+  const identitySource = resolved.identitySource ?? null
   const packageRow = resolved.packageRow ?? {}
   const active = resolved.activeRow ?? {}
   const candidateId = resolved.candidateId as string
@@ -414,16 +555,26 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   const shipping = record(shippingRead.data)
   const queueObserved = first(queue.source_observed_at, queue.updated_at,
     queue.created_at)
+  const sourceReceipt = first(identitySource?.snapshotId, queue.id,
+    queue.source_trace_id)
+  const sourceAuthority = text(identitySource?.authority, 180) ??
+    (queue.source_trace_id ? "seller_os_live_commercial_traces_v1.PRODUCT_TRUTH"
+      : "ebay_luna_opportunity_queue")
   const packageObserved = first(packageRow.updated_at, packageRow.created_at)
   const activeObserved = first(active.last_ebay_sync_at, active.updated_at,
     active.created_at)
   const stageEvidence: Record<string, Readonly<{ status: SellerOsAuditEvidenceStatusV1;
     authority: string; observedAt: unknown; receipt?: unknown; failure?: unknown }>> = {
-    LUNA_SOURCE: { status: text(queue.id, 80) ? "PROVEN" : "MISSING",
-      authority: "ebay_luna_opportunity_queue", observedAt: queueObserved,
-      receipt: queue.id },
+    LUNA_SOURCE: { status: text(sourceReceipt, 120)
+      ? "PROVEN" : "MISSING",
+      authority: sourceAuthority, observedAt: queueObserved,
+      receipt: sourceReceipt },
     PRODUCT_TRUTH: { status: lunaTruth.status,
-      authority: "ebay_luna_opportunity_queue.assessment.productTruth",
+      authority: identitySource
+        ? "luna_catalog_snapshot_variants_v1.identity_result"
+        : queue.source_trace_id
+          ? "seller_os_live_commercial_traces_v1.PRODUCT_TRUTH"
+          : "ebay_luna_opportunity_queue.assessment.productTruth",
       observedAt: lunaTruth.capturedAt, receipt: lunaTruth.evidenceDigest },
     MARKET_RESEARCH: { status: research.length ? "PROVEN" : "MISSING",
       authority: "marketplace_product_research_capture_observations",
@@ -586,6 +737,11 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     OBSERVED_AT: now.toISOString(), DETAIL_MODE: mode,
     INPUT_IDENTITY: { type: input.identityType, value: input.identity },
     RESOLVED_CANONICAL_IDENTITY: { candidateId,
+      sourceTraceId: text(queue.source_trace_id, 80),
+      sourceSnapshotId: text(identitySource?.snapshotId, 120),
+      sourceIdentityAuthority: sourceAuthority,
+      preflightStatus: text(identitySource?.preflightStatus, 80),
+      sourceFingerprint: text(identitySource?.sourceFingerprint, 180),
       opportunityId: text(queue.id, 80),
       productCaseId: text(resolved.productCaseRow?.product_case_id, 180),
       lunaProductId: text(queue.supplier_product_id, 180),
