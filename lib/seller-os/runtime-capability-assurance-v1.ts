@@ -907,6 +907,16 @@ function evaluateCapability(input: Readonly<{
     (heartbeatLag === null || heartbeatLag > definition.maxExpectedSilenceSeconds)
   const dependencyWaiting = observation.pendingWorkCount !== null &&
     observation.pendingWorkCount > 0 && observation.dependencyAvailable === false
+  // A browser worker's durable heartbeat is the authority for its ability to
+  // claim work. Lack of a prior capture is not evidence that the worker is
+  // parked: a fresh worker may be idle, newly connected, or waiting for its
+  // first task. The previous ordering classified that normal state as
+  // OUTPUT_MISSING/STALLED and contradicted the same heartbeat used by the
+  // claim RPC.
+  const freshProductResearchWorker =
+    (definition.capabilityId === "PRODUCT_RESEARCH_EXTENSION" ||
+      definition.capabilityId === "PRODUCT_RESEARCH_BROWSER_WORKER") &&
+    observation.connectionProven === true && !authorityExpired
 
   let finalHealthState: SellerOsCapabilityFinalHealthV1
   if (observation.persistedFreshExpiredCount > 0) {
@@ -924,6 +934,9 @@ function evaluateCapability(input: Readonly<{
   } else if (heartbeatLate) {
     finalHealthState = observation.connectionProven === false
       ? "DISCONNECTED" : "WAITING_DEPENDENCY"
+  } else if (freshProductResearchWorker &&
+      observation.lastExpectedOutputAt === null) {
+    finalHealthState = "HEALTHY"
   } else if (outputMissing) {
     finalHealthState = "OUTPUT_MISSING"
   } else if (outputLate) {

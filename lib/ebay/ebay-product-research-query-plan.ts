@@ -357,7 +357,7 @@ export async function getProductResearchQueryPlanStatus(input: {
 }) {
   const baseQuery = () => input.supabase
     .from("marketplace_product_research_query_plans")
-    .select("id,run_id,plan_version,status,query_count,candidate_count,created_at,completed_at,source_context,subject_listing_id,subject_item_id,subject_supplier_variant_id,request_receipt_id,source_candidate_key,source_luna_product_id,source_supplier_sku,source_opportunity_id")
+    .select("id,run_id,plan_version,status,query_count,candidate_count,created_at,completed_at,source_context,subject_listing_id,subject_item_id,subject_supplier_variant_id,request_receipt_id,source_candidate_key,source_luna_product_id,source_supplier_sku,source_opportunity_id,source_luna_snapshot_id,source_product_truth_fingerprint,pre_research_policy_version,pre_research_result,pre_research_trace_eligible,pre_research_evidence_digest,pre_research_evidence,pre_research_completed_at")
     .eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US")
   let planRead
@@ -429,6 +429,14 @@ export async function getProductResearchQueryPlanStatus(input: {
     sourceLunaProductId: plan.source_luna_product_id ?? null,
     sourceSupplierSku: plan.source_supplier_sku ?? null,
     sourceOpportunityId: plan.source_opportunity_id ?? null,
+    sourceLunaSnapshotId: plan.source_luna_snapshot_id ?? null,
+    sourceProductTruthFingerprint: plan.source_product_truth_fingerprint ?? null,
+    preResearchPolicyVersion: plan.pre_research_policy_version ?? null,
+    preResearchResult: plan.pre_research_result ?? null,
+    preResearchTraceEligible: plan.pre_research_trace_eligible === true,
+    preResearchEvidenceDigest: plan.pre_research_evidence_digest ?? null,
+    preResearchEvidence: record(plan.pre_research_evidence),
+    preResearchCompletedAt: plan.pre_research_completed_at ?? null,
     rawCompetitorContentStored: false,
     openAiCalls: 0,
     ebayWrites: 0,

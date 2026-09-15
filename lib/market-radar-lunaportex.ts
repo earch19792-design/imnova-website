@@ -4,7 +4,7 @@ import {
 import {
   type MarketRadarEventType,
   type MarketRadarSyncResult,
-} from "@/lib/market-radar-types"
+} from "./market-radar-types"
 import { captureLunaExplicitProductFieldsV1 } from "./luna-product-source-fields-v1"
 
 const LUNAPORTEX_SOURCE_KEY =
@@ -151,6 +151,7 @@ type ShopifyProduct = {
   image?: ShopifyImage | null
   images?: ShopifyImage[] | null
   variants?: ShopifyVariant[] | null
+  options?: unknown[] | null
 }
 
 type ShopifyProductsResponse = {
@@ -1369,6 +1370,33 @@ async function fetchLunaPortexProducts(): Promise<LunaPortexProductFetchResult> 
       productMap.values()
     )
   )
+}
+
+/**
+ * Structured, read-only feed reader for a logical catalog snapshot. It does
+ * not touch Supabase and intentionally skips authenticated inventory
+ * hydration; availability remains source-proven while quantity stays
+ * explicitly unproven in the snapshot read model.
+ */
+export async function fetchFreshLunaPortexStructuredCatalogV1() {
+  const productMap = new Map<string, AggregatedProduct>()
+  for (const collection of LUNAPORTEX_COLLECTIONS) {
+    const products = await fetchCollectionProducts(collection)
+    for (const product of products) {
+      const supplierProductId = String(product.id || "")
+      const handle = getString(product.handle)
+      if (!supplierProductId || !handle) continue
+      const existing = productMap.get(supplierProductId)
+      if (existing) existing.collections.add(collection)
+      else productMap.set(supplierProductId, { ...product,
+        collections: new Set([collection]) })
+    }
+    await wait(SHOPIFY_PAGE_DELAY_MS)
+  }
+  return Object.freeze({
+    products: Object.freeze(Array.from(productMap.values())),
+    sourceAuthority: "LUNA_SHOPIFY_PRODUCTS_JSON_STRUCTURED_FEED" as const,
+  })
 }
 
 async function ensureLunaPortexSource(

@@ -102,6 +102,12 @@ import { SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1,
   readSellerOsPublicationExecutionAuditV1 } from
   "../seller-os/audit-observability-gateway-v1"
 import { getSupabaseAdminClient } from "../supabase-admin"
+import { getLunaCatalogCandidatesV1, getLunaCatalogDeltaV1,
+  getLunaCatalogPreflightV1, getLunaCatalogStatusV1,
+  LUNA_CATALOG_MCP_TOOLS_V1, LUNA_CATALOG_PREFLIGHT_STATUSES_V1 } from
+  "./luna-catalog-snapshot-v1"
+import { LUNA_PRE_RESEARCH_MCP_COMMAND_V1,
+  requestLunaPreResearchV1 } from "./luna-pre-research-intake-v1"
 
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
   "SELLER_OS_MCP_READONLY_V1_2026_09_06_AUDIT_OBSERVABILITY"
@@ -148,6 +154,7 @@ const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
   SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1,
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1,
+  ...LUNA_CATALOG_MCP_TOOLS_V1,
 ])
 
 const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
@@ -166,6 +173,8 @@ const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name,
   "search",
   "fetch",
+  ...LUNA_CATALOG_MCP_TOOLS_V1.map((tool) => tool.name),
+  LUNA_PRE_RESEARCH_MCP_COMMAND_V1.name,
 ])
 
 export const SELLER_OS_MCP_EXPECTED_CATALOG_COUNT_V1 =
@@ -216,6 +225,7 @@ const DEDICATED_READ_TOOLS = Object.freeze([
   SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1,
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1,
+  ...LUNA_CATALOG_MCP_TOOLS_V1,
 ])
 
 function safeErrorResponse(status: number, code: number, message: string) {
@@ -434,7 +444,7 @@ export function createSellerOsMcpServerV1(options: {
   )
   const server = new McpServer({ name: "seller-os-private-readonly",
     version: SELLER_OS_MCP_ENDPOINT_VERSION }, {
-    instructions: "Private Seller OS canonical read-only evidence. Preserve unavailable and unproven states. Never claim or perform marketplace, inventory, supplier, Registry, Product Case, buyer-message, WhatsApp, OAuth, environment, SQL, or arbitrary URL mutations.",
+    instructions: "Private Seller OS canonical read-only evidence plus one separately-scoped bounded Luna pre-research command. Preserve unavailable and unproven states. The command only creates or reuses internal Product Research work for exact authoritative Luna candidates; it cannot perform marketplace, inventory, supplier, Registry, Product Case, buyer-message, WhatsApp, OAuth, environment, SQL, publication, purchase, shipping, or arbitrary URL mutations.",
   })
   if (SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1.length !==
       SELLER_OS_MCP_EXPECTED_CATALOG_COUNT_V1 ||
@@ -693,6 +703,95 @@ export function createSellerOsMcpServerV1(options: {
       text: "Seller OS returned bounded read-only workspace-bound data and migration evidence." }] }
     })
   registeredToolNames.add(SELLER_OS_DATA_STATUS_TOOL_V1.name)
+  const lunaCatalogSupabase = getSupabaseAdminClient()
+  const lunaCatalogToolSchemas = {
+    seller_os_get_luna_catalog_status: z.object({}).strict(),
+    seller_os_get_luna_catalog_delta: z.object({
+      limit: z.number().int().min(1).max(500).optional(),
+    }).strict(),
+    seller_os_get_luna_preflight: z.object({
+      status: z.enum(LUNA_CATALOG_PREFLIGHT_STATUSES_V1).optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    }).strict(),
+    seller_os_get_luna_candidates: z.object({
+      limit: z.number().int().min(1).max(100).optional(),
+    }).strict(),
+  } as const
+  for (const descriptor of LUNA_CATALOG_MCP_TOOLS_V1) {
+    const config = { title: descriptor.title, description: descriptor.description,
+      inputSchema: lunaCatalogToolSchemas[descriptor.name as keyof typeof lunaCatalogToolSchemas],
+      annotations: descriptor.annotations, securitySchemes,
+      _meta: { securitySchemes } }
+    server.registerTool(descriptor.name, config, async (args: unknown) => {
+      const input = (args && typeof args === "object" ? args : {}) as Record<string, unknown>
+      try {
+        const result = descriptor.name === "seller_os_get_luna_catalog_status"
+          ? await getLunaCatalogStatusV1(lunaCatalogSupabase)
+          : descriptor.name === "seller_os_get_luna_catalog_delta"
+            ? await getLunaCatalogDeltaV1(lunaCatalogSupabase, Number(input.limit ?? 100))
+            : descriptor.name === "seller_os_get_luna_preflight"
+              ? await getLunaCatalogPreflightV1(lunaCatalogSupabase, {
+                  status: input.status as typeof LUNA_CATALOG_PREFLIGHT_STATUSES_V1[number] | undefined,
+                  limit: Number(input.limit ?? 100),
+                })
+              : await getLunaCatalogCandidatesV1(lunaCatalogSupabase,
+                  Number(input.limit ?? 50))
+        return { structuredContent: { result }, content: [{ type: "text" as const,
+          text: `Seller OS returned bounded read-only Luna catalog evidence for ${descriptor.title}.` }] }
+      } catch (error) {
+        const result = { ...revenueFailureV1(error, "ASSISTANT_EVIDENCE",
+          "LUNA_CATALOG_READ_FAILED_CLOSED"), status: "LUNA_CATALOG_READ_FAILED_CLOSED",
+          credentialsIncluded: false, buyerPiiIncluded: false,
+          marketplaceWrites: 0, publicationWrites: 0, purchases: 0,
+          eBayResearchCalls: 0, shippingCaptures: 0 }
+        return { isError: true, structuredContent: { result }, content: [{
+          type: "text" as const,
+          text: "Seller OS stopped the Luna catalog read safely; no evidence was inferred.",
+        }] }
+      }
+    })
+    registeredToolNames.add(descriptor.name)
+  }
+  const lunaPreResearchSchema = z.object({
+    snapshotId: z.string().uuid(),
+    candidates: z.array(z.object({
+      productId: z.string().regex(/^\d{1,30}$/),
+      variantId: z.string().regex(/^\d{1,30}$/),
+      sku: z.string().min(1).max(160),
+    }).strict()).min(1).max(10),
+  }).strict()
+  server.registerTool(LUNA_PRE_RESEARCH_MCP_COMMAND_V1.name, {
+    title: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.title,
+    description: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.description,
+    inputSchema: lunaPreResearchSchema,
+    annotations: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.annotations,
+    _meta: { securitySchemes: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.securitySchemes,
+      capability: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.capability },
+  }, async (args: unknown) => {
+    try {
+      const parsed = lunaPreResearchSchema.parse(args)
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("LUNA_PRE_RESEARCH_ACCOUNT_SCOPE_REQUIRED")
+      const result = await requestLunaPreResearchV1({
+        supabase: lunaCatalogSupabase, accountKey: account.accountKey,
+        snapshotId: parsed.snapshotId, candidates: parsed.candidates,
+      })
+      return { structuredContent: { result }, content: [{ type: "text" as const,
+        text: "Seller OS created or reused bounded internal Luna pre-research work; no marketplace action was performed." }] }
+    } catch (error) {
+      const result = { ...revenueFailureV1(error, "INPUT_VALIDATION",
+        "LUNA_PRE_RESEARCH_COMMAND_FAILED_CLOSED"),
+        status: "LUNA_PRE_RESEARCH_COMMAND_FAILED_CLOSED",
+        credentialsIncluded: false, marketplaceWrites: 0,
+        publicationWrites: 0, purchases: 0, shippingCaptures: 0,
+        commercialTraces: 0 }
+      return { isError: true, structuredContent: { result }, content: [{
+        type: "text" as const,
+        text: "Seller OS rejected or stopped the bounded Luna pre-research command safely.",
+      }] }
+    }
+  })
+  registeredToolNames.add(LUNA_PRE_RESEARCH_MCP_COMMAND_V1.name)
   const officialOrdersCollector = options.officialOrdersCollector ?? (async () => {
     if (getSellerOsMcpToolExecutionSourceV1(applicationAuthMode) ===
         "CLOUD_READ_RELAY") {

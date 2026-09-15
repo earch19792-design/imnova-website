@@ -262,6 +262,12 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
     ? browserWorkers.value.byId.get("PRODUCT_RESEARCH_BROWSER_WORKER") : null
   const planStatus = researchPlan.available
     ? String(researchPlan.value?.status ?? "") : ""
+  // The plan status is not a workload count. An ACTIVE plan can have no
+  // pending tasks after a retry-safe completion, and treating it as work made
+  // the operational auditor compare a proven heartbeat with an unknown queue.
+  // Reuse the existing query-plan read model's authoritative pending count.
+  const productResearchPendingCount = researchPlan.available
+    ? count(researchPlan.value?.pendingCount) : null
   const latestResearch = record(research.available
     ? research.value.latest : null)
   const latestResearchAt = Date.parse(String(latestResearch.captured_at ??
@@ -276,15 +282,18 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       productResearchBrowserWorker?.receiptId)
   const productResearchState: SellerOsOperationalStateV1 =
     !productResearchAuthorityAvailable || !recentResearch ? "DESCONOCIDO"
-      : planStatus === "COMPLETE" ? "SIN_TRABAJO" : "OPERANDO"
+      : productResearchPendingCount === 0 ? "SIN_TRABAJO"
+        : productResearchPendingCount !== null ? "OPERANDO" : "DESCONOCIDO"
   const productResearchPresentationCause = !productResearchAuthorityAvailable
     ? "PRODUCT_RESEARCH_AUTHORITY_UNAVAILABLE"
       : !productResearchCapabilityReceiptPresent
       ? "PRODUCT_RESEARCH_WORKER_CAPABILITY_RECEIPT_ABSENT"
       : !recentResearch ? "PRODUCT_RESEARCH_WORKER_CAPABILITY_RECEIPT_EXPIRED"
-        : planStatus === "COMPLETE"
+        : productResearchPendingCount === 0
           ? "FRESH_CAPABILITY_AND_NO_PENDING_PLAN_WORK"
-          : "FRESH_CAPABILITY_AND_PLAN_WORK_AVAILABLE"
+          : productResearchPendingCount !== null
+            ? "FRESH_CAPABILITY_AND_PLAN_WORK_AVAILABLE"
+            : "PRODUCT_RESEARCH_PENDING_WORK_AUTHORITY_UNAVAILABLE"
 
   const lunaJobs = settled(lunaJobsRaw)
   const lunaTrace = settled(lunaTraceRaw)
@@ -454,11 +463,19 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
         capabilityObservedAt: productResearchExtension?.observedAt ?? null,
         capabilityMaximumAgeSeconds: 5 * 60,
         extensionVersion: productResearchExtension?.extensionVersion ?? null,
+        effectiveWorkerAuthority: recentResearch &&
+          productResearchPendingCount !== null
+          ? "PROVEN" as const : "PARTIAL_UNPROVEN" as const,
+        workerAcquisitionPath: "claim_next_live_listing_product_research_v2",
+        workerAcquisitionProof: recentResearch
+          ? "FRESH_SHARED_EXTENSION_WORKER_HEARTBEAT" as const
+          : "HEARTBEAT_NOT_PROVEN" as const,
         lastSuccessfulActivity: productResearchCapabilityReceiptPresent
           && Number.isFinite(latestResearchAt)
           ? new Date(latestResearchAt).toISOString() : null,
         lastError: null,
         queuePlanState: planStatus || null,
+        eligiblePendingJobCount: productResearchPendingCount,
         presentationCause: productResearchPresentationCause }),
       publisher: Object.freeze({ state: "BLOQUEADO" as const,
         compactState: compactStates.publisher,
@@ -598,10 +615,9 @@ export function auditSellerOsOperationalSnapshotV1(
         snapshot.capabilities.productResearch.connectionState,
       capabilityProven:
         snapshot.capabilities.productResearch.capabilityProven,
-      capabilityFresh: snapshot.capabilities.productResearch.capabilityFresh,
+        capabilityFresh: snapshot.capabilities.productResearch.capabilityFresh,
       eligiblePendingJobCount:
-        snapshot.capabilities.productResearch.queuePlanState === "COMPLETE"
-          ? 0 : null,
+        snapshot.capabilities.productResearch.eligiblePendingJobCount,
       presentationState: snapshot.capabilities.productResearch.state }],
     salesIntegrity: snapshot.ownerInsights ? {
       sourceIsOfficialOrders: sales.source === "OFFICIAL_EBAY_ORDERS",

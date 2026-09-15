@@ -32,6 +32,10 @@ import { loadSellerOsAssistantMonitorV1 } from
   "./ebay-seller-os-assistant-runtime"
 import { ensureProductResearchAdaptiveReformulationV1 } from
   "./ebay-product-research-adaptive-reformulation-v1"
+import {
+  buildLunaPreResearchProductTruthFingerprintV1,
+  LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1,
+} from "./luna-pre-research-intake-v1"
 
 export const MAYEL_LIVE_MARKET_REVALIDATION_VERSION =
   "MAYEL_LIVE_MARKET_REVALIDATION_V1_2026_09_06"
@@ -396,7 +400,7 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
     .eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US")
     .in("source_context", ["LIVE_LISTING_REVALIDATION",
-      "QUICK_PICK_RESEARCH_REQUIRED"])
+      "QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"])
     .eq("status", "ACTIVE")
     .order("created_at", { ascending: true }).limit(100)
   if (plans.error) {
@@ -437,9 +441,11 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
   const pending = (plans.data ?? []).filter((plan) =>
     resumablePlanIds.has(String(plan.id)) && (
       plan.source_context === "QUICK_PICK_RESEARCH_REQUIRED" ||
+      plan.source_context === "LUNA_PRE_RESEARCH" ||
       receiptById.get(String(plan.request_receipt_id))?.status === "OPEN"))
   const activeClaimCount = pending.filter((plan) => {
-    if (plan.source_context === "QUICK_PICK_RESEARCH_REQUIRED") {
+    if (["QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"].includes(
+      plan.source_context)) {
       return Boolean(plan.worker_lease_owner && plan.worker_lease_expires_at &&
         Date.parse(String(plan.worker_lease_expires_at)) > now)
     }
@@ -448,7 +454,8 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
       Date.parse(String(receipt.lease_expires_at)) > now)
   }).length
   const claimable = pending.filter((plan) => {
-    if (plan.source_context === "QUICK_PICK_RESEARCH_REQUIRED") {
+    if (["QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"].includes(
+      plan.source_context)) {
       return !plan.worker_lease_expires_at ||
         Date.parse(String(plan.worker_lease_expires_at)) <= now
     }
@@ -502,7 +509,8 @@ export async function claimMayelAutonomousResearchPlanV1(input: {
     supabase: input.supabase, accountKey: input.accountKey, planId,
   })
   if (!plan || !["LIVE_LISTING_REVALIDATION",
-      "QUICK_PICK_RESEARCH_REQUIRED"].includes(plan.sourceContext)) {
+      "QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"].includes(
+        plan.sourceContext)) {
     throw new Error("MAYEL_RESEARCH_WORKER_CLAIM_READBACK_FAILED")
   }
   const itemId = plan.sourceContext === "LIVE_LISTING_REVALIDATION"
@@ -675,6 +683,162 @@ async function completeQuickPickProductResearchPlanV1(input: {
     marketplaceWrites: 0 as const, completedAt })
 }
 
+async function completeLunaPreResearchProductResearchPlanV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  planId: string
+  capture: ProductResearchBrowserCapture
+  soldRows: unknown[]
+  workerId: string
+}) {
+  const plan = await getProductResearchQueryPlanStatus({
+    supabase: input.supabase, accountKey: input.accountKey,
+    planId: input.planId,
+  })
+  if (!plan || plan.sourceContext !== LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1 ||
+      !plan.sourceLunaProductId || !plan.subjectSupplierVariantId ||
+      !plan.sourceSupplierSku || !plan.sourceLunaSnapshotId ||
+      !plan.sourceProductTruthFingerprint) {
+    throw new Error("LUNA_PRE_RESEARCH_PLAN_SCOPE_INVALID")
+  }
+  const lease = await input.supabase.from(
+    "marketplace_product_research_query_plans")
+    .select("worker_lease_owner,worker_lease_expires_at")
+    .eq("id", input.planId).eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").eq("source_context", LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1)
+    .limit(1).maybeSingle()
+  if (lease.error || lease.data?.worker_lease_owner !== input.workerId ||
+      !lease.data.worker_lease_expires_at ||
+      Date.parse(String(lease.data.worker_lease_expires_at)) <= Date.now()) {
+    throw new Error("LUNA_PRE_RESEARCH_WORKER_LEASE_REQUIRED")
+  }
+  const source = await input.supabase.from("luna_catalog_snapshot_variants_v1")
+    .select("snapshot_id,product_id,variant_id,sku,title,product_type,source_fingerprint,identity_result")
+    .eq("snapshot_id", plan.sourceLunaSnapshotId)
+    .eq("product_id", plan.sourceLunaProductId)
+    .eq("variant_id", plan.subjectSupplierVariantId)
+    .eq("sku", plan.sourceSupplierSku).limit(2)
+  if (source.error || (source.data ?? []).length !== 1) {
+    throw new Error("LUNA_PRE_RESEARCH_SOURCE_READBACK_REQUIRED")
+  }
+  const sourceRow = record(source.data[0])
+  const truthFingerprint = buildLunaPreResearchProductTruthFingerprintV1({
+    product_id: String(sourceRow.product_id), variant_id: String(sourceRow.variant_id),
+    sku: String(sourceRow.sku), title: String(sourceRow.title),
+    product_type: text(sourceRow.product_type) || null,
+    identity_result: sourceRow.identity_result,
+  })
+  if (truthFingerprint !== plan.sourceProductTruthFingerprint) {
+    throw new Error("LUNA_PRE_RESEARCH_PRODUCT_TRUTH_CHANGED")
+  }
+  const planned = await assertProductResearchCaptureMatchesNextQuery({
+    supabase: input.supabase, accountKey: input.accountKey,
+    searchQuery: input.capture?.searchQuery, planId: input.planId,
+  })
+  if (!planned || planned.planId !== input.planId) {
+    throw new Error("LUNA_PRE_RESEARCH_TASK_BINDING_INVALID")
+  }
+  const target = targetFromCatalogRow({
+    supplier_product_id: plan.sourceLunaProductId,
+    supplier_variant_id: plan.subjectSupplierVariantId,
+    sku: plan.sourceSupplierSku,
+    title: sourceRow.title,
+    variant_title: null,
+    barcode: null,
+    metadata: { identityEvidenceSource: "LUNA_STRUCTURED_CATALOG_SNAPSHOT" },
+  })
+  if (!target) throw new Error("LUNA_PRE_RESEARCH_TARGET_UNPROVEN")
+  const research = await importProductResearchBrowserCapture({
+    supabase: input.supabase, accountKey: input.accountKey,
+    actorId: input.actorId, capture: input.capture,
+    exactTargets: [target], visualContext: { categoryId: planned.categoryId },
+  })
+  let soldImportBatchId: string | null = null
+  let soldEvidenceOutcome = "NO_ROWS_CAPTURED"
+  if (input.soldRows.length > 0) {
+    const soldCapture = await adaptMainSearchSoldCaptureForCanonicalImport({
+      rows: input.soldRows,
+    })
+    try {
+      const sold = await importOfficialSoldEvidence({
+        supabase: input.supabase, accountKey: input.accountKey,
+        actorId: input.actorId, format: "JSON",
+        sourceExportType: "EBAY_MAIN_SEARCH_SOLD_CAPTURE",
+        content: JSON.stringify({ rows: soldCapture.rows }), operatorAttested: true,
+      })
+      soldImportBatchId = sold.batchId
+      soldEvidenceOutcome = "DURABLE_SOLD_EVIDENCE"
+    } catch (error) {
+      if (!soldEvidenceNoValidRowsDiagnostic(error)) throw error
+      soldEvidenceOutcome = "NO_VALID_SOLD_EVIDENCE"
+    }
+  }
+  if (!planned.alreadyProcessed) {
+    await markProductResearchQueryCaptured({
+      supabase: input.supabase, accountKey: input.accountKey,
+      planId: input.planId, taskId: planned.taskId,
+      searchQueryHash: research.searchQueryHash,
+      captureBatchId: research.batchId, capturedAt: new Date(research.capturedAt),
+      deferPlanCompletion: true,
+    })
+  }
+  const qualityWrite = await input.supabase.from(
+    "marketplace_product_research_query_tasks").update({
+      quality_status: research.commercialQualityStatus,
+      quality_metrics: research.commercialQuality,
+      commercial_evidence_entities: research.commercialEvidence,
+    }).eq("id", planned.taskId).eq("plan_id", input.planId)
+    .eq("marketplace_account_key", input.accountKey).select("id").single()
+  if (qualityWrite.error || qualityWrite.data?.id !== planned.taskId) {
+    throw new Error("LUNA_PRE_RESEARCH_QUALITY_READBACK_REQUIRED")
+  }
+  const evidenceCount = research.commercialEvidence.length
+  const confirmedSoldQuantity = research.commercialEvidence.reduce((total, entry) =>
+    total + (Number(entry.soldQuantity) > 0 ? Number(entry.soldQuantity) : 0), 0)
+  const result: "PRE_RESEARCH_HIGH" | "PRE_RESEARCH_MEDIUM" |
+    "PRE_RESEARCH_LOW" | "INSUFFICIENT_MARKET_EVIDENCE" =
+    research.commercialQualityStatus === "COMMERCIALLY_SUFFICIENT" &&
+      confirmedSoldQuantity > 0 ? "PRE_RESEARCH_HIGH" : confirmedSoldQuantity > 0
+        ? "PRE_RESEARCH_MEDIUM" : evidenceCount > 0 ||
+          Number(research.validCount ?? 0) > 0 ? "PRE_RESEARCH_LOW"
+          : "INSUFFICIENT_MARKET_EVIDENCE"
+  const traceEligible = result === "PRE_RESEARCH_HIGH" ||
+    result === "PRE_RESEARCH_MEDIUM"
+  const completedAt = new Date().toISOString()
+  const evidence = {
+    contractVersion: "LUNA_PRE_RESEARCH_RESULT_V1",
+    sourceContext: LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1,
+    sourceSnapshotId: plan.sourceLunaSnapshotId,
+    productId: plan.sourceLunaProductId,
+    variantId: plan.subjectSupplierVariantId,
+    sku: plan.sourceSupplierSku,
+    productTruthFingerprint: plan.sourceProductTruthFingerprint,
+    planId: input.planId, taskId: planned.taskId, captureBatchId: research.batchId,
+    soldImportBatchId, soldEvidenceOutcome, qualityStatus: research.commercialQualityStatus,
+    evidenceCount, confirmedSoldQuantity, traceEligible,
+    provenance: ["LUNA_STRUCTURED_CATALOG_SNAPSHOT", "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"],
+  }
+  const evidenceDigest = sha256(evidence)
+  const completed = await input.supabase.rpc(
+    "complete_luna_pre_research_product_research_v1", {
+      p_marketplace_account_key: input.accountKey, p_plan_id: input.planId,
+      p_worker_id: input.workerId, p_capture_batch_id: research.batchId,
+      p_result: result, p_trace_eligible: traceEligible,
+      p_evidence_digest: evidenceDigest, p_evidence: evidence,
+      p_completed_at: completedAt,
+    })
+  if (completed.error || !completed.data) {
+    throw new Error("LUNA_PRE_RESEARCH_COMPLETION_PERSIST_FAILED")
+  }
+  return Object.freeze({ planId: input.planId,
+    sourceContext: LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1, result, traceEligible,
+    captureBatchId: research.batchId, soldImportBatchId, soldEvidenceOutcome,
+    evidenceDigest, evidence, productResearchExecuted: true as const,
+    nextStageStarted: false as const, ownerActionRequired: false as const,
+    marketplaceWrites: 0 as const, completedAt })
+}
+
 export async function completeAutonomousProductResearchPlanV1(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -705,6 +869,13 @@ export async function completeAutonomousProductResearchPlanV1(input: {
   }
   if (plan?.sourceContext === "QUICK_PICK_RESEARCH_REQUIRED") {
     return completeQuickPickProductResearchPlanV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      actorId: input.actorId, planId, workerId,
+      capture: input.capture, soldRows: input.soldRows,
+    })
+  }
+  if (plan?.sourceContext === LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1) {
+    return completeLunaPreResearchProductResearchPlanV1({
       supabase: input.supabase, accountKey: input.accountKey,
       actorId: input.actorId, planId, workerId,
       capture: input.capture, soldRows: input.soldRows,
