@@ -51,6 +51,35 @@ export type ProductResearchCommercialQueryV1 = Readonly<{
   ordinal: number
 }>
 
+export type ProductResearchStructuredIdentityQuerySourceV1 = Readonly<{
+  version?: unknown
+  productFamily?: unknown
+  canonicalFamilyPhrase?: unknown
+  formFactors?: unknown
+  audience?: unknown
+  color?: unknown
+  receiverSize?: unknown
+  pinDiameter?: unknown
+  dimensions?: unknown
+  edgeFeature?: unknown
+  sizeDescriptor?: unknown
+  functionalDifferentiators?: unknown
+  identitySufficient?: unknown
+  evidence?: unknown
+  queryPlan?: unknown
+}>
+
+export type ProductResearchComparableEvidenceV1 = Readonly<{
+  itemId?: unknown
+  soldQuantity?: unknown
+  classification?: unknown
+  classificationReasons?: unknown
+  queryProvenance?: unknown
+}>
+
+export const PRODUCT_RESEARCH_ACCEPTED_COMPARABLE_POLICY_V1 =
+  "PRODUCT_RESEARCH_ACCEPTED_COMPARABLE_POLICY_V1_2026_09_19" as const
+
 export type ProductResearchReformulationEvidenceEntityV1 = Readonly<{
   itemId?: string | null
   boundedTitleEvidence?: string | null
@@ -94,6 +123,10 @@ const FUNCTION_WORDS = new Set([
 ])
 const COUNT_WORDS = new Set([
   "count", "ct", "pack", "packs", "pc", "pcs", "piece", "pieces", "set",
+])
+const UNIT_WORDS = new Set([
+  "cm", "ft", "g", "in", "inch", "inches", "kg", "l", "lb", "lbs",
+  "ml", "mm", "oz", "quart", "quarts",
 ])
 const NOISE_WORDS = new Set([
   "assorted", "default", "new", "title", "various",
@@ -151,15 +184,26 @@ function countQualifierTokens(titleTokens: readonly string[]) {
 }
 
 function sizeQualifierTokens(titleTokens: readonly string[]) {
-  const units = new Set(["cm", "ft", "g", "in", "inch", "inches", "kg", "l",
-    "lb", "lbs", "ml", "mm", "oz", "quart", "quarts"])
   const result: string[] = []
   for (let index = 0; index < titleTokens.length - 1; index += 1) {
-    if (/^\d+(?:\.\d+)?$/.test(titleTokens[index]) && units.has(titleTokens[index + 1])) {
+    if (/^\d+(?:\.\d+)?$/.test(titleTokens[index]) &&
+        UNIT_WORDS.has(titleTokens[index + 1])) {
       result.push(titleTokens[index], titleTokens[index + 1])
     }
   }
   return unique(result)
+}
+
+function boundedIdentityHead(value: unknown) {
+  const normalized = normalizedText(value)
+  const beforeMarketingTail = normalized.split(/["“”]|\s+[–—]\s+/u)[0] ?? ""
+  const commaParts = beforeMarketingTail.split(",")
+  while (commaParts.length > 1 &&
+      /\b\d+(?:\.\d+)?\s*(?:cm|ft|in|inch|inches|kg|lb|lbs|ml|mm|oz|quart|quarts)\b/i
+        .test(commaParts[commaParts.length - 1])) {
+    commaParts.pop()
+  }
+  return commaParts.join(", ")
 }
 
 export function extractProductResearchEntityV1(input: Readonly<{
@@ -172,21 +216,25 @@ export function extractProductResearchEntityV1(input: Readonly<{
   const sourceAuthority = normalizedText(input.sourceAuthority, 160) ||
     "LUNA_PRODUCT_TRUTH"
   const titleTokens = tokens(input.productName)
+  const identityHeadTokens = tokens(boundedIdentityHead(input.productName))
   const brandSignal = unique(tokens(input.brand).filter((entry) => entry.length >= 2))
   const countOrSetQualifiers = countQualifierTokens(titleTokens)
   const sizeOrVariantQualifiers = sizeQualifierTokens(titleTokens)
-  const boundary = titleTokens.findIndex((entry) => CONNECTORS.has(entry))
-  const main = (boundary >= 0 ? titleTokens.slice(0, boundary) : titleTokens)
+  const boundary = identityHeadTokens.findIndex((entry) => CONNECTORS.has(entry))
+  const main = (boundary >= 0
+    ? identityHeadTokens.slice(0, boundary) : identityHeadTokens)
     .filter((entry) => entry.length >= 2 && !/^\d+(?:\.\d+)?$/.test(entry) &&
       !FUNCTION_WORDS.has(entry) && !COUNT_WORDS.has(entry) &&
-      !NOISE_WORDS.has(entry) && !brandSignal.includes(entry))
+      !UNIT_WORDS.has(entry) && !NOISE_WORDS.has(entry) &&
+      !brandSignal.includes(entry))
   const productNoun = [...main].reverse().find((entry) =>
     !MATERIALS.has(entry) && !COLORS.has(entry) && !SHAPES.has(entry) &&
     !GENERIC_CONTEXT.has(entry)) ?? null
   const nounIndex = productNoun ? main.lastIndexOf(productNoun) : -1
   const materialQualifiers = unique(main.filter((entry) => MATERIALS.has(entry)))
   const beforeNoun = nounIndex >= 0 ? main.slice(0, nounIndex) : []
-  const afterConnector = boundary >= 0 ? titleTokens.slice(boundary + 1) : []
+  const afterConnector = boundary >= 0
+    ? identityHeadTokens.slice(boundary + 1) : []
   const featureQualifiers = unique([
     ...beforeNoun.filter((entry) => SHAPES.has(entry)),
     ...afterConnector,
@@ -194,7 +242,8 @@ export function extractProductResearchEntityV1(input: Readonly<{
     .filter((entry) => entry.length >= 2 && !MATERIALS.has(entry) &&
       !COLORS.has(entry) && !GENERIC_CONTEXT.has(entry) &&
       !FUNCTION_WORDS.has(entry) && !COUNT_WORDS.has(entry) &&
-      !NOISE_WORDS.has(entry) && !/^\d+(?:\.\d+)?$/.test(entry) &&
+      !UNIT_WORDS.has(entry) && !NOISE_WORDS.has(entry) &&
+      !/^\d+(?:\.\d+)?$/.test(entry) &&
       entry !== productNoun))
   const definingFamilyQualifiers = unique(beforeNoun.filter((entry) =>
     !MATERIALS.has(entry) && !COLORS.has(entry) && !SHAPES.has(entry) &&
@@ -235,13 +284,122 @@ function evidenceForTerms(entity: ProductResearchEntityV1, selected: readonly st
   return selected.flatMap((term) => byTerm.get(term) ? [byTerm.get(term)!] : [])
 }
 
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => normalizedText(entry, 120) || []).slice(0, 24)
+    : []
+}
+
+function structuredIdentityStrategyV1(input: Readonly<{
+  structuredIdentity: ProductResearchStructuredIdentityQuerySourceV1
+  sourceField?: string
+  sourceAuthority?: string
+}>) {
+  const identity = objectRecord(input.structuredIdentity)
+  const queryPlan = objectRecord(identity.queryPlan)
+  const familyPhrase = normalizedText(identity.canonicalFamilyPhrase, 120)
+  const familyTerms = unique(tokens(familyPhrase).filter((entry) =>
+    entry.length >= 2 && !FUNCTION_WORDS.has(entry) &&
+    !COUNT_WORDS.has(entry) && !UNIT_WORDS.has(entry) &&
+    !/^\d+(?:\.\d+)?$/.test(entry)))
+  const productNoun = familyTerms.at(-1) ?? null
+  const sourceField = normalizedText(input.sourceField, 120) ||
+    "identity_result.queryPlan"
+  const sourceAuthority = normalizedText(input.sourceAuthority, 160) ||
+    "LUNA_STRUCTURED_PRODUCT_IDENTITY_V1_3"
+  const invalid = identity.version !== "SELLER_OS_STRUCTURED_PRODUCT_IDENTITY_V1_3" ||
+    identity.identitySufficient !== true ||
+    !normalizedText(identity.productFamily, 120) || !productNoun ||
+    !familyTerms.length
+  const emptyEntity = Object.freeze({ productNoun: null,
+    productFamilyCandidate: null, materialQualifiers: Object.freeze([]),
+    countOrSetQualifiers: Object.freeze([]), sizeOrVariantQualifiers: Object.freeze([]),
+    brandSignal: Object.freeze([]), featureQualifiers: Object.freeze([]),
+    definingFamilyQualifiers: Object.freeze([]), evidence: Object.freeze([]),
+    status: "UNPROVEN" as const }) satisfies ProductResearchEntityV1
+  if (invalid) return Object.freeze({ entity: emptyEntity,
+    queries: Object.freeze([]), semanticExpansionStatus: "UNPROVEN" as const })
+
+  const sizeOrVariantQualifiers = unique(tokens([
+    identity.receiverSize, identity.pinDiameter, identity.dimensions,
+    identity.sizeDescriptor,
+  ].map((entry) => normalizedText(entry, 80)).filter(Boolean).join(" ")))
+  const evidenceRows = Array.isArray(identity.evidence)
+    ? identity.evidence.map((entry) => objectRecord(entry)) : []
+  const materialQualifiers = unique(evidenceRows.flatMap((entry) =>
+    normalizedText(entry.field, 80).toUpperCase() === "MATERIAL"
+      ? tokens(entry.value) : []))
+  const featureQualifiers = unique(tokens([
+    ...stringArray(identity.formFactors),
+    ...stringArray(identity.functionalDifferentiators),
+    normalizedText(identity.audience, 80), normalizedText(identity.color, 80),
+    normalizedText(identity.edgeFeature, 80),
+  ].filter(Boolean).join(" ")).filter((entry) =>
+    !familyTerms.includes(entry) && !UNIT_WORDS.has(entry) &&
+    !/^\d+(?:\.\d+)?$/.test(entry)))
+  const definingFamilyQualifiers = familyTerms.slice(0, -1)
+  const selectedTerms = unique([...familyTerms, ...materialQualifiers,
+    ...sizeOrVariantQualifiers, ...featureQualifiers])
+  const evidence = Object.freeze(selectedTerms.map((term) => Object.freeze({
+    term, sourceField, sourceAuthority,
+    selectionReason: familyTerms.includes(term)
+      ? term === productNoun ? "STRUCTURED_PRODUCT_FAMILY_HEAD_NOUN"
+        : "STRUCTURED_PRODUCT_FAMILY_QUALIFIER"
+      : materialQualifiers.includes(term) ? "STRUCTURED_MATERIAL_QUALIFIER"
+        : sizeOrVariantQualifiers.includes(term) ? "STRUCTURED_SIZE_OR_VARIANT_QUALIFIER"
+          : "STRUCTURED_IDENTITY_DIFFERENTIATOR",
+  })))
+  const entity = Object.freeze({ productNoun,
+    productFamilyCandidate: boundedQuery(familyTerms),
+    materialQualifiers: Object.freeze(materialQualifiers),
+    countOrSetQualifiers: Object.freeze([]),
+    sizeOrVariantQualifiers: Object.freeze(sizeOrVariantQualifiers),
+    brandSignal: Object.freeze([]), featureQualifiers: Object.freeze(featureQualifiers),
+    definingFamilyQualifiers: Object.freeze(definingFamilyQualifiers), evidence,
+    status: "PROVEN" as const }) satisfies ProductResearchEntityV1
+  const progression = Array.isArray(queryPlan.progression)
+    ? queryPlan.progression : []
+  const planned = unique([...progression, queryPlan.exactStrong,
+    queryPlan.nearExactFamily, queryPlan.functionalFamily,
+    queryPlan.broadFallback].flatMap((entry) => {
+      const query = boundedQuery(tokens(entry))
+      if (!query) return []
+      const queryTerms = tokens(query)
+      return familyTerms.every((term) => includesStem(queryTerms, term))
+        ? [query] : []
+    })).slice(0, 3)
+  const queries = Object.freeze(planned.map((query, index) => Object.freeze({
+    intent: index === 0 ? "EXACT_PRODUCT_QUERY" as const
+      : "CORE_FAMILY_QUERY" as const,
+    query,
+    evidenceBasis: Object.freeze(query.split(" ").map((term) =>
+      evidence.find((entry) => entry.term === term) ?? Object.freeze({
+        term, sourceField, sourceAuthority,
+        selectionReason: "STRUCTURED_QUERY_PLAN_QUALIFIER",
+      }))),
+    ordinal: index + 1,
+  })))
+  return Object.freeze({ entity, queries,
+    semanticExpansionStatus: "UNPROVEN" as const })
+}
+
 export function buildProductResearchCommercialQueryStrategyV1(input: Readonly<{
   productName: unknown
   brand?: unknown
   sourceField?: string
   sourceAuthority?: string
   marketplaceTerms?: readonly ProductResearchMarketplaceTermV1[]
+  structuredIdentity?: ProductResearchStructuredIdentityQuerySourceV1 | null
 }>) {
+  if (input.structuredIdentity !== undefined && input.structuredIdentity !== null) {
+    return structuredIdentityStrategyV1({ structuredIdentity: input.structuredIdentity,
+      sourceField: input.sourceField, sourceAuthority: input.sourceAuthority })
+  }
   const entity = extractProductResearchEntityV1(input)
   if (!entity.productNoun) return Object.freeze({ entity, queries: Object.freeze([]),
     semanticExpansionStatus: "UNPROVEN" as const })
@@ -291,6 +449,108 @@ export function buildProductResearchCommercialQueryStrategyV1(input: Readonly<{
       Object.freeze({ ...entry, evidenceBasis: Object.freeze(entry.evidenceBasis),
         ordinal: index + 1 }))),
     semanticExpansionStatus: expansionTerms.length ? "PROVEN" as const : "UNPROVEN" as const,
+  })
+}
+
+function evidenceClassificationReasons(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((entry) => normalizedText(entry, 120).toUpperCase()).filter(Boolean)
+    : []
+}
+
+function evidenceSoldQuantity(value: unknown) {
+  const amount = Number(value)
+  return Number.isFinite(amount) && amount > 0 ? Math.floor(amount) : 0
+}
+
+function acceptedComparableClassV1(
+  classification: CommercialComparableClassificationV1,
+  reasons: readonly string[],
+) {
+  const contamination = reasons.some((reason) =>
+    /(?:BRAND|IP|PREMIUM_MATERIAL)_CONTAMINATION/.test(reason))
+  if (contamination) return false
+  if (classification === "EXACT_PRODUCT_COMPARABLE") {
+    return !reasons.some((reason) => /PACK.*(?:DIFFERS|MISMATCH)/.test(reason))
+  }
+  if (classification === "CLOSE_VARIANT_COMPARABLE") return true
+  return classification === "CORE_FAMILY_COMPARABLE" &&
+    reasons.includes("PRODUCT_ENTITY_FAMILY_AND_STRUCTURE_MATCH")
+}
+
+/**
+ * Produces the plan-level commercial authority from all settled task evidence.
+ * Raw SOLD remains observable, but only policy-accepted structural comparables
+ * can influence the durable disposition. Duplicate eBay item IDs count once.
+ */
+export function summarizeProductResearchComparableEvidenceV1(
+  rows: readonly ProductResearchComparableEvidenceV1[],
+) {
+  type Candidate = Readonly<{
+    itemId: string
+    soldQuantity: number
+    classification: CommercialComparableClassificationV1
+    classificationReasons: readonly string[]
+    accepted: boolean
+  }>
+  const classificationRank: Record<CommercialComparableClassificationV1, number> = {
+    EXACT_PRODUCT_COMPARABLE: 5, CLOSE_VARIANT_COMPARABLE: 4,
+    CORE_FAMILY_COMPARABLE: 3, ADJACENT_BUT_NOT_COMPARABLE: 2,
+    FALSE_POSITIVE: 1,
+  }
+  const grouped = new Map<string, { rawSold: number; candidates: Candidate[] }>()
+  for (const row of rows) {
+    const itemId = normalizedText(row.itemId, 30)
+    const classification = evidenceClassification(row.classification)
+    if (!/^\d{9,20}$/.test(itemId) || !classification) continue
+    const soldQuantity = evidenceSoldQuantity(row.soldQuantity)
+    const classificationReasons = evidenceClassificationReasons(
+      row.classificationReasons)
+    const candidate = Object.freeze({ itemId, soldQuantity, classification,
+      classificationReasons: Object.freeze(classificationReasons),
+      accepted: acceptedComparableClassV1(classification, classificationReasons) })
+    const current = grouped.get(itemId) ?? { rawSold: 0, candidates: [] }
+    current.rawSold = Math.max(current.rawSold, soldQuantity)
+    current.candidates.push(candidate)
+    grouped.set(itemId, current)
+  }
+  const canonical = [...grouped.entries()].sort(([left], [right]) =>
+    left.localeCompare(right)).map(([, entry]) => {
+      const selected = [...entry.candidates].sort((left, right) =>
+        Number(right.accepted) - Number(left.accepted) ||
+        classificationRank[right.classification] -
+          classificationRank[left.classification] ||
+        right.soldQuantity - left.soldQuantity)[0]
+      return { rawSold: entry.rawSold, selected }
+    })
+  const accepted = canonical.filter((entry) => entry.selected.accepted)
+  const count = (classification: CommercialComparableClassificationV1) =>
+    accepted.filter((entry) => entry.selected.classification === classification).length
+  const exactComparableCount = count("EXACT_PRODUCT_COMPARABLE")
+  const closeVariantComparableCount = count("CLOSE_VARIANT_COMPARABLE")
+  const familyComparableCount = count("CORE_FAMILY_COMPARABLE")
+  const acceptedComparableCount = exactComparableCount +
+    closeVariantComparableCount + familyComparableCount
+  const rawObservedSoldQuantity = canonical.reduce((total, entry) =>
+    total + entry.rawSold, 0)
+  const acceptedComparableSoldQuantity = accepted.reduce((total, entry) =>
+    total + entry.selected.soldQuantity, 0)
+  const comparablePrecision = canonical.length
+    ? acceptedComparableCount / canonical.length : 0
+  const result = acceptedComparableCount === 0
+    ? "INSUFFICIENT_MARKET_EVIDENCE" as const
+    : acceptedComparableSoldQuantity <= 0
+      ? "PRE_RESEARCH_LOW" as const
+      : comparablePrecision >= 0.5
+        ? "PRE_RESEARCH_HIGH" as const : "PRE_RESEARCH_MEDIUM" as const
+  return Object.freeze({
+    policyVersion: PRODUCT_RESEARCH_ACCEPTED_COMPARABLE_POLICY_V1,
+    exactComparableCount, closeVariantComparableCount, familyComparableCount,
+    acceptedComparableCount, rawObservedSoldQuantity,
+    acceptedComparableSoldQuantity, observedItemCount: canonical.length,
+    comparablePrecision, result,
+    traceEligible: result === "PRE_RESEARCH_HIGH" ||
+      result === "PRE_RESEARCH_MEDIUM",
   })
 }
 

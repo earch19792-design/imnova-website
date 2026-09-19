@@ -26,6 +26,8 @@ import {
   markProductResearchQueryCaptured,
   PRODUCT_RESEARCH_QUERY_PLAN_VERSION,
 } from "./ebay-product-research-query-plan"
+import { summarizeProductResearchComparableEvidenceV1 } from
+  "./ebay-product-research-query-intelligence-v1"
 import { currentLiveListingsForMonitorV1 } from
   "./ebay-seller-os-live-portfolio-integrity-v1"
 import { loadSellerOsAssistantMonitorV1 } from
@@ -43,6 +45,8 @@ export const MAYEL_LIVE_MARKET_REVALIDATION_RECOVERY_POLICY =
   "MAYEL_LIVE_MARKET_REVALIDATION_POLICY_V1"
 export const QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_NAMESPACE_CONTRACT_V1 =
   "QUICK_PICK_PRODUCT_RESEARCH_IDENTITY_NAMESPACE_V1_2026_09_07"
+export const LUNA_PRE_RESEARCH_RESULT_CONTRACT_V2 =
+  "LUNA_PRE_RESEARCH_RESULT_V2_2026_09_19" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -793,21 +797,43 @@ async function completeLunaPreResearchProductResearchPlanV1(input: {
   if (qualityWrite.error || qualityWrite.data?.id !== planned.taskId) {
     throw new Error("LUNA_PRE_RESEARCH_QUALITY_READBACK_REQUIRED")
   }
-  const evidenceCount = research.commercialEvidence.length
-  const confirmedSoldQuantity = research.commercialEvidence.reduce((total, entry) =>
-    total + (Number(entry.soldQuantity) > 0 ? Number(entry.soldQuantity) : 0), 0)
-  const result: "PRE_RESEARCH_HIGH" | "PRE_RESEARCH_MEDIUM" |
-    "PRE_RESEARCH_LOW" | "INSUFFICIENT_MARKET_EVIDENCE" =
-    research.commercialQualityStatus === "COMMERCIALLY_SUFFICIENT" &&
-      confirmedSoldQuantity > 0 ? "PRE_RESEARCH_HIGH" : confirmedSoldQuantity > 0
-        ? "PRE_RESEARCH_MEDIUM" : evidenceCount > 0 ||
-          Number(research.validCount ?? 0) > 0 ? "PRE_RESEARCH_LOW"
-          : "INSUFFICIENT_MARKET_EVIDENCE"
-  const traceEligible = result === "PRE_RESEARCH_HIGH" ||
-    result === "PRE_RESEARCH_MEDIUM"
+  const planTasksRead = await input.supabase.from(
+    "marketplace_product_research_query_tasks")
+    .select("id,status,capture_batch_id,quality_status,quality_metrics,commercial_evidence_entities")
+    .eq("plan_id", input.planId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").order("ordinal", { ascending: true })
+  if (planTasksRead.error || !(planTasksRead.data ?? []).length) {
+    throw new Error("LUNA_PRE_RESEARCH_PLAN_EVIDENCE_READBACK_REQUIRED")
+  }
+  const planTasks = (planTasksRead.data ?? []).map((entry) => record(entry))
+  const unsettled = planTasks.filter((task) =>
+    !["CAPTURED", "PROCESSED", "SKIPPED"].includes(text(task.status, 24)))
+  if (unsettled.some((task) => text(task.status, 24) !== "PENDING")) {
+    throw new Error("LUNA_PRE_RESEARCH_PLAN_TASK_STATE_INVALID")
+  }
+  if (unsettled.length > 0) {
+    return Object.freeze({ planId: input.planId,
+      sourceContext: LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1,
+      result: "PLAN_TASK_SETTLED_MORE_TASKS_PENDING" as const,
+      traceEligible: false as const, pendingTaskCount: unsettled.length,
+      captureBatchId: research.batchId, soldImportBatchId, soldEvidenceOutcome,
+      productResearchExecuted: true as const, nextStageStarted: false as const,
+      ownerActionRequired: false as const, marketplaceWrites: 0 as const })
+  }
+  const planEvidenceRows = planTasks.flatMap((task) =>
+    Array.isArray(task.commercial_evidence_entities)
+      ? task.commercial_evidence_entities : [])
+  const comparable = summarizeProductResearchComparableEvidenceV1(planEvidenceRows)
+  const result = comparable.result
+  const traceEligible = comparable.traceEligible
+  const aggregateQualityStatus = comparable.acceptedComparableCount > 0 &&
+      comparable.comparablePrecision >= 0.5
+    ? "COMMERCIALLY_SUFFICIENT" : comparable.observedItemCount > 0
+      ? "LOW_PRECISION_REFORMULATION_REQUIRED" : "NO_EVIDENCE_UNPROVEN"
   const completedAt = new Date().toISOString()
   const evidence = {
-    contractVersion: "LUNA_PRE_RESEARCH_RESULT_V1",
+    contractVersion: LUNA_PRE_RESEARCH_RESULT_CONTRACT_V2,
     sourceContext: LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1,
     sourceSnapshotId: plan.sourceLunaSnapshotId,
     productId: plan.sourceLunaProductId,
@@ -815,8 +841,24 @@ async function completeLunaPreResearchProductResearchPlanV1(input: {
     sku: plan.sourceSupplierSku,
     productTruthFingerprint: plan.sourceProductTruthFingerprint,
     planId: input.planId, taskId: planned.taskId, captureBatchId: research.batchId,
-    soldImportBatchId, soldEvidenceOutcome, qualityStatus: research.commercialQualityStatus,
-    evidenceCount, confirmedSoldQuantity, traceEligible,
+    taskIds: planTasks.map((task) => text(task.id, 40)),
+    captureBatchIds: planTasks.map((task) => text(task.capture_batch_id, 40))
+      .filter(Boolean),
+    taskQuality: planTasks.map((task) => ({ taskId: text(task.id, 40),
+      status: text(task.status, 24), qualityStatus: text(task.quality_status, 80),
+      qualityMetrics: record(task.quality_metrics) })),
+    soldImportBatchId, soldEvidenceOutcome, result,
+    qualityStatus: aggregateQualityStatus,
+    exactComparableCount: comparable.exactComparableCount,
+    closeVariantComparableCount: comparable.closeVariantComparableCount,
+    familyComparableCount: comparable.familyComparableCount,
+    acceptedComparableCount: comparable.acceptedComparableCount,
+    rawObservedSoldQuantity: comparable.rawObservedSoldQuantity,
+    acceptedComparableSoldQuantity: comparable.acceptedComparableSoldQuantity,
+    observedItemCount: comparable.observedItemCount,
+    comparablePrecision: comparable.comparablePrecision,
+    comparablePolicyVersion: comparable.policyVersion,
+    traceEligible,
     provenance: ["LUNA_STRUCTURED_CATALOG_SNAPSHOT", "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"],
   }
   const evidenceDigest = sha256(evidence)

@@ -7,6 +7,7 @@ import {
   PRODUCT_RESEARCH_QUERY_INTELLIGENCE_V1,
   type ProductResearchMarketplaceTermV1,
   type ProductResearchQueryIntentV1,
+  type ProductResearchStructuredIdentityQuerySourceV1,
   type ProductResearchTermEvidenceV1,
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 } from "./ebay-product-research-query-intelligence-v1.ts"
@@ -237,6 +238,7 @@ export function buildProductResearchCommercialQueryPlanV1(input: Readonly<{
   sourceField?: string
   sourceAuthority?: string
   marketplaceTerms?: readonly ProductResearchMarketplaceTermV1[]
+  structuredIdentity?: ProductResearchStructuredIdentityQuerySourceV1 | null
 }>) {
   const candidate = input.candidate
   const strategy = buildProductResearchCommercialQueryStrategyV1({
@@ -245,6 +247,7 @@ export function buildProductResearchCommercialQueryPlanV1(input: Readonly<{
     sourceField: input.sourceField,
     sourceAuthority: input.sourceAuthority,
     marketplaceTerms: input.marketplaceTerms,
+    structuredIdentity: input.structuredIdentity,
   })
   const variant = text(candidate.supplierVariantId)
   const queries: ProductResearchCommercialPlannedQuery[] = strategy.queries.map(

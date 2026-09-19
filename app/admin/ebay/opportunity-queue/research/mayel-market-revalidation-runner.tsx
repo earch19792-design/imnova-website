@@ -126,7 +126,7 @@ export function MayelMarketRevalidationRunner() {
     const planId = planIdFromLocation()
     const autonomous = autonomousModeFromLocation()
     const browserWorkerControl = browserWorkerControlModeFromLocation()
-    const gateOnly = browserWorkerControl && !planId && !autonomous
+    const gateOnly = browserWorkerControl && !planId
     if ((!planId && !autonomous && !gateOnly) || started.current) return
     started.current = true
     setActive(true)
@@ -249,7 +249,8 @@ export function MayelMarketRevalidationRunner() {
         })
         return
       }
-      const maximumPlans = autonomous ? 4 : 1
+      const maximumPlans = browserWorkerControl && planId ? 1
+        : autonomous ? 4 : 1
       let completed = 0
       const pollStartedAt = performance.now()
       const permit = controller.acquirePollPermit()

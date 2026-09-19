@@ -136,8 +136,9 @@ function queryPayload(row: JsonRecord) {
       productName: text(row.title, 240),
       categoryId: null,
     },
-    sourceField: "title",
-    sourceAuthority: "LUNA_STRUCTURED_CATALOG_SNAPSHOT",
+    sourceField: "identity_result.queryPlan",
+    sourceAuthority: LUNA_CATALOG_SNAPSHOT_IDENTITY_ENGINE_V1,
+    structuredIdentity: record(row.identity_result),
   })
   if (!plan.queries.length) throw new Error("LUNA_PRE_RESEARCH_QUERY_EMPTY")
   return plan
