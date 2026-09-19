@@ -468,11 +468,11 @@ function acceptedComparableClassV1(
   reasons: readonly string[],
 ) {
   const contamination = reasons.some((reason) =>
-    /(?:BRAND|IP|PREMIUM_MATERIAL)_CONTAMINATION/.test(reason))
+    /(?:BRAND|IP)_CONTAMINATION/.test(reason) ||
+    /PREMIUM_MATERIAL_(?:CONTAMINATION|MISMATCH)/.test(reason) ||
+    /PACK.*(?:DIFFERS|MISMATCH)/.test(reason))
   if (contamination) return false
-  if (classification === "EXACT_PRODUCT_COMPARABLE") {
-    return !reasons.some((reason) => /PACK.*(?:DIFFERS|MISMATCH)/.test(reason))
-  }
+  if (classification === "EXACT_PRODUCT_COMPARABLE") return true
   if (classification === "CLOSE_VARIANT_COMPARABLE") return true
   return classification === "CORE_FAMILY_COMPARABLE" &&
     reasons.includes("PRODUCT_ENTITY_FAMILY_AND_STRUCTURE_MATCH")
