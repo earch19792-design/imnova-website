@@ -26,6 +26,7 @@ export type ProductResearchTermEvidenceV1 = Readonly<{
 export type ProductResearchEntityV1 = Readonly<{
   productNoun: string | null
   productFamilyCandidate: string | null
+  configurationCount: number | null
   materialQualifiers: readonly string[]
   countOrSetQualifiers: readonly string[]
   sizeOrVariantQualifiers: readonly string[]
@@ -132,6 +133,9 @@ const NOISE_WORDS = new Set([
   "assorted", "default", "new", "title", "various",
 ])
 const CONNECTORS = new Set(["for", "including", "with"])
+const OPTIONAL_USAGE_CONTEXT = new Set([
+  "bathroom", "counter", "desk", "kitchen",
+])
 const REFORMULATION_NOISE = new Set([
   ...FUNCTION_WORDS,
   "buy", "free", "item", "items", "lot", "new", "pack", "packs",
@@ -183,9 +187,20 @@ function countQualifierTokens(titleTokens: readonly string[]) {
   return []
 }
 
+function configurationCount(value: unknown) {
+  const match = normalizedText(value).match(
+    /\b(\d{1,2})\s*(?:-\s*)?in\s*(?:-\s*)?1\b/i,
+  )
+  const count = Number(match?.[1])
+  return Number.isInteger(count) && count > 1 ? count : null
+}
+
 function sizeQualifierTokens(titleTokens: readonly string[]) {
   const result: string[] = []
   for (let index = 0; index < titleTokens.length - 1; index += 1) {
+    const configurationPattern = /^\d{1,2}$/.test(titleTokens[index]) &&
+      titleTokens[index + 1] === "in" && titleTokens[index + 2] === "1"
+    if (configurationPattern) continue
     if (/^\d+(?:\.\d+)?$/.test(titleTokens[index]) &&
         UNIT_WORDS.has(titleTokens[index + 1])) {
       result.push(titleTokens[index], titleTokens[index + 1])
@@ -218,6 +233,7 @@ export function extractProductResearchEntityV1(input: Readonly<{
   const titleTokens = tokens(input.productName)
   const identityHeadTokens = tokens(boundedIdentityHead(input.productName))
   const brandSignal = unique(tokens(input.brand).filter((entry) => entry.length >= 2))
+  const productConfigurationCount = configurationCount(input.productName)
   const countOrSetQualifiers = countQualifierTokens(titleTokens)
   const sizeOrVariantQualifiers = sizeQualifierTokens(titleTokens)
   const boundary = identityHeadTokens.findIndex((entry) => CONNECTORS.has(entry))
@@ -237,7 +253,7 @@ export function extractProductResearchEntityV1(input: Readonly<{
     ? identityHeadTokens.slice(boundary + 1) : []
   const featureQualifiers = unique([
     ...beforeNoun.filter((entry) => SHAPES.has(entry)),
-    ...afterConnector,
+    ...afterConnector.filter((entry) => !OPTIONAL_USAGE_CONTEXT.has(entry)),
   ]
     .filter((entry) => entry.length >= 2 && !MATERIALS.has(entry) &&
       !COLORS.has(entry) && !GENERIC_CONTEXT.has(entry) &&
@@ -268,6 +284,7 @@ export function extractProductResearchEntityV1(input: Readonly<{
   return Object.freeze({
     productNoun,
     productFamilyCandidate,
+    configurationCount: productConfigurationCount,
     materialQualifiers: Object.freeze(materialQualifiers),
     countOrSetQualifiers: Object.freeze(countOrSetQualifiers),
     sizeOrVariantQualifiers: Object.freeze(sizeOrVariantQualifiers),
@@ -295,6 +312,48 @@ function stringArray(value: unknown) {
     : []
 }
 
+function structuredFamilyTermVisible(
+  expected: string,
+  queryTerms: readonly string[],
+) {
+  if (includesStem(queryTerms, expected)) return true
+  const stem = lexicalStem(expected)
+  if (stem === "doorbell") {
+    return includesStem(queryTerms, "door") && includesStem(queryTerms, "bell")
+  }
+  if (stem === "pet") {
+    return ["dog", "cat"].some((term) => includesStem(queryTerms, term))
+  }
+  return false
+}
+
+function familyPreservingLexicalVariants(
+  query: string,
+  familyTerms: readonly string[],
+) {
+  const hasTrainingContext = familyTerms.some((term) =>
+    lexicalStem(term) === "training")
+  const hasPetContext = familyTerms.some((term) => lexicalStem(term) === "pet")
+  const hasDoorbellFamily = familyTerms.some((term) =>
+    lexicalStem(term) === "doorbell")
+  if (!hasTrainingContext || !hasPetContext || !hasDoorbellFamily) return []
+
+  const splitCompound = tokens(query).flatMap((term) =>
+    lexicalStem(term) === "doorbell" ? ["door", "bell"] : [term])
+  const petVariant = boundedQuery(splitCompound)
+  const dogVariantTerms: string[] = []
+  for (let index = 0; index < splitCompound.length; index += 1) {
+    const term = splitCompound[index]
+    if (/^\d{1,3}$/.test(term) && splitCompound[index + 1] === "pack") {
+      dogVariantTerms.push(`${term}pack`)
+      index += 1
+      continue
+    }
+    dogVariantTerms.push(lexicalStem(term) === "pet" ? "dog" : term)
+  }
+  return unique([petVariant, boundedQuery(dogVariantTerms)])
+}
+
 function structuredIdentityStrategyV1(input: Readonly<{
   structuredIdentity: ProductResearchStructuredIdentityQuerySourceV1
   sourceField?: string
@@ -317,7 +376,8 @@ function structuredIdentityStrategyV1(input: Readonly<{
     !normalizedText(identity.productFamily, 120) || !productNoun ||
     !familyTerms.length
   const emptyEntity = Object.freeze({ productNoun: null,
-    productFamilyCandidate: null, materialQualifiers: Object.freeze([]),
+    productFamilyCandidate: null, configurationCount: null,
+    materialQualifiers: Object.freeze([]),
     countOrSetQualifiers: Object.freeze([]), sizeOrVariantQualifiers: Object.freeze([]),
     brandSignal: Object.freeze([]), featureQualifiers: Object.freeze([]),
     definingFamilyQualifiers: Object.freeze([]), evidence: Object.freeze([]),
@@ -340,7 +400,9 @@ function structuredIdentityStrategyV1(input: Readonly<{
     normalizedText(identity.audience, 80), normalizedText(identity.color, 80),
     normalizedText(identity.edgeFeature, 80),
   ].filter(Boolean).join(" ")).filter((entry) =>
-    !familyTerms.includes(entry) && !UNIT_WORDS.has(entry) &&
+    !familyTerms.includes(entry) && !FUNCTION_WORDS.has(entry) &&
+    !UNIT_WORDS.has(entry) &&
+    !OPTIONAL_USAGE_CONTEXT.has(entry) &&
     !/^\d+(?:\.\d+)?$/.test(entry)))
   const definingFamilyQualifiers = familyTerms.slice(0, -1)
   const selectedTerms = unique([...familyTerms, ...materialQualifiers,
@@ -356,6 +418,7 @@ function structuredIdentityStrategyV1(input: Readonly<{
   })))
   const entity = Object.freeze({ productNoun,
     productFamilyCandidate: boundedQuery(familyTerms),
+    configurationCount: null,
     materialQualifiers: Object.freeze(materialQualifiers),
     countOrSetQualifiers: Object.freeze([]),
     sizeOrVariantQualifiers: Object.freeze(sizeOrVariantQualifiers),
@@ -364,15 +427,23 @@ function structuredIdentityStrategyV1(input: Readonly<{
     status: "PROVEN" as const }) satisfies ProductResearchEntityV1
   const progression = Array.isArray(queryPlan.progression)
     ? queryPlan.progression : []
-  const planned = unique([...progression, queryPlan.exactStrong,
+  const basePlanned = unique([...progression, queryPlan.exactStrong,
     queryPlan.nearExactFamily, queryPlan.functionalFamily,
     queryPlan.broadFallback].flatMap((entry) => {
       const query = boundedQuery(tokens(entry))
       if (!query) return []
       const queryTerms = tokens(query)
-      return familyTerms.every((term) => includesStem(queryTerms, term))
+      return familyTerms.every((term) => structuredFamilyTermVisible(
+        term, queryTerms))
         ? [query] : []
-    })).slice(0, 3)
+    }))
+  const lexicalVariants = basePlanned.flatMap((query) =>
+    familyPreservingLexicalVariants(query, familyTerms))
+  const planned = unique([...basePlanned, ...lexicalVariants]).filter((query) => {
+    const queryTerms = tokens(query)
+    return familyTerms.every((term) => structuredFamilyTermVisible(
+      term, queryTerms))
+  }).slice(0, 3)
   const queries = Object.freeze(planned.map((query, index) => Object.freeze({
     intent: index === 0 ? "EXACT_PRODUCT_QUERY" as const
       : "CORE_FAMILY_QUERY" as const,
