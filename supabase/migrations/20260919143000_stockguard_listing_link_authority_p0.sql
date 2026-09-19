@@ -232,8 +232,29 @@ begin
     or p_observed_at is null then
     raise exception 'LISTING_IDENTITY_QUARANTINE_INPUT_INVALID';
   end if;
+  -- Shared serialization contract (always acquire the account lock first):
+  -- account -> item -> normalized SKU -> reverse identity.
   perform pg_advisory_xact_lock(hashtextextended(
-    'listing-identity-quarantine:' || p_account_key, 0));
+    'listing-link-authority-v1:account:' || p_account_key, 0));
+
+  -- Resolve any stale quarantine only after holding the same account lock used
+  -- by lifecycle transitions and current-live ingestion. This makes ACTIVE
+  -- authority + ACTIVE quarantine impossible after reconciliation commits.
+  update public.seller_os_listing_identity_quarantines_v1 quarantine
+  set quarantine_state='RESOLVED',
+      authority_id=authority.authority_id,
+      resolved_at=p_observed_at,
+      resolution_reason_code='CANONICAL_ACTIVE_AUTHORITY_PRESENT',
+      updated_at=p_observed_at
+  from public.seller_os_listing_product_link_authorities_v1 authority
+  where quarantine.account_key=p_account_key
+    and quarantine.marketplace_id='EBAY_US'
+    and quarantine.quarantine_state='ACTIVE'
+    and authority.account_key=quarantine.account_key
+    and authority.marketplace_id=quarantine.marketplace_id
+    and authority.ebay_item_id=quarantine.ebay_item_id
+    and upper(trim(authority.ebay_sku))=upper(trim(quarantine.ebay_sku))
+    and authority.lifecycle_state='ACTIVE';
 
   with duplicated as (
     select a.account_key,a.ebay_item_id,a.ebay_sku,
@@ -314,8 +335,12 @@ begin
     or coalesce(p_reason_code,'') !~ '^[A-Z][A-Z0-9_]{2,119}$' then
     raise exception 'LISTING_LINK_AUTHORITY_INPUT_INVALID';
   end if;
+  -- Canonical lock ordering is shared with quarantine reconciliation and
+  -- current-live ingestion: account -> item -> normalized SKU -> identity.
   perform pg_advisory_xact_lock(hashtextextended(
-    'listing-link-item:'||p_account_key||':'||p_ebay_item_id,0));
+    'listing-link-authority-v1:account:'||p_account_key,0));
+  perform pg_advisory_xact_lock(hashtextextended(
+    'listing-link-authority-v1:item:'||p_account_key||':'||p_ebay_item_id,0));
 
   select * into v_current
   from public.seller_os_listing_product_link_authorities_v1 authority
@@ -436,9 +461,11 @@ begin
     convert_to(jsonb_build_array(v_active.market_radar_product_id,
       v_decision.components)::text,'UTF8'),'sha256'),'hex');
   perform pg_advisory_xact_lock(hashtextextended(
-    'listing-link-sku:'||p_account_key||':'||upper(trim(v_active.ebay_sku)),0));
+    'listing-link-authority-v1:sku:'||p_account_key||':'||
+      upper(trim(v_active.ebay_sku)),0));
   perform pg_advisory_xact_lock(hashtextextended(
-    'listing-link-identity:'||p_account_key||':'||v_identity_key,0));
+    'listing-link-authority-v1:identity:'||p_account_key||':'||
+      v_identity_key,0));
 
   if p_action in ('CREATE','REPLACE') and v_current.authority_id is not null
     and v_current.source_decision_id=p_source_decision_id
@@ -683,6 +710,22 @@ $migration$;
 -- Backfill only unambiguous, already-approved exact identities. This preserves
 -- the known certified authority without pretending that old evidence is a new
 -- V1.3 preflight. Ambiguous groups remain without authority and fail closed.
+-- Serialize the complete prepare snapshot with current-live ingestion and all
+-- lifecycle transitions. Sorted account acquisition preserves lock ordering.
+do $migration$
+declare r record;
+begin
+  for r in
+    select distinct account_key
+    from public.ebay_active_listings
+    order by account_key
+  loop
+    perform pg_advisory_xact_lock(hashtextextended(
+      'listing-link-authority-v1:account:' || r.account_key, 0));
+  end loop;
+end;
+$migration$;
+
 with latest as (
   select distinct on (d.account_key,d.marketplace_id,d.ebay_item_id) d.*
   from public.seller_os_luna_linkage_decisions d
@@ -766,14 +809,13 @@ end;
 $function$;
 drop trigger if exists seller_os_luna_stock_job_authority_p0
   on public.seller_os_luna_stock_check_jobs;
-create trigger seller_os_luna_stock_job_authority_p0
-before insert or update on public.seller_os_luna_stock_check_jobs
-for each row execute function public.guard_seller_os_luna_stock_job_authority_p0();
 drop trigger if exists seller_os_luna_stock_observation_authority_p0
   on public.seller_os_luna_stock_observations;
-create trigger seller_os_luna_stock_observation_authority_p0
-before insert on public.seller_os_luna_stock_observations
-for each row execute function public.guard_seller_os_luna_stock_job_authority_p0();
+
+-- PREPARE only: strict StockGuard enforcement is deliberately activated by
+-- the ordered activation migration after authority-aware application code is
+-- deployed. Keeping the triggers absent here preserves the current worker
+-- claim/complete/ensure contract during the rollout boundary.
 
 -- Patch current-live preservation: marketplace facts are always ingested, but
 -- cached supplier lineage survives only while exact ACTIVE authority remains.
@@ -802,13 +844,22 @@ $anchor$;
   then jsonb_build_object('canonicalSupplierLineage',target.raw_payload->'canonicalSupplierLineage')
 $replacement$;
   reconcile_anchor text := '  get diagnostics v_ended = row_count;';
+  lock_anchor text :=
+    '  perform pg_advisory_xact_lock(hashtextextended(p_account_key, 417));';
+  lock_replacement text := $replacement$
+  perform pg_advisory_xact_lock(hashtextextended(
+    'listing-link-authority-v1:account:' || p_account_key, 0));
+  perform pg_advisory_xact_lock(hashtextextended(p_account_key, 417));
+$replacement$;
 begin
   select pg_get_functiondef(
     'public.record_ebay_current_live_authority_success_v1(text,uuid,text,timestamptz,timestamptz,jsonb,jsonb)'::regprocedure)
     into d;
-  if strpos(d,preserve_anchor)=0 or strpos(d,reconcile_anchor)=0 then
+  if strpos(d,preserve_anchor)=0 or strpos(d,reconcile_anchor)=0
+    or strpos(d,lock_anchor)=0 then
     raise exception 'STOCKGUARD_CURRENT_LIVE_PATCH_TARGET_UNPROVEN';
   end if;
+  d:=replace(d,lock_anchor,lock_replacement);
   d:=replace(d,preserve_anchor,preserve_replacement);
   d:=replace(d,reconcile_anchor,reconcile_anchor || E'\n  perform public.reconcile_seller_os_listing_identity_quarantines_v1(p_account_key,p_observed_at);');
   execute d;
