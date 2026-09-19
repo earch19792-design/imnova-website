@@ -630,6 +630,44 @@ function includesStem(row: readonly string[], expected: string) {
   return row.some((entry) => lexicalStem(entry) === stem)
 }
 
+const INCOMPATIBLE_PET_TRAINING_BELL_FORMS = new Set([
+  "bicycle", "collar", "counter", "decorative", "electronic", "hanging",
+  "service", "sleigh", "strap", "ultrasonic", "wireless",
+])
+
+function contextualProductNounMatch(
+  entity: ProductResearchEntityV1,
+  rowTokens: readonly string[],
+  detectedCount: number | null,
+) {
+  if (!entity.productNoun) return false
+  if (lexicalStem(entity.productNoun) !== "doorbell") {
+    return includesStem(rowTokens, entity.productNoun)
+  }
+  if (rowTokens.some((term) => INCOMPATIBLE_PET_TRAINING_BELL_FORMS.has(
+    lexicalStem(term)))) return false
+  const expectedCount = Number(entity.countOrSetQualifiers.find((entry) =>
+    /^\d+$/.test(entry))) || null
+  if (expectedCount && detectedCount && expectedCount !== detectedCount) return false
+  if (includesStem(rowTokens, entity.productNoun)) return true
+  if (!includesStem(rowTokens, "bell") || !includesStem(rowTokens, "door") ||
+      !["training", "potty"].some((term) => includesStem(rowTokens, term)) ||
+      !["pet", "dog", "cat"].some((term) => includesStem(rowTokens, term))) return false
+  return !expectedCount || detectedCount === expectedCount
+}
+
+function contextualFamilyQualifierMatch(
+  entity: ProductResearchEntityV1,
+  rowTokens: readonly string[],
+  expected: string,
+  productNounMatched: boolean,
+) {
+  if (includesStem(rowTokens, expected)) return true
+  return productNounMatched && lexicalStem(entity.productNoun ?? "") === "doorbell" &&
+    lexicalStem(expected) === "pet" &&
+    ["dog", "cat"].some((term) => includesStem(rowTokens, term))
+}
+
 function hasStructuralDiscriminatorMatch(
   entity: ProductResearchEntityV1,
   rowTokens: readonly string[],
@@ -654,13 +692,15 @@ export function classifyCommercialComparableV1(input: Readonly<{
   detectedSize?: string | null
 }>) {
   const rowTokens = unique(tokens(input.title).filter((entry) => entry.length >= 2))
-  if (!input.entity.productNoun ||
-      !includesStem(rowTokens, input.entity.productNoun)) {
+  const productNounMatched = contextualProductNounMatch(
+    input.entity, rowTokens, input.detectedCount ?? null)
+  if (!productNounMatched) {
     return Object.freeze({ classification: "FALSE_POSITIVE" as const,
       reasons: Object.freeze(["PRODUCT_NOUN_ABSENT"]) })
   }
   const missingFamily = input.entity.definingFamilyQualifiers.filter((entry) =>
-    !includesStem(rowTokens, entry))
+    !contextualFamilyQualifierMatch(
+      input.entity, rowTokens, entry, productNounMatched))
   if (missingFamily.length) {
     return Object.freeze({ classification: "ADJACENT_BUT_NOT_COMPARABLE" as const,
       reasons: Object.freeze(["DEFINING_FAMILY_QUALIFIER_MISSING",
