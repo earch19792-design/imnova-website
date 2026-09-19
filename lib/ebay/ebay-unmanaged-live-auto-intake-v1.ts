@@ -233,13 +233,23 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
     const id = canonicalPackageId(label)
     return id ? [id] : []
   }))]
-  const [decisionRead, manualRead, packageRead, skuOpportunityRead] =
+  const [decisionRead, authorityRead, quarantineRead, manualRead, packageRead,
+    skuOpportunityRead] =
     await Promise.all([
       supabase.from("seller_os_luna_linkage_decisions")
         .select("ebay_item_id,decision,luna_product_id,luna_variant_id,luna_sku")
         .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
         .in("ebay_item_id", itemIds).order("decision_version", { ascending: false })
         .limit(itemIds.length * 4),
+      supabase.from("seller_os_listing_product_link_authorities_v1")
+        .select("ebay_item_id,lifecycle_state,updated_at")
+        .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+        .in("ebay_item_id", itemIds).order("updated_at", { ascending: false })
+        .limit(itemIds.length * 4),
+      supabase.from("seller_os_listing_identity_quarantines_v1")
+        .select("ebay_item_id,quarantine_state,reason_code")
+        .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+        .in("ebay_item_id", itemIds).limit(itemIds.length * 2),
       supabase.from("ebay_manual_listing_links")
         .select("ebay_item_id,verification_status,candidate_key")
         .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
@@ -256,7 +266,8 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
           .in("supplier_sku", labels).limit(201)
         : Promise.resolve({ data: [], error: null }),
     ])
-  if (decisionRead.error || manualRead.error || packageRead.error ||
+  if (decisionRead.error || authorityRead.error || quarantineRead.error ||
+      manualRead.error || packageRead.error ||
       skuOpportunityRead.error) {
     throw new Error("UNMANAGED_LIVE_AUTO_INTAKE_AUTHORITY_READ_FAILED")
   }
@@ -309,9 +320,16 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
     }
   }
   const latestDecisions = [...latestDecisionByItemId.values()]
-  const managedItemIds = new Set(latestDecisions.filter((decision) =>
-    decision.decision === "APPROVE_EXACT_LINKAGE")
-    .map((decision) => String(decision.ebay_item_id)))
+  const latestAuthorityByItemId = new Map<string, JsonRecord>()
+  for (const authority of (authorityRead.data ?? []) as Array<JsonRecord>) {
+    const itemId = String(authority.ebay_item_id)
+    if (!latestAuthorityByItemId.has(itemId)) {
+      latestAuthorityByItemId.set(itemId, authority)
+    }
+  }
+  const managedItemIds = new Set([...latestAuthorityByItemId.values()]
+    .filter((authority) => authority.lifecycle_state === "ACTIVE")
+    .map((authority) => String(authority.ebay_item_id)))
   const decidedItemIds = new Set(latestDecisions.map((decision) =>
     String(decision.ebay_item_id)))
   const conflictingItemIds = new Set(
@@ -321,6 +339,17 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
   )
   for (const itemId of decidedItemIds) {
     if (!managedItemIds.has(itemId)) conflictingItemIds.add(itemId)
+  }
+  for (const authority of latestAuthorityByItemId.values()) {
+    if (authority.lifecycle_state === "UNLINKED" ||
+        authority.lifecycle_state === "INVALIDATED") {
+      conflictingItemIds.add(String(authority.ebay_item_id))
+    }
+  }
+  for (const quarantine of (quarantineRead.data ?? []) as Array<JsonRecord>) {
+    if (quarantine.quarantine_state === "ACTIVE") {
+      conflictingItemIds.add(String(quarantine.ebay_item_id))
+    }
   }
   const classifications = listings.map((listing) =>
     classifyEbayUnmanagedLiveListingV1({

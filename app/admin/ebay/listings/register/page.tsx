@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
 import { SellerOsMobileNav } from "../../components/seller-os-mobile-nav"
+import { StockguardLinkAuthorityControlsP0,
+  type StockguardLinkAuthorityReadbackP0 } from
+  "./stockguard-link-authority-controls-p0"
 
 type SafeDefaults = {
   categoryId?: string
@@ -89,6 +92,7 @@ type ApiPayload = {
   registrations?: Registration[]
   templates?: ListingTemplate[]
   targetListing?: TargetListing | null
+  linkAuthority?: StockguardLinkAuthorityReadbackP0 | null
   certifiedIdentities?: CertifiedIdentity[]
   registration?: Registration
   verification?: {
@@ -358,6 +362,8 @@ export default function RegisterManualEbayListingPage() {
   const [saving, setSaving] = useState(false)
   const [helperProducts, setHelperProducts] = useState<ProductOption[]>([])
   const [targetListing, setTargetListing] = useState<TargetListing | null>(null)
+  const [linkAuthority, setLinkAuthority] =
+    useState<StockguardLinkAuthorityReadbackP0 | null>(null)
   const [certifiedIdentities, setCertifiedIdentities] = useState<CertifiedIdentity[]>([])
   const [helperLoading, setHelperLoading] = useState(true)
   const [resolvingIdentity, setResolvingIdentity] = useState("")
@@ -445,6 +451,7 @@ export default function RegisterManualEbayListingPage() {
       setRegistrations(payload.registrations ?? [])
       setTemplates(payload.templates ?? [])
       setTargetListing(payload.targetListing ?? null)
+      setLinkAuthority(payload.linkAuthority ?? null)
       setCertifiedIdentities(payload.certifiedIdentities ?? [])
       setAccountKey(
         payload.configuration?.accountAlias ??
@@ -658,6 +665,33 @@ export default function RegisterManualEbayListingPage() {
     }
   }
 
+  async function transitionLinkAuthority(action: "UNLINK" | "INVALIDATE") {
+    const authorityId = linkAuthority?.authority?.authority_id
+    if (!targetListing || !authorityId || resolvingIdentity) return
+    const confirmed = window.confirm(
+      action === "UNLINK"
+        ? `¿Desvincular ${targetListing.itemId}? StockGuard quedará UNKNOWN.`
+        : `¿Invalidar el vínculo de ${targetListing.itemId}? Active Sync no podrá restaurarlo automáticamente.`,
+    )
+    if (!confirmed) return
+    setResolvingIdentity(action)
+    setError("")
+    try {
+      await apiRequest("POST", { action: "listing_link_authority",
+        confirmation: "MUTAR_AUTORIDAD_DE_VINCULO",
+        mutation: { action, ebayItemId: targetListing.itemId,
+          expectedAuthorityId: authorityId,
+          reasonCode: action === "UNLINK"
+            ? "OWNER_UNLINKED_LISTING_PRODUCT" : "OWNER_INVALIDATED_LISTING_PRODUCT" } })
+      setMessage(`${action === "UNLINK" ? "Vínculo removido" : "Vínculo invalidado"}; StockGuard quedó UNKNOWN.`)
+      await loadRegistrations()
+    } catch (requestError) {
+      setError(errorLabel(requestError instanceof Error ? requestError.message : ""))
+    } finally {
+      setResolvingIdentity("")
+    }
+  }
+
   function formFromRegistration(row: Registration): FormState {
     return {
       ...emptyForm,
@@ -749,13 +783,17 @@ export default function RegisterManualEbayListingPage() {
           <a href={targetListing.ebayUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex min-h-11 items-center justify-center rounded-xl border border-rose-100/30 px-4 text-sm font-black text-rose-50">
             Ver este listing en eBay ↗
           </a>
-          {recommendedIdentity && !targetListing.linked ? <div className="mt-5 rounded-2xl border-2 border-emerald-300/50 bg-emerald-300/[0.10] p-4">
+          <StockguardLinkAuthorityControlsP0 itemId={targetListing.itemId}
+            ebaySku={targetListing.ebaySku} authority={linkAuthority}
+            busy={Boolean(resolvingIdentity)} onVerify={() => void loadRegistrations()}
+            onTransition={(action) => void transitionLinkAuthority(action)} />
+          {recommendedIdentity ? <div className="mt-5 rounded-2xl border-2 border-emerald-300/50 bg-emerald-300/[0.10] p-4">
             <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100">Identidad encontrada para confirmar</p>
             <h3 className="mt-2 font-black text-white">{recommendedIdentity.productTitle || recommendedIdentity.sourceListingTitle || recommendedIdentity.lunaSku}</h3>
             <p className="mt-2 text-sm text-emerald-50/80">SKU Luna: <strong>{recommendedIdentity.lunaSku}</strong> · certificada antes en eBay {recommendedIdentity.sourceItemId}</p>
             <p className="mt-2 text-xs leading-5 text-white/55">Se destacó porque ambos registros conservan exactamente la misma imagen oficial. Esto sólo facilita encontrarla: tú confirmas la identidad y el OS vuelve a verificar eBay antes de guardar.</p>
             <button type="button" disabled={Boolean(resolvingIdentity)} onClick={() => void resolveCertifiedIdentity(recommendedIdentity)} className="mt-4 min-h-14 w-full rounded-2xl bg-emerald-300 px-4 text-sm font-black text-emerald-950 disabled:opacity-50">
-              {resolvingIdentity === recommendedIdentity.sourceDecisionId ? "Verificando en eBay y vinculando…" : `Confirmar y vincular a ${recommendedIdentity.lunaSku}`}
+              {resolvingIdentity === recommendedIdentity.sourceDecisionId ? "Verificando en eBay y vinculando…" : targetListing.linked ? `Reemplazar vínculo con ${recommendedIdentity.lunaSku}` : `Confirmar y vincular a ${recommendedIdentity.lunaSku}`}
             </button>
           </div> : null}
         </section> : !loading && form.ebayItemId ? <section role="alert" className="rounded-3xl border-2 border-rose-400 bg-rose-500/[0.12] p-5 text-rose-50">
@@ -888,7 +926,7 @@ export default function RegisterManualEbayListingPage() {
           {helperLoading ? <p role="status" className="mt-4 rounded-2xl border border-white/10 p-4 text-sm text-white/60">Buscando productos disponibles…</p> : null}
           {helperError ? <div role="alert" className="mt-4 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-4 text-sm text-rose-50"><p>{helperError}</p><div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => void loadHelperProducts()} className="min-h-11 rounded-xl bg-white px-3 font-black text-black">Reintentar</button><a href="/admin/ebay/opportunity-queue" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-rose-100/25 px-3 text-center font-black">Abrir cola</a></div></div> : null}
 
-          {targetListing && !targetListing.linked && visibleCertifiedIdentities.length ? <section className="mt-4 rounded-2xl border border-white/15 bg-white/[0.03] p-4">
+          {targetListing && visibleCertifiedIdentities.length ? <section className="mt-4 rounded-2xl border border-white/15 bg-white/[0.03] p-4">
             <p className="text-xs font-black uppercase tracking-[0.16em] text-white/65">Otras identidades Luna certificadas</p>
             <p className="mt-2 text-xs leading-5 text-white/55">Elige únicamente si es exactamente el mismo producto y variante. El OS no decide por el título ni por la foto.</p>
             <div className="mt-3 grid gap-3">

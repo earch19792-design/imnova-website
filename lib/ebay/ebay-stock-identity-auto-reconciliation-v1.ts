@@ -28,15 +28,19 @@ export const SELLER_OS_STOCK_IDENTITY_AUTO_RECONCILIATION_VERSION =
 const ITEM_ID = /^\d{9,19}$/
 export const MAXIMUM_TARGETS = 20 as const
 
-type DecisionRow = Readonly<{
-  decision_id: string
-  decision_version: number
-  decision: string
+type AuthorityRow = Readonly<{
+  authority_id: string
   ebay_item_id: string
-  ebay_sku: string | null
-  linkage_id: string | null
+  ebay_sku: string
+  linkage_id: string
   components: unknown
   evidence_maximum_age_seconds: number
+  lifecycle_state: string
+}>
+
+type QuarantineRow = Readonly<{
+  ebay_item_id: string
+  quarantine_state: string
 }>
 
 type VariantRow = Readonly<{
@@ -151,6 +155,31 @@ function parseCertifiedComponents(value: unknown) {
     ? parsed : []
 }
 
+export function selectCanonicalStockAuthoritySeedsP0(input: Readonly<{
+  targets: readonly string[]
+  liveSkus: ReadonlyMap<string, string | null>
+  authorities: readonly AuthorityRow[]
+  quarantines: readonly QuarantineRow[]
+}>) {
+  const quarantined = new Set(input.quarantines.filter((row) =>
+    row.quarantine_state === "ACTIVE").map((row) => row.ebay_item_id))
+  return input.targets.flatMap((itemId) => {
+    const active = input.authorities.filter((row) =>
+      row.ebay_item_id === itemId && row.lifecycle_state === "ACTIVE")
+    const authority = active.length === 1 ? active[0] : null
+    const liveSku = input.liveSkus.get(itemId)
+    const components = authority
+      ? parseCertifiedComponents(authority.components) : []
+    const maximumAgeSeconds = authority
+      ? freshnessMaximumAgeSeconds(authority.evidence_maximum_age_seconds) : null
+    return authority && input.liveSkus.has(itemId) && liveSku === authority.ebay_sku &&
+      !quarantined.has(itemId) && components.length && maximumAgeSeconds
+      ? [{ itemId, ebaySku: liveSku, linkageId: authority.linkage_id,
+          components, maximumAgeSeconds, authorityId: authority.authority_id }]
+      : []
+  })
+}
+
 export function classifyPersistedLunaStockObservationStateV1(input: Readonly<{
   sourceAvailable: boolean
   stockState: string
@@ -241,41 +270,32 @@ export async function reconcileSellerOsStockIdentityV1(
     readbackScope: Object.freeze({ itemIds: Object.freeze([]),
       stockCheckJobIds: Object.freeze([]) }),
   })
-  const [listingRead, decisionRead] = await Promise.all([
+  const [listingRead, authorityRead, quarantineRead] = await Promise.all([
     supabase.from("ebay_active_listings")
       .select("ebay_item_id,ebay_sku")
       .eq("account_key", input.accountKey)
       .eq("listing_status", "active")
       .in("ebay_item_id", targets),
-    supabase.from("seller_os_luna_linkage_decisions")
-      .select("decision_id,decision_version,decision,ebay_item_id,ebay_sku,linkage_id,components,evidence_maximum_age_seconds")
+    supabase.from("seller_os_listing_product_link_authorities_v1")
+      .select("authority_id,ebay_item_id,ebay_sku,linkage_id,components,evidence_maximum_age_seconds,lifecycle_state")
       .eq("account_key", input.accountKey)
       .eq("marketplace_id", "EBAY_US")
       .in("ebay_item_id", targets)
-      .order("decision_version", { ascending: false }),
+      .order("updated_at", { ascending: false }),
+    supabase.from("seller_os_listing_identity_quarantines_v1")
+      .select("ebay_item_id,quarantine_state")
+      .eq("account_key", input.accountKey)
+      .eq("marketplace_id", "EBAY_US")
+      .in("ebay_item_id", targets),
   ])
-  if (listingRead.error || decisionRead.error) {
+  if (listingRead.error || authorityRead.error || quarantineRead.error) {
     throw new Error("STOCK_IDENTITY_RECONCILIATION_SOURCE_READ_FAILED")
   }
   const liveSkus = new Map((listingRead.data ?? []).map((row) =>
     [String(row.ebay_item_id), safeText(row.ebay_sku, 120)]))
-  const latest = new Map<string, DecisionRow>()
-  for (const row of (decisionRead.data ?? []) as DecisionRow[]) {
-    if (!latest.has(row.ebay_item_id)) latest.set(row.ebay_item_id, row)
-  }
-  const seeds = targets.flatMap((itemId) => {
-    const decision = latest.get(itemId)
-    const components = decision ? parseCertifiedComponents(decision.components) : []
-    const maximumAgeSeconds = decision
-      ? freshnessMaximumAgeSeconds(decision.evidence_maximum_age_seconds)
-      : null
-    return liveSkus.has(itemId) && decision?.decision ===
-      "APPROVE_EXACT_LINKAGE" && decision.linkage_id && components.length &&
-      maximumAgeSeconds
-      ? [{ itemId, ebaySku: liveSkus.get(itemId) ?? decision.ebay_sku,
-          linkageId: decision.linkage_id, components, maximumAgeSeconds }]
-      : []
-  })
+  const seeds = selectCanonicalStockAuthoritySeedsP0({ targets, liveSkus,
+    authorities: (authorityRead.data ?? []) as AuthorityRow[],
+    quarantines: (quarantineRead.data ?? []) as QuarantineRow[] })
   const productIds = [...new Set(seeds.flatMap((seed) =>
     seed.components.map((component) => component.productId)))]
   const variantRead = productIds.length ? await supabase

@@ -20,10 +20,14 @@ import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
+import { mutateStockguardListingLinkAuthorityP0,
+  parseListingAuthorityMutationP0 } from
+  "@/lib/ebay/stockguard-listing-link-authority-p0"
 
 function safeErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message : ""
-  return isSafeManualListingErrorCode(message)
+  return isSafeManualListingErrorCode(message) ||
+      /^LISTING_LINK_AUTHORITY_[A-Z0-9_]+$/.test(message)
     ? message
     : "MANUAL_LISTING_REQUEST_FAILED"
 }
@@ -37,7 +41,9 @@ function errorStatus(code: string) {
   ) return 503
   if (
     code.endsWith("_ALREADY_LINKED") ||
-    code.endsWith("_MISMATCH")
+    code.endsWith("_MISMATCH") ||
+    code.endsWith("_COLLISION") ||
+    code.endsWith("_CONFLICT")
   ) return 409
   if (
     code.endsWith("_INVALID") ||
@@ -165,6 +171,24 @@ export async function POST(req: Request) {
 
   try {
     const body = object(await req.json())
+    if (body.action === "listing_link_authority") {
+      if (body.confirmation !== "MUTAR_AUTORIDAD_DE_VINCULO") {
+        return failure("LISTING_LINK_AUTHORITY_CONFIRMATION_REQUIRED", 400)
+      }
+      const configuration = getManualListingRegistrationConfiguration()
+      if (!configuration.accountKey) {
+        return failure("MANUAL_LISTING_ACCOUNT_KEY_REQUIRED", 503)
+      }
+      const result = await mutateStockguardListingLinkAuthorityP0({
+        supabase: getSupabaseAdminClient(),
+        accountKey: configuration.accountKey,
+        actorUserId: auth.userId,
+        mutation: parseListingAuthorityMutationP0(body.mutation),
+      })
+      return NextResponse.json({ success: true, linkAuthority: result.readback,
+        safety: { ebayWriteUsed: false, stockWriteUsed: false,
+          canPublish: false, readAfterWriteVerified: true } })
+    }
     if (body.action === "resolve_existing_certified_identity") {
       if (body.confirmation !== "VINCULAR_IDENTIDAD_LUNA_CERTIFICADA") {
         return failure(

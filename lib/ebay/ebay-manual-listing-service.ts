@@ -21,6 +21,9 @@ import { expectedEbayDraftOnlySku } from "@/lib/ebay/ebay-draft-only-readiness"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { reconcileSellerOsStockIdentityV1 } from
   "@/lib/ebay/ebay-stock-identity-auto-reconciliation-v1"
+import { ensureStockguardAuthorityFromDecisionP0,
+  readStockguardListingLinkAuthorityP0 } from
+  "@/lib/ebay/stockguard-listing-link-authority-p0"
 
 type JsonRecord = Record<string, unknown>
 
@@ -568,6 +571,7 @@ async function readCertifiedManualLiveLinkage(
         productId: text(lineage.productId),
         variantId: text(lineage.variantId),
         sourceSku: text(lineage.sourceSku),
+        decisionReference: text(lineage.decisionReference),
         legacyLineageSuperseded: mode === "AUTO_LINEAGE_SUCCESSOR",
         marketplaceWrites: 0 as const,
       }
@@ -674,17 +678,21 @@ export async function registerManualEbayListing(
         verification: persistedVerification,
       })
     : null
-  const stockGuardRefresh = persistedVerification.status === "verified"
-    ? await refreshCertifiedManualListingStockGuard(supabase, {
-        accountKey,
-        ebayItemId: input.ebayItemId,
-      })
-    : null
   const manualLiveLinkage = persistedVerification.status === "verified"
     ? await readCertifiedManualLiveLinkage(supabase, {
         connectorListingId: persistedVerification.connectorListingId,
       })
     : null
+  const linkAuthority = manualLiveLinkage?.decisionReference
+    ? await ensureStockguardAuthorityFromDecisionP0({ supabase, accountKey,
+        ebayItemId: input.ebayItemId,
+        sourceDecisionId: manualLiveLinkage.decisionReference,
+        actorUserId, automatedDeterministic: Boolean(options.automatedDeterministic) })
+    : null
+  const stockGuardRefresh = linkAuthority?.stockguardEligible
+    ? await refreshCertifiedManualListingStockGuard(supabase, {
+        accountKey, ebayItemId: input.ebayItemId,
+      }) : null
 
   let template: JsonRecord | null = null
   if (
@@ -712,6 +720,7 @@ export async function registerManualEbayListing(
     effectiveSafeDefaults,
     activeListingHydration,
     manualLiveLinkage,
+    linkAuthority,
     stockGuardRefresh,
     template,
     templateActivated: Boolean(template),
@@ -845,6 +854,9 @@ export async function getManualEbayListingResolutionContext(
     }
   }
   const target = targetResult.data
+  const linkAuthority = target
+    ? await readStockguardListingLinkAuthorityP0({ supabase, accountKey,
+        ebayItemId: String(target.ebay_item_id) }) : null
   return {
     targetListing: target ? {
       itemId: target.ebay_item_id,
@@ -854,9 +866,9 @@ export async function getManualEbayListingResolutionContext(
       lastObservedAt: target.last_ebay_sync_at,
       primaryImageUrl: targetPrimaryImageUrl,
       ebayUrl: `https://www.ebay.com/itm/${target.ebay_item_id}`,
-      linked: latestByItem.get(target.ebay_item_id)?.decision ===
-        "APPROVE_EXACT_LINKAGE",
+      linked: linkAuthority?.stockguardEligible === true,
     } : null,
+    linkAuthority,
     certifiedIdentities: [...identities.values()].sort((left, right) =>
       Number(Boolean(right.exactPrimaryImageMatch)) -
         Number(Boolean(left.exactPrimaryImageMatch))),
@@ -897,6 +909,13 @@ export async function resolveManualEbayListingWithCertifiedIdentity(
   if (observed.ownership !== "verified" || !observed.ebaySku) {
     throw new Error("MANUAL_LISTING_EBAY_ITEM_NOT_ACTIVE")
   }
+  const authorityBefore = await readStockguardListingLinkAuthorityP0({
+    supabase, accountKey, ebayItemId: input.ebayItemId,
+  })
+  if (!authorityBefore.authority && (authorityBefore.quarantine ||
+      authorityBefore.activeSkuAuthorityCardinality > 0)) {
+    throw new Error("LISTING_LINK_AUTHORITY_ACTIVE_SKU_COLLISION")
+  }
   const { data, error } = await supabase.rpc(
     "resolve_manual_existing_certified_identity_v1",
     {
@@ -920,6 +939,16 @@ export async function resolveManualEbayListingWithCertifiedIdentity(
     throw new Error(reason && /^MANUAL_LISTING_[A-Z0-9_]+$/.test(reason)
       ? reason : "MANUAL_LISTING_CERTIFIED_IDENTITY_WRITE_FAILED")
   }
+  const decisionReference = text(resolution.decisionReference) ??
+    text(resolution.decisionId)
+  if (!decisionReference) {
+    throw new Error("MANUAL_LISTING_CERTIFIED_IDENTITY_WRITE_FAILED")
+  }
+  const linkAuthority = await ensureStockguardAuthorityFromDecisionP0({
+    supabase, accountKey, ebayItemId: input.ebayItemId,
+    sourceDecisionId: decisionReference, actorUserId: input.actorUserId,
+    automatedDeterministic: false,
+  })
   const stockGuardRefresh = await refreshCertifiedManualListingStockGuard(
     supabase,
     { accountKey, ebayItemId: input.ebayItemId },
@@ -933,6 +962,7 @@ export async function resolveManualEbayListingWithCertifiedIdentity(
       listingStatus: observed.listingStatus,
       observedAt: observed.observedAt,
     },
+    linkAuthority,
     stockGuardRefresh,
   }
 }
