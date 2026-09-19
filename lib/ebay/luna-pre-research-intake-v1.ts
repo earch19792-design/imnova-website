@@ -16,19 +16,6 @@ export const LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1 =
   "LUNA_PRE_RESEARCH" as const
 export const LUNA_PRE_RESEARCH_MAX_BATCH_SIZE_V1 = 10 as const
 
-export const LUNA_PRE_RESEARCH_MCP_COMMAND_V1 = Object.freeze({
-  name: "seller_os_request_luna_pre_research",
-  title: "Request bounded Luna pre-research",
-  description: "Create or reuse bounded internal Product Research work for exact PREFLIGHT_PASS Luna candidates from a complete authoritative snapshot. This schedules only Seller OS research work; it cannot publish, buy, ship, or write to a marketplace.",
-  annotations: Object.freeze({ readOnlyHint: false as const,
-    destructiveHint: false as const, openWorldHint: false as const,
-    idempotentHint: true as const }),
-  securitySchemes: Object.freeze([{ type: "oauth2" as const,
-    scopes: ["seller_os.command"] }]),
-  sideEffects: true as const,
-  capability: LUNA_PRE_RESEARCH_INTAKE_V1,
-})
-
 export type LunaPreResearchResultV1 =
   | "PRE_RESEARCH_HIGH"
   | "PRE_RESEARCH_MEDIUM"
@@ -95,7 +82,9 @@ export function buildLunaPreResearchIdentityKeyV1(input: Readonly<{
   })
 }
 
-function candidateValid(candidate: LunaPreResearchCandidateRequestV1) {
+export function isLunaPreResearchCandidateV1(
+  candidate: LunaPreResearchCandidateRequestV1,
+) {
   return /^\d{1,30}$/.test(candidate.productId) &&
     /^\d{1,30}$/.test(candidate.variantId) &&
     /^[^\u0000\r\n]{1,160}$/.test(candidate.sku)
@@ -129,7 +118,7 @@ export function classifyLunaPreResearchDispositionV1(input: Readonly<{
     researchAllowed: false as const })
 }
 
-function queryPayload(row: JsonRecord) {
+export function buildLunaPreResearchQueryPayloadV1(row: JsonRecord) {
   const plan = buildProductResearchCommercialQueryPlanV1({
     candidate: {
       supplierVariantId: text(row.variant_id, 160),
@@ -153,7 +142,7 @@ export async function requestLunaPreResearchV1(input: Readonly<{
   if (!/^[0-9a-f-]{36}$/i.test(input.snapshotId) ||
       !input.candidates.length ||
       input.candidates.length > LUNA_PRE_RESEARCH_MAX_BATCH_SIZE_V1 ||
-      input.candidates.some((candidate) => !candidateValid(candidate))) {
+      input.candidates.some((candidate) => !isLunaPreResearchCandidateV1(candidate))) {
     throw new Error("LUNA_PRE_RESEARCH_REQUEST_BOUNDS_INVALID")
   }
   const unique = new Map(input.candidates.map((candidate) =>
@@ -195,7 +184,7 @@ export async function requestLunaPreResearchV1(input: Readonly<{
       productId: candidate.productId, variantId: candidate.variantId,
       sku: candidate.sku, productTruthFingerprint,
     })
-    const plan = queryPayload(row)
+    const plan = buildLunaPreResearchQueryPayloadV1(row)
     const persisted = await input.supabase.rpc(
       "create_or_reuse_luna_pre_research_plan_v1", {
         p_plan_id: randomUUID(),

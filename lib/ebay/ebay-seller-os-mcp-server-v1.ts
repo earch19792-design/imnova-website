@@ -106,8 +106,6 @@ import { getLunaCatalogCandidatesV1, getLunaCatalogDeltaV1,
   getLunaCatalogPreflightV1, getLunaCatalogStatusV1,
   LUNA_CATALOG_MCP_TOOLS_V1, LUNA_CATALOG_PREFLIGHT_STATUSES_V1 } from
   "./luna-catalog-snapshot-v1"
-import { LUNA_PRE_RESEARCH_MCP_COMMAND_V1,
-  requestLunaPreResearchV1 } from "./luna-pre-research-intake-v1"
 
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
   "SELLER_OS_MCP_READONLY_V1_2026_09_06_AUDIT_OBSERVABILITY"
@@ -174,7 +172,6 @@ const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
   "search",
   "fetch",
   ...LUNA_CATALOG_MCP_TOOLS_V1.map((tool) => tool.name),
-  LUNA_PRE_RESEARCH_MCP_COMMAND_V1.name,
 ])
 
 export const SELLER_OS_MCP_EXPECTED_CATALOG_COUNT_V1 =
@@ -703,7 +700,7 @@ export function createSellerOsMcpServerV1(options: {
       text: "Seller OS returned bounded read-only workspace-bound data and migration evidence." }] }
     })
   registeredToolNames.add(SELLER_OS_DATA_STATUS_TOOL_V1.name)
-  const lunaCatalogSupabase = getSupabaseAdminClient()
+  const lunaCatalogSupabase = () => getSupabaseAdminClient()
   const lunaCatalogToolSchemas = {
     seller_os_get_luna_catalog_status: z.object({}).strict(),
     seller_os_get_luna_catalog_delta: z.object({
@@ -726,15 +723,15 @@ export function createSellerOsMcpServerV1(options: {
       const input = (args && typeof args === "object" ? args : {}) as Record<string, unknown>
       try {
         const result = descriptor.name === "seller_os_get_luna_catalog_status"
-          ? await getLunaCatalogStatusV1(lunaCatalogSupabase)
+          ? await getLunaCatalogStatusV1(lunaCatalogSupabase())
           : descriptor.name === "seller_os_get_luna_catalog_delta"
-            ? await getLunaCatalogDeltaV1(lunaCatalogSupabase, Number(input.limit ?? 100))
+            ? await getLunaCatalogDeltaV1(lunaCatalogSupabase(), Number(input.limit ?? 100))
             : descriptor.name === "seller_os_get_luna_preflight"
-              ? await getLunaCatalogPreflightV1(lunaCatalogSupabase, {
+              ? await getLunaCatalogPreflightV1(lunaCatalogSupabase(), {
                   status: input.status as typeof LUNA_CATALOG_PREFLIGHT_STATUSES_V1[number] | undefined,
                   limit: Number(input.limit ?? 100),
                 })
-              : await getLunaCatalogCandidatesV1(lunaCatalogSupabase,
+              : await getLunaCatalogCandidatesV1(lunaCatalogSupabase(),
                   Number(input.limit ?? 50))
         return { structuredContent: { result }, content: [{ type: "text" as const,
           text: `Seller OS returned bounded read-only Luna catalog evidence for ${descriptor.title}.` }] }
@@ -752,46 +749,6 @@ export function createSellerOsMcpServerV1(options: {
     })
     registeredToolNames.add(descriptor.name)
   }
-  const lunaPreResearchSchema = z.object({
-    snapshotId: z.string().uuid(),
-    candidates: z.array(z.object({
-      productId: z.string().regex(/^\d{1,30}$/),
-      variantId: z.string().regex(/^\d{1,30}$/),
-      sku: z.string().min(1).max(160),
-    }).strict()).min(1).max(10),
-  }).strict()
-  server.registerTool(LUNA_PRE_RESEARCH_MCP_COMMAND_V1.name, {
-    title: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.title,
-    description: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.description,
-    inputSchema: lunaPreResearchSchema,
-    annotations: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.annotations,
-    _meta: { securitySchemes: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.securitySchemes,
-      capability: LUNA_PRE_RESEARCH_MCP_COMMAND_V1.capability },
-  }, async (args: unknown) => {
-    try {
-      const parsed = lunaPreResearchSchema.parse(args)
-      const account = getEbaySellerAccountScopeConfiguration()
-      if (!account.accountKey) throw new Error("LUNA_PRE_RESEARCH_ACCOUNT_SCOPE_REQUIRED")
-      const result = await requestLunaPreResearchV1({
-        supabase: lunaCatalogSupabase, accountKey: account.accountKey,
-        snapshotId: parsed.snapshotId, candidates: parsed.candidates,
-      })
-      return { structuredContent: { result }, content: [{ type: "text" as const,
-        text: "Seller OS created or reused bounded internal Luna pre-research work; no marketplace action was performed." }] }
-    } catch (error) {
-      const result = { ...revenueFailureV1(error, "INPUT_VALIDATION",
-        "LUNA_PRE_RESEARCH_COMMAND_FAILED_CLOSED"),
-        status: "LUNA_PRE_RESEARCH_COMMAND_FAILED_CLOSED",
-        credentialsIncluded: false, marketplaceWrites: 0,
-        publicationWrites: 0, purchases: 0, shippingCaptures: 0,
-        commercialTraces: 0 }
-      return { isError: true, structuredContent: { result }, content: [{
-        type: "text" as const,
-        text: "Seller OS rejected or stopped the bounded Luna pre-research command safely.",
-      }] }
-    }
-  })
-  registeredToolNames.add(LUNA_PRE_RESEARCH_MCP_COMMAND_V1.name)
   const officialOrdersCollector = options.officialOrdersCollector ?? (async () => {
     if (getSellerOsMcpToolExecutionSourceV1(applicationAuthMode) ===
         "CLOUD_READ_RELAY") {
