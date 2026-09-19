@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — eBay Product Research Capture",
-  "version": "1.2.28",
+  "version": "1.2.38",
+  "minimum_chrome_version": "106",
   "description": "Automatiza una sesión acotada de Product Research y Sold desde Seller OS.",
   "permissions": [
     "scripting",
-    "alarms"
+    "alarms",
+    "webNavigation"
   ],
   "host_permissions": [
     "https://www.ebay.com/sh/research*",
     "https://www.ebay.com/sch/*",
+    "https://www.ebay.com/itm/*",
     "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/*",
     "https://imnova-seller-os-preprod.vercel.app/admin/*",
     "https://imnova-ebay-mobile-preprod.vercel.app/admin/*",
@@ -39,9 +42,21 @@
     },
     {
       "matches": [
+        "https://www.ebay.com/itm/*"
+      ],
+      "js": [
+        "ended-item-content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
         "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/*",
         "https://imnova-seller-os-preprod.vercel.app/admin/ebay/*",
-        "https://imnova-ebay-mobile-preprod.vercel.app/admin/ebay/*"
+        "https://imnova-ebay-mobile-preprod.vercel.app/admin/ebay/*",
+        "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay-seller-os*",
+        "https://imnova-seller-os-preprod.vercel.app/admin/ebay-seller-os*",
+        "https://imnova-ebay-mobile-preprod.vercel.app/admin/ebay-seller-os*"
       ],
       "js": [
         "admin-bridge.js"

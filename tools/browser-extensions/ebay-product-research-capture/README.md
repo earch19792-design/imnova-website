@@ -9,7 +9,60 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.28.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.38.
+
+## Bridge autoreparable y binding por documento (v1.2.38)
+
+Al reemplazar o recargar la extensión, el service worker reinserta el bridge
+versionado en las pestañas Seller OS ya abiertas. El probe solo permite iniciar
+SOLD cuando demuestra la versión de extensión y bridge, runtime alcanzable y
+respuesta real del service worker. Los fallos de contexto invalidado, runtime,
+mensajería y timeout permanecen separados y el retry es bounded.
+
+La rama `FREE_SHIPPING_ONLY` espera el documento principal committed/complete,
+conserva el `documentId` autoritativo y dirige la captura únicamente mediante
+`tabId + documentId`. La respuesta debe devolver exactamente la URL efectiva,
+query, branch y nonce del intento. Si el content script todavía no existe, se
+reinserta una sola vez en ese mismo documento; nunca se usa un envío genérico al
+tab. Una navegación posterior invalida el binding anterior.
+
+Cada tarea conserva URL solicitada, URL pendiente/efectiva, tab, documento,
+timestamps y prueba del filtro. Solo `STALE_DOCUMENT_RESPONSE` y
+`NAVIGATION_TIMEOUT` permiten un reintento acotado. Una página con cero resultados
+y `LH_FS=1` demostrado es una captura válida.
+
+`PROVEN_ZERO_BY_SEARCH_FILTER` queda limitado a la observación SOLD capturada
+bajo el documento con filtro probado. Un historial agregado o mixto del mismo
+Item ID conserva su shipping global sin demostrar; no se alteran seller, Best
+Offer ni realized price.
+
+## Seller y Free Shipping con provenance (v1.2.35+)
+
+Cada búsqueda SOLD near-exact conserva su rama general y ejecuta una rama
+adicional acotada con el filtro efectivo `LH_FS=1`. Solo esa evidencia o el
+texto explícito “Free Shipping” puede probar shipping cero. El precio mostrado,
+el total entregado y el precio realizado permanecen separados.
+
+El detalle público del mismo Item ID puede probar únicamente la identidad del
+seller cuando existe un único username/perfil estable. Si no se demuestra que
+el listing terminó, nunca completa shipping, Best Offer ni precio realizado.
+
+## Identidad estable del seller en detalle SOLD (v1.2.34)
+
+El enriquecimiento del listing terminado conserva `SELLER_IDENTITY_UNKNOWN` salvo que la página pública exacta exponga un username, enlace `/usr/`, `_ssn` o una URL estable de perfil `/str/`. La captura no depende de que el enlace esté visible dentro del viewport de la pestaña en background y nunca deriva diversidad desde Item IDs.
+
+## Evidencia SOLD fail-closed y diagnóstico por tarea (v1.2.33)
+
+Cada tarea de enrichment conserva su código original y una clase estable
+(`TIMEOUT`, `NAVIGATION_FAILED`, `CHALLENGE`, `PAGE_PARSE_FAILED` o
+`REQUEST_FAILED`). Un fallo parcial reduce confianza, pero no borra precios
+SOLD ya verificados.
+
+El enrichment near-exact consulta como máximo seis páginas públicas de detalle de
+listings terminados. Seller, shipping, precio mostrado, Best Offer y precio
+realizado conservan provenance independiente. Un dato desconocido en SOLD nunca
+se rellena desde el listing activo; si la página terminada no demuestra el dato,
+permanece `UNKNOWN` y pricing continúa bloqueado.
 
 ## Liveness y recuperación autónoma (v1.2.28)
 

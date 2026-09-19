@@ -168,6 +168,7 @@ export function MayelMarketRevalidationRunner() {
       }
       attestEbayOneClickResearchExtensionArtifact({
         extensionVersion: probe.extensionVersion,
+        extensionId: probe.extensionId,
         manifestOriginMatch: probe.extensionId === probe.bridgeExtensionId,
       })
       const workerId = await stableProductResearchWorkerId(probe.extensionId)

@@ -10,12 +10,33 @@ export const EBAY_ONE_CLICK_RESEARCH_RESULT =
   "IMNOVA_EBAY_ONE_CLICK_RESEARCH_RESULT_V1"
 export const EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE =
   "IMNOVA_EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE_V1"
+export const EBAY_ONE_CLICK_RESEARCH_BRIDGE_VERSION =
+  "PRODUCT_RESEARCH_ADMIN_BRIDGE_V2" as const
+
+export const EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES = Object.freeze([
+  "PRODUCT_RESEARCH",
+  "PRODUCT_RESEARCH_BROWSER_CAPTURE",
+  "NEAR_EXACT_SOLD_ENRICHMENT",
+  "ENDED_ITEM_PUBLIC_DETAIL",
+  "FREE_SHIPPING_FILTER_PROVENANCE",
+  "DOCUMENT_BOUND_CAPTURE",
+  "BROWSER_WORKER_CONTROL",
+  "NO_COOKIE_ACCESS",
+  "NO_MARKETPLACE_WRITES",
+] as const)
 
 export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
-  version: "1.2.28",
-  buildId: "aa5e25606b6617903a02a88a98f4b7f5c9093511",
+  version: "1.2.38",
+  buildId:
+    "4b9f4f0fa632bbde95108dfab7ebc566b5d1cf2ce060bb50862ff3bf09325c8c",
+  artifactSha256:
+    "4b9f4f0fa632bbde95108dfab7ebc566b5d1cf2ce060bb50862ff3bf09325c8c",
+  sourceTreeSha256:
+    "a8ea89b80c677e392d6dcd3a925274551fdfb00d80f3b13ca7e1ffb16fc490cf",
+  extensionId: "ajplldjfkdgigcibbplcffhafendcnei",
+  expectedCapabilities: EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES,
   archivePath:
-    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.28.zip",
+    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.38.zip",
 })
 
 export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
@@ -25,6 +46,15 @@ export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
   Object.freeze({ version: "1.2.27",
     buildId: "e48924c20aa5ec439224a34c0a696e5b85ed19ba",
     browserRestartRecoverySupported: false as const }),
+  Object.freeze({ version: "1.2.28",
+    buildId: "aa5e25606b6617903a02a88a98f4b7f5c9093511",
+    browserRestartRecoverySupported: true as const }),
+  Object.freeze({ version: "1.2.29",
+    buildId: "aa2e93a8f2a6691607903026944e432b0ce375d2",
+    browserRestartRecoverySupported: true as const }),
+  Object.freeze({ version: "1.2.31",
+    buildId: "efd31c491d28d331eb758f8b6886f80dec132872",
+    browserRestartRecoverySupported: true as const }),
   Object.freeze({ version: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version,
     buildId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.buildId,
     browserRestartRecoverySupported: true as const }),
@@ -33,17 +63,29 @@ export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
 export function attestEbayOneClickResearchExtensionArtifact(input: Readonly<{
   extensionVersion: unknown
   manifestOriginMatch: unknown
+  extensionId?: unknown
 }>) {
   const artifact = EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY.find(
     (candidate) => candidate.version === input.extensionVersion)
   if (!artifact || input.manifestOriginMatch !== true) {
     throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT_MISMATCH")
   }
+  if (artifact.version === EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version &&
+      input.extensionId !== undefined &&
+      input.extensionId !== EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.extensionId) {
+    throw new Error("ONE_CLICK_RESEARCH_EXTENSION_IDENTITY_MISMATCH")
+  }
   return Object.freeze({
     extensionVersion: artifact.version,
     buildId: artifact.buildId,
     browserRestartRecoverySupported:
       artifact.browserRestartRecoverySupported,
+    ...(artifact.version === EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version
+      ? { artifactSha256: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.artifactSha256,
+        sourceTreeSha256: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.sourceTreeSha256,
+        extensionId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.extensionId,
+        expectedCapabilities: EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES }
+      : {}),
     manifestOriginMatch: true as const,
   })
 }
@@ -65,6 +107,84 @@ export const EBAY_ONE_CLICK_RESEARCH_HANDSHAKE_BOUNDS = Object.freeze({
   attemptTimeoutMs: 750,
   retryDelayMs: 250,
 })
+
+export const EBAY_COMMERCIAL_TRACE_BRIDGE_RECONNECT_BOUNDS = Object.freeze({
+  maximumProbeAttempts: 2,
+  reconnectDelayMs: 350,
+  probeTimeoutMs: 5_000,
+})
+
+const TRANSIENT_BRIDGE_ERRORS = new Set([
+  "CONTENT_SCRIPT_CONTEXT_INVALIDATED",
+  "EXTENSION_RUNTIME_UNREACHABLE",
+  "SERVICE_WORKER_MESSAGE_FAILED",
+  "PROBE_TIMEOUT",
+])
+
+type ResearchBridgeProofV1 = Readonly<{
+  ready?: unknown
+  extensionVersion?: unknown
+  bridgeVersion?: unknown
+  bridgeInstanceId?: unknown
+  runtimeReachable?: unknown
+  serviceWorkerResponse?: unknown
+  serviceWorkerInstanceId?: unknown
+  cookieAccess?: unknown
+  marketplaceWrites?: unknown
+}>
+
+export function validateEbayCommercialTraceBridgeProofV1(
+  proof: ResearchBridgeProofV1,
+) {
+  if (proof.ready !== true ||
+    proof.extensionVersion !== EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version ||
+    proof.bridgeVersion !== EBAY_ONE_CLICK_RESEARCH_BRIDGE_VERSION ||
+    typeof proof.bridgeInstanceId !== "string" || !proof.bridgeInstanceId ||
+    proof.runtimeReachable !== true ||
+    proof.serviceWorkerResponse !== "PROBE_ACK" ||
+    typeof proof.serviceWorkerInstanceId !== "string" ||
+    !proof.serviceWorkerInstanceId || proof.cookieAccess !== false ||
+    proof.marketplaceWrites !== 0) {
+    throw new Error("COMMERCIAL_TRACE_RESEARCH_EXTENSION_RELOAD_REQUIRED")
+  }
+  return Object.freeze({ ...proof, ready: true as const,
+    extensionVersion: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version,
+    bridgeVersion: EBAY_ONE_CLICK_RESEARCH_BRIDGE_VERSION,
+    bridgeInstanceId: proof.bridgeInstanceId,
+    runtimeReachable: true as const,
+    serviceWorkerResponse: "PROBE_ACK" as const,
+    serviceWorkerInstanceId: proof.serviceWorkerInstanceId,
+    cookieAccess: false as const, marketplaceWrites: 0 as const })
+}
+
+export async function probeEbayCommercialTraceBridgeWithReconnectV1(input: {
+  probe: (timeoutMs: number) => Promise<ResearchBridgeProofV1>
+  awaitAutoRebind?: (errorCode: string) => Promise<void>
+  wait?: (delayMs: number) => Promise<void>
+}) {
+  const wait = input.wait ?? ((delayMs: number) => new Promise<void>(
+    (resolve) => setTimeout(resolve, delayMs)))
+  let lastError = "PROBE_TIMEOUT"
+  for (let attempt = 1;
+    attempt <= EBAY_COMMERCIAL_TRACE_BRIDGE_RECONNECT_BOUNDS.maximumProbeAttempts;
+    attempt += 1) {
+    try {
+      return validateEbayCommercialTraceBridgeProofV1(await input.probe(
+        EBAY_COMMERCIAL_TRACE_BRIDGE_RECONNECT_BOUNDS.probeTimeoutMs))
+    } catch (error) {
+      lastError = error instanceof Error &&
+          /^[A-Z][A-Z0-9_]{2,119}$/.test(error.message)
+        ? error.message : "SERVICE_WORKER_MESSAGE_FAILED"
+      const canRetry = attempt <
+        EBAY_COMMERCIAL_TRACE_BRIDGE_RECONNECT_BOUNDS.maximumProbeAttempts &&
+        TRANSIENT_BRIDGE_ERRORS.has(lastError)
+      if (!canRetry) break
+      await input.awaitAutoRebind?.(lastError)
+      await wait(EBAY_COMMERCIAL_TRACE_BRIDGE_RECONNECT_BOUNDS.reconnectDelayMs)
+    }
+  }
+  throw new Error(lastError)
+}
 
 export async function establishEbayOneClickResearchHandshake<T>(input: Readonly<{
   probe: (attemptTimeoutMs: number) => Promise<T>

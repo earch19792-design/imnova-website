@@ -951,6 +951,7 @@ async function probeOneClickResearchExtension() {
         }
         attestEbayOneClickResearchExtensionArtifact({
           extensionVersion: result.extensionVersion,
+          extensionId: result.extensionId,
           manifestOriginMatch: trace.manifestMatched,
         })
         return result
@@ -1816,7 +1817,7 @@ export function Loop2Top20OpportunityPool({
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
             {oneClickResearchCommandCenter}
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.28 conserva la captura anterior y reactiva el mismo bridge al entrar o volver a Oportunidades, incluso mediante navegación SPA; no almacena tokens ni usa credenciales persistentes.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.38 repara automáticamente el bridge de pestañas Seller OS abiertas después de un reload/update, vincula Free Shipping al documento nuevo mediante documentId y conserva provenance por observación. Un listing no terminado nunca completa shipping ni precio realizado. No almacena tokens ni usa credenciales persistentes.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>

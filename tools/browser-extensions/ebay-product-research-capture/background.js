@@ -1,7 +1,7 @@
 "use strict"
 
 if (typeof importScripts === "function") {
-  importScripts("worker-control-recovery.js")
+  importScripts("worker-control-recovery.js", "navigation-binding.js")
 }
 
 const ANALYZE_MESSAGE = "IMNOVA_ANALYZE_VISIBLE_EBAY_THUMBNAIL_V1"
@@ -9,28 +9,33 @@ const MAX_IMAGE_BYTES = 3 * 1024 * 1024
 const MAX_DECODED_PIXELS = 16_000_000
 const ALLOWED_IMAGE_HOST = "i.ebayimg.com"
 const ONE_CLICK_PROBE = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1"
+const ADMIN_BRIDGE_VERSION = "PRODUCT_RESEARCH_ADMIN_BRIDGE_V2"
 const ONE_CLICK_RUN_QUERY = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_QUERY_V1"
+const NEAR_EXACT_SOLD_ENRICHMENT = "IMNOVA_EBAY_NEAR_EXACT_SOLD_ENRICHMENT_V1"
 const PRODUCT_RESEARCH_CAPTURE = "IMNOVA_AUTOMATED_PRODUCT_RESEARCH_CAPTURE_V1"
 const PRODUCT_RESEARCH_DIAGNOSTIC_PING = "IMNOVA_PRODUCT_RESEARCH_DIAGNOSTIC_PING_V1"
 const MAIN_SEARCH_SOLD_CAPTURE = "IMNOVA_AUTOMATED_MAIN_SEARCH_SOLD_CAPTURE_V1"
+const ENDED_ITEM_DETAIL_CAPTURE = "IMNOVA_AUTOMATED_ENDED_ITEM_DETAIL_CAPTURE_V1"
 const ADMIN_ORIGINS = new Set([
   "https://imnova-website-z1qh-canonical-preview.vercel.app",
   "https://imnova-seller-os-preprod.vercel.app",
   "https://imnova-ebay-mobile-preprod.vercel.app",
 ])
-const ADMIN_SCOPE_MATCHES = [...ADMIN_ORIGINS].map(
-  (origin) => `${origin}/admin/ebay/*`,
-)
+const ADMIN_SCOPE_MATCHES = [...ADMIN_ORIGINS].flatMap((origin) => [
+  `${origin}/admin/ebay/*`, `${origin}/admin/ebay-seller-os*`,
+])
 const ADMIN_CONTROL_SCOPE_MATCHES = [...ADMIN_ORIGINS].map(
   (origin) => `${origin}/admin/*`,
 )
-const ADMIN_SCOPE_PATH = /^\/admin\/ebay(?:\/|$)/
-const ADMIN_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
+const ADMIN_SCOPE_PATH = /^\/admin\/(?:ebay(?:\/|$)|ebay-seller-os(?:\/|$))/
+const ADMIN_PATH = /^\/admin\/(?:ebay\/(?:mobile-review|opportunity-queue\/research|commercial-trace)|ebay-seller-os)\/?$/
 const WORKER_CONTROL_URL =
   "https://imnova-seller-os-preprod.vercel.app/admin/ebay/opportunity-queue/research?mayelResearchWorker=auto&browserWorkerControl=1"
 const WORKER_CONTROL_ALARM = "seller-os-product-research-worker-control-v1"
 const WORKER_CONTROL_RECOVERY =
   globalThis.SELLER_OS_PRODUCT_RESEARCH_CONTROL_RECOVERY_V1
+const FREE_SHIPPING_NAVIGATION =
+  globalThis.IMNOVA_FREE_SHIPPING_NAVIGATION_BINDING_V1
 const SESSION_VERSION = "EBAY_ONE_CLICK_RESEARCH_SESSION_V1_2026_08_26"
 const SESSION_SCOPE = "EBAY_RESEARCH_CAPTURE_ONLY"
 const MAX_RUNTIME_MS = 15 * 60_000
@@ -38,10 +43,13 @@ const MAX_QUERIES = 15
 const MAX_ROWS = 200
 const MAX_PAGES_PER_QUERY = 2
 const MAX_RETRIES = 1
+const MAX_ENDED_ITEM_DETAIL_CAPTURES = 6
 const PRODUCT_RESEARCH_DAY_RANGE = 90
 const PRODUCT_RESEARCH_PAGE_LIMIT = 50
 const PRODUCT_RESEARCH_TRACE_VERSION = "PRODUCT_RESEARCH_STAGE_TRACE_V2"
 const PRODUCT_RESEARCH_TASK_BINDING_VERSION = "PRODUCT_RESEARCH_TASK_BINDING_V1"
+const SERVICE_WORKER_INSTANCE_ID = globalThis.crypto?.randomUUID?.() ??
+  `worker-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
 function canonicalAdminScopeTab(tab) {
   try {
@@ -125,6 +133,10 @@ async function ensureWorkerControlTab({ forceReloadExisting = false } = {}) {
 
 function scheduleWorkerControlRecovery() {
   chrome.alarms?.create?.(WORKER_CONTROL_ALARM, { periodInMinutes: 2 })
+  // onInstalled also runs for an extension replacement. Reinjecting the
+  // versioned bridge repairs Seller OS tabs whose former isolated world was
+  // invalidated without forcing the owner to find and reload each tab first.
+  void injectAdminBridgeIntoExistingTabs()
   void ensureWorkerControlTab({ forceReloadExisting: true })
 }
 
@@ -370,6 +382,19 @@ function oneClickAdminSender(sender) {
 function safeFailureCode(error, fallback) {
   const value = error instanceof Error ? error.message : ""
   return /^[A-Z0-9_:.-]+$/.test(value) ? value : fallback
+}
+
+function enrichmentFailureClass(code) {
+  const value = typeof code === "string" ? code.toUpperCase() : ""
+  if (/(?:TIMEOUT|LEASE_EXPIRED|DEADLINE)/.test(value)) return "TIMEOUT"
+  if (/(?:CHALLENGE|CAPTCHA|ROBOT|ACCESS_DENIED)/.test(value)) {
+    return "CHALLENGE"
+  }
+  if (/(?:NAVIGATION|TAB_CREATE|TAB_CLOSED|TAB_REMOVED|URL_INVALID)/
+    .test(value)) return "NAVIGATION_FAILED"
+  if (/(?:PARSE|CONTENT_CAPTURE|CAPTURE_RESULT|SOLD_FILTER|ROW_INVALID)/
+    .test(value)) return "PAGE_PARSE_FAILED"
+  return "REQUEST_FAILED"
 }
 
 function boundedLease(value) {
@@ -657,10 +682,64 @@ async function productResearchContentCapture(input) {
 
 async function contentCapture(input) {
   const startedAt = Date.now()
+  let staleResponseCount = 0
+  let boundDocumentInjectionAttempted = false
+  const captureBinding = input.navigation
+    ? FREE_SHIPPING_NAVIGATION.captureBinding(input.navigation,
+      input.message.queryIdentity, input.captureNonce)
+    : null
   while (Date.now() - startedAt < input.timeoutMs) {
     if (Date.now() >= input.expiresAt) throw new Error("ONE_CLICK_RESEARCH_SESSION_EXPIRED")
     try {
-      const response = await chrome.tabs.sendMessage(input.tabId, input.message)
+      if (captureBinding) {
+        await FREE_SHIPPING_NAVIGATION.assertAuthoritativeDocument(chrome,
+          captureBinding, input.navigation)
+      }
+      const messageOptions = captureBinding
+        ? { documentId: captureBinding.documentId } : undefined
+      let response
+      try {
+        response = await chrome.tabs.sendMessage(input.tabId, {
+          ...input.message,
+          ...(captureBinding ? { captureBinding } : {}),
+        }, messageOptions)
+      } catch (error) {
+        const missingReceiver = /receiving end does not exist|message port closed/i
+          .test(error instanceof Error ? error.message : "")
+        if (!captureBinding || !missingReceiver ||
+            boundDocumentInjectionAttempted) throw error
+        boundDocumentInjectionAttempted = true
+        const injected = await chrome.scripting.executeScript({
+          target: { tabId: captureBinding.tabId,
+            documentIds: [captureBinding.documentId] },
+          files: ["sold-content.js"],
+          injectImmediately: true,
+        })
+        const injectedDocuments = new Set((Array.isArray(injected) ? injected : [])
+          .map((entry) => entry?.documentId).filter(Boolean))
+        if (!injectedDocuments.has(captureBinding.documentId)) {
+          const failure = new Error("STALE_DOCUMENT_RESPONSE")
+          failure.navigationEvidence = input.navigation
+          throw failure
+        }
+        await wait(100)
+        continue
+      }
+      if (input.navigation) {
+        try {
+          await FREE_SHIPPING_NAVIGATION.assertAuthoritativeDocument(chrome,
+            captureBinding, input.navigation)
+          FREE_SHIPPING_NAVIGATION.verifyBoundCapture(input.navigation,
+            response, captureBinding)
+        } catch (error) {
+          staleResponseCount += 1
+          if (staleResponseCount < 2) {
+            await wait(250)
+            continue
+          }
+          throw error
+        }
+      }
       if (response?.success === false || response?.status === "FAILED") {
         throw new Error(safeFailureCode(new Error(String(response?.error ?? "")),
           "ONE_CLICK_RESEARCH_CONTENT_CAPTURE_FAILED"))
@@ -674,6 +753,66 @@ async function contentCapture(input) {
     await wait(750)
   }
   throw new Error(input.timeoutCode)
+}
+
+function freeShippingFailureCode(error) {
+  const code = safeFailureCode(error, "FREE_SHIPPING_CAPTURE_FAILED")
+  if (/CHALLENGE|CAPTCHA|ACCESS_DENIED/.test(code)) return "CHALLENGE"
+  if (/MARKER_OR_DOM|PARSE|SOURCE_FORMAT/.test(code)) return "PAGE_PARSE_FAILED"
+  if (code === "FILTER_REMOVED_BY_EBAY" || code === "STALE_DOCUMENT_RESPONSE" ||
+      code === "NAVIGATION_TIMEOUT" || code === "NAVIGATION_FAILED") return code
+  return code
+}
+
+async function captureBoundFreeShippingPage(input) {
+  const attempts = []
+  let lastError = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let navigation = null
+    const navigationBindingId = crypto.randomUUID()
+    const captureNonce = crypto.randomUUID()
+    try {
+      navigation = await FREE_SHIPPING_NAVIGATION.waitForFreeShippingNavigation({
+        chromeApi: chrome,
+        tabId: input.tabId,
+        requestedUrl: input.requestedUrl,
+        expectedQuery: input.searchQuery,
+        bindingId: navigationBindingId,
+        timeoutMs: input.timeoutMs,
+      })
+      attempts.push(navigation)
+      const sold = await contentCapture({
+        tabId: input.tabId,
+        expiresAt: input.expiresAt,
+        timeoutMs: input.timeoutMs,
+        timeoutCode: "NAVIGATION_TIMEOUT",
+        navigation,
+        captureNonce,
+        message: { type: MAIN_SEARCH_SOLD_CAPTURE,
+          queryIdentity: input.searchQuery,
+          freeShippingFilterRequired: true,
+          navigationBindingId,
+          maxRows: input.maxRows },
+      })
+      const rows = (Array.isArray(sold.rows) ? sold.rows : []).map((row) => ({
+        ...row, navigationEvidence: navigation,
+      }))
+      return { sold: { ...sold, rows }, navigation,
+        navigationAttempts: attempts, navigationAttemptCount: attempt + 1 }
+    } catch (error) {
+      const navigationEvidence = error?.navigationEvidence ?? navigation
+      if (navigationEvidence && attempts.at(-1) !== navigationEvidence) {
+        attempts.push(navigationEvidence)
+      }
+      const code = freeShippingFailureCode(error)
+      lastError = error instanceof Error ? error : new Error(code)
+      lastError.navigationEvidence = navigationEvidence
+      lastError.navigationAttempts = attempts
+      lastError.navigationAttemptCount = attempt + 1
+      if (!FREE_SHIPPING_NAVIGATION.RETRYABLE.has(code) || attempt === 1) break
+    }
+  }
+  throw lastError ?? new Error("FREE_SHIPPING_CAPTURE_FAILED")
 }
 
 function productResearchCategoryId(value) {
@@ -742,11 +881,12 @@ function productResearchUrl(searchQuery, categoryId) {
   return url.href
 }
 
-function soldSearchUrl(searchQuery, page) {
+function soldSearchUrl(searchQuery, page, freeShippingOnly = false) {
   const url = new URL("https://www.ebay.com/sch/i.html")
   url.searchParams.set("_nkw", searchQuery)
   url.searchParams.set("LH_Sold", "1")
   url.searchParams.set("LH_Complete", "1")
+  if (freeShippingOnly) url.searchParams.set("LH_FS", "1")
   url.searchParams.set("_sop", "13")
   url.searchParams.set("_ipg", "60")
   url.searchParams.set("_pgn", String(page))
@@ -839,16 +979,353 @@ async function runOneClickQuery(message) {
   throw lastError ?? new Error("ONE_CLICK_RESEARCH_QUERY_FAILED")
 }
 
+async function runNearExactSoldTask(task, lease, maximumRows) {
+  const searchQuery = typeof task?.searchQuery === "string"
+    ? task.searchQuery.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, 100)
+    : ""
+  const ordinal = Number(task?.ordinal)
+  if (searchQuery.length < 3 || !Number.isInteger(ordinal) || ordinal < 1) {
+    throw new Error("NEAR_EXACT_SOLD_TASK_INVALID")
+  }
+  const tab = await chrome.tabs.create({
+    url: soldSearchUrl(searchQuery, 1, false), active: false,
+  })
+  if (!Number.isInteger(tab?.id)) throw new Error(
+    "NEAR_EXACT_SOLD_TAB_CREATE_FAILED")
+  try {
+    const rowsByItemId = new Map()
+    let soldFilterProven = false
+    let freeShippingFilterProven = false
+    let freeShippingBranchStatus = "NOT_ATTEMPTED"
+    let freeShippingBranchError = null
+    let freeShippingNavigation = null
+    let freeShippingNavigationAttempts = []
+    let freeShippingNavigationAttemptCount = 0
+    let allSoldBranchError = null
+    for (const branch of [
+      { name: "ALL_SOLD", freeShippingOnly: false,
+        maximumPages: Number(lease.bounds.maxPagesPerQuery) },
+      { name: "FREE_SHIPPING_ONLY", freeShippingOnly: true, maximumPages: 1 },
+    ]) {
+      try {
+        for (let page = 1; page <= branch.maximumPages &&
+          (branch.freeShippingOnly || rowsByItemId.size < maximumRows); page += 1) {
+          const requestedUrl = soldSearchUrl(searchQuery, page,
+            branch.freeShippingOnly)
+          let sold
+          if (branch.freeShippingOnly) {
+            const captured = await captureBoundFreeShippingPage({
+              tabId: tab.id,
+              requestedUrl,
+              searchQuery,
+              expiresAt: lease.expiresAt,
+              timeoutMs: 12_000,
+              maxRows: Math.min(maximumRows, MAX_ROWS),
+            })
+            sold = captured.sold
+            freeShippingNavigation = captured.navigation
+            freeShippingNavigationAttempts = captured.navigationAttempts
+            freeShippingNavigationAttemptCount =
+              captured.navigationAttemptCount
+          } else {
+            await chrome.tabs.update(tab.id, { url: requestedUrl, active: false })
+            sold = await contentCapture({
+              tabId: tab.id, expiresAt: lease.expiresAt, timeoutMs: 12_000,
+              timeoutCode: "NEAR_EXACT_SOLD_CAPTURE_TIMEOUT",
+              message: { type: MAIN_SEARCH_SOLD_CAPTURE,
+                queryIdentity: searchQuery,
+                freeShippingFilterRequired: false,
+                maxRows: Math.min(maximumRows - rowsByItemId.size, MAX_ROWS) },
+            })
+          }
+          if (branch.freeShippingOnly) {
+            freeShippingFilterProven = sold.freeShippingFilterProven === true
+            freeShippingBranchStatus = freeShippingFilterProven
+              ? "COMPLETED" : "FAILED"
+          } else soldFilterProven = sold.soldFilterProven === true
+          for (const row of Array.isArray(sold.rows) ? sold.rows : []) {
+            if (rowsByItemId.size >= maximumRows &&
+                !rowsByItemId.has(row.itemId)) break
+            const current = rowsByItemId.get(row.itemId)
+            if (!current) rowsByItemId.set(row.itemId, row)
+            else if (row.shippingEvidence === "PROVEN_ZERO_BY_SEARCH_FILTER") {
+              rowsByItemId.set(row.itemId,
+                FREE_SHIPPING_NAVIGATION.mergeFreeShippingEvidence(current, row))
+            }
+          }
+          if (!sold.nextPageAvailable || !sold.rows?.length) break
+        }
+      } catch (error) {
+        if (branch.freeShippingOnly) {
+          freeShippingBranchStatus = "FAILED"
+          freeShippingBranchError = freeShippingFailureCode(error)
+          freeShippingNavigation = error?.navigationEvidence ??
+            freeShippingNavigation
+          freeShippingNavigationAttempts = Array.isArray(
+            error?.navigationAttempts) ? error.navigationAttempts
+            : freeShippingNavigationAttempts
+          freeShippingNavigationAttemptCount = Number(
+            error?.navigationAttemptCount) ||
+            freeShippingNavigationAttemptCount
+        } else allSoldBranchError = safeFailureCode(error,
+          "NEAR_EXACT_SOLD_CAPTURE_FAILED")
+      }
+    }
+    if (!soldFilterProven && !freeShippingFilterProven) {
+      const failure = new Error(allSoldBranchError || freeShippingBranchError ||
+        "NEAR_EXACT_SOLD_FILTER_NOT_PROVEN")
+      failure.freeShippingNavigation = freeShippingNavigation
+      failure.freeShippingNavigationAttempts = freeShippingNavigationAttempts
+      failure.freeShippingNavigationAttemptCount =
+        freeShippingNavigationAttemptCount
+      failure.freeShippingBranchStatus = freeShippingBranchStatus
+      failure.freeShippingBranchError = freeShippingBranchError
+      failure.allSoldBranchError = allSoldBranchError
+      throw failure
+    }
+    return { ordinal, searchQuery, rows: [...rowsByItemId.values()],
+      soldFilterProven: soldFilterProven || freeShippingFilterProven,
+      allSoldBranchError, freeShippingFilterProven,
+      freeShippingBranchStatus, freeShippingBranchError,
+      freeShippingNavigation, freeShippingNavigationAttempts,
+      freeShippingNavigationAttemptCount }
+  } finally {
+    try { await chrome.tabs.remove(tab.id) } catch { /* owned tab already closed */ }
+  }
+}
+
+async function runEndedItemDetailTask(row, lease) {
+  const itemId = typeof row?.itemId === "string" ? row.itemId.trim() : ""
+  if (!/^\d{9,20}$/.test(itemId)) throw new Error("ENDED_ITEM_ID_INVALID")
+  const tab = await chrome.tabs.create({
+    url: `https://www.ebay.com/itm/${encodeURIComponent(itemId)}`, active: false,
+  })
+  if (!Number.isInteger(tab?.id)) throw new Error("ENDED_ITEM_TAB_CREATE_FAILED")
+  try {
+    return await contentCapture({ tabId: tab.id, expiresAt: lease.expiresAt,
+      timeoutMs: 12_000, timeoutCode: "ENDED_ITEM_DETAIL_CAPTURE_TIMEOUT",
+      message: { type: ENDED_ITEM_DETAIL_CAPTURE, expectedItemId: itemId } })
+  } finally {
+    try { await chrome.tabs.remove(tab.id) } catch { /* owned tab already closed */ }
+  }
+}
+
+function mergeEndedItemDetail(row, detail) {
+  const sameItem = detail?.listingIdentityStatus === "PROVEN_SAME_ITEM_ID" &&
+    detail.itemId === row.itemId
+  if (!sameItem) return row
+  const endedItemProven = detail.endedItemIdentityStatus ===
+    "PROVEN_SAME_ENDED_ITEM"
+  const detailSellerProven = detail.sellerIdentityStatus === "PROVEN" &&
+    typeof detail.sellerUsername === "string" && detail.sellerUsername.length > 1
+  const detailShippingObserved = endedItemProven &&
+    detail.shippingStatus === "OBSERVED" &&
+    Number.isFinite(Number(detail.visibleShippingAmount))
+  const detailDisplayedConfirmed = endedItemProven && detail.displayedPriceStatus ===
+    "DISPLAYED_PRICE_CONFIRMED" &&
+    Number.isFinite(Number(detail.displayedSoldPriceAmount))
+  const detailRealizedConfirmed = endedItemProven && detail.realizedPriceStatus ===
+    "REALIZED_PRICE_CONFIRMED" &&
+    Number.isFinite(Number(detail.realizedTransactionPriceAmount))
+  const bestOfferStatus = row.bestOfferStatus === "EXPLICIT_PRESENT" ||
+      detail.bestOfferStatus === "EXPLICIT_PRESENT"
+    ? "EXPLICIT_PRESENT" : detail.bestOfferStatus === "EXPLICIT_ABSENT"
+      ? "EXPLICIT_ABSENT" : row.bestOfferStatus || "UNKNOWN"
+  const fieldProvenance = { ...(row.fieldProvenance || {}) }
+  for (const field of ["sellerIdentity", "shipping", "displayedPrice",
+    "bestOffer", "realizedPrice"]) {
+    const evidence = detail.fieldProvenance?.[field]
+    if (["ENDED_ITEM_PUBLIC_DETAIL", "SOLD_ITEM_PUBLIC_DETAIL_SAME_ITEM_ID"]
+      .includes(evidence?.source) &&
+        evidence.evidenceItemId === row.itemId) fieldProvenance[field] = evidence
+  }
+  if (row.bestOfferStatus === "EXPLICIT_PRESENT") {
+    fieldProvenance.bestOffer = row.fieldProvenance?.bestOffer ??
+      fieldProvenance.bestOffer
+  }
+  const realizedPriceStatus = detailRealizedConfirmed &&
+      bestOfferStatus !== "EXPLICIT_PRESENT"
+    ? "REALIZED_PRICE_CONFIRMED" : "UNPROVEN"
+  return { ...row,
+    sellerUsername: detailSellerProven ? detail.sellerUsername : row.sellerUsername,
+    sellerProfileUrl: detailSellerProven ? detail.sellerProfileUrl : row.sellerProfileUrl,
+    stableSellerIdentity: detailSellerProven
+      ? detail.stableSellerIdentity : row.stableSellerIdentity,
+    sellerIdentityStatus: detailSellerProven ? "PROVEN" : row.sellerIdentityStatus,
+    sellerIdentitySource: detailSellerProven
+      ? detail.sellerIdentitySource : row.sellerIdentitySource,
+    sellerIdentityKey: detailSellerProven
+      ? detail.sellerIdentityKey : row.sellerIdentityKey,
+    visibleShippingAmount: detailShippingObserved
+      ? Number(detail.visibleShippingAmount) : row.visibleShippingAmount,
+    shippingStatus: detailShippingObserved ? "OBSERVED" : row.shippingStatus,
+    displayedSoldPriceAmount: detailDisplayedConfirmed
+      ? Number(detail.displayedSoldPriceAmount) : row.displayedSoldPriceAmount,
+    realizedTransactionPriceAmount: realizedPriceStatus ===
+        "REALIZED_PRICE_CONFIRMED"
+      ? Number(detail.realizedTransactionPriceAmount) : null,
+    realizedTransactionPriceCurrency: realizedPriceStatus ===
+      "REALIZED_PRICE_CONFIRMED" ? "USD" : null,
+    realizedPriceStatus, bestOfferStatus, fieldProvenance,
+    listingIdentityStatus: "PROVEN_SAME_ITEM_ID",
+    endedItemIdentityStatus: endedItemProven
+      ? "PROVEN_SAME_ENDED_ITEM" : row.endedItemIdentityStatus,
+    pricingEligibility: bestOfferStatus === "EXPLICIT_PRESENT" ||
+        realizedPriceStatus !== "REALIZED_PRICE_CONFIRMED"
+      ? "DISPLAYED_PRICE_NOT_REALIZED"
+      : "SUBJECT_TO_COMMERCIAL_IDENTITY_VALIDATION" }
+}
+
+async function enrichEndedItemDetails(rows, lease) {
+  const unique = []
+  const seen = new Set()
+  for (const row of rows) {
+    if (!/^\d{9,20}$/.test(String(row?.itemId ?? "")) || seen.has(row.itemId)) continue
+    seen.add(row.itemId)
+    unique.push(row)
+    if (unique.length >= MAX_ENDED_ITEM_DETAIL_CAPTURES) break
+  }
+  const details = new Map()
+  const outcomes = new Map()
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < unique.length) {
+      const index = cursor
+      cursor += 1
+      const row = unique[index]
+      try {
+        const detail = await runEndedItemDetailTask(row, lease)
+        details.set(row.itemId, detail)
+        outcomes.set(row.itemId, { itemId: row.itemId, status: "COMPLETED",
+          error: null,
+          listingIdentityStatus: detail.listingIdentityStatus ?? "NOT_PROVEN",
+          endedItemIdentityStatus: detail.endedItemIdentityStatus ?? "NOT_PROVEN",
+          sellerIdentityStatus: detail.sellerIdentityStatus ?? "UNKNOWN" })
+      } catch (error) {
+        const errorCode = safeFailureCode(error,
+          "ENDED_ITEM_DETAIL_CAPTURE_FAILED")
+        details.set(row.itemId, null)
+        outcomes.set(row.itemId, { itemId: row.itemId, status: "FAILED",
+          error: errorCode, failureClass: enrichmentFailureClass(errorCode),
+          listingIdentityStatus: "NOT_PROVEN",
+          endedItemIdentityStatus: "NOT_PROVEN",
+          sellerIdentityStatus: "UNKNOWN" })
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(2, unique.length) }, () => worker()))
+  return { rows: rows.map((row) => mergeEndedItemDetail(row,
+      details.get(row.itemId))), outcomes: [...outcomes.values()],
+    attemptedCount: unique.length,
+    completedCount: [...details.values()].filter((detail) =>
+      detail?.listingIdentityStatus === "PROVEN_SAME_ITEM_ID").length }
+}
+
+async function runNearExactSoldEnrichment(message) {
+  const lease = boundedLease(message.lease)
+  const tasks = Array.isArray(message.tasks) ? message.tasks : []
+  const remainingRows = Number(message.remainingRows)
+  if (!tasks.length || tasks.length > 6 || !Number.isInteger(remainingRows) ||
+    remainingRows < 1 || remainingRows > MAX_ROWS) {
+    throw new Error("NEAR_EXACT_SOLD_ENRICHMENT_BOUNDS_INVALID")
+  }
+  const perTaskLimit = Math.max(1, Math.floor(remainingRows / tasks.length))
+  const results = []
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < tasks.length) {
+      const index = cursor
+      cursor += 1
+      const task = tasks[index]
+      try {
+        const completed = await runNearExactSoldTask(task, lease, perTaskLimit)
+        results[index] = { ...completed, status: "COMPLETED", error: null }
+      } catch (error) {
+        const errorCode = safeFailureCode(error,
+          "NEAR_EXACT_SOLD_TASK_FAILED")
+        results[index] = {
+          ordinal: Number(task?.ordinal),
+          searchQuery: typeof task?.searchQuery === "string"
+            ? task.searchQuery.normalize("NFKC").trim().replace(/\s+/g, " ")
+              .slice(0, 100)
+            : "",
+          rows: [], soldFilterProven: false, status: "FAILED",
+          error: errorCode,
+          failureClass: enrichmentFailureClass(errorCode),
+          allSoldBranchError: error?.allSoldBranchError ?? null,
+          freeShippingFilterProven: false,
+          freeShippingBranchStatus:
+            error?.freeShippingBranchStatus ?? "FAILED",
+          freeShippingBranchError: error?.freeShippingBranchError ?? null,
+          freeShippingNavigation: error?.freeShippingNavigation ??
+            error?.navigationEvidence ?? null,
+          freeShippingNavigationAttempts:
+            error?.freeShippingNavigationAttempts ??
+            error?.navigationAttempts ?? [],
+          freeShippingNavigationAttemptCount: Number(
+            error?.freeShippingNavigationAttemptCount ??
+            error?.navigationAttemptCount) || 0,
+        }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(3, tasks.length) }, () => worker()))
+  const completed = results.filter((result) => result?.status === "COMPLETED")
+  const searchRows = completed.flatMap((result) => result.rows).slice(0, remainingRows)
+  const endedItemDetails = await enrichEndedItemDetails(searchRows, lease)
+  const rows = endedItemDetails.rows
+  return { success: true, extensionId: chrome.runtime.id,
+    extensionVersion: chrome.runtime.getManifest().version,
+    rows, taskOutcomes: results.map((result) => ({ ordinal: result.ordinal,
+      searchQuery: result.searchQuery, observedRows: result.rows.length,
+      soldFilterProven: result.soldFilterProven, status: result.status,
+      allSoldBranchError: result.allSoldBranchError ?? null,
+      freeShippingFilterProven: result.freeShippingFilterProven === true,
+      freeShippingBranchStatus: result.freeShippingBranchStatus ?? "FAILED",
+      freeShippingBranchError: result.freeShippingBranchError ?? null,
+      requestedUrl: result.freeShippingNavigation?.requestedUrl ?? null,
+      pendingUrl: result.freeShippingNavigation?.pendingUrl ?? null,
+      effectiveUrl: result.freeShippingNavigation?.effectiveUrl ?? null,
+      tabId: result.freeShippingNavigation?.tabId ?? null,
+      documentId: result.freeShippingNavigation?.documentId ?? null,
+      navigationStartedAt:
+        result.freeShippingNavigation?.navigationStartedAt ?? null,
+      navigationCompletedAt:
+        result.freeShippingNavigation?.navigationCompletedAt ?? null,
+      filterProofStatus:
+        result.freeShippingNavigation?.filterProofStatus ?? null,
+      navigationRetryCount: Math.max(0,
+        (result.freeShippingNavigationAttemptCount ?? 1) - 1),
+      error: result.error,
+      failureClass: result.status === "FAILED" ? result.failureClass : null })),
+    soldFilterProven: completed.length > 0 &&
+      completed.every((result) => result.soldFilterProven),
+    completedTaskCount: completed.length,
+    failedTaskCount: results.length - completed.length,
+    endedItemDetailAttemptedCount: endedItemDetails.attemptedCount,
+    endedItemDetailCompletedCount: endedItemDetails.completedCount,
+    endedItemDetailOutcomes: endedItemDetails.outcomes,
+    endedItemDetailBudgetLimit: MAX_ENDED_ITEM_DETAIL_CAPTURES,
+    paginationAutomated: true, cookieAccess: false, marketplaceWrites: 0 }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!oneClickAdminSender(sender)) return false
   if (message?.type === ONE_CLICK_PROBE) {
     sendResponse({ success: true, ready: true, extensionId: chrome.runtime.id,
       extensionVersion: chrome.runtime.getManifest().version,
+      bridgeVersionRequired: ADMIN_BRIDGE_VERSION,
+      runtimeReachable: true,
+      serviceWorkerResponse: "PROBE_ACK",
+      serviceWorkerInstanceId: SERVICE_WORKER_INSTANCE_ID,
       persistentCredential: false, cookieAccess: false, marketplaceWrites: 0 })
     return false
   }
-  if (message?.type !== ONE_CLICK_RUN_QUERY) return false
-  void runOneClickQuery(message).then(
+  if (![ONE_CLICK_RUN_QUERY, NEAR_EXACT_SOLD_ENRICHMENT]
+    .includes(message?.type)) return false
+  const operation = message.type === NEAR_EXACT_SOLD_ENRICHMENT
+    ? runNearExactSoldEnrichment(message) : runOneClickQuery(message)
+  void operation.then(
     (result) => sendResponse(result),
     (error) => sendResponse({ success: false,
       error: safeFailureCode(error, "ONE_CLICK_RESEARCH_QUERY_FAILED"),
