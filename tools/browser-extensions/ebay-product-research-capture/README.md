@@ -9,7 +9,16 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.38.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.39.
+
+## Autoridad pública de seller y precio realizado (v1.2.39)
+
+El follow-up acotado de detalle vincula la identidad del seller únicamente a
+enlaces oficiales de eBay dentro del módulo del vendedor o con el Item ID
+exacto. Un enlace de tienda patrocinada fuera de ese contexto no cuenta. El
+precio realizado continúa fail-closed: solo se confirma mediante `sold for`,
+`winning bid` o una tarjeta condensada oficial marcada exactamente `SOLD`; una
+página activa, `ENDED`, MSRP o Best Offer permanece `UNPROVEN`.
 
 ## Bridge autoreparable y binding por documento (v1.2.38)
 

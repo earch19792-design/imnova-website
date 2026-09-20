@@ -26,17 +26,17 @@ export const EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES = Object.freeze([
 ] as const)
 
 export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
-  version: "1.2.38",
+  version: "1.2.39",
   buildId:
-    "4b9f4f0fa632bbde95108dfab7ebc566b5d1cf2ce060bb50862ff3bf09325c8c",
+    "a105de6ad08996efe0cc604f2833ba1211a2c1c9b18b76e5f522d4baa7a30455",
   artifactSha256:
-    "4b9f4f0fa632bbde95108dfab7ebc566b5d1cf2ce060bb50862ff3bf09325c8c",
+    "a105de6ad08996efe0cc604f2833ba1211a2c1c9b18b76e5f522d4baa7a30455",
   sourceTreeSha256:
-    "a8ea89b80c677e392d6dcd3a925274551fdfb00d80f3b13ca7e1ffb16fc490cf",
+    "4997928823a6b2e26c75805640fd3c193e5ebca95b09a1c88f078ce01130ba87",
   extensionId: "ajplldjfkdgigcibbplcffhafendcnei",
   expectedCapabilities: EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES,
   archivePath:
-    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.38.zip",
+    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.39.zip",
 })
 
 export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
@@ -54,6 +54,9 @@ export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
     browserRestartRecoverySupported: true as const }),
   Object.freeze({ version: "1.2.31",
     buildId: "efd31c491d28d331eb758f8b6886f80dec132872",
+    browserRestartRecoverySupported: true as const }),
+  Object.freeze({ version: "1.2.38",
+    buildId: "4b9f4f0fa632bbde95108dfab7ebc566b5d1cf2ce060bb50862ff3bf09325c8c",
     browserRestartRecoverySupported: true as const }),
   Object.freeze({ version: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version,
     buildId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.buildId,

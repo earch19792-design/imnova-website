@@ -47,9 +47,9 @@
     const marker = [...document.querySelectorAll(
       "[data-testid*='ended' i],.x-item-ended,[class*='ended' i]",
     )].filter(visible).map((element) => text(element.innerText || element.textContent))
-      .find((value) => /listing (?:has )?ended|this item (?:has )?sold|sold on\b/i.test(value))
+      .find((value) => /listing (?:has |was )?ended|this item (?:has )?sold|sold on\b/i.test(value))
     const bodyMarker = body.match(
-      /(?:this listing (?:has )?ended(?: on)?|this item (?:has )?sold|sold on\s+[A-Z][a-z]{2,8}\s+\d{1,2},\s+20\d{2})/i,
+      /(?:this listing (?:has |was )?ended(?: on| by the seller)?|this item (?:has )?sold|sold on\s+[A-Z][a-z]{2,8}\s+\d{1,2},\s+20\d{2})/i,
     )?.[0]
     return marker || bodyMarker || null
   }
@@ -61,21 +61,51 @@
       ? candidate : null
   }
 
+  function officialEbayUrl(value) {
+    try {
+      const url = new URL(value, window.location.href)
+      return url.protocol === "https:" && /(^|\.)ebay\.com$/i.test(url.hostname)
+        ? url : null
+    } catch { return null }
+  }
+
+  function decoded(value) {
+    try { return decodeURIComponent(value) } catch { return "" }
+  }
+
+  function sellerLinkScope(link) {
+    return link.closest?.(
+      ".x-sellercard-atf_main,.x-evo-btf-seller-card-river__container," +
+      "[data-testid*='seller' i],.x-item-condensed-card",
+    ) ?? null
+  }
+
   function sellerIdentity(itemId) {
     const links = elementsAcrossOpenRoots(
-      "a[href*='/usr/' i],a[href*='/str/' i],a[href*='_ssn=' i],a[href*='seller=' i]",
+      "a[href*='/usr/' i],a[href*='/str/' i],a[href*='/sch/' i]," +
+      "a[href*='_ssn=' i],a[href*='seller=' i],a[href*='username=' i]," +
+      "a[href*='sid=' i]",
     )
     const usernames = new Map()
     for (const link of links) {
-      try {
-        const url = new URL(link.href, window.location.href)
-        if (url.protocol !== "https:" || !/(^|\.)ebay\.com$/i.test(url.hostname)) continue
-        const userPath = url.pathname.match(/^\/usr\/([^/?#]{2,80})/i)?.[1]
-        const username = stableSellerUsername(decodeURIComponent(userPath ||
-          url.searchParams.get("_ssn") || url.searchParams.get("seller") || ""))
-        if (!username) continue
-        usernames.set(username.toLocaleLowerCase("en-US"), username)
-      } catch { /* fail closed and keep looking */ }
+      const url = officialEbayUrl(link.href)
+      if (!url) continue
+      const scoped = Boolean(sellerLinkScope(link))
+      const itemBound = url.searchParams.get("item") === itemId ||
+        url.searchParams.get("item_id") === itemId
+      const userPath = url.pathname.match(/^\/usr\/([^/?#]{2,80})/i)?.[1]
+      const sellerSearchPath = url.pathname.match(
+        /^\/sch\/([^/?#]{2,80})\/m\.html$/i,
+      )?.[1]
+      const condensedSeller = scoped &&
+        url.pathname.toLocaleLowerCase("en-US") === "/sch/i.html"
+        ? url.searchParams.get("sid") : null
+      const username = stableSellerUsername(decoded(userPath ||
+        (itemBound ? sellerSearchPath || url.searchParams.get("username") : "") ||
+        (scoped ? url.searchParams.get("_ssn") ||
+          url.searchParams.get("seller") || condensedSeller : "") || ""))
+      if (!username || (!scoped && !itemBound)) continue
+      usernames.set(username.toLocaleLowerCase("en-US"), username)
     }
     if (usernames.size === 1) {
       const username = [...usernames.values()][0]
@@ -92,17 +122,14 @@
       sellerIdentityKey: "SELLER_IDENTITY_UNKNOWN" }
     const stores = new Map()
     for (const link of links) {
-      try {
-        const url = new URL(link.href, window.location.href)
-        const storePath = url.pathname.match(/^\/str\/([^/?#]{2,80})/i)?.[1]
-        if (url.protocol !== "https:" || !/(^|\.)ebay\.com$/i.test(url.hostname) ||
-            !storePath) continue
-        const storeId = stableSellerUsername(decodeURIComponent(storePath))
-        if (!storeId) continue
-        const canonicalProfile = `https://www.ebay.com/str/${encodeURIComponent(storeId)}`
-        stores.set(canonicalProfile.toLocaleLowerCase("en-US"),
-          { storeId, canonicalProfile })
-      } catch { /* fail closed and keep looking */ }
+      const url = officialEbayUrl(link.href)
+      const storePath = url?.pathname.match(/^\/str\/([^/?#]{2,80})/i)?.[1]
+      if (!url || !storePath || !sellerLinkScope(link)) continue
+      const storeId = stableSellerUsername(decoded(storePath))
+      if (!storeId) continue
+      const canonicalProfile = `https://www.ebay.com/str/${encodeURIComponent(storeId)}`
+      stores.set(canonicalProfile.toLocaleLowerCase("en-US"),
+        { storeId, canonicalProfile })
     }
     if (stores.size === 1) {
       const { storeId, canonicalProfile } = [...stores.values()][0]
@@ -141,8 +168,30 @@
     const realizedMatch = body.match(
       /(?:sold for|winning bid)\s*(?:US\s*)?\$\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/i,
     )
-    const realized = realizedMatch && !bestOfferPresent
-      ? Number(realizedMatch[1].replace(/,/g, "")) : null
+    const condensedCards = [...document.querySelectorAll(
+      ".x-item-condensed-card",
+    )].filter(visible)
+    const explicitSoldPrices = condensedCards.flatMap((card) => {
+      const banner = text(card.querySelector?.(
+        ".x-item-condensed-card__banner",
+      )?.innerText || card.querySelector?.(
+        ".x-item-condensed-card__banner",
+      )?.textContent)
+      if (banner.toLocaleUpperCase("en-US") !== "SOLD") return []
+      const cardText = text(card.innerText || card.textContent)
+      if (/best offer accepted|offer accepted/i.test(cardText)) return []
+      const amount = exactUsdAmount(card.querySelector?.(
+        ".x-item-condensed-card__sold-price",
+      )?.innerText || card.querySelector?.(
+        ".x-item-condensed-card__sold-price",
+      )?.textContent)
+      return amount === null ? [] : [amount]
+    })
+    const uniqueExplicitSoldPrices = [...new Set(explicitSoldPrices)]
+    const realized = !bestOfferPresent && realizedMatch
+      ? Number(realizedMatch[1].replace(/,/g, ""))
+      : !bestOfferPresent && uniqueExplicitSoldPrices.length === 1
+        ? uniqueExplicitSoldPrices[0] : null
     const displayedCandidates = [...document.querySelectorAll(
       ".x-price-primary,[itemprop='price'],[data-testid*='price' i]",
     )].filter(visible).map((element) => exactUsdAmount(

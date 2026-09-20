@@ -19,18 +19,22 @@ export function buildProductResearchExtensionArtifact(root) {
   if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) {
     throw new Error("PRODUCT_RESEARCH_EXTENSION_VERSION_INVALID")
   }
-  const archive = zipSync(Object.fromEntries(PRODUCT_RESEARCH_EXTENSION_FILES.map((name) =>
-    [name, new Uint8Array(readFileSync(resolve(root, name)))])), {
+  const sources = PRODUCT_RESEARCH_EXTENSION_FILES.map((name) =>
+    [name, new Uint8Array(readFileSync(resolve(root, name)))])
+  const archive = zipSync(Object.fromEntries(sources), {
     level: 0,
     // ZIP metadata must not inherit wall-clock time. Use midday so fflate's
     // local-time DOS timestamp remains in the representable year 1980.
     mtime: new Date("1980-01-02T12:00:00.000Z"),
   })
   const artifactSha256 = sha256(archive)
+  const sourceTreeSha256 = sha256(Buffer.concat(sources.flatMap(([name, bytes]) =>
+    [Buffer.from(`${name}\0`, "utf8"), Buffer.from(bytes)])))
   return Object.freeze({
     version: manifest.version,
     archive,
     artifactSha256,
+    sourceTreeSha256,
     buildId: artifactSha256,
   })
 }
@@ -46,6 +50,7 @@ export function writeProductResearchExtensionArtifact({ root, outputRoot }) {
   return Object.freeze({
     version: artifact.version,
     artifactSha256: artifact.artifactSha256,
+    sourceTreeSha256: artifact.sourceTreeSha256,
     buildId: artifact.buildId,
     archiveBytes: artifact.archive.byteLength,
     versioned,
