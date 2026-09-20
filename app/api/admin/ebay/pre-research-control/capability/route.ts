@@ -7,11 +7,14 @@ import { createClient } from "@supabase/supabase-js"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import {
-  SELLER_OS_ADMIN_PRE_RESEARCH_CSRF_TTL_MS,
   SellerOsAdminPreResearchErrorV1,
   assertSellerOsOwnerAdminPreResearchV1,
-  getSellerOsAdminPreResearchCsrfBoundaryV1,
 } from "@/lib/ebay/luna-pre-research-admin-api-v1"
+import {
+  SELLER_OS_CONTROL_CSRF_TTL_MS,
+  consumeSellerOsControlCsrfV1,
+  issueSellerOsControlCsrfV1,
+} from "@/lib/ebay/teo-pre-research-control-csrf-v1"
 import {
   SELLER_OS_CONTROL_OAUTH_BINDINGS_V1,
   authorizeSellerOsControlConsentV1,
@@ -42,6 +45,37 @@ function csrfContext(request: NextRequest, actorUserId: string) {
   return { actorUserId, adminSessionToken: token(request), requestUrl: request.url,
     origin: request.headers.get("origin"),
     secFetchSite: request.headers.get("sec-fetch-site"), operation: OPERATION }
+}
+
+function csrfSigningSecret() {
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ?? ""
+  if (secret.length < 32) throw new SellerOsAdminPreResearchErrorV1(
+    "ADMIN_PRE_RESEARCH_CSRF_ENTROPY_UNAVAILABLE")
+  return secret
+}
+
+async function consumeControlCsrf(request: NextRequest, actorUserId: string,
+  admin: ReturnType<typeof getSupabaseAdminClient>) {
+  return consumeSellerOsControlCsrfV1({
+    ...csrfContext(request, actorUserId),
+    contentType: request.headers.get("content-type"),
+    csrfHeader: request.headers.get("x-seller-os-csrf"),
+    csrfCookie: request.cookies.get(CSRF_COOKIE)?.value ?? null,
+  }, {
+    signingSecret: csrfSigningSecret(),
+    consumeReplay: async (csrf) => {
+      const result = await admin.rpc("consume_seller_os_control_csrf_v1", {
+        p_token_digest: csrf.tokenDigest,
+        p_owner_user_id: csrf.actorUserId,
+        p_expires_at: csrf.expiresAt,
+      })
+      if (result.error || typeof result.data !== "boolean") {
+        throw new SellerOsAdminPreResearchErrorV1(
+          "ADMIN_PRE_RESEARCH_CSRF_STORE_UNAVAILABLE")
+      }
+      return result.data
+    },
+  })
 }
 
 function failure(cause: unknown) {
@@ -97,8 +131,10 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await validateAdminApiRequest(request)
     const actor = assertSellerOsOwnerAdminPreResearchV1(auth)
-    const csrf = getSellerOsAdminPreResearchCsrfBoundaryV1().issue(
-      csrfContext(request, actor.actorSubject))
+    const csrf = issueSellerOsControlCsrfV1(
+      csrfContext(request, actor.actorSubject), {
+        signingSecret: csrfSigningSecret(),
+      })
     const account = getEbaySellerAccountScopeConfiguration()
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
     const capabilities = await getSupabaseAdminClient().from(
@@ -114,7 +150,7 @@ export async function GET(request: NextRequest) {
     { headers: HEADERS })
     response.cookies.set(CSRF_COOKIE, csrf.csrfToken,
       cookieOptions(request,
-        Math.floor(SELLER_OS_ADMIN_PRE_RESEARCH_CSRF_TTL_MS / 1_000)))
+        Math.floor(SELLER_OS_CONTROL_CSRF_TTL_MS / 1_000)))
     return response
   } catch (cause) { return failure(cause) }
 }
@@ -132,16 +168,12 @@ export async function DELETE(request: NextRequest) {
       throw new SellerOsAdminPreResearchErrorV1(
         "TEO_CONTROL_DISABLE_REQUEST_REJECTED")
     }
-    getSellerOsAdminPreResearchCsrfBoundaryV1().consume({
-      ...csrfContext(request, actor.actorSubject),
-      contentType: request.headers.get("content-type"),
-      csrfHeader: request.headers.get("x-seller-os-csrf"),
-      csrfCookie: request.cookies.get(CSRF_COOKIE)?.value ?? null,
-    })
+    const admin = getSupabaseAdminClient()
+    await consumeControlCsrf(request, actor.actorSubject, admin)
     consumed = true
     const account = getEbaySellerAccountScopeConfiguration()
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
-    const disabled = await getSupabaseAdminClient().rpc(
+    const disabled = await admin.rpc(
       "disable_seller_os_pre_research_command_v1", {
         p_marketplace_account_key: account.accountKey,
         p_owner_user_id: actor.actorSubject,
@@ -168,18 +200,13 @@ export async function POST(request: NextRequest) {
     const parsed = parseSellerOsControlAuthorizationRequestV1(body)
     const auth = await validateAdminApiRequest(request)
     const actor = assertSellerOsOwnerAdminPreResearchV1(auth)
-    getSellerOsAdminPreResearchCsrfBoundaryV1().consume({
-      ...csrfContext(request, actor.actorSubject),
-      contentType: request.headers.get("content-type"),
-      csrfHeader: request.headers.get("x-seller-os-csrf"),
-      csrfCookie: request.cookies.get(CSRF_COOKIE)?.value ?? null,
-    })
+    const admin = getSupabaseAdminClient()
+    await consumeControlCsrf(request, actor.actorSubject, admin)
     consumed = true
     const accessToken = token(request)
     const oauthClient = controlOAuthClient(accessToken)
     const account = getEbaySellerAccountScopeConfiguration()
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
-    const admin = getSupabaseAdminClient()
     const authorized = await authorizeSellerOsControlConsentV1({
       authorizationId: parsed.authorizationId,
       actorUserId: actor.actorSubject,
