@@ -1,8 +1,9 @@
-const EXPECTED_CLIENT_ID = "9ab58207-f8b2-4c8a-9f10-047efc97b325"
-const EXPECTED_REDIRECT_URI =
-  "https://chatgpt.com/connector/oauth/YZ_2z2gp8NQJ"
-const EXPECTED_RESOURCE =
-  "https://imnova-seller-os-preprod.vercel.app/api/seller-os/control/mcp"
+export const SELLER_OS_CONTROL_OAUTH_BINDINGS_V1 = Object.freeze({
+  clientId: "9ab58207-f8b2-4c8a-9f10-047efc97b325",
+  redirectUri: "https://chatgpt.com/connector/oauth/YZ_2z2gp8NQJ",
+  resource:
+    "https://imnova-seller-os-preprod.vercel.app/api/seller-os/control/mcp",
+})
 
 const REQUIRED_SCOPES = new Set(["openid", "profile"])
 const ALLOWED_SCOPES = new Set([
@@ -42,6 +43,7 @@ export function parseSellerOsControlAuthorizationRequestV1(value: unknown) {
 
 export function validateSellerOsControlAuthorizationDetailsV1(input: Readonly<{
   details: unknown
+  authoritativeResource: unknown
   authorizationId: string
   actorUserId: string
 }>) {
@@ -49,9 +51,11 @@ export function validateSellerOsControlAuthorizationDetailsV1(input: Readonly<{
       !record(input.details.user) ||
       input.details.authorization_id !== input.authorizationId ||
       input.details.user.id !== input.actorUserId ||
-      input.details.client.id !== EXPECTED_CLIENT_ID ||
-      input.details.redirect_uri !== EXPECTED_REDIRECT_URI ||
-      input.details.resource !== EXPECTED_RESOURCE ||
+      input.details.client.id !== SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.clientId ||
+      input.details.redirect_uri !==
+        SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.redirectUri ||
+      input.authoritativeResource !==
+        SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.resource ||
       typeof input.details.scope !== "string") {
     fail("TEO_CONTROL_AUTHORIZATION_BINDING_INVALID")
   }
@@ -63,7 +67,8 @@ export function validateSellerOsControlAuthorizationDetailsV1(input: Readonly<{
     fail("TEO_CONTROL_AUTHORIZATION_BINDING_INVALID")
   }
 
-  return Object.freeze({ clientId: EXPECTED_CLIENT_ID,
+  return Object.freeze({
+    clientId: SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.clientId,
     requestedScopes: Object.freeze([...requestedScopes]) })
 }
 
@@ -71,14 +76,19 @@ export async function authorizeSellerOsControlConsentV1<TCapability>(
   input: Readonly<{ authorizationId: string; actorUserId: string }>,
   dependencies: Readonly<{
     getAuthorizationDetails: (authorizationId: string) => Promise<unknown>
+    getAuthorizationResource: (authorizationId: string,
+      actorUserId: string) => Promise<unknown>
     approveAuthorization: (authorizationId: string) => Promise<string>
     persistCapability: (clientId: string) => Promise<TCapability>
   }>,
 ) {
   const details = await dependencies.getAuthorizationDetails(
     input.authorizationId)
+  const authoritativeResource = await dependencies.getAuthorizationResource(
+    input.authorizationId, input.actorUserId)
   const binding = validateSellerOsControlAuthorizationDetailsV1({
     details,
+    authoritativeResource,
     authorizationId: input.authorizationId,
     actorUserId: input.actorUserId,
   })

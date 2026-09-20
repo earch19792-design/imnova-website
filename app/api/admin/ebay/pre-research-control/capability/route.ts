@@ -13,6 +13,7 @@ import {
   getSellerOsAdminPreResearchCsrfBoundaryV1,
 } from "@/lib/ebay/luna-pre-research-admin-api-v1"
 import {
+  SELLER_OS_CONTROL_OAUTH_BINDINGS_V1,
   authorizeSellerOsControlConsentV1,
   parseSellerOsControlAuthorizationRequestV1,
 } from "@/lib/ebay/teo-pre-research-control-authorization-v1"
@@ -178,16 +179,30 @@ export async function POST(request: NextRequest) {
     const oauthClient = controlOAuthClient(accessToken)
     const account = getEbaySellerAccountScopeConfiguration()
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+    const admin = getSupabaseAdminClient()
     const authorized = await authorizeSellerOsControlConsentV1({
       authorizationId: parsed.authorizationId,
       actorUserId: actor.actorSubject,
     }, {
       getAuthorizationDetails: (authorizationId) =>
         getAuthorizationDetails(oauthClient, authorizationId),
+      getAuthorizationResource: async (authorizationId, actorUserId) => {
+        const result = await admin.rpc(
+          "get_seller_os_control_oauth_resource_v1", {
+            p_authorization_id: authorizationId,
+            p_owner_user_id: actorUserId,
+            p_client_id: SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.clientId,
+            p_redirect_uri: SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.redirectUri,
+          })
+        if (result.error || typeof result.data !== "string") {
+          throw new Error("TEO_CONTROL_AUTHORIZATION_BINDING_INVALID")
+        }
+        return result.data
+      },
       approveAuthorization: (authorizationId) =>
         approveAuthorization(oauthClient, authorizationId),
       persistCapability: async (clientId) => {
-        const persisted = await getSupabaseAdminClient().rpc(
+        const persisted = await admin.rpc(
           "authorize_seller_os_pre_research_command_v1", {
             p_marketplace_account_key: account.accountKey,
             p_owner_user_id: actor.actorSubject,
