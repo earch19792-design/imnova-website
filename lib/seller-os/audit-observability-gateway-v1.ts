@@ -62,7 +62,7 @@ type ReadResult = Readonly<{ data: unknown; error: unknown }>
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const JOURNEY_STAGES = Object.freeze([
-  "LUNA_SOURCE", "PRODUCT_TRUTH", "MARKET_RESEARCH", "RADAR", "PRICING",
+  "LUNA_SOURCE", "PRODUCT_TRUTH", "COMMERCIAL_TRACE", "MARKET_RESEARCH", "RADAR", "PRICING",
   "ECONOMICS", "EBAY_IDENTITY", "CATEGORY", "ASPECTS", "LISTING_PACKAGE",
   "OWNER_AUTHORIZATION", "PUBLISHER", "OFFICIAL_EBAY_READBACK",
   "CURRENT_LIVE", "STOCK", "ANALYTICS", "ORDERS", "MAYEL",
@@ -549,8 +549,11 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     CANDIDATE_KEY: candidateId,
     OPPORTUNITY_ID: text(queue.id, 80) ?? "",
   }
+  const canonicalProductUrl = text(first(identitySource?.canonicalUrl,
+    queue.source_canonical_url), 2_000)
   const [approvalRead, executionRead, publicationRead, childRead,
-    economicsRead, researchRead, keywordRead, shippingRead] = await Promise.all([
+    economicsRead, researchRead, keywordRead, shippingRead,
+    commercialTraceRead] = await Promise.all([
       packageId ? budget.read({ dependency: "AUTHORIZATION",
         authority: "ebay_draft_only_approvals", query: () => input.supabase
           .from("ebay_draft_only_approvals").select("*").eq("listing_package_id", packageId)
@@ -594,6 +597,15 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
           .from("seller_os_luna_shipping_job_claims").select("*")
           .eq("account_key", input.accountKey).eq("candidate_id", candidateId)
           .order("updated_at", { ascending: false }).limit(1).maybeSingle() }),
+      canonicalProductUrl ? budget.read({ dependency: "COMMERCIAL_TRACE",
+        authority: "seller_os_live_commercial_traces_v1", query: () =>
+          input.supabase.from("seller_os_live_commercial_traces_v1")
+            .select("trace_id,contract_version,state,current_stage,result,safety,started_at,updated_at,completed_at")
+            .eq("account_key", input.accountKey)
+            .eq("product_url", canonicalProductUrl)
+            .order("started_at", { ascending: false }).limit(1).maybeSingle() })
+        : budget.skip("COMMERCIAL_TRACE",
+          "seller_os_live_commercial_traces_v1"),
     ])
   const approval = latest(rows(approvalRead.data)) ?? {}
   const execution = latest(rows(executionRead.data)) ?? {}
@@ -608,6 +620,10 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   const economics = record(economicsRead.data)
   const research = rows(researchRead.data)
   const shipping = record(shippingRead.data)
+  const commercialTrace = record(commercialTraceRead.data)
+  const commercialTraceResult = record(commercialTrace.result)
+  const commercialTraceDecisionLoop = record(
+    commercialTraceResult.DECISION_LOOP)
   const queueObserved = first(queue.source_observed_at, queue.updated_at,
     queue.created_at)
   const sourceReceipt = first(identitySource?.snapshotId, queue.id,
@@ -631,6 +647,17 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
           ? "seller_os_live_commercial_traces_v1.PRODUCT_TRUTH"
           : "ebay_luna_opportunity_queue.assessment.productTruth",
       observedAt: lunaTruth.capturedAt, receipt: lunaTruth.evidenceDigest },
+    COMMERCIAL_TRACE: { status: commercialTrace.state === "COMPLETED"
+      ? "PROVEN" : commercialTrace.state === "FAILED"
+        ? "CONTRADICTED" : commercialTrace.state === "RUNNING"
+          ? "UNPROVEN" : "MISSING",
+      authority: "seller_os_live_commercial_traces_v1",
+      observedAt: first(commercialTrace.completed_at,
+        commercialTrace.updated_at, commercialTrace.started_at),
+      receipt: commercialTrace.trace_id,
+      failure: commercialTrace.state === "FAILED"
+        ? first(commercialTraceResult.failureCode,
+          "COMMERCIAL_TRACE_FAILED_CLOSED") : null },
     MARKET_RESEARCH: { status: research.length ? "PROVEN" : "MISSING",
       authority: "marketplace_product_research_capture_observations",
       observedAt: research[0]?.created_at, receipt: research[0]?.capture_batch_id },
@@ -692,6 +719,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   // replace independent Luna truth or turn a failed read into MISSING.
   const affectedStages: Record<string, string[]> = {
     MARKET_RESEARCH: ["MARKET_RESEARCH_PROJECTION"],
+    COMMERCIAL_TRACE: ["COMMERCIAL_TRACE"],
     PRICING: ["PRICING_ECONOMICS"], ECONOMICS: ["PRICING_ECONOMICS"],
     CATEGORY: ["PACKAGE"], ASPECTS: ["PACKAGE"], LISTING_PACKAGE: ["PACKAGE"],
     OWNER_AUTHORIZATION: ["AUTHORIZATION"],
@@ -820,6 +848,22 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     TRACE_PRODUCT_TRUTH_SUFFICIENT:
       traceProductTruth.traceProductTruthSufficient ? "YES" : "NO",
     TRACE_COMPATIBILITY: traceProductTruth.traceCompatible ? "YES" : "NO",
+    COMMERCIAL_TRACE: Object.keys(commercialTrace).length ? {
+      TRACE_ID: text(commercialTrace.trace_id, 80),
+      TRACE_STATUS: text(commercialTrace.state, 40),
+      CURRENT_STAGE: text(commercialTrace.current_stage, 80),
+      TRACE_DECISION: text(commercialTraceResult.FINAL_DECISION, 120),
+      TRACE_BLOCKERS: Array.isArray(commercialTraceDecisionLoop.blockers)
+        ? commercialTraceDecisionLoop.blockers.slice(0, 30) : [],
+      TRACE_RECEIPT: {
+        contractVersion: text(commercialTrace.contract_version, 120),
+        sourceProductTruthEvidenceDigest: text(record(record(
+          commercialTraceResult.PRODUCT_TRUTH).fieldTruthV1).evidenceDigest, 100),
+        completedAt: dateValue(commercialTrace.completed_at),
+      },
+      ECONOMICS: record(commercialTraceResult.ECONOMICS),
+      READINESS: commercialTraceDecisionLoop,
+    } : null,
     PUBLICATION_REVISION_STATUS: publisherRevision,
     UNSUPPORTED_DOWNSTREAM_VALUES: unsupportedDownstream,
     MARKETPLACE_POLICY_VALUES: brandAuthority?.supported ? [brandAuthority] : [],

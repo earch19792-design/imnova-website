@@ -7,8 +7,15 @@ import { getEbaySellerAccountScopeConfiguration } from
   "./ebay-seller-account-scope"
 import {
   authenticateSellerOsControlRequestV1,
+  loadSellerOsControlOAuthConfigurationV1,
   type SellerOsControlPrincipalV1,
 } from "./teo-pre-research-control-oauth-v1"
+import {
+  getTeoCommercialTraceV1,
+  parseTeoCommercialTraceGetV1,
+  parseTeoCommercialTraceRequestV1,
+  requestTeoCommercialTraceV1,
+} from "./teo-commercial-trace-control-v1"
 import {
   TEO_PRE_RESEARCH_CONTRACT_V1,
   TEO_PRE_RESEARCH_MAXIMUM_LIST_ROWS_V1,
@@ -26,10 +33,12 @@ export const SELLER_OS_CONTROL_TOOL_NAMES_V1 = Object.freeze([
   "seller_os_get_pre_research_batch",
   "seller_os_resume_pre_research_batch",
   "seller_os_list_pre_research_batches",
+  "seller_os_request_commercial_trace",
+  "seller_os_get_commercial_trace",
 ] as const)
 
 const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
-  "X-Seller-OS-Control-Mode": "PRE_RESEARCH_NORMAL_BATCH_V1",
+  "X-Seller-OS-Control-Mode": "BOUNDED_PRE_RESEARCH_AND_COMMERCIAL_TRACE_V1",
   "X-Seller-OS-Marketplace-Write-Capability": "ABSENT" })
 const securitySchemes = [{ type: "oauth2" as const,
   scopes: ["openid", "profile"] }]
@@ -52,9 +61,11 @@ function createServer(principal: SellerOsControlPrincipalV1) {
     version: "1.0.0" })
   const context = () => {
     const account = getEbaySellerAccountScopeConfiguration()
+    const oauth = loadSellerOsControlOAuthConfigurationV1()
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+    if (!oauth) throw new Error("SELLER_OS_CONTROL_OAUTH_CONFIGURATION_REQUIRED")
     return { supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
-      principal }
+      oauthResource: oauth.resource, principal }
   }
   server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[0], {
     title: "Request bounded normal Pre-Research batch",
@@ -109,6 +120,36 @@ function createServer(principal: SellerOsControlPrincipalV1) {
   }, async () => {
     const result = await listTeoPreResearchBatchesV1(context())
     return toolResult(result, `Seller OS returned ${result.count} authorized normal Pre-Research batches.`)
+  })
+  server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[4], {
+    title: "Request bounded Commercial Trace",
+    description: "Run or reuse one idempotent canonical Commercial Trace for an exact Luna product/variant/SKU whose durable Product Truth receipt passes the Trace entry contract. This never runs Publisher or writes to a marketplace.",
+    inputSchema: z.object({ productId: z.string().regex(/^\d{1,30}$/),
+      variantId: z.string().regex(/^\d{1,30}$/),
+      sku: z.string().min(1).max(160),
+      clientIdempotencyKey: z.string().regex(/^[A-Za-z0-9._:-]{8,160}$/),
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false,
+      idempotentHint: true, openWorldHint: false },
+    _meta: { securitySchemes },
+  }, async (args) => {
+    const request = parseTeoCommercialTraceRequestV1(args)
+    const result = await requestTeoCommercialTraceV1({ ...context(), ...request })
+    return toolResult(result,
+      "Seller OS ran or reused the bounded canonical Commercial Trace.")
+  })
+  server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[5], {
+    title: "Get bounded Commercial Trace",
+    description: "Read status, decision, blockers, Product Truth receipt provenance, economics, and readiness for one OWNER-authorized Commercial Trace.",
+    inputSchema: z.object({ traceId: z.string().uuid() }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false,
+      idempotentHint: true, openWorldHint: false },
+    _meta: { securitySchemes },
+  }, async (args) => {
+    const request = parseTeoCommercialTraceGetV1(args)
+    const result = await getTeoCommercialTraceV1({ ...context(), ...request })
+    return toolResult(result,
+      "Seller OS returned the bounded durable Commercial Trace readback.")
   })
   return server
 }

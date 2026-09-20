@@ -108,7 +108,7 @@ import { getLunaCatalogCandidatesV1, getLunaCatalogDeltaV1,
   "./luna-catalog-snapshot-v1"
 
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
-  "SELLER_OS_MCP_READONLY_V1_2026_09_06_AUDIT_OBSERVABILITY"
+  "SELLER_OS_MCP_READONLY_V1_2026_09_20_TRACE_PRODUCT_TRUTH_READBACK"
 export const SELLER_OS_CHATGPT_CONNECTION_STATE = Object.freeze({
   code: "CODE_COMPLETE" as const,
   humanConnection: "READY_FOR_HUMAN_CONNECTION_AFTER_APPROVED_AUTH_SETUP" as const,

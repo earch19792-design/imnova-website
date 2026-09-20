@@ -58,7 +58,8 @@ function unauthorized(config: NonNullable<ReturnType<
     status: code === "insufficient_scope" ? 403 : 401,
     headers: { "Cache-Control": "private, no-store, max-age=0",
       "WWW-Authenticate": `Bearer resource_metadata="${config.metadataUrl}", scope="openid profile"`,
-      "X-Seller-OS-Control-Mode": "PRE_RESEARCH_NORMAL_BATCH_V1" },
+      "X-Seller-OS-Control-Mode":
+        "BOUNDED_PRE_RESEARCH_AND_COMMERCIAL_TRACE_V1" },
   })
 }
 

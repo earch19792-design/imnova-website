@@ -857,10 +857,24 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
   accountKey: string
   productUrl: string
   actorUserId?: string | null
+  preauthorizedTraceId?: string | null
   fetchImpl?: typeof fetch
   marketReader?: MarketReaderV1
 }>) {
   const canonicalUrl = parseDirectedLunaProductUrl(input.productUrl).canonicalUrl
+  if (input.preauthorizedTraceId) {
+    const reserved = await input.supabase.from(
+      "seller_os_live_commercial_traces_v1")
+      .select("trace_id,account_key,product_url,started_by,state,event_count")
+      .eq("trace_id", input.preauthorizedTraceId).limit(1).maybeSingle()
+    if (reserved.error || !reserved.data ||
+        reserved.data.account_key !== input.accountKey ||
+        reserved.data.product_url !== canonicalUrl ||
+        reserved.data.started_by !== (input.actorUserId ?? null) ||
+        reserved.data.state !== "RUNNING" || reserved.data.event_count !== 0) {
+      throw new Error("LIVE_COMMERCIAL_TRACE_PREAUTHORIZATION_INVALID")
+    }
+  }
   const productTruth = await readCanonicalTraceProductTruthV1({
     supabase: input.supabase, canonicalUrl,
   })
@@ -880,12 +894,15 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         required.get("SUPPLIER_AVAILABILITY")) {
     throw new Error("LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_LIVE_BINDING_INVALID")
   }
-  const start = await input.supabase.from("seller_os_live_commercial_traces_v1")
-    .insert({ account_key: input.accountKey, product_url: canonicalUrl,
-      started_by: input.actorUserId ?? null }).select("trace_id").single()
-  if (start.error || !start.data) throw new Error(
-    "LIVE_COMMERCIAL_TRACE_START_WRITE_FAILED")
-  const traceId = String(start.data.trace_id)
+  let traceId = input.preauthorizedTraceId ?? null
+  if (!traceId) {
+    const start = await input.supabase.from("seller_os_live_commercial_traces_v1")
+      .insert({ account_key: input.accountKey, product_url: canonicalUrl,
+        started_by: input.actorUserId ?? null }).select("trace_id").single()
+    if (start.error || !start.data) throw new Error(
+      "LIVE_COMMERCIAL_TRACE_START_WRITE_FAILED")
+    traceId = String(start.data.trace_id)
+  }
   let sequence = 0
   const emit: TraceEventWriter = async (stage, status, narrative,
     evidence = {}) => {

@@ -127,6 +127,20 @@ async function approveAuthorization(client: ControlOAuthClient,
   return data.redirect_url
 }
 
+function parseTraceCapabilityAuthorization(value: unknown) {
+  const body = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : null
+  if (!body || Object.keys(body).sort().join(",") !==
+      "action,commandClientId" ||
+      body.action !== "AUTHORIZE_COMMERCIAL_TRACE" ||
+      body.commandClientId !== SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.clientId) {
+    throw new SellerOsAdminPreResearchErrorV1(
+      "TEO_COMMERCIAL_TRACE_AUTHORIZATION_REQUEST_REJECTED")
+  }
+  return Object.freeze({ commandClientId:
+    SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.clientId })
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await validateAdminApiRequest(request)
@@ -144,9 +158,19 @@ export async function GET(request: NextRequest) {
       .eq("owner_user_id", actor.actorSubject).order("created_at", {
         ascending: false }).limit(20)
     if (capabilities.error) throw new Error("TEO_CONTROL_CAPABILITY_READ_FAILED")
+    const traceCapabilities = await getSupabaseAdminClient().from(
+      "seller_os_commercial_trace_command_capabilities_v1")
+      .select("capability_id,command_client_id,oauth_resource,allowed_contract_version,enabled,created_at,updated_at,disabled_at,expires_at")
+      .eq("marketplace_account_key", account.accountKey)
+      .eq("owner_user_id", actor.actorSubject).order("created_at", {
+        ascending: false }).limit(20)
+    if (traceCapabilities.error) throw new Error(
+      "TEO_COMMERCIAL_TRACE_CAPABILITY_READ_FAILED")
     const response = NextResponse.json({ success: true, csrf,
       capabilityCode: "TEO_PRE_RESEARCH_NORMAL_BATCH_V1",
-      maximumCandidates: 50, capabilities: capabilities.data ?? [] },
+      traceCapabilityCode: "TEO_COMMERCIAL_TRACE_V1",
+      maximumCandidates: 50, capabilities: capabilities.data ?? [],
+      traceCapabilities: traceCapabilities.data ?? [] },
     { headers: HEADERS })
     response.cookies.set(CSRF_COOKIE, csrf.csrfToken,
       cookieOptions(request,
@@ -162,7 +186,8 @@ export async function DELETE(request: NextRequest) {
     const actor = assertSellerOsOwnerAdminPreResearchV1(auth)
     const body = await request.json().catch(() => null) as Record<string, unknown> | null
     if (!body || Object.keys(body).sort().join(",") !== "action,commandClientId" ||
-        body.action !== "DISABLE" || typeof body.commandClientId !== "string" ||
+        !["DISABLE", "DISABLE_COMMERCIAL_TRACE"].includes(String(body.action)) ||
+        typeof body.commandClientId !== "string" ||
         body.commandClientId.length < 8 || body.commandClientId.length > 240 ||
         /[\u0000\r\n]/.test(body.commandClientId)) {
       throw new SellerOsAdminPreResearchErrorV1(
@@ -173,11 +198,15 @@ export async function DELETE(request: NextRequest) {
     consumed = true
     const account = getEbaySellerAccountScopeConfiguration()
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
-    const disabled = await admin.rpc(
-      "disable_seller_os_pre_research_command_v1", {
+    const traceAction = body.action === "DISABLE_COMMERCIAL_TRACE"
+    const disabled = await admin.rpc(traceAction
+      ? "disable_seller_os_commercial_trace_v1"
+      : "disable_seller_os_pre_research_command_v1", {
         p_marketplace_account_key: account.accountKey,
         p_owner_user_id: actor.actorSubject,
         p_command_client_id: body.commandClientId,
+        ...(traceAction ? { p_oauth_resource:
+          SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.resource } : {}),
       })
     if (disabled.error) throw new Error("TEO_CONTROL_DISABLE_FAILED")
     const response = NextResponse.json({ success: true,
@@ -197,7 +226,10 @@ export async function POST(request: NextRequest) {
   let consumed = false
   try {
     const body = await request.json().catch(() => null) as Record<string, unknown> | null
-    const parsed = parseSellerOsControlAuthorizationRequestV1(body)
+    const parsed = body?.action === "AUTHORIZE"
+      ? parseSellerOsControlAuthorizationRequestV1(body) : null
+    const traceAuthorization = parsed ? null
+      : parseTraceCapabilityAuthorization(body)
     const auth = await validateAdminApiRequest(request)
     const actor = assertSellerOsOwnerAdminPreResearchV1(auth)
     const admin = getSupabaseAdminClient()
@@ -207,6 +239,35 @@ export async function POST(request: NextRequest) {
     const oauthClient = controlOAuthClient(accessToken)
     const account = getEbaySellerAccountScopeConfiguration()
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+    if (traceAuthorization) {
+      const existingControl = await admin.from(
+        "seller_os_pre_research_command_capabilities_v1")
+        .select("capability_id").eq("marketplace_account_key", account.accountKey)
+        .eq("owner_user_id", actor.actorSubject)
+        .eq("command_client_id", traceAuthorization.commandClientId)
+        .eq("enabled", true)
+        .limit(1).maybeSingle()
+      if (existingControl.error || !existingControl.data) {
+        throw new Error("TEO_COMMERCIAL_TRACE_CAPABILITY_BINDING_INVALID")
+      }
+      const persisted = await admin.rpc(
+        "authorize_seller_os_commercial_trace_v1", {
+          p_marketplace_account_key: account.accountKey,
+          p_owner_user_id: actor.actorSubject,
+          p_command_client_id: traceAuthorization.commandClientId,
+          p_oauth_resource: SELLER_OS_CONTROL_OAUTH_BINDINGS_V1.resource,
+          p_expires_at: null,
+        })
+      if (persisted.error) throw new Error(
+        "TEO_COMMERCIAL_TRACE_CAPABILITY_PERSIST_FAILED")
+      const response = NextResponse.json({ success: true,
+        capability: persisted.data, actor: { subject: actor.actorSubject },
+        safety: { marketplaceWrites: 0, publisherAuthority: 0,
+          preResearchMutations: 0 } }, { headers: HEADERS })
+      response.cookies.set(CSRF_COOKIE, "", cookieOptions(request, 0))
+      return response
+    }
+    if (!parsed) throw new Error("TEO_CONTROL_AUTHORIZATION_REQUEST_REJECTED")
     const authorized = await authorizeSellerOsControlConsentV1({
       authorizationId: parsed.authorizationId,
       actorUserId: actor.actorSubject,

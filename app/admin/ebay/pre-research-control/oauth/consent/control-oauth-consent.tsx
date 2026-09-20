@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase"
 type State = "LOADING" | "READY" | "APPROVING" | "FAILED"
 type Capability = Readonly<{ command_client_id: string; enabled: boolean;
   created_at: string; disabled_at: string | null }>
+const CONTROL_CLIENT_ID = "9ab58207-f8b2-4c8a-9f10-047efc97b325"
 
 export function ControlOAuthConsent() {
   const [state, setState] = useState<State>("LOADING")
@@ -14,6 +15,7 @@ export function ControlOAuthConsent() {
   const [authorizationId, setAuthorizationId] = useState("")
   const [message, setMessage] = useState("Validando la autorización…")
   const [capabilities, setCapabilities] = useState<Capability[]>([])
+  const [traceCapabilities, setTraceCapabilities] = useState<Capability[]>([])
 
   useEffect(() => {
     const id = new URLSearchParams(window.location.search)
@@ -31,7 +33,8 @@ export function ControlOAuthConsent() {
           headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store",
         })
       const payload = await response.json().catch(() => ({})) as {
-        csrf?: { csrfToken?: string }; error?: string; capabilities?: Capability[]
+        csrf?: { csrfToken?: string }; error?: string; capabilities?: Capability[];
+        traceCapabilities?: Capability[]
       }
       if (!response.ok || !payload.csrf?.csrfToken) {
         setState("FAILED")
@@ -40,6 +43,7 @@ export function ControlOAuthConsent() {
       }
       setCsrf(payload.csrf.csrfToken)
       setCapabilities(payload.capabilities ?? [])
+      setTraceCapabilities(payload.traceCapabilities ?? [])
       setState("READY")
       setMessage(id
         ? "Autoriza solo lotes NORMAL Pre-Research V2 de hasta 50 candidatos."
@@ -68,6 +72,25 @@ export function ControlOAuthConsent() {
     window.location.assign(payload.redirectUrl)
   }
 
+  async function authorizeCommercialTrace() {
+    setState("APPROVING")
+    const session = await supabase.auth.getSession()
+    const accessToken = session.data.session?.access_token
+    if (!accessToken) { setState("FAILED"); setMessage("Sesión OWNER_ADMIN requerida."); return }
+    const response = await fetch("/api/admin/ebay/pre-research-control/capability", {
+      method: "POST", headers: { Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json", "X-Seller-OS-CSRF": csrf },
+      body: JSON.stringify({ action: "AUTHORIZE_COMMERCIAL_TRACE",
+        commandClientId: CONTROL_CLIENT_ID }),
+    })
+    if (response.ok) window.location.reload()
+    else {
+      const payload = await response.json().catch(() => ({})) as { error?: string }
+      setState("FAILED")
+      setMessage(payload.error ?? "La autorización Trace falló de forma segura.")
+    }
+  }
+
   async function disable(commandClientId: string) {
     const session = await supabase.auth.getSession()
     const accessToken = session.data.session?.access_token
@@ -81,6 +104,19 @@ export function ControlOAuthConsent() {
     else { setState("FAILED"); setMessage("La revocación falló de forma segura.") }
   }
 
+  async function disableTrace(commandClientId: string) {
+    const session = await supabase.auth.getSession()
+    const accessToken = session.data.session?.access_token
+    if (!accessToken) return
+    const response = await fetch("/api/admin/ebay/pre-research-control/capability", {
+      method: "DELETE", headers: { Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json", "X-Seller-OS-CSRF": csrf },
+      body: JSON.stringify({ action: "DISABLE_COMMERCIAL_TRACE", commandClientId }),
+    })
+    if (response.ok) window.location.reload()
+    else { setState("FAILED"); setMessage("La revocación Trace falló de forma segura.") }
+  }
+
   return <main className="min-h-screen bg-slate-950 px-6 py-16 text-slate-100">
     <section className="mx-auto max-w-xl rounded-3xl border border-white/10 bg-slate-900 p-8 shadow-2xl">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
@@ -90,7 +126,8 @@ export function ControlOAuthConsent() {
       <p className="mt-4 text-sm leading-6 text-slate-300">{message}</p>
       <ul className="mt-5 space-y-2 text-sm text-slate-400">
         <li>Solo crea, consulta y reanuda lotes NORMAL Pre-Research V2.</li>
-        <li>No incluye Publisher, Trace, SQL, URLs arbitrarias ni escrituras de marketplace.</li>
+        <li>Pre-Research no incluye Trace. Commercial Trace requiere una segunda autorización OWNER explícita.</li>
+        <li>Ninguna autorización incluye Publisher, SQL, URLs arbitrarias ni escrituras de marketplace.</li>
         <li>La autorización queda vinculada a tu usuario y al cliente OAuth exacto.</li>
       </ul>
       <button type="button" onClick={() => void approve()}
@@ -107,6 +144,34 @@ export function ControlOAuthConsent() {
             onClick={() => void disable(capability.command_client_id)}
             className="rounded-lg border border-red-400/40 px-3 py-2 text-red-300">
             Revocar
+          </button> : <span className="text-slate-500">Revocada</span>}
+        </div>)}
+      </div>}
+      {capabilities.some((capability) => capability.enabled &&
+        capability.command_client_id === CONTROL_CLIENT_ID) &&
+        !traceCapabilities.some((capability) => capability.enabled &&
+          capability.command_client_id === CONTROL_CLIENT_ID) &&
+        <div className="mt-8 border-t border-white/10 pt-6">
+          <h2 className="text-sm font-semibold">Commercial Trace acotado</h2>
+          <p className="mt-2 text-xs leading-5 text-slate-400">
+            Autoriza por separado solo la ejecución y lectura idempotente de Commercial Trace para Product Truth canónico. No concede Publisher ni escrituras de marketplace.
+          </p>
+          <button type="button" onClick={() => void authorizeCommercialTrace()}
+            disabled={state !== "READY"}
+            className="mt-4 min-h-11 rounded-xl border border-cyan-400/50 px-4 text-sm font-semibold text-cyan-200 disabled:opacity-40">
+            Autorizar Commercial Trace acotado
+          </button>
+        </div>}
+      {traceCapabilities.length > 0 && <div className="mt-8 border-t border-white/10 pt-6">
+        <h2 className="text-sm font-semibold">Autorizaciones Commercial Trace</h2>
+        {traceCapabilities.map((capability) => <div
+          key={`trace-${capability.command_client_id}`}
+          className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-slate-950/70 p-3 text-xs">
+          <span className="truncate text-slate-400">{capability.command_client_id}</span>
+          {capability.enabled ? <button type="button"
+            onClick={() => void disableTrace(capability.command_client_id)}
+            className="rounded-lg border border-red-400/40 px-3 py-2 text-red-300">
+            Revocar Trace
           </button> : <span className="text-slate-500">Revocada</span>}
         </div>)}
       </div>}
