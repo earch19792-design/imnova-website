@@ -150,12 +150,19 @@ test("candidate, similar, identifier-exact active and identifier-exact sold evid
     returnedCandidateCount: 4,
     enrichedSampleCount: 4,
     strongSimilarCount: 1,
+    exactModelComparableCount: 2,
+    nearExactProductCount: 1,
+    functionalComparableCount: 0,
+    nonComparableCount: 1,
     identifierExactActiveCount: 1,
     identifierExactRecentSoldCount: 1,
     identifierExactRecentSoldQuantity: 6,
     identifierExactRecentSoldSellerCount: 1,
     identifierExactStaleSoldCount: 0,
     conflictingCount: 1,
+    commercialSamplingPolicy: null,
+    marketSearches: null,
+    nearExactSoldEnrichment: null,
   })
 })
 

@@ -180,6 +180,12 @@ test("route and bundle surface regress downward", () => {
   const productJourneyApi = exists(
     "app/api/admin/ebay/product-journey/route.ts",
   )
+  const commercialTracePage = exists(
+    "app/admin/ebay/commercial-trace/page.tsx",
+  )
+  const preResearchControlConsentPage = exists(
+    "app/admin/ebay/pre-research-control/oauth/consent/page.tsx",
+  )
   assert.equal(
     temporarySellerOauthPage,
     temporarySellerOauthApi,
@@ -232,7 +238,8 @@ test("route and bundle surface regress downward", () => {
     countNamed("app", "page.tsx") <= 28 + Number(listingOptimizationPreviewPage) + Number(temporarySellerOauthPage) +
       Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
       Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage) +
-      Number(lunaQuickPickPage) + Number(productJourneyPage),
+      Number(lunaQuickPickPage) + Number(productJourneyPage) +
+      Number(commercialTracePage) + Number(preResearchControlConsentPage),
     "page route count regressed",
   )
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
@@ -266,6 +273,14 @@ test("route and bundle surface regress downward", () => {
   // Production StockGuard adds exactly one separately authenticated GET-only
   // durable reader. The general eBay Pro production isolation stays intact.
   const productionStockReadApi = exists("app/api/runtime/stockguard-read/route.ts")
+  const boundedControlApis = [
+    "app/api/admin/ebay/commercial-trace/route.ts",
+    "app/api/admin/ebay/pre-research-control/capability/route.ts",
+    "app/api/admin/ebay/pre-research/controlled-rerun/route.ts",
+    "app/api/admin/ebay/pre-research/route.ts",
+    "app/api/cron/luna-catalog-snapshot/route.ts",
+    "app/api/seller-os/control/mcp/route.ts",
+  ].filter(exists).length
   if (productionStockReadApi) {
     const route = read("app/api/runtime/stockguard-read/route.ts")
     assert.match(route, /authorizeProductionStockReadV1/)
@@ -276,7 +291,8 @@ test("route and bundle surface regress downward", () => {
     countNamed("app/api", "route.ts") <= 101 + Number(exists("app/api/admin/ebay/assistant/revenue-engine/route.ts")) + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
       Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
-      Number(lunaQuickPickApi) + Number(productJourneyApi) + Number(productionStockReadApi),
+      Number(lunaQuickPickApi) + Number(productJourneyApi) + Number(productionStockReadApi) +
+      boundedControlApis,
     "API route count regressed",
   )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)

@@ -26,7 +26,7 @@ async function runCheck(name, args, timeoutMs = 15 * 60 * 1000) {
   const started = Date.now(), logPath = resolve(root, `.seller-os/${name}.log`)
   const fd = openSync(logPath, "w", 0o600)
   let overflow = false, timedOut = false
-  const child = spawn(node, ["--max-old-space-size=3072", ...args], { cwd: root, detached: true,
+  const child = spawn(node, ["--max-old-space-size=4096", ...args], { cwd: root, detached: true,
     env: { ...process.env, NODE_ENV: name === "build" ? "production" : "test", NEXT_TELEMETRY_DISABLED: "1",
       EBAY_DRAFT_ONLY_WRITES_ENABLED: "false", EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "false",
       EBAY_SELLER_WHATSAPP_ENABLED: "false" }, stdio: ["ignore", fd, fd] })
