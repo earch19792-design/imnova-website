@@ -123,7 +123,7 @@ export function MayelMarketRevalidationRunner() {
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
-    const planId = planIdFromLocation()
+    let planId = planIdFromLocation()
     const autonomous = autonomousModeFromLocation()
     const browserWorkerControl = browserWorkerControlModeFromLocation()
     const gateOnly = browserWorkerControl && !planId
@@ -242,12 +242,30 @@ export function MayelMarketRevalidationRunner() {
         }).finally(() => { heartbeatInFlight = false })
       }, SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS)
       if (gateOnly) {
-        setState("Worker Research V2 disponible · gate de control activo")
-        await new Promise<void>((resolve) => {
-          leadershipAbort.signal.addEventListener("abort", () => resolve(),
-            { once: true })
+        const next = await authorizedPost({
+          action: "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN",
         })
-        return
+        const result = next.result && typeof next.result === "object"
+          ? next.result as JsonRecord : {}
+        const nextPlanId = typeof result.planId === "string" &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+            .test(result.planId) ? result.planId : null
+        if (!nextPlanId) {
+          setState("Worker Research V2 disponible · sin lote autorizado pendiente")
+          const delayMs = controller.nextDelayMs()
+          await new Promise<void>((resolve) => {
+            const reload = window.setTimeout(() => {
+              window.location.reload()
+              resolve()
+            }, delayMs)
+            leadershipAbort.signal.addEventListener("abort", () => {
+              window.clearTimeout(reload)
+              resolve()
+            }, { once: true })
+          })
+          return
+        }
+        planId = nextPlanId
       }
       const maximumPlans = browserWorkerControl && planId ? 1
         : autonomous ? 4 : 1

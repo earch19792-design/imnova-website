@@ -20,6 +20,7 @@ const REASON_CODE = /^[A-Z0-9_]{3,80}$/
 const OPERATIONS = new Set([
   "NORMAL_PRE_RESEARCH",
   "CONTROLLED_RERUN",
+  "TEO_CONTROL_AUTHORIZATION",
 ])
 
 type AdminValidation = Readonly<{

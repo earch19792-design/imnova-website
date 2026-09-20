@@ -67,6 +67,8 @@ import {
   resolveRemoteOperatorUserIdV1,
 } from "@/lib/ebay/ebay-remote-operator-safe-mutation-canary-v1"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
+import { nextAuthorizedTeoPreResearchPlanV1 } from
+  "@/lib/ebay/teo-pre-research-control-plane-v1"
 import {
   getSupabaseAdminClient,
   validateSellerOsApiRequest,
@@ -480,6 +482,22 @@ export async function POST(request: Request) {
       })
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await nextAuthorizedTeoPreResearchPlanV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { globalQueueFallback: 0, marketplaceWrites: 0,
+          priceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {
       return NextResponse.json({ success: false, error: safeCode(error) },
