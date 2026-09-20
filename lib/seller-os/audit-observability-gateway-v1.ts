@@ -457,7 +457,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   const now = input.now ?? new Date()
   const mode = cleanDetailMode(input.detailMode)
   const resolved = await resolveProductIdentity(input, budget)
-  if (resolved.contradiction) return Object.freeze({
+  if (resolved.contradiction !== null) return Object.freeze({
     AUDIT_CONTRACT_VERSION: SELLER_OS_PRODUCT_CASE_AUDIT_V1,
     OBSERVED_AT: now.toISOString(), DETAIL_MODE: mode,
     INPUT_IDENTITY: { type: input.identityType, value: input.identity },
