@@ -28,6 +28,7 @@ import {
 } from "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
 import {
   persistLunaChromeShippingCaptureV1,
+  persistCommercialTraceShippingCaptureV1,
   tryPersistEconomicLiveListingShippingCaptureV1,
   persistLunaChromeLiveListingShippingCaptureV1,
   persistLunaProductPageOosV1,
@@ -488,6 +489,20 @@ export async function POST(req: Request) {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
       const capture = listingAiRecord(body.capture) as
         LunaShippingCapturePostV1
+      const commercialTraceResult =
+        await persistCommercialTraceShippingCaptureV1({
+          supabase: auth.supabase, accountKey: auth.accountKey,
+          capture, sessionSecret: sessionSecret(),
+        })
+      if (commercialTraceResult) return listingAiResponse({ success: true,
+        result: { ...commercialTraceResult,
+          traceContinuation: { applicable: true,
+            status: "AWAITING_EXACT_IDEMPOTENT_CONTROL_REPLAY",
+            traceReevaluated: false, marketplaceWrites: 0 },
+          economicsContinuation: null, postShippingContinuation: null },
+        safety: { cookieAccess: false, credentialAccess: false,
+          lunaPurchases: 0, marketplaceWrites: 0,
+          commercialTraceShippingReceiptPersisted: true } })
       const economicResult =
         await tryPersistEconomicLiveListingShippingCaptureV1({
           supabase: auth.supabase, accountKey: auth.accountKey,

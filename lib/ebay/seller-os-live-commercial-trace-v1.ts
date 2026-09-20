@@ -15,6 +15,9 @@ import { buildCommercialDecisionLoopSnapshotV1_1 } from
 import { evaluateLunaTraceProductTruthGateV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
   "../seller-os/luna-trace-product-truth-gate-v1.ts"
+import { readCommercialTraceShippingReceiptV1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
+  "./ebay-luna-chrome-shipping-capture-server-v1.ts"
 
 export const SELLER_OS_LIVE_COMMERCIAL_TRACE_V1 =
   "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1" as const
@@ -777,9 +780,18 @@ type TraceEventWriter = (stage: string, status: "RUNNING" | "PASS" |
 async function latestShipping(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
+  traceId: string
+  sourceFingerprint: string
   productId: string
   variant: DirectedLunaVariant
 }>) {
+  const consumerReceipt = await readCommercialTraceShippingReceiptV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    traceId: input.traceId, lunaProductId: input.productId,
+    lunaVariantId: input.variant.id, supplierSku: input.variant.sku,
+    sourceFingerprint: input.sourceFingerprint,
+  })
+  if (consumerReceipt) return consumerReceipt
   // The immutable frontier ledger intentionally revokes direct service-role
   // table reads. Use its bounded security-definer read contract and then apply
   // the exact product/variant/SKU predicate in memory.
@@ -858,21 +870,52 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
   productUrl: string
   actorUserId?: string | null
   preauthorizedTraceId?: string | null
+  continuationReason?: "EXACT_IDEMPOTENT_REPLAY_AFTER_SHIPPING" | null
   fetchImpl?: typeof fetch
   marketReader?: MarketReaderV1
 }>) {
   const canonicalUrl = parseDirectedLunaProductUrl(input.productUrl).canonicalUrl
+  let continuationState: Readonly<{ eventCount: number
+    currentStage: string
+    completedAt: string
+    result: JsonRecord }> | null = null
   if (input.preauthorizedTraceId) {
     const reserved = await input.supabase.from(
       "seller_os_live_commercial_traces_v1")
-      .select("trace_id,account_key,product_url,started_by,state,event_count")
+      .select("trace_id,account_key,product_url,started_by,state,event_count,current_stage,completed_at,result")
       .eq("trace_id", input.preauthorizedTraceId).limit(1).maybeSingle()
+    const continuationRequested = input.continuationReason ===
+      "EXACT_IDEMPOTENT_REPLAY_AFTER_SHIPPING"
+    const previousResult = record(reserved.data?.result)
+    const initialReservationValid = !continuationRequested &&
+      reserved.data?.state === "RUNNING" && reserved.data?.event_count === 0
+    const continuationReservationValid = continuationRequested &&
+      reserved.data?.state === "COMPLETED" &&
+      Number.isInteger(reserved.data?.event_count) &&
+      Number(reserved.data?.event_count) > 0 &&
+      previousResult.FINAL_DECISION === "HOLD_SHIPPING_UNPROVEN" &&
+      typeof reserved.data?.completed_at === "string"
     if (reserved.error || !reserved.data ||
         reserved.data.account_key !== input.accountKey ||
         reserved.data.product_url !== canonicalUrl ||
         reserved.data.started_by !== (input.actorUserId ?? null) ||
-        reserved.data.state !== "RUNNING" || reserved.data.event_count !== 0) {
+        (!initialReservationValid && !continuationReservationValid)) {
       throw new Error("LIVE_COMMERCIAL_TRACE_PREAUTHORIZATION_INVALID")
+    }
+    if (continuationReservationValid) {
+      const eventCount = Number(reserved.data.event_count)
+      continuationState = Object.freeze({ eventCount,
+        currentStage: String(reserved.data.current_stage),
+        completedAt: String(reserved.data.completed_at), result: previousResult })
+      const reopened = await input.supabase.from(
+        "seller_os_live_commercial_traces_v1").update({ state: "RUNNING",
+          current_stage: "PRODUCT_TRUTH", completed_at: null,
+          updated_at: new Date().toISOString() })
+        .eq("trace_id", input.preauthorizedTraceId)
+        .eq("state", "COMPLETED").eq("event_count", eventCount)
+        .select("trace_id").limit(1).maybeSingle()
+      if (reopened.error || !reopened.data) throw new Error(
+        "LIVE_COMMERCIAL_TRACE_CONTINUATION_CONFLICT")
     }
   }
   const productTruth = await readCanonicalTraceProductTruthV1({
@@ -903,7 +946,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       "LIVE_COMMERCIAL_TRACE_START_WRITE_FAILED")
     traceId = String(start.data.trace_id)
   }
-  let sequence = 0
+  let sequence = continuationState?.eventCount ?? 0
   const emit: TraceEventWriter = async (stage, status, narrative,
     evidence = {}) => {
     sequence += 1
@@ -971,7 +1014,9 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         authority: "LUNA_PUBLIC_READ_ONLY_PRODUCT_JSON" })
 
     const shipping = await latestShipping({ supabase: input.supabase,
-      accountKey: input.accountKey, productId: product.productId, variant })
+      accountKey: input.accountKey, traceId,
+      sourceFingerprint: String(productTruth.row.source_fingerprint),
+      productId: product.productId, variant })
     await emit("SHIPPING_QTY1", shipping ? "PASS" : "BLOCKED",
       shipping
         ? `Se reutilizó una captura durable y fresca de shipping qty=1: USD ${shipping.amountUsd.toFixed(2)}. No se abrió una compra nueva.`
@@ -1279,6 +1324,26 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       "LIVE_COMMERCIAL_TRACE_COMPLETION_WRITE_FAILED")
     return Object.freeze({ traceId, result })
   } catch (error) {
+    if (continuationState) {
+      const failureSequence = sequence + 1
+      const failureCode = safeCode(error)
+      await input.supabase.from(
+        "seller_os_live_commercial_trace_events_v1").insert({
+          trace_id: traceId, sequence: failureSequence,
+          stage: "SHIPPING_REEVALUATION", status: "FAIL",
+          narrative: "La reevaluación segura no reemplazó el resultado durable anterior.",
+          evidence: { failureCode, priorResultPreserved: true,
+            marketplaceWrites: 0, publicationWrites: 0 },
+        })
+      await input.supabase.from("seller_os_live_commercial_traces_v1")
+        .update({ state: "COMPLETED",
+          current_stage: continuationState.currentStage,
+          event_count: failureSequence, result: continuationState.result,
+          completed_at: continuationState.completedAt,
+          updated_at: new Date().toISOString() })
+        .eq("trace_id", traceId)
+      throw error
+    }
     await completeFailure({ supabase: input.supabase, traceId,
       code: safeCode(error), sequence: sequence + 1 }).catch(() => undefined)
     throw error

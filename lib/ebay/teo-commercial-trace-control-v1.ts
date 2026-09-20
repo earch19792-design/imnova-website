@@ -9,6 +9,8 @@ import {
 } from "./seller-os-live-commercial-trace-v1"
 import type { TeoPreResearchCommandPrincipalV1 } from
   "./teo-pre-research-control-plane-v1"
+import { readCommercialTraceShippingReceiptV1 } from
+  "./ebay-luna-chrome-shipping-capture-server-v1"
 
 export const TEO_COMMERCIAL_TRACE_CAPABILITY_V1 =
   "TEO_COMMERCIAL_TRACE_V1" as const
@@ -244,6 +246,31 @@ export async function requestTeoCommercialTraceV1(input: Readonly<{
         })
       } catch { /* The public request still fails closed. */ }
       fail("TEO_COMMERCIAL_TRACE_EXECUTION_FAILED")
+    }
+  } else {
+    const existing = await readSellerOsLiveCommercialTraceV1({
+      supabase: input.supabase, traceId })
+    const trace = record(existing?.trace)
+    const result = record(trace.result)
+    if (trace.state === "COMPLETED" &&
+        result.FINAL_DECISION === "HOLD_SHIPPING_UNPROVEN") {
+      const shippingReceipt = await readCommercialTraceShippingReceiptV1({
+        supabase: input.supabase, accountKey: input.accountKey, traceId,
+        lunaProductId: input.productId, lunaVariantId: input.variantId,
+        supplierSku: input.sku,
+        sourceFingerprint: canonical.sourceFingerprint,
+      })
+      if (shippingReceipt) {
+        try {
+          await runSellerOsLiveCommercialTraceV1({ supabase: input.supabase,
+            accountKey: input.accountKey, productUrl: canonical.canonicalUrl,
+            actorUserId: input.principal.ownerUserId,
+            preauthorizedTraceId: traceId,
+            continuationReason: "EXACT_IDEMPOTENT_REPLAY_AFTER_SHIPPING" })
+        } catch {
+          fail("TEO_COMMERCIAL_TRACE_EXECUTION_FAILED")
+        }
+      }
     }
   }
   return getTeoCommercialTraceV1({ ...input, traceId })

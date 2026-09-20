@@ -76,6 +76,8 @@ export const LUNA_CANONICAL_BIND_FINAL_ROOT_CAUSE_V1 =
   "LEGACY_FAMILY_SCOPED_CANARY_ID_STALE_AFTER_CURRENT_ACCOUNT_SCOPED_IDENTITY_MIGRATION" as const
 export const LUNA_CHROME_LIVE_LISTING_CAPTURE_SCOPE_V1 =
   "LUNA_CHROME_LIVE_LISTING_CAPTURE_SCOPE_V1" as const
+export const SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1 =
+  "SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -300,6 +302,70 @@ async function latestSameDayRun(input: Readonly<{
     throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_DURABLE_RUN_UNAVAILABLE")
   }
   return text(record(result.data).id, 80)!
+}
+
+async function accountRunIds(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+}>) {
+  const result = await input.supabase.from("ebay_same_day_pilot_runs")
+    .select("id").eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").order("created_at", { ascending: false })
+    .limit(100)
+  if (result.error) throw new Error(
+    "COMMERCIAL_TRACE_SHIPPING_RECEIPT_RUN_READ_FAILED")
+  return records(result.data).map((row) => text(row.id, 80))
+    .filter((id): id is string => Boolean(id))
+}
+
+export async function readCommercialTraceShippingReceiptV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  traceId: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  sourceFingerprint: string
+  now?: number
+}>) {
+  const runIds = await accountRunIds(input)
+  if (!runIds.length) return null
+  const result = await input.supabase.from("ebay_same_day_pilot_events")
+    .select("event_payload,created_at").in("run_id", runIds)
+    .eq("event_type", SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1)
+    .order("created_at", { ascending: false }).limit(500)
+  if (result.error) throw new Error(
+    "COMMERCIAL_TRACE_SHIPPING_RECEIPT_READ_FAILED")
+  const now = input.now ?? Date.now()
+  for (const row of records(result.data)) {
+    const receipt = record(row.event_payload)
+    const observedAt = text(receipt.observedAt, 80)
+    const age = observedAt ? now - Date.parse(observedAt) : Number.POSITIVE_INFINITY
+    const shippingUsd = money(receipt.shippingUsd)
+    if (receipt.contractVersion !==
+          SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1 ||
+        receipt.shippingContractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION ||
+        receipt.traceId !== input.traceId ||
+        receipt.lunaProductId !== input.lunaProductId ||
+        receipt.lunaVariantId !== input.lunaVariantId ||
+        receipt.supplierSku !== input.supplierSku ||
+        receipt.sourceFingerprint !== input.sourceFingerprint ||
+        receipt.quantity !== 1 || shippingUsd === null ||
+        receipt.currency !== "USD" ||
+        receipt.canonicalDestinationMatch !== true ||
+        receipt.destinationProfileDigest !== CANONICAL_DESTINATION.profileDigest ||
+        !SHA256.test(String(receipt.evidenceDigest ?? "")) ||
+        !Number.isFinite(age) || age < -60_000 ||
+        age > LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS * 1_000) continue
+    return Object.freeze({ amountUsd: shippingUsd, observedAt,
+      evidenceDigest: String(receipt.evidenceDigest),
+      acquisitionMethod: String(receipt.acquisitionMethod),
+      canonicalDestinationMatch: true as const,
+      canonicalDestinationCountryClass: "US" as const,
+      quantity: 1 as const, noPurchase: true as const,
+      noCredentials: true as const })
+  }
+  return null
 }
 
 async function freshProductPageOosCandidateIds(input: Readonly<{
@@ -561,6 +627,204 @@ const CANONICAL_DESTINATION = normalizeLunaChromeShippingDestinationV1({
   province: canonicalAddress.stateOrProvince,
   postalCode: canonicalAddress.postalCode,
 })
+
+type CommercialTraceShippingAuthorityV1 = Readonly<{
+  requestId: string
+  traceId: string
+  sourceSnapshotId: string
+  sourceFingerprint: string
+  fieldTruthEvidenceDigest: string
+  job: LunaChromeShippingJobV1
+}>
+
+async function resolveCommercialTraceShippingAuthoritiesV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  sessionSecret: string
+  candidateId?: string
+  now?: number
+}>) : Promise<readonly CommercialTraceShippingAuthorityV1[]> {
+  const requests = await input.supabase.from(
+    "seller_os_commercial_trace_command_requests_v1")
+    .select("request_id,trace_id,source_snapshot_id,luna_product_id,luna_variant_id,supplier_sku,canonical_url,source_fingerprint,field_truth_evidence_digest,created_at")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("contract_version", "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1")
+    .order("created_at", { ascending: false }).limit(25)
+  if (requests.error) throw new Error(
+    "COMMERCIAL_TRACE_SHIPPING_REQUEST_READ_FAILED")
+  const requestRows = records(requests.data)
+  const traceIds = requestRows.map((row) => text(row.trace_id, 80))
+    .filter((value): value is string => Boolean(value))
+  if (!traceIds.length) return Object.freeze([])
+  const traces = await input.supabase.from("seller_os_live_commercial_traces_v1")
+    .select("trace_id,state,result").in("trace_id", traceIds)
+  if (traces.error) throw new Error(
+    "COMMERCIAL_TRACE_SHIPPING_TRACE_READ_FAILED")
+  const traceById = new Map(records(traces.data).map((row) =>
+    [String(row.trace_id), row] as const))
+  const authorities: CommercialTraceShippingAuthorityV1[] = []
+  for (const request of requestRows) {
+    const requestId = text(request.request_id, 80)
+    const traceId = text(request.trace_id, 80)
+    const sourceSnapshotId = text(request.source_snapshot_id, 80)
+    const productId = text(request.luna_product_id, 30)
+    const variantId = text(request.luna_variant_id, 30)
+    const supplierSku = text(request.supplier_sku, 160)
+    const canonicalProductUrl = text(request.canonical_url, 500)
+    const sourceFingerprint = text(request.source_fingerprint, 80)
+    const fieldTruthEvidenceDigest = text(
+      request.field_truth_evidence_digest, 80)
+    if (!requestId || !traceId || !sourceSnapshotId || !productId ||
+        !variantId || !supplierSku || !canonicalProductUrl ||
+        !sourceFingerprint || !SHA256.test(sourceFingerprint) ||
+        !fieldTruthEvidenceDigest || !SHA256.test(fieldTruthEvidenceDigest)) continue
+    const currentCandidateId = candidateId(input.accountKey, productId,
+      variantId, supplierSku)
+    if (input.candidateId && input.candidateId !== currentCandidateId) continue
+    const trace = traceById.get(traceId)
+    const result = record(trace?.result)
+    const truth = record(result.PRODUCT_TRUTH)
+    const gate = record(truth.traceProductTruthGate)
+    const priceRange = record(result.PRICE_RANGE)
+    const salePriceUsd = money(priceRange.median)
+    if (trace?.state !== "COMPLETED" ||
+        result.FINAL_DECISION !== "HOLD_SHIPPING_UNPROVEN" ||
+        gate.traceProductTruthSufficient !== true ||
+        gate.receiptEvidenceDigest !== fieldTruthEvidenceDigest ||
+        truth.productId !== productId || truth.variantId !== variantId ||
+        truth.supplierSku !== supplierSku || salePriceUsd === null ||
+        salePriceUsd <= 0) continue
+    const prior = await readCommercialTraceShippingReceiptV1({
+      supabase: input.supabase, accountKey: input.accountKey, traceId,
+      lunaProductId: productId, lunaVariantId: variantId, supplierSku,
+      sourceFingerprint, now: input.now,
+    })
+    if (prior) continue
+    const variant = await input.supabase.from("luna_catalog_snapshot_variants_v1")
+      .select("canonical_url,title,price,availability,source_fingerprint,field_truth_v1")
+      .eq("snapshot_id", sourceSnapshotId).eq("product_id", productId)
+      .eq("variant_id", variantId).eq("sku", supplierSku)
+      .limit(2)
+    if (variant.error || variant.data?.length !== 1) continue
+    const row = record(variant.data[0])
+    const fieldTruth = record(row.field_truth_v1)
+    const supplierCostUsd = money(row.price)
+    const productName = text(row.title, 200)
+    if (row.canonical_url !== canonicalProductUrl ||
+        row.source_fingerprint !== sourceFingerprint ||
+        fieldTruth.evidenceDigest !== fieldTruthEvidenceDigest ||
+        row.availability !== true || supplierCostUsd === null || !productName) continue
+    const session = issueLunaShippingCaptureSessionV1({
+      secret: input.sessionSecret, candidateId: currentCandidateId,
+      snapshotDigest: sourceFingerprint, now: input.now,
+    })
+    authorities.push(Object.freeze({ requestId, traceId, sourceSnapshotId,
+      sourceFingerprint, fieldTruthEvidenceDigest,
+      job: normalizeLunaChromeShippingJobV1({
+        contractVersion: LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
+        ...session, snapshotDigest: sourceFingerprint,
+        identity: { candidateId: currentCandidateId, canonicalProductUrl,
+          lunaProductId: productId, lunaVariantId: variantId,
+          supplierSku, quantity: 1 }, destination: CANONICAL_DESTINATION,
+        salePriceUsd, supplierCostUsd, productName,
+      }) }))
+    if (authorities.length >= 1) break
+  }
+  return Object.freeze(authorities)
+}
+
+export async function persistCommercialTraceShippingCaptureV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  capture: LunaShippingCapturePostV1
+  sessionSecret: string
+  now?: number
+}>) {
+  const [authority] = await resolveCommercialTraceShippingAuthoritiesV1({
+    ...input, candidateId: input.capture.candidateId,
+  })
+  if (!authority) return null
+  verifyLunaShippingCaptureSessionV1({ secret: input.sessionSecret,
+    candidateId: authority.job.identity.candidateId,
+    snapshotDigest: authority.sourceFingerprint,
+    captureSessionId: input.capture.captureSessionId,
+    nonce: input.capture.nonce, now: input.now })
+  const job = normalizeLunaChromeShippingJobV1({ ...authority.job,
+    captureSessionId: input.capture.captureSessionId,
+    nonce: input.capture.nonce })
+  const certified = certifyLunaShippingCapturePostV1({
+    job, capture: input.capture, now: input.now })
+  if (certified.quote.acquisitionMethod !== LUNA_HTTP_SHIPPING_SOURCE ||
+      input.capture.canonicalDestinationMatch !== true ||
+      input.capture.canonicalDestinationFingerprint !==
+        CANONICAL_DESTINATION.profileDigest) {
+    throw new Error("COMMERCIAL_TRACE_SHIPPING_CANONICAL_QUOTE_REQUIRED")
+  }
+  const runId = await latestSameDayRun(input)
+  const receipt = Object.freeze({
+    contractVersion: SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1,
+    shippingContractVersion: LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
+    requestId: authority.requestId, traceId: authority.traceId,
+    sourceSnapshotId: authority.sourceSnapshotId,
+    sourceFingerprint: authority.sourceFingerprint,
+    fieldTruthEvidenceDigest: authority.fieldTruthEvidenceDigest,
+    candidateId: job.identity.candidateId,
+    lunaProductId: job.identity.lunaProductId,
+    lunaVariantId: job.identity.lunaVariantId,
+    supplierSku: job.identity.supplierSku, quantity: 1,
+    subtotalUsd: certified.quote.subtotalUsd,
+    shippingUsd: certified.quote.shippingAmountUsd,
+    totalUsd: input.capture.totalUsd, currency: "USD",
+    observedAt: certified.quote.observedAt,
+    acquisitionMethod: certified.quote.acquisitionMethod,
+    evidenceDigest: certified.quote.evidenceDigest,
+    extensionEvidenceDigest: input.capture.evidenceDigest,
+    destinationProfileDigest: CANONICAL_DESTINATION.profileDigest,
+    canonicalDestinationMatch: true, noPurchase: true,
+    noCredentials: true, noRawDestinationAddress: true,
+    marketplaceWrites: 0,
+  })
+  const idempotencyKey = [runId,
+    SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1,
+    authority.traceId, certified.quote.evidenceDigest.slice(7)].join(":")
+  const write = await input.supabase.from("ebay_same_day_pilot_events").upsert({
+    run_id: runId, candidate_id: null,
+    event_type: SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1,
+    event_payload: receipt, idempotency_key: idempotencyKey,
+    ebay_read_calls: 0, openai_calls: 0, ebay_writes: 0,
+    production_changed: false,
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (write.error) throw new Error(
+    "COMMERCIAL_TRACE_SHIPPING_RECEIPT_WRITE_FAILED")
+  const readback = await readCommercialTraceShippingReceiptV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    traceId: authority.traceId,
+    lunaProductId: job.identity.lunaProductId,
+    lunaVariantId: job.identity.lunaVariantId,
+    supplierSku: job.identity.supplierSku,
+    sourceFingerprint: authority.sourceFingerprint, now: input.now,
+  })
+  if (!readback || readback.evidenceDigest !== certified.quote.evidenceDigest) {
+    throw new Error("COMMERCIAL_TRACE_SHIPPING_RECEIPT_READBACK_FAILED")
+  }
+  const shippingClaimCompleted = await completeLunaChromeShippingJobClaimV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    candidateId: job.identity.candidateId,
+    snapshotDigest: authority.sourceFingerprint,
+    captureSessionId: input.capture.captureSessionId,
+  })
+  return Object.freeze({ capturePostAccepted: true as const,
+    captureResultDurable: true as const, durableReadbackMatch: true as const,
+    durableStore: "ebay_same_day_pilot_events" as const,
+    consumerContractVersion:
+      SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1,
+    traceId: authority.traceId, shippingClaimCompleted,
+    identity: job.identity, quote: certified.quote,
+    capture: Object.freeze({ subtotalUsd: input.capture.subtotalUsd,
+      shippingUsd: input.capture.shippingUsd,
+      totalUsd: input.capture.totalUsd }),
+    economics: certified.economics, marketplaceWrites: 0 as const })
+}
 
 function liveListingChromeAuthority(input: Awaited<ReturnType<
   typeof resolveExactCurrentLiveIdentityV1>>) {
@@ -1362,6 +1626,31 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     batchSlotResult.data)
   const batchPriorityCandidateIds = batchSlot.priorityCandidateId
     ? Object.freeze([batchSlot.priorityCandidateId]) : undefined
+  if (!batchPriorityCandidateIds && input.maximumJobs === 1) {
+    const [traceAuthority] = await resolveCommercialTraceShippingAuthoritiesV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      sessionSecret: input.sessionSecret, now: input.now,
+    })
+    if (traceAuthority) {
+      const job = traceAuthority.job
+      const claim = await input.supabase.rpc(
+        "claim_seller_os_luna_shipping_job_v2", {
+          p_account_key: input.accountKey,
+          p_candidate_id: job.identity.candidateId,
+          p_snapshot_digest: job.snapshotDigest,
+          p_runtime_instance_id: input.runtimeInstanceId,
+          p_capture_session_id: job.captureSessionId,
+          p_leader_session_id: input.leaderSessionId,
+        })
+      if (claim.error) throw new Error(
+        "COMMERCIAL_TRACE_SHIPPING_JOB_CLAIM_AUTHORITY_UNAVAILABLE")
+      const claimed = record(claim.data).claimed === true
+      return Object.freeze({ jobs: claimed ? Object.freeze([job]) :
+        Object.freeze([]), eligiblePendingJobCount: 1,
+        claimedJobCount: claimed ? 1 : 0, leaseConflictCount: claimed ? 0 : 1,
+        claimFailureCount: 0 })
+    }
+  }
   let eligible: readonly LunaChromeShippingJobV1[] = Object.freeze([])
   let standardDiscoveryError: unknown = null
   try {
