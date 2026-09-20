@@ -199,6 +199,19 @@ async function resolveLatestCompleteLunaSnapshotIdentity(input: Readonly<{
   })
   if (canonical.status !== "PROVEN") return { found: true as const,
     contradiction: "LUNA_SOURCE_IDENTITY_BLOCKED" as const }
+  const fieldTruth = record(row.field_truth_v1)
+  const fieldTruthPresent = Object.keys(fieldTruth).length > 0
+  const fieldTruthBound = fieldTruth.contractVersion ===
+      "LUNA_FIELD_PRODUCT_TRUTH_V1" &&
+    fieldTruth.sourceSnapshotId === snapshotId &&
+    fieldTruth.sourceProductId === canonical.productId &&
+    fieldTruth.sourceVariantId === canonical.variantId &&
+    fieldTruth.sourceSupplierSku === canonical.supplierSku &&
+    fieldTruth.sourceCatalogFingerprint === row.source_fingerprint &&
+    typeof fieldTruth.evidenceDigest === "string" &&
+    /^sha256:[0-9a-f]{64}$/.test(fieldTruth.evidenceDigest)
+  if (fieldTruthPresent && !fieldTruthBound) return { found: true as const,
+    contradiction: "LUNA_PRODUCT_TRUTH_BINDING_INVALID" as const }
   // This is a read-only projection for the audit consumer. It deliberately
   // has no opportunity id and never creates a legacy queue row.
   return { found: true as const, contradiction: null,
@@ -214,6 +227,7 @@ async function resolveLatestCompleteLunaSnapshotIdentity(input: Readonly<{
       source_fingerprint: text(row.source_fingerprint, 180),
       source_snapshot_id: snapshotId,
       assessment: { structuredProductIdentity: row.identity_result,
+        ...(fieldTruthBound ? { productTruth: { fieldTruthV1: fieldTruth } } : {}),
         preflightStatus, preflightReasons: row.preflight_reasons ?? [] } },
     identitySource: { authority: "luna_catalog_snapshot_variants_v1",
       snapshotId, observedAt: row.observed_at ?? snapshot.snapshot_completed_at,
@@ -571,7 +585,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
       receipt: sourceReceipt },
     PRODUCT_TRUTH: { status: lunaTruth.status,
       authority: identitySource
-        ? "luna_catalog_snapshot_variants_v1.identity_result"
+        ? "luna_catalog_snapshot_variants_v1.field_truth_v1"
         : queue.source_trace_id
           ? "seller_os_live_commercial_traces_v1.PRODUCT_TRUTH"
           : "ebay_luna_opportunity_queue.assessment.productTruth",

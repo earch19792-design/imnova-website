@@ -96,6 +96,12 @@ function images(value: unknown) {
     .filter((item): item is string => Boolean(item))
 }
 
+function sourceHtml(value: unknown) {
+  if (typeof value !== "string") return null
+  const normalized = value.replace(/\u0000/g, "").trim()
+  return normalized ? normalized.slice(0, 100_000) : null
+}
+
 function stableFingerprint(value: unknown) {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`
 }
@@ -124,6 +130,7 @@ function variantRows(products: readonly JsonRecord[], observedAt: string,
       const options = Array.isArray(product.options) ? product.options : []
       const sourceFields = {
         ...captureLunaExplicitProductFieldsV1(product),
+        body_html: sourceHtml(product.body_html),
         variant_title: text(variant.title, 220),
         collections: Array.isArray(product.collections) ? product.collections : [],
       }

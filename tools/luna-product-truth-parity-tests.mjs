@@ -22,7 +22,16 @@ await db.exec(`create schema extensions; create extension pgcrypto with schema e
   create table market_radar_current_variant_snapshots(product_id uuid,supplier_variant_id text,snapshot_id uuid);
   create table ebay_listing_packages(id uuid primary key,candidate_key text,package_data jsonb,updated_at timestamptz);
   create table ebay_luna_opportunity_queue(id uuid primary key,candidate_key text,market_radar_product_id uuid,
-    supplier_product_id text,supplier_variant_id text,supplier_sku text,assessment jsonb,decision text);`)
+    supplier_product_id text,supplier_variant_id text,supplier_sku text,assessment jsonb,decision text);
+  create table luna_catalog_snapshots_v1(snapshot_id uuid primary key,snapshot_status text not null,
+    snapshot_completed_at timestamptz);
+  create table luna_catalog_snapshot_variants_v1(snapshot_id uuid not null,product_id text not null,
+    variant_id text not null,sku text,canonical_url text not null,title text not null,price numeric,
+    compare_at_price numeric,availability boolean,options jsonb not null,weight numeric,weight_unit text,
+    images jsonb not null,product_type text,barcode_gtin text,source_fields jsonb not null,
+    source_fingerprint text not null,observed_at timestamptz not null,preflight_status text not null,
+    preflight_reasons text[] not null,identity_result jsonb not null,
+    primary key(snapshot_id,product_id,variant_id));`)
 const p = { id: '10000000-0000-4000-8000-000000000001', source_id: '10000000-0000-4000-8000-000000000002',
   supplier_product_id: '1234567890123', product_url: 'https://lunaportex.com/products/test-funnels',
   title: '3-piece nylon funnel set', metadata: {},
@@ -49,6 +58,20 @@ await insert('market_radar_current_variant_snapshots',{product_id:p.id,supplier_
 await insert('ebay_luna_opportunity_queue',q)
 await db.exec(await readFile(new URL('../supabase/migrations/20260908002125_luna_product_truth_field_parity_v1.sql',import.meta.url),'utf8'))
 await db.exec(await readFile(new URL('../supabase/migrations/20260908004733_luna_product_truth_multiline_evidence_v1.sql',import.meta.url),'utf8'))
+const catalogSnapshotId='40000000-0000-4000-8000-000000000001'
+await db.query(`insert into luna_catalog_snapshots_v1 values($1,'COMPLETE',$2)`,
+  [catalogSnapshotId,'2026-09-20T18:00:00Z'])
+await db.query(`insert into luna_catalog_snapshot_variants_v1(
+  snapshot_id,product_id,variant_id,sku,canonical_url,title,price,compare_at_price,
+  availability,options,weight,weight_unit,images,product_type,barcode_gtin,source_fields,
+  source_fingerprint,observed_at,preflight_status,preflight_reasons,identity_result)
+  values($1,'9234567890123','5234567890123','CATALOG42',
+  'https://lunaportex.com/products/catalog-test','Catalog nylon bag',5,0,true,'[]',200,'g',
+  '["https://cdn.example.test/catalog.jpg"]','Bags',null,$2,$3,$4,
+  'PREFLIGHT_PASS','{}','{"identitySufficient":true}')`,[
+    catalogSnapshotId,JSON.stringify({body_html:'<p>Material: Nylon</p>'}),
+    `sha256:${'c'.repeat(64)}`,'2026-09-20T18:00:00Z'])
+await db.exec(await readFile(new URL('../supabase/migrations/20260920203000_luna_catalog_product_truth_materialization_v1.sql',import.meta.url),'utf8'))
 async function derive(product=p,snapshot=s,pkg={}) {
   return (await db.query('select derive_luna_field_truth_v1($1::jsonb,$2::jsonb,$3::jsonb,$4::jsonb) r',
     [product,snapshot,expected,pkg].map(JSON.stringify))).rows[0].r
@@ -122,5 +145,24 @@ await insert('ebay_luna_opportunity_queue',{...q,id:'30000000-0000-4000-8000-000
 const second=(await db.query("select assessment from ebay_luna_opportunity_queue where candidate_key='second-candidate'")).rows[0].assessment
 assert.equal(second.productTruth.fieldTruthV1.fields.length,25)
 console.log('PASS_NORMAL_SOURCE_TRIGGERS_AND_NULL_CACHED_ID')
+const catalogTruth=(await db.query(`select field_truth_v1 from luna_catalog_snapshot_variants_v1
+  where snapshot_id=$1`,[catalogSnapshotId])).rows[0].field_truth_v1
+const cf=(name)=>catalogTruth.fields.find(x=>x.FIELD===name)
+pass('PASS_CATALOG_SNAPSHOT_DURABLE_FIELD_TRUTH',()=>{
+  assert.equal(catalogTruth.contractVersion,'LUNA_FIELD_PRODUCT_TRUTH_V1')
+  assert.equal(catalogTruth.sourceSnapshotId,catalogSnapshotId)
+  assert.equal(catalogTruth.sourceCatalogFingerprint,`sha256:${'c'.repeat(64)}`)
+  assert.equal(cf('LUNA_PRODUCT_ID').VALUE,'9234567890123')
+  assert.equal(cf('MATERIAL').VALUE,'Nylon')
+  assert.equal(cf('BRAND').SEMANTIC_CLASS,'MISSING')
+})
+await db.query(`update luna_catalog_snapshot_variants_v1 set field_truth_v1=$2
+  where snapshot_id=$1`,[catalogSnapshotId,JSON.stringify({forged:true})])
+const protectedTruth=(await db.query(`select field_truth_v1 from luna_catalog_snapshot_variants_v1
+  where snapshot_id=$1`,[catalogSnapshotId])).rows[0].field_truth_v1
+pass('PASS_CATALOG_TRUTH_CANNOT_BE_CLIENT_FORGED',()=>{
+  assert.equal(protectedTruth.evidenceDigest,catalogTruth.evidenceDigest)
+  assert.equal(protectedTruth.forged,undefined)
+})
 await assert.rejects(()=>derive(p,{...s,sku:'OTHER'}),/EXACT_SOURCE_BINDING_INVALID/)
 await db.close()
