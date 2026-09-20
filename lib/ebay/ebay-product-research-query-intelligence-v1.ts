@@ -56,6 +56,7 @@ export type ProductResearchStructuredIdentityQuerySourceV1 = Readonly<{
   version?: unknown
   productFamily?: unknown
   canonicalFamilyPhrase?: unknown
+  model?: unknown
   formFactors?: unknown
   audience?: unknown
   color?: unknown
@@ -135,6 +136,10 @@ const NOISE_WORDS = new Set([
 const CONNECTORS = new Set(["for", "including", "with"])
 const OPTIONAL_USAGE_CONTEXT = new Set([
   "bathroom", "counter", "desk", "kitchen",
+])
+const OPTIONAL_CORPORATE_NAME_TOKENS = new Set([
+  "co", "company", "corp", "corporation", "inc", "incorporated", "limited",
+  "llc", "ltd", "products",
 ])
 const REFORMULATION_NOISE = new Set([
   ...FUNCTION_WORDS,
@@ -327,6 +332,51 @@ function structuredFamilyTermVisible(
   return false
 }
 
+function structuredQueryIdentityVisible(input: Readonly<{
+  queryTerms: readonly string[]
+  familyTerms: readonly string[]
+  modelTerms: readonly string[]
+  corporateTokenIndex: number
+}>) {
+  const modelVisible = input.modelTerms.length > 0 && input.modelTerms.every((term) =>
+    structuredFamilyTermVisible(term, input.queryTerms))
+  if (input.corporateTokenIndex < 1 || !modelVisible) {
+    return input.familyTerms.filter((term) =>
+      !OPTIONAL_CORPORATE_NAME_TOKENS.has(term)).every((term) =>
+      structuredFamilyTermVisible(term, input.queryTerms))
+  }
+  const prefixTerms = input.familyTerms.slice(0, input.corporateTokenIndex)
+    .filter((term) => !input.modelTerms.includes(term))
+  const coreFamilyTerms = input.familyTerms.slice(input.corporateTokenIndex + 1)
+    .filter((term) => !input.modelTerms.includes(term) &&
+      !OPTIONAL_CORPORATE_NAME_TOKENS.has(term))
+  const prefixVisible = prefixTerms.length > 0 && prefixTerms.every((term) =>
+    structuredFamilyTermVisible(term, input.queryTerms))
+  const coreFamilyVisible = coreFamilyTerms.length > 0 &&
+    coreFamilyTerms.every((term) =>
+      structuredFamilyTermVisible(term, input.queryTerms))
+  return modelVisible && (prefixVisible || coreFamilyVisible)
+}
+
+function corporateIdentityQueryVariants(input: Readonly<{
+  familyTerms: readonly string[]
+  modelTerms: readonly string[]
+  corporateTokenIndex: number
+}>) {
+  if (input.corporateTokenIndex < 1 || !input.modelTerms.length) return []
+  const prefixTerms = input.familyTerms.slice(0, input.corporateTokenIndex)
+    .filter((term) => !input.modelTerms.includes(term))
+  const coreFamilyTerms = input.familyTerms.slice(input.corporateTokenIndex + 1)
+    .filter((term) => !input.modelTerms.includes(term) &&
+      !OPTIONAL_CORPORATE_NAME_TOKENS.has(term))
+  if (!prefixTerms.length || !coreFamilyTerms.length) return []
+  return unique([
+    boundedQuery([prefixTerms[0], ...input.modelTerms, ...coreFamilyTerms]),
+    boundedQuery([...prefixTerms, ...input.modelTerms]),
+    boundedQuery([...input.modelTerms, ...coreFamilyTerms]),
+  ])
+}
+
 function familyPreservingLexicalVariants(
   query: string,
   familyTerms: readonly string[],
@@ -366,6 +416,12 @@ function structuredIdentityStrategyV1(input: Readonly<{
     entry.length >= 2 && !FUNCTION_WORDS.has(entry) &&
     !COUNT_WORDS.has(entry) && !UNIT_WORDS.has(entry) &&
     !/^\d+(?:\.\d+)?$/.test(entry)))
+  const modelTerms = unique(tokens(identity.model).filter((entry) =>
+    entry.length >= 2 && !FUNCTION_WORDS.has(entry) &&
+    !UNIT_WORDS.has(entry)))
+  const corporateTokenIndex = familyTerms.findIndex((term, index) =>
+    index > 0 && OPTIONAL_CORPORATE_NAME_TOKENS.has(term) &&
+    familyTerms.slice(index + 1).some((entry) => !modelTerms.includes(entry)))
   const productNoun = familyTerms.at(-1) ?? null
   const sourceField = normalizedText(input.sourceField, 120) ||
     "identity_result.queryPlan"
@@ -430,20 +486,27 @@ function structuredIdentityStrategyV1(input: Readonly<{
   const basePlanned = unique([...progression, queryPlan.exactStrong,
     queryPlan.nearExactFamily, queryPlan.functionalFamily,
     queryPlan.broadFallback].flatMap((entry) => {
-      const query = boundedQuery(tokens(entry))
+      const query = boundedQuery(tokens(entry).filter((term) =>
+        corporateTokenIndex < 0 || !OPTIONAL_CORPORATE_NAME_TOKENS.has(term)))
       if (!query) return []
       const queryTerms = tokens(query)
-      return familyTerms.every((term) => structuredFamilyTermVisible(
-        term, queryTerms))
+      return structuredQueryIdentityVisible({ queryTerms, familyTerms,
+        modelTerms, corporateTokenIndex })
         ? [query] : []
     }))
+  const corporateVariants = corporateIdentityQueryVariants({ familyTerms,
+    modelTerms, corporateTokenIndex })
   const lexicalVariants = basePlanned.flatMap((query) =>
     familyPreservingLexicalVariants(query, familyTerms))
-  const planned = unique([...basePlanned, ...lexicalVariants]).filter((query) => {
+  const plannedCandidates = corporateVariants.length
+    ? [basePlanned[0] ?? "", ...corporateVariants, ...basePlanned.slice(1),
+      ...lexicalVariants]
+    : [...basePlanned, ...lexicalVariants]
+  const planned = unique(plannedCandidates).filter((query) => {
     const queryTerms = tokens(query)
-    return familyTerms.every((term) => structuredFamilyTermVisible(
-      term, queryTerms))
-  }).slice(0, 3)
+    return structuredQueryIdentityVisible({ queryTerms, familyTerms,
+      modelTerms, corporateTokenIndex })
+  }).slice(0, corporateVariants.length ? 4 : 3)
   const queries = Object.freeze(planned.map((query, index) => Object.freeze({
     intent: index === 0 ? "EXACT_PRODUCT_QUERY" as const
       : "CORE_FAMILY_QUERY" as const,
