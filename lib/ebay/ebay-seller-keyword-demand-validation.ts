@@ -36,6 +36,11 @@ export type EbaySellerComparableInput = {
   durableSoldSourceType?: string | null
   durableSoldSourceClass?: string | null
   realizedPriceStatus?: string | null
+  commercialTraceQueryIdentity?: string | null
+  commercialTraceAcquisitionPath?:
+    | "PRODUCT_RESEARCH_NEAR_EXACT_SOLD"
+    | "PUBLIC_EBAY_SOLD_COMPLETED"
+    | null
   gtin?: string | null
   brand?: string | null
   mpn?: string | null

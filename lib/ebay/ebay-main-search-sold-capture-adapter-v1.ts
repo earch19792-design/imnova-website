@@ -120,6 +120,7 @@ function safeCapturedRow(value: unknown, now: Date) {
   const soldAt = new Date(text(row.soldAt ?? row.observedAt, 80))
   const capturedAt = new Date(text(row.capturedAt, 80))
   const displayedSoldPriceAmount = money(row.displayedSoldPriceAmount)
+  const condition = text(row.condition, 80) || null
   const bestOfferStatus = text(row.bestOfferStatus, 32).toUpperCase()
   const shippingStatus = text(row.shippingStatus, 32).toUpperCase()
   const visibleShippingAmount = money(row.visibleShippingAmount)
@@ -182,6 +183,7 @@ function safeCapturedRow(value: unknown, now: Date) {
     itemId,
     stale: false as const,
     title,
+    condition,
     soldAt: soldAt.toISOString(),
     capturedAt: capturedAt.toISOString(),
     queryIdentity,
@@ -280,6 +282,7 @@ export function adaptMainSearchSoldCaptureForCommercialTrace(input: {
     return [Object.freeze({
       itemId: safe.itemId,
       title: safe.title,
+      condition: safe.condition,
       soldAt: safe.soldAt,
       capturedAt: safe.capturedAt,
       queryIdentity: safe.queryIdentity,

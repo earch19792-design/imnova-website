@@ -11,6 +11,9 @@ import type { TeoPreResearchCommandPrincipalV1 } from
   "./teo-pre-research-control-plane-v1"
 import { readCommercialTraceShippingReceiptV1 } from
   "./ebay-luna-chrome-shipping-capture-server-v1"
+import { enqueueCommercialTracePricingEnrichmentV1,
+  readCommercialTracePricingEvidenceV1 } from
+  "./seller-os-commercial-trace-pricing-enrichment-v1"
 
 export const TEO_COMMERCIAL_TRACE_CAPABILITY_V1 =
   "TEO_COMMERCIAL_TRACE_V1" as const
@@ -267,6 +270,42 @@ export async function requestTeoCommercialTraceV1(input: Readonly<{
             actorUserId: input.principal.ownerUserId,
             preauthorizedTraceId: traceId,
             continuationReason: "EXACT_IDEMPOTENT_REPLAY_AFTER_SHIPPING" })
+        } catch {
+          fail("TEO_COMMERCIAL_TRACE_EXECUTION_FAILED")
+        }
+      }
+    } else if (trace.state === "COMPLETED" &&
+        result.FINAL_DECISION === "HOLD_PRICING_EVIDENCE_QUALITY") {
+      const pricingReceipt = await readCommercialTracePricingEvidenceV1({
+        supabase: input.supabase, accountKey: input.accountKey, traceId,
+        productId: input.productId, variantId: input.variantId,
+        supplierSku: input.sku,
+        sourceFingerprint: canonical.sourceFingerprint,
+      })
+      if (pricingReceipt) {
+        try {
+          await runSellerOsLiveCommercialTraceV1({ supabase: input.supabase,
+            accountKey: input.accountKey, productUrl: canonical.canonicalUrl,
+            actorUserId: input.principal.ownerUserId,
+            preauthorizedTraceId: traceId,
+            continuationReason:
+              "EXACT_IDEMPOTENT_REPLAY_AFTER_PRICING_ENRICHMENT" })
+        } catch {
+          fail("TEO_COMMERCIAL_TRACE_EXECUTION_FAILED")
+        }
+      } else {
+        const productTruth = record(result.PRODUCT_TRUTH)
+        try {
+          await enqueueCommercialTracePricingEnrichmentV1({
+            supabase: input.supabase, traceId, accountKey: input.accountKey,
+            productId: input.productId, variantId: input.variantId,
+            supplierSku: input.sku, canonicalUrl: canonical.canonicalUrl,
+            sourceFingerprint: canonical.sourceFingerprint,
+            exactProductTitle: text(productTruth.title, 300),
+            market: { acceptedComparables: result.ACCEPTED_COMPARABLES,
+              nearExactSoldEnrichment:
+                result.NEAR_EXACT_SOLD_ENRICHMENT },
+          })
         } catch {
           fail("TEO_COMMERCIAL_TRACE_EXECUTION_FAILED")
         }

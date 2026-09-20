@@ -18,6 +18,10 @@ import { evaluateLunaTraceProductTruthGateV1 } from
 import { readCommercialTraceShippingReceiptV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
   "./ebay-luna-chrome-shipping-capture-server-v1.ts"
+import {
+  enqueueCommercialTracePricingEnrichmentV1,
+  readCommercialTracePricingEvidenceV1,
+} from "./seller-os-commercial-trace-pricing-enrichment-v1"
 
 export const SELLER_OS_LIVE_COMMERCIAL_TRACE_V1 =
   "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1" as const
@@ -28,6 +32,8 @@ type JsonRecord = Record<string, unknown>
 type MarketReaderV1 = (candidate: EbaySellerKeywordCandidate, options?: Readonly<{
   functionalSearchQuery?: string | null
   marketplaceAccountKey?: string | null
+  commercialTraceSoldEnrichment?: Awaited<ReturnType<
+    typeof readCommercialTracePricingEvidenceV1>>
 }>) =>
   Promise<EbaySellerKeywordDemandReport>
 
@@ -870,7 +876,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
   productUrl: string
   actorUserId?: string | null
   preauthorizedTraceId?: string | null
-  continuationReason?: "EXACT_IDEMPOTENT_REPLAY_AFTER_SHIPPING" | null
+  continuationReason?: "EXACT_IDEMPOTENT_REPLAY_AFTER_SHIPPING" |
+    "EXACT_IDEMPOTENT_REPLAY_AFTER_PRICING_ENRICHMENT" | null
   fetchImpl?: typeof fetch
   marketReader?: MarketReaderV1
 }>) {
@@ -884,8 +891,10 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       "seller_os_live_commercial_traces_v1")
       .select("trace_id,account_key,product_url,started_by,state,event_count,current_stage,completed_at,result")
       .eq("trace_id", input.preauthorizedTraceId).limit(1).maybeSingle()
-    const continuationRequested = input.continuationReason ===
-      "EXACT_IDEMPOTENT_REPLAY_AFTER_SHIPPING"
+    const continuationRequested = Boolean(input.continuationReason)
+    const expectedPriorDecision = input.continuationReason ===
+        "EXACT_IDEMPOTENT_REPLAY_AFTER_PRICING_ENRICHMENT"
+      ? "HOLD_PRICING_EVIDENCE_QUALITY" : "HOLD_SHIPPING_UNPROVEN"
     const previousResult = record(reserved.data?.result)
     const initialReservationValid = !continuationRequested &&
       reserved.data?.state === "RUNNING" && reserved.data?.event_count === 0
@@ -893,7 +902,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       reserved.data?.state === "COMPLETED" &&
       Number.isInteger(reserved.data?.event_count) &&
       Number(reserved.data?.event_count) > 0 &&
-      previousResult.FINAL_DECISION === "HOLD_SHIPPING_UNPROVEN" &&
+      previousResult.FINAL_DECISION === expectedPriorDecision &&
       typeof reserved.data?.completed_at === "string"
     if (reserved.error || !reserved.data ||
         reserved.data.account_key !== input.accountKey ||
@@ -1033,6 +1042,17 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         shippingUsd: shipping?.amountUsd ?? null, landedCostUsd: landedCost,
         includesEbayFees: false })
 
+    const pricingEnrichment = traceId
+      ? await readCommercialTracePricingEvidenceV1({
+          supabase: input.supabase, accountKey: input.accountKey, traceId,
+          productId: product.productId, variantId: variant.id,
+          supplierSku: variant.sku,
+          sourceFingerprint: String(productTruth.row.source_fingerprint),
+        }) : null
+    if (input.continuationReason ===
+        "EXACT_IDEMPOTENT_REPLAY_AFTER_PRICING_ENRICHMENT" &&
+        !pricingEnrichment) throw new Error(
+          "COMMERCIAL_TRACE_PRICING_ENRICHMENT_RECEIPT_REQUIRED")
     await emit("MARKET_SEARCH_PROGRESS", "RUNNING",
       "Seller OS está consultando eBay en modo GET/read-only y evaluará cada resultado con identidad exacta o fuerte.",
       { queryInputAuthority: "LUNA_PRODUCT_TRUTH", manualComparables: 0,
@@ -1055,7 +1075,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
           productType: product.productType,
           description: safeClaimTruth.safeClaims.map((entry) => entry.value)
             .join(" ") }, { functionalSearchQuery,
-          marketplaceAccountKey: input.accountKey })
+        marketplaceAccountKey: input.accountKey,
+        commercialTraceSoldEnrichment: pricingEnrichment })
     } catch (error) {
       marketFailure = safeCode(error)
     }
@@ -1220,6 +1241,30 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       ipClear: compliance.blockers.length === 0,
       autoPublish: false,
     })
+    let pricingEnrichmentDispatch: JsonRecord | null = pricingEnrichment
+      ? { status: "COMPLETED", receiptDigest:
+          pricingEnrichment.receiptDigest,
+        evidenceRowCount: pricingEnrichment.rows.length,
+        marketplaceWrites: 0 }
+      : null
+    if (!pricingEnrichment && decision.finalDecision ===
+        "HOLD_PRICING_EVIDENCE_QUALITY") {
+      try {
+        const dispatch = await enqueueCommercialTracePricingEnrichmentV1({
+          supabase: input.supabase, traceId, accountKey: input.accountKey,
+          productId: product.productId, variantId: variant.id,
+          supplierSku: variant.sku, canonicalUrl,
+          sourceFingerprint: String(productTruth.row.source_fingerprint),
+          exactProductTitle: product.title, market,
+        })
+        pricingEnrichmentDispatch = { status: dispatch.enqueued
+            ? "PENDING_BROWSER_WORKER" : "NOT_DISPATCHED",
+          ...dispatch }
+      } catch (error) {
+        pricingEnrichmentDispatch = { status: "DISPATCH_FAILED_SAFE",
+          failureCode: safeCode(error), marketplaceWrites: 0 }
+      }
+    }
     await emit("DECISION_LOOP", decisionLoop.state === "LISTING_PACKAGE_READY"
       ? "PASS" : "BLOCKED",
       decisionLoop.state === "LISTING_PACKAGE_READY"
@@ -1285,6 +1330,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       RAW_KEYWORD_EVIDENCE: market.rawKeywordEvidence,
       KEYWORD_PROVENANCE: market.keywordProvenance,
       PRICING_EVIDENCE_QUALITY: market.pricingEvidenceQuality,
+      AUTONOMOUS_PRICING_ENRICHMENT: pricingEnrichmentDispatch,
       DEMAND_CLASSIFICATION: market.demandClassification,
       ACCEPTED_COMPARABLES: market.acceptedComparables,
       EXCLUDED_COMPARABLES: market.excludedComparables,
@@ -1330,7 +1376,9 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       await input.supabase.from(
         "seller_os_live_commercial_trace_events_v1").insert({
           trace_id: traceId, sequence: failureSequence,
-          stage: "SHIPPING_REEVALUATION", status: "FAIL",
+          stage: input.continuationReason ===
+              "EXACT_IDEMPOTENT_REPLAY_AFTER_PRICING_ENRICHMENT"
+            ? "PRICING_REEVALUATION" : "SHIPPING_REEVALUATION",
           narrative: "La reevaluación segura no reemplazó el resultado durable anterior.",
           evidence: { failureCode, priorResultPreserved: true,
             marketplaceWrites: 0, publicationWrites: 0 },

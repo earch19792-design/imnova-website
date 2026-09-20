@@ -70,6 +70,11 @@ import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 import { nextAuthorizedTeoPreResearchPlanV1 } from
   "@/lib/ebay/teo-pre-research-control-plane-v1"
 import {
+  claimCommercialTracePricingEnrichmentV1,
+  completeCommercialTracePricingEnrichmentV1,
+  releaseCommercialTracePricingEnrichmentV1,
+} from "@/lib/ebay/seller-os-commercial-trace-pricing-enrichment-v1"
+import {
   getSupabaseAdminClient,
   validateSellerOsApiRequest,
 } from "@/lib/supabase-admin"
@@ -447,6 +452,78 @@ export async function POST(request: Request) {
       })
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "CLAIM_COMMERCIAL_TRACE_PRICING_ENRICHMENT") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const claimAuthoritySessionId = uuid(body?.leaderSessionId)
+      if (!claimAuthoritySessionId) throw new Error(
+        "PRODUCT_RESEARCH_CLAIM_AUTHORITY_REQUIRED")
+      const supabase = getSupabaseAdminClient()
+      const authority = await verifySellerOsBrowserWorkloadLeaseV1({
+        supabase, accountKey: account.accountKey,
+        workerFamily: "PRODUCT_RESEARCH",
+        workerInstanceId: String(body?.workerId ?? ""),
+        claimAuthoritySessionId,
+      })
+      if (!authority.claimAuthorityGranted) return NextResponse.json({
+        success: true, result: { claimed: false, jobId: null, traceId: null,
+          suppressedDuplicatePoll: true, marketplaceWrites: 0 },
+        safety: { arbitraryUrls: 0, marketplaceWrites: 0, priceWrites: 0 },
+      }, { headers: { "Cache-Control": "private, no-store" } })
+      const result = await claimCommercialTracePricingEnrichmentV1({
+        supabase, accountKey: account.accountKey,
+        ownerUserId: auth.validation.userId,
+        workerId: body?.workerId,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { arbitraryUrls: 0, marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "COMPLETE_COMMERCIAL_TRACE_PRICING_ENRICHMENT") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await completeCommercialTracePricingEnrichmentV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        ownerUserId: auth.validation.userId, workerId: body?.workerId,
+        jobId: body?.jobId, rows: body?.rows,
+        taskOutcomes: body?.taskOutcomes,
+        soldFilterProven: body?.soldFilterProven,
+        paginationAutomated: body?.paginationAutomated,
+        extensionMarketplaceWrites: body?.extensionMarketplaceWrites,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { arbitraryUrls: 0, marketplaceWrites: 0, priceWrites: 0,
+          publicationWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store",
+        "X-Seller-OS-Trace-Pricing-Enrichment": "COMPLETED" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "RELEASE_COMMERCIAL_TRACE_PRICING_ENRICHMENT") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await releaseCommercialTracePricingEnrichmentV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        ownerUserId: auth.validation.userId, workerId: body?.workerId,
+        jobId: body?.jobId, errorCode: body?.errorCode,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { arbitraryUrls: 0, marketplaceWrites: 0, priceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {
       return NextResponse.json({ success: false, error: safeCode(error) },

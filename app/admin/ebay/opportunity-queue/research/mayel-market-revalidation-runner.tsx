@@ -241,6 +241,96 @@ export function MayelMarketRevalidationRunner() {
           })
         }).finally(() => { heartbeatInFlight = false })
       }, SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS)
+      if (gateOnly && claimAuthorityGranted) {
+        const pricingClaimPayload = await authorizedPost({
+          action: "CLAIM_COMMERCIAL_TRACE_PRICING_ENRICHMENT", workerId,
+          leaderSessionId,
+        })
+        const pricingClaim = pricingClaimPayload.result &&
+          typeof pricingClaimPayload.result === "object"
+          ? pricingClaimPayload.result as JsonRecord : {}
+        if (pricingClaim.claimed === true) {
+          const jobId = String(pricingClaim.jobId ?? "")
+          const tasks = Array.isArray(pricingClaim.tasks)
+            ? pricingClaim.tasks as JsonRecord[] : []
+          const remainingRows = Number(pricingClaim.remainingRows)
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+              .test(jobId) || tasks.length < 1 || tasks.length > 6 ||
+              remainingRows !== 60 || pricingClaim.commandType !==
+                "IMNOVA_EBAY_NEAR_EXACT_SOLD_ENRICHMENT_V1" ||
+              pricingClaim.freeShippingRequired !== false ||
+              pricingClaim.arbitraryUrlAllowed !== false) {
+            throw new Error("COMMERCIAL_TRACE_PRICING_CLAIM_INVALID")
+          }
+          workerState = "WORKING"
+          heartbeat = await persistHeartbeat("WORKING")
+          try {
+            setState("Enriqueciendo pricing SOLD para Commercial Trace…")
+            const captured = await extensionCommand<{
+              success: true
+              extensionId: string
+              extensionVersion: string
+              rows: JsonRecord[]
+              taskOutcomes: JsonRecord[]
+              soldFilterProven: boolean
+              completedTaskCount: number
+              failedTaskCount: number
+              paginationAutomated: boolean
+              cookieAccess: false
+              marketplaceWrites: 0
+            }>({ type: "IMNOVA_EBAY_NEAR_EXACT_SOLD_ENRICHMENT_V1",
+              lease: buildEbayOneClickResearchLease({
+                sessionId: crypto.randomUUID(),
+              }), tasks, remainingRows }, 180_000)
+            if (captured.cookieAccess !== false ||
+                captured.marketplaceWrites !== 0 ||
+                captured.extensionId !== probe.extensionId ||
+                captured.bridgeExtensionId !== probe.extensionId ||
+                captured.soldFilterProven !== true ||
+                captured.paginationAutomated !== true ||
+                captured.completedTaskCount !== tasks.length ||
+                captured.failedTaskCount !== 0 ||
+                !Array.isArray(captured.rows) || captured.rows.length > 60 ||
+                !Array.isArray(captured.taskOutcomes) ||
+                captured.taskOutcomes.length !== tasks.length) {
+              throw new Error(
+                "COMMERCIAL_TRACE_PRICING_WORKER_RESULT_INVALID")
+            }
+            setState("Persistiendo evidencia SOLD durable…")
+            await authorizedPost({
+              action: "COMPLETE_COMMERCIAL_TRACE_PRICING_ENRICHMENT",
+              jobId, workerId, rows: captured.rows,
+              taskOutcomes: captured.taskOutcomes,
+              soldFilterProven: captured.soldFilterProven,
+              paginationAutomated: captured.paginationAutomated,
+              extensionMarketplaceWrites: captured.marketplaceWrites,
+            })
+          } catch (error) {
+            await authorizedPost({
+              action: "RELEASE_COMMERCIAL_TRACE_PRICING_ENRICHMENT",
+              jobId, workerId,
+              errorCode: error instanceof Error ? error.message :
+                "COMMERCIAL_TRACE_PRICING_WORKER_FAILED",
+            }).catch(() => undefined)
+            throw error
+          } finally {
+            workerState = "IDLE"
+          }
+          setState("Pricing SOLD capturado · esperando replay idempotente de Trace")
+          const delayMs = controller.nextDelayMs()
+          await new Promise<void>((resolve) => {
+            const reload = window.setTimeout(() => {
+              window.location.reload()
+              resolve()
+            }, delayMs)
+            leadershipAbort.signal.addEventListener("abort", () => {
+              window.clearTimeout(reload)
+              resolve()
+            }, { once: true })
+          })
+          return
+        }
+      }
       if (gateOnly) {
         const next = await authorizedPost({
           action: "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN",

@@ -63,6 +63,11 @@ const BROWSE_QUOTA_RESERVE = 50
 type CommercialMarketReaderOptions = Readonly<{
   functionalSearchQuery?: string | null
   marketplaceAccountKey?: string | null
+  commercialTraceSoldEnrichment?: Readonly<{
+    status: "COMPLETED"
+    rows: readonly EbaySellerComparableInput[]
+    tasks: readonly JsonRecord[]
+  }> | null
 }>
 
 export type EbayCatalogIdentityProduct = {
@@ -950,6 +955,9 @@ export async function runEbaySellerKeywordDemandValidation(
       | "REQUEST_FAILED" = "NOT_CONFIGURED"
     let soldComparables: EbaySellerComparableInput[] = []
     let nearExactSoldComparables: EbaySellerComparableInput[] = []
+    const browserSoldEnrichment = options.commercialTraceSoldEnrichment ?? null
+    const browserSoldComparables = browserSoldEnrichment
+      ? [...browserSoldEnrichment.rows] : []
     let nearExactAttemptedCount = 0
     let nearExactRequestFailureCount = 0
     const insightsEnabled =
@@ -1037,12 +1045,64 @@ export async function runEbaySellerKeywordDemandValidation(
           : "REQUEST_FAILED"
       }
     }
+    if (browserSoldEnrichment) {
+      const validation = buildEbaySellerKeywordDemandValidation({ candidate,
+        comparables: browserSoldComparables,
+        insightsAvailability: "NOT_CONFIGURED" })
+      for (const task of browserSoldEnrichment.tasks) {
+        const sourceComparableId = text(task.sourceComparableId)
+        const audit = nearExactSoldAudit.get(sourceComparableId)
+        if (!audit) continue
+        const taskQuery = text(task.searchQuery)
+        const matched = browserSoldComparables.filter((comparable, index) => {
+          const evidence = validation.comparableEvidence[index]
+          return comparable.commercialTraceQueryIdentity === taskQuery &&
+            evidence?.eligibleComparable === true &&
+            evidence.pricingAuthorityEligible === true &&
+            ["EXACT_MODEL_COMPARABLE", "NEAR_EXACT_PRODUCT"]
+              .includes(evidence.commercialComparableClass)
+        })
+        nearExactSoldAudit.set(sourceComparableId, { ...audit,
+          query: taskQuery,
+          confirmedSoldQuantity: matched.reduce((sum, comparable) =>
+            sum + (numberOrNull(comparable.confirmedSoldQuantity) ?? 0), 0),
+          lastSoldDate: matched.map((comparable) =>
+            text(comparable.lastSoldDate)).filter(Boolean)
+            .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null,
+          provenance: matched.length ? "CONFIRMED_DURABLE_SOLD"
+            : audit.provenance,
+          matchedSoldComparableIds: matched.map((comparable) =>
+            ebayComparableLegacyItemId(comparable.itemId)).filter(Boolean),
+          result: matched.length ? "VERIFIED_SOLD_FOUND"
+            : "NO_VERIFIED_SOLD_FOUND" })
+      }
+    }
     const byId = new Map<string, EbaySellerComparableInput>()
     for (const comparable of [...activeWithDurable, ...soldComparables,
-      ...nearExactSoldComparables]) {
+      ...nearExactSoldComparables, ...browserSoldComparables]) {
       const key = ebayComparableLegacyItemId(comparable.itemId) ||
         comparable.itemId || `${comparable.source}:${comparable.title}`
       const existing = byId.get(key)
+      if (existing && comparable.durableSoldSourceType ===
+          "EBAY_MAIN_SEARCH_SOLD_BROWSER_CAPTURE") {
+        byId.set(key, { ...existing,
+          price: comparable.price, currency: comparable.currency,
+          sellerUsername: comparable.sellerUsername,
+          confirmedSoldQuantity: comparable.confirmedSoldQuantity,
+          estimatedSoldQuantity: 0,
+          lastSoldDate: comparable.lastSoldDate,
+          soldHistorySource: "CONFIRMED_DURABLE_SOLD",
+          durableSoldSourceType: comparable.durableSoldSourceType,
+          durableSoldSourceClass: comparable.durableSoldSourceClass,
+          realizedPriceStatus: comparable.realizedPriceStatus,
+          shippingCost: comparable.shippingCost,
+          itemEndDate: comparable.itemEndDate,
+          commercialTraceQueryIdentity:
+            comparable.commercialTraceQueryIdentity,
+          commercialTraceAcquisitionPath:
+            comparable.commercialTraceAcquisitionPath })
+        continue
+      }
       byId.set(key, existing && comparable.source ===
           "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
         ? { ...existing, totalSoldQuantity: Math.max(
@@ -1063,9 +1123,12 @@ export async function runEbaySellerKeywordDemandValidation(
     const combinedMaximumExamined = nearExactMaximumExamined +
       maximumExamined + functionalMaximumExamined
     const nearExactAuditRows = [...nearExactSoldAudit.values()]
-    const nearExactPendingCandidateCount = nearExactAuditRows.filter((entry) =>
-      ["NOT_AVAILABLE", "REQUEST_FAILED"].includes(entry.result)).length
-    const nearExactSoldEnrichmentStatus = !selectedNearExactCandidates.length
+    const nearExactPendingCandidateCount = browserSoldEnrichment ? 0
+      : nearExactAuditRows.filter((entry) =>
+        ["NOT_AVAILABLE", "REQUEST_FAILED"].includes(entry.result)).length
+    const nearExactSoldEnrichmentStatus = browserSoldEnrichment
+      ? "COMPLETED" as const
+      : !selectedNearExactCandidates.length
       ? "NOT_REQUIRED" as const
       : nearExactPendingCandidateCount === 0
         ? "COMPLETED" as const
@@ -1081,13 +1144,15 @@ export async function runEbaySellerKeywordDemandValidation(
       enrichedSampleCount: byId.size,
       resolvedCategoryId: categoryId,
       insightsAvailability,
-      durableSoldEvidenceStatus: durableSold.status,
+      durableSoldEvidenceStatus: browserSoldComparables.length
+        ? "AVAILABLE" : durableSold.status,
       nearExactSoldEnrichment: {
         status: nearExactSoldEnrichmentStatus,
         budgetLimit: NEAR_EXACT_SOLD_ENRICHMENT_LIMIT,
         candidateCount: nearExactCandidates.length,
         selectedCandidateCount: selectedNearExactCandidates.length,
-        attemptedCandidateCount: nearExactAttemptedCount,
+        attemptedCandidateCount: browserSoldEnrichment
+          ? browserSoldEnrichment.tasks.length : nearExactAttemptedCount,
         durableSatisfiedCount: nearExactAuditRows.filter((entry) =>
           entry.result === "DURABLE_CONFIRMED").length,
         completedCandidateCount: nearExactAuditRows.length -
