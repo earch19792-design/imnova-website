@@ -10,6 +10,9 @@ import {
   type SellerOsControlPrincipalV1,
 } from "./teo-pre-research-control-oauth-v1"
 import {
+  TEO_PRE_RESEARCH_CONTRACT_V1,
+  TEO_PRE_RESEARCH_MAXIMUM_LIST_ROWS_V1,
+  listTeoPreResearchBatchesV1,
   parseTeoPreResearchGetV1,
   parseTeoPreResearchRequestV1,
   readTeoPreResearchBatchV1,
@@ -22,6 +25,7 @@ export const SELLER_OS_CONTROL_TOOL_NAMES_V1 = Object.freeze([
   "seller_os_request_pre_research_batch",
   "seller_os_get_pre_research_batch",
   "seller_os_resume_pre_research_batch",
+  "seller_os_list_pre_research_batches",
 ] as const)
 
 const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
@@ -32,6 +36,11 @@ const securitySchemes = [{ type: "oauth2" as const,
 const candidate = z.object({ productId: z.string().regex(/^\d{1,30}$/),
   variantId: z.string().regex(/^\d{1,30}$/),
   sku: z.string().min(1).max(160) }).strict()
+const listedBatch = z.object({ batchId: z.string().uuid(),
+  status: z.enum(["REQUESTED", "AUTHORIZED", "RUNNING", "NEEDS_ATTENTION",
+  "COMPLETED", "CANCELLED"]), createdAt: z.string(), updatedAt: z.string(),
+  candidateCount: z.number().int().min(1).max(50),
+  contractVersion: z.literal(TEO_PRE_RESEARCH_CONTRACT_V1) }).strict()
 
 function toolResult(result: unknown, text: string) {
   return { structuredContent: { result }, content: [{ type: "text" as const,
@@ -84,6 +93,22 @@ function createServer(principal: SellerOsControlPrincipalV1) {
     const request = parseTeoPreResearchGetV1(args)
     const result = await resumeTeoPreResearchBatchV1({ ...context(), ...request })
     return toolResult(result, "Seller OS resumed only retry-safe members of the authorized batch.")
+  })
+  server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[3], {
+    title: "List authorized normal Pre-Research batches",
+    description: "Read up to 25 authorized NORMAL Pre-Research V2 batches belonging to the authenticated owner. This performs no mutations.",
+    inputSchema: z.object({}).strict(),
+    outputSchema: z.object({ result: z.object({
+      batches: z.array(listedBatch).max(TEO_PRE_RESEARCH_MAXIMUM_LIST_ROWS_V1),
+      count: z.number().int().min(0).max(TEO_PRE_RESEARCH_MAXIMUM_LIST_ROWS_V1),
+      maximumRows: z.literal(TEO_PRE_RESEARCH_MAXIMUM_LIST_ROWS_V1),
+    }).strict() }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false,
+      idempotentHint: true, openWorldHint: false },
+    _meta: { securitySchemes },
+  }, async () => {
+    const result = await listTeoPreResearchBatchesV1(context())
+    return toolResult(result, `Seller OS returned ${result.count} authorized normal Pre-Research batches.`)
   })
   return server
 }

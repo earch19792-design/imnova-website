@@ -13,6 +13,7 @@ export const TEO_PRE_RESEARCH_CAPABILITY_V1 =
 export const TEO_PRE_RESEARCH_CONTRACT_V1 =
   "LUNA_PRE_RESEARCH_RESULT_V2_2026_09_19" as const
 export const TEO_PRE_RESEARCH_MAXIMUM_CANDIDATES_V1 = 50 as const
+export const TEO_PRE_RESEARCH_MAXIMUM_LIST_ROWS_V1 = 25 as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -233,6 +234,44 @@ export async function requestTeoPreResearchBatchV1(input: Readonly<{
 function numeric(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? number : 0
+}
+
+export async function listTeoPreResearchBatchesV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  principal: TeoPreResearchCommandPrincipalV1
+}>) {
+  const capability = await requireCapability(input)
+  const batchRead = await input.supabase.from("seller_os_pre_research_batches_v1")
+    .select("batch_id,batch_state,created_at,updated_at,candidate_count,contract_version")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("owner_authorization_id", capability.capability_id)
+    .eq("owner_user_id", input.principal.ownerUserId)
+    .eq("command_client_id", input.principal.commandClientId)
+    .eq("contract_version", TEO_PRE_RESEARCH_CONTRACT_V1)
+    .order("created_at", { ascending: false })
+    .limit(TEO_PRE_RESEARCH_MAXIMUM_LIST_ROWS_V1)
+  if (batchRead.error) fail("TEO_PRE_RESEARCH_BATCH_LIST_FAILED")
+  const batches = (batchRead.data ?? []).map((row) => {
+    const batchId = uuid(row.batch_id)
+    const candidateCount = Number(row.candidate_count)
+    const createdAt = typeof row.created_at === "string" ? row.created_at : ""
+    const updatedAt = typeof row.updated_at === "string" ? row.updated_at : ""
+    if (!batchId || !["REQUESTED", "AUTHORIZED", "RUNNING",
+      "NEEDS_ATTENTION", "COMPLETED", "CANCELLED"].includes(row.batch_state) ||
+        !Number.isInteger(candidateCount) || candidateCount < 1 ||
+        candidateCount > TEO_PRE_RESEARCH_MAXIMUM_CANDIDATES_V1 ||
+        row.contract_version !== TEO_PRE_RESEARCH_CONTRACT_V1 ||
+        !createdAt || !updatedAt || !Number.isFinite(Date.parse(createdAt)) ||
+        !Number.isFinite(Date.parse(updatedAt))) {
+      fail("TEO_PRE_RESEARCH_BATCH_LIST_INVALID")
+    }
+    return Object.freeze({ batchId, status: row.batch_state,
+      createdAt, updatedAt, candidateCount,
+      contractVersion: TEO_PRE_RESEARCH_CONTRACT_V1 })
+  })
+  return Object.freeze({ batches: Object.freeze(batches), count: batches.length,
+    maximumRows: TEO_PRE_RESEARCH_MAXIMUM_LIST_ROWS_V1 })
 }
 
 export async function readTeoPreResearchBatchV1(input: Readonly<{
