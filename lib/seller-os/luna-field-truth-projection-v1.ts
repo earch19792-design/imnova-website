@@ -1,12 +1,11 @@
 // Projection only: the existing Luna catalog -> assessment materializer owns
 // truth. No queue, reference listing, package or image fallback is allowed here.
-export const LUNA_FIELD_TRUTH_FIELDS_V1 = Object.freeze([
-  "LUNA_PRODUCT_ID", "LUNA_VARIANT_ID", "SUPPLIER_SKU", "TITLE", "BRAND",
-  "MODEL", "MATERIAL", "COLOR", "DIMENSIONS", "SIZE_SET", "WEIGHT",
-  "PACKAGE_CONTENTS", "QUANTITY_OR_SET_COUNT", "FORM_FACTOR", "FEATURES",
-  "INTENDED_USES", "GTIN", "MPN", "SUPPLIER_COST", "REGULAR_PRICE", "SALE_PRICE",
-  "SUPPLIER_AVAILABILITY", "SUPPLIER_STOCK", "IMAGES", "VARIANT_OPTIONS",
-])
+import { LUNA_FIELD_TRUTH_RECEIPT_FIELDS_V1,
+  LUNA_TRACE_REQUIRED_PRODUCT_TRUTH_FIELDS_V1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
+  "./luna-trace-product-truth-gate-v1.ts"
+
+export const LUNA_FIELD_TRUTH_FIELDS_V1 = LUNA_FIELD_TRUTH_RECEIPT_FIELDS_V1
 type Row = Record<string, unknown>
 function record(value: unknown): Row {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Row : {}
@@ -44,7 +43,10 @@ export function projectLunaFieldTruthV1(value: unknown, now: Date) {
       VALUE: source.VALUE ?? null, EVIDENCE_STATUS: String(source.EVIDENCE_STATUS),
       FRESHNESS: stale ? "STALE" : source.OBSERVED_AT ? "CURRENT" : "UNKNOWN",
       DOWNSTREAM_CONSUMABLE: proven && !stale,
-      DOWNSTREAM_CONSUMERS: ["PRODUCT_TRUTH"] })
+      DOWNSTREAM_CONSUMERS: ["PRODUCT_TRUTH",
+        ...((LUNA_TRACE_REQUIRED_PRODUCT_TRUTH_FIELDS_V1 as readonly string[])
+          .includes(name)
+          ? ["COMMERCIAL_TRACE"] : [])] })
   })
   const status: "CONTRADICTED" | "PROVEN" | "PARTIAL" | "UNPROVEN" = fields.some((f) => f.EVIDENCE_STATUS === "CONTRADICTED") ? "CONTRADICTED"
     : fields.every((f) => f.EVIDENCE_STATUS === "PROVEN" && f.FRESHNESS !== "STALE") ? "PROVEN"

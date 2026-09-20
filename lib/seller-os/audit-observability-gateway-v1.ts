@@ -8,6 +8,9 @@ import { createProductCaseReadBudgetV1, ProductCaseCriticalReadFailureV1,
   type ProductCaseReadBudgetV1 } from "./product-case-read-budget-v1"
 import { readKeywordDecisionHandoffV1, consumeListingPackageKeywordHandoffV1, type KeywordBindingV1 } from "./keyword-intelligence-handoff-v1"
 import { envelopeFromProductCaseV1 } from "./listing-commercial-envelope-v1"
+import { evaluateLunaTraceProductTruthGateV1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
+  "./luna-trace-product-truth-gate-v1.ts"
 import { buildCanonicalLunaSkuIdentityV1 } from "../ebay/seller-os-structured-product-identity-v1"
 
 export const SELLER_OS_AUDIT_OBSERVABILITY_GATEWAY_V1 =
@@ -199,6 +202,18 @@ async function resolveLatestCompleteLunaSnapshotIdentity(input: Readonly<{
   })
   if (canonical.status !== "PROVEN") return { found: true as const,
     contradiction: "LUNA_SOURCE_IDENTITY_BLOCKED" as const }
+  const productVariantsRead = await budget.read({
+    dependency: "IDENTITY_LUNA_SINGLE_VARIANT",
+    authority: "luna_catalog_snapshot_variants_v1",
+    retrySafety: "READ_ONLY_IDEMPOTENT_CRITICAL_IDENTITY",
+    query: () => input.supabase.from("luna_catalog_snapshot_variants_v1")
+      .select("variant_id").eq("snapshot_id", snapshotId)
+      .eq("product_id", canonical.productId).order("variant_id").limit(2),
+  })
+  const productVariants = rows(productVariantsRead.data)
+  const exactSingleVariantBinding = !productVariantsRead.error &&
+    productVariants.length === 1 &&
+    text(productVariants[0].variant_id, 180) === canonical.variantId
   const fieldTruth = record(row.field_truth_v1)
   const fieldTruthPresent = Object.keys(fieldTruth).length > 0
   const fieldTruthBound = fieldTruth.contractVersion ===
@@ -226,12 +241,16 @@ async function resolveLatestCompleteLunaSnapshotIdentity(input: Readonly<{
       source_observed_at: row.observed_at ?? null,
       source_fingerprint: text(row.source_fingerprint, 180),
       source_snapshot_id: snapshotId,
+      source_canonical_url: text(row.canonical_url, 2_000),
+      source_exact_single_variant_binding: exactSingleVariantBinding,
       assessment: { structuredProductIdentity: row.identity_result,
         ...(fieldTruthBound ? { productTruth: { fieldTruthV1: fieldTruth } } : {}),
         preflightStatus, preflightReasons: row.preflight_reasons ?? [] } },
     identitySource: { authority: "luna_catalog_snapshot_variants_v1",
       snapshotId, observedAt: row.observed_at ?? snapshot.snapshot_completed_at,
       preflightStatus, sourceFingerprint: text(row.source_fingerprint, 180),
+      canonicalUrl: text(row.canonical_url, 2_000),
+      exactSingleVariantBinding,
       identityEngineVersion: text(snapshot.identity_engine_version, 120),
       preflightContractVersion: text(snapshot.preflight_contract_version, 120) } }
 }
@@ -492,7 +511,29 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   const assessment = record(queue.assessment)
   const productTruth = record(first(assessment.productTruth,
     assessment.productTruthV1, assessment.lunaProductTruthV1))
-  const lunaTruth = projectLunaFieldTruthV1(productTruth.fieldTruthV1, now)
+  const fieldTruthReceipt = productTruth.fieldTruthV1
+  const lunaTruth = projectLunaFieldTruthV1(fieldTruthReceipt, now)
+  const traceProductTruth = evaluateLunaTraceProductTruthGateV1({
+    receipt: fieldTruthReceipt,
+    binding: {
+      snapshotId: text(first(identitySource?.snapshotId,
+        queue.source_snapshot_id), 120),
+      productId: text(queue.supplier_product_id, 180),
+      variantId: text(queue.supplier_variant_id, 180),
+      supplierSku: text(queue.supplier_sku, 180),
+      sourceFingerprint: text(first(identitySource?.sourceFingerprint,
+        queue.source_fingerprint), 180),
+      canonicalUrl: text(first(identitySource?.canonicalUrl,
+        queue.source_canonical_url), 2_000),
+      exactSingleVariantBinding: first(
+        identitySource?.exactSingleVariantBinding,
+        queue.source_exact_single_variant_binding) === true,
+      supplierCost: numberValue(queue.supplier_price),
+      supplierAvailability: typeof queue.supplier_available === "boolean"
+        ? queue.supplier_available : null,
+    },
+    now,
+  })
   const brandAuthority = lunaTruth.unsupportedDownstreamValues.some(v=>record(v).FIELD==='BRAND' && record(v).DOWNSTREAM_VALUE==='Unbranded')
     ? await readPublicationBrandAuthorityV1({supabase:input.supabase,accountKey:input.accountKey,opportunity:queue,aspects:{Brand:'Unbranded'},now}) : null
   const unsupportedDownstream = brandAuthority?.supported ? lunaTruth.unsupportedDownstreamValues.filter(v=>
@@ -736,6 +777,8 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     else groups.UNPROVEN.push(truth.FIELD)
   }
   const firstBlocker = orderedJourney.find((stage) =>
+    !(stage.STAGE === "PRODUCT_TRUTH" &&
+      traceProductTruth.traceProductTruthSufficient) &&
     stage.STATUS !== "PROVEN" && stage.STATUS !== "NOT_APPLICABLE")
   const blocker = firstBlocker?.STAGE ?? null
   const impact = blocker === "ANALYTICS" ? "LEARNING_BLINDNESS"
@@ -773,6 +816,10 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     PRODUCT_TRUTH_COMPLETENESS: { STATUS: lunaTruth.status,
       FIELD_TRUTH_CONTRACT_VERSION: lunaTruth.contractVersion,
       COUNTS: lunaTruth.counts, EVIDENCE_ID: lunaTruth.evidenceDigest },
+    TRACE_PRODUCT_TRUTH: traceProductTruth,
+    TRACE_PRODUCT_TRUTH_SUFFICIENT:
+      traceProductTruth.traceProductTruthSufficient ? "YES" : "NO",
+    TRACE_COMPATIBILITY: traceProductTruth.traceCompatible ? "YES" : "NO",
     PUBLICATION_REVISION_STATUS: publisherRevision,
     UNSUPPORTED_DOWNSTREAM_VALUES: unsupportedDownstream,
     MARKETPLACE_POLICY_VALUES: brandAuthority?.supported ? [brandAuthority] : [],

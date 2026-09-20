@@ -72,6 +72,7 @@ await db.query(`insert into luna_catalog_snapshot_variants_v1(
     catalogSnapshotId,JSON.stringify({body_html:'<p>Material: Nylon</p>'}),
     `sha256:${'c'.repeat(64)}`,'2026-09-20T18:00:00Z'])
 await db.exec(await readFile(new URL('../supabase/migrations/20260920203000_luna_catalog_product_truth_materialization_v1.sql',import.meta.url),'utf8'))
+await db.exec(await readFile(new URL('../supabase/migrations/20260920210000_luna_body_html_trace_truth_binding_v1.sql',import.meta.url),'utf8'))
 async function derive(product=p,snapshot=s,pkg={}) {
   return (await db.query('select derive_luna_field_truth_v1($1::jsonb,$2::jsonb,$3::jsonb,$4::jsonb) r',
     [product,snapshot,expected,pkg].map(JSON.stringify))).rows[0].r
@@ -107,6 +108,46 @@ assert.equal(f('FEATURES',multiline).SEMANTIC_CLASS,'SUPPLIER_CLAIM')
 assert.deepEqual(f('FEATURES',multiline).VALUE,['Finish: Rust resistant'])
 assert.equal(multiline.unsupportedDownstreamValues[0].FIELD,'BRAND')
 console.log('PASS_MULTILINE_CLAIMS_AND_PACKAGE_ASPECT_DIAGNOSTIC')
+const item6952Markup=await derive({...p,title:
+  'CFS Replacement Water Filters 7pk For Watts Premier WPRL-58',body_html:`
+  <p><strong>Key Features:</strong></p>
+  <ul><li>Reduces chlorine taste and odor</li><li>Tool-free replacement</li></ul>
+  <p><strong>What’s Included:</strong></p>
+  <ul><li>2 × membrane filters</li><li>4 × pre-filters</li><li>1 × post-filter</li></ul>
+  <p><strong>Perfect For:</strong><br>Watts Premier reverse-osmosis systems.</p>
+  <p>Complete 7‑pack replacement filter kit.</p>`})
+pass('PASS_REAL_LUNA_STRONG_LIST_MARKUP',()=>{
+  assert.equal(f('FEATURES',item6952Markup).SEMANTIC_CLASS,'SUPPLIER_CLAIM')
+  assert.equal(f('QUANTITY_OR_SET_COUNT',item6952Markup).VALUE,7)
+  assert.deepEqual(f('PACKAGE_CONTENTS',item6952Markup).VALUE.map(x=>x.NORMALIZED_VALUE),
+    ['2 × membrane filters','4 × pre-filters','1 × post-filter'])
+  assert.deepEqual(f('INTENDED_USES',item6952Markup).VALUE,
+    ['Watts Premier reverse-osmosis systems.'])
+})
+const item5789Markup=await derive({...p,title:
+  'Hot and Cold Insulated Bags for Food Delivery / Grocery / Thermal Bag',body_html:`
+  <p><strong>Triple-Layer Insulation</strong> – Keeps food hot or cold.</p>
+  <p>Built with a durable aluminum exterior, waterproof EPE insulation, and a non-toxic PE inner lining for reliable transport.</p>
+  <p>This reusable bag is perfect for grocery runs, beach trips, picnics, lunches, and everyday use.</p>`})
+pass('PASS_REAL_LUNA_STRONG_LEAD_AND_EXPLICIT_CLAUSES',()=>{
+  assert.equal(f('MATERIAL',item5789Markup).VALUE,
+    'durable aluminum exterior, waterproof EPE insulation, and a non-toxic PE inner lining')
+  assert.equal(f('MATERIAL',item5789Markup).SEMANTIC_CLASS,'FACT')
+  assert.equal(f('FEATURES',item5789Markup).SEMANTIC_CLASS,'SUPPLIER_CLAIM')
+  assert.equal(f('INTENDED_USES',item5789Markup).SEMANTIC_CLASS,'FACT')
+  assert.equal(f('DIMENSIONS',item5789Markup).SEMANTIC_CLASS,'MISSING')
+  assert.equal(f('PACKAGE_CONTENTS',item5789Markup).SEMANTIC_CLASS,'MISSING')
+  assert.equal(f('QUANTITY_OR_SET_COUNT',item5789Markup).SEMANTIC_CLASS,'MISSING')
+  assert.equal(item5789Markup.counts.inferred,0)
+})
+const ambiguousMarkup=await derive({...p,title:'Reusable thermal bag',body_html:
+  '<p>Premium material and versatile enough for almost anything.</p>'})
+pass('PASS_AMBIGUOUS_PROSE_REMAINS_MISSING',()=>{
+  assert.equal(f('MATERIAL',ambiguousMarkup).SEMANTIC_CLASS,'MISSING')
+  assert.equal(f('INTENDED_USES',ambiguousMarkup).SEMANTIC_CLASS,'MISSING')
+  assert.equal(f('FEATURES',ambiguousMarkup).SEMANTIC_CLASS,'MISSING')
+  assert.equal(ambiguousMarkup.counts.inferred,0)
+})
 pass('PASS_IMAGE_PROVENANCE_PRESERVED',()=>{
   assert.deepEqual(f('IMAGES').VALUE.map(x=>x.SOURCE_IMAGE_URL),p.image_urls)
   assert.equal(f('IMAGES').VALUE[0].VARIANT_ASSOCIATION_IF_PROVEN,null)

@@ -12,6 +12,9 @@ import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from
 import { buildCommercialDecisionLoopSnapshotV1_1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
   "./seller-os-commercial-decision-loop-v1-1.ts"
+import { evaluateLunaTraceProductTruthGateV1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit suffix.
+  "../seller-os/luna-trace-product-truth-gate-v1.ts"
 
 export const SELLER_OS_LIVE_COMMERCIAL_TRACE_V1 =
   "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1" as const
@@ -57,6 +60,53 @@ function safeCode(error: unknown) {
   const message = error instanceof Error ? error.message : ""
   return /^[A-Z][A-Z0-9_]{2,119}$/.test(message)
     ? message : "LIVE_COMMERCIAL_TRACE_STAGE_FAILED"
+}
+
+export async function readCanonicalTraceProductTruthV1(input: Readonly<{
+  supabase: SupabaseClient
+  canonicalUrl: string
+  now?: Date
+}>) {
+  const latest = await input.supabase.from("luna_catalog_snapshots_v1")
+    .select("snapshot_id,snapshot_completed_at")
+    .eq("snapshot_status", "COMPLETE")
+    .order("snapshot_completed_at", { ascending: false }).limit(1)
+    .maybeSingle()
+  if (latest.error || !latest.data) throw new Error(
+    "LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_READ_FAILED")
+  const snapshotId = String(latest.data.snapshot_id ?? "")
+  const variants = await input.supabase.from("luna_catalog_snapshot_variants_v1")
+    .select("snapshot_id,product_id,variant_id,sku,canonical_url,title,price,availability,source_fingerprint,preflight_status,field_truth_v1")
+    .eq("snapshot_id", snapshotId).eq("canonical_url", input.canonicalUrl)
+    .order("variant_id").limit(3)
+  if (variants.error) throw new Error(
+    "LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_READ_FAILED")
+  const rows = Array.isArray(variants.data) ? variants.data.map(record) : []
+  if (rows.length !== 1) throw new Error(
+    "LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_VARIANT_AMBIGUOUS")
+  const row = rows[0]
+  if (row.preflight_status !== "PREFLIGHT_PASS") throw new Error(
+    "LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_INSUFFICIENT")
+  const gate = evaluateLunaTraceProductTruthGateV1({
+    receipt: row.field_truth_v1,
+    binding: {
+      snapshotId,
+      productId: text(row.product_id, 180),
+      variantId: text(row.variant_id, 180),
+      supplierSku: text(row.sku, 180),
+      sourceFingerprint: text(row.source_fingerprint, 180),
+      canonicalUrl: text(row.canonical_url, 2_000),
+      exactSingleVariantBinding: true,
+      supplierCost: number(row.price),
+      supplierAvailability: typeof row.availability === "boolean"
+        ? row.availability : null,
+    },
+    now: input.now,
+  })
+  if (!gate.traceProductTruthSufficient) throw new Error(
+    "LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_INSUFFICIENT")
+  return Object.freeze({ snapshotId, row, gate,
+    receipt: record(row.field_truth_v1) })
 }
 
 export function detectCommercialClaimConflictsV1(product: Readonly<{
@@ -811,6 +861,25 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
   marketReader?: MarketReaderV1
 }>) {
   const canonicalUrl = parseDirectedLunaProductUrl(input.productUrl).canonicalUrl
+  const productTruth = await readCanonicalTraceProductTruthV1({
+    supabase: input.supabase, canonicalUrl,
+  })
+  const product = await fetchDirectedLunaProduct(canonicalUrl,
+    input.fetchImpl ?? fetch)
+  if (product.variants.length !== 1) throw new Error(
+    "LIVE_COMMERCIAL_TRACE_VARIANT_AMBIGUOUS")
+  const variant = product.variants[0]
+  const required = new Map(productTruth.gate.fields.map((field) =>
+    [field.field, field.value]))
+  if (product.productId !== required.get("LUNA_PRODUCT_ID") ||
+      variant.id !== required.get("LUNA_VARIANT_ID") ||
+      variant.sku !== required.get("SUPPLIER_SKU") ||
+      product.title !== required.get("TITLE") ||
+      variant.sourceUnitPrice !== required.get("SUPPLIER_COST") ||
+      (variant.available ? "AVAILABLE" : "OUT_OF_STOCK") !==
+        required.get("SUPPLIER_AVAILABILITY")) {
+    throw new Error("LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_LIVE_BINDING_INVALID")
+  }
   const start = await input.supabase.from("seller_os_live_commercial_traces_v1")
     .insert({ account_key: input.accountKey, product_url: canonicalUrl,
       started_by: input.actorUserId ?? null }).select("trace_id").single()
@@ -833,13 +902,10 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
   }
   try {
     await emit("PRODUCT_TRUTH", "RUNNING",
-      "Seller OS está leyendo la ficha pública exacta de Luna; no usa conclusiones humanas previas.",
-      { source: "LUNA_PUBLIC_READ_ONLY_PRODUCT_JSON", productUrl: canonicalUrl })
-    const product = await fetchDirectedLunaProduct(canonicalUrl,
-      input.fetchImpl ?? fetch)
-    if (product.variants.length !== 1) throw new Error(
-      "LIVE_COMMERCIAL_TRACE_VARIANT_AMBIGUOUS")
-    const variant = product.variants[0]
+      "Seller OS está validando la ficha pública contra el recibo durable exacto de Product Truth.",
+      { source: "LUNA_FIELD_PRODUCT_TRUTH_V1", productUrl: canonicalUrl,
+        evidenceDigest: productTruth.gate.receiptEvidenceDigest,
+        sourceSnapshotId: productTruth.snapshotId })
     await emit("PRODUCT_TRUTH", "PASS",
       `Identidad exacta encontrada: ${product.title}; variante ${variant.title}; SKU ${variant.sku}.`,
       { productId: product.productId, variantId: variant.id,
@@ -847,7 +913,9 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         gtin: variant.sourceUnitBarcode, productType: product.productType,
         variantTitle: variant.title, imageCount: product.imageUrls.length,
         sourceMode: product.sourceMode, sourceParserVersion:
-          product.sourceParserVersion, rawHtmlPersisted: false })
+          product.sourceParserVersion, rawHtmlPersisted: false,
+        traceProductTruthGate: productTruth.gate,
+        fieldTruthEvidenceDigest: productTruth.gate.receiptEvidenceDigest })
 
     const conflicts = detectCommercialClaimConflictsV1(product)
     const safeClaimTruth = buildConservativeSafeClaimSubsetV1({ ...product,
@@ -1132,7 +1200,9 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         variantTitle: variant.title, gtin: variant.sourceUnitBarcode,
         model: safeClaimTruth.safeClaims.find((entry) =>
           entry.kind === "MODEL")?.value ?? null,
-        productType: product.productType, imageCount: product.imageUrls.length },
+        productType: product.productType, imageCount: product.imageUrls.length,
+        fieldTruthV1: productTruth.receipt,
+        traceProductTruthGate: productTruth.gate },
       CLAIM_CONFLICTS: conflicts,
       SAFE_CLAIM_SUBSET: safeClaimTruth.safeClaims,
       DO_NOT_USE_CLAIMS: safeClaimTruth.doNotUseClaims,
