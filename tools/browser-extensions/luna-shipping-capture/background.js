@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.56"
+const EXTENSION_BUILD_VERSION = "1.0.57"
 const WORKER_CONTROL_ALARM = "seller-os-luna-shipping-worker-control-v1"
 const JOB_TIMEOUT_ALARM = "seller-os-luna-shipping-job-timeout-v1"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
@@ -737,7 +737,8 @@ function jobValidationReason(value) {
     owner === identity ? "identity." : owner === destination ? "destination." : ""}${field}`
   if (typeof job.captureSessionId !== "string" || typeof job.nonce !== "string" ||
       typeof job.snapshotDigest !== "string" ||
-      typeof job.productName !== "string" || typeof job.salePriceUsd !== "number" ||
+      typeof job.productName !== "string" ||
+      (job.salePriceUsd !== null && typeof job.salePriceUsd !== "number") ||
       typeof job.supplierCostUsd !== "number") return "JOB_INVALID_TYPE:job"
   if (typeof identity.candidateId !== "string" ||
       typeof identity.canonicalProductUrl !== "string" ||
@@ -775,7 +776,8 @@ function jobValidationReason(value) {
       !/^\d{5}(?:-\d{4})?$/.test(destination.postalCode)) {
     return "JOB_INVALID_TYPE:destination"
   }
-  if (!Number.isFinite(job.salePriceUsd) || job.salePriceUsd <= 0 ||
+  if ((job.salePriceUsd !== null &&
+      (!Number.isFinite(job.salePriceUsd) || job.salePriceUsd <= 0)) ||
       !Number.isFinite(job.supplierCostUsd) || job.supplierCostUsd < 0 ||
       job.productName.trim().length < 2 || job.productName.length > 240) {
     return "JOB_INVALID_TYPE:commercialFacts"

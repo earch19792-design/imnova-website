@@ -692,8 +692,7 @@ async function resolveCommercialTraceShippingAuthoritiesV1(input: Readonly<{
         gate.traceProductTruthSufficient !== true ||
         gate.receiptEvidenceDigest !== fieldTruthEvidenceDigest ||
         truth.productId !== productId || truth.variantId !== variantId ||
-        truth.supplierSku !== supplierSku || salePriceUsd === null ||
-        salePriceUsd <= 0) continue
+        truth.supplierSku !== supplierSku) continue
     const prior = await readCommercialTraceShippingReceiptV1({
       supabase: input.supabase, accountKey: input.accountKey, traceId,
       lunaProductId: productId, lunaVariantId: variantId, supplierSku,
@@ -2025,6 +2024,9 @@ function persistedFrontier(input: Readonly<{
     ...previousWithoutDigest } = previous
   const economics = input.certified.economics
   const quote = input.certified.quote
+  if (!economics) {
+    throw new Error("LUNA_SHIPPING_FRONTIER_ECONOMICS_REQUIRED")
+  }
   const marketTest = record(previous.quickPickMarketTestV1)
   const marketTestEligible = marketTest.contractVersion ===
       "LUNA_QUICK_PICK_MARKET_TEST_PATH_V1" &&

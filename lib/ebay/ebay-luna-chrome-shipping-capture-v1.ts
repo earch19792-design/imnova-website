@@ -225,7 +225,7 @@ export type LunaChromeShippingJobV1 = Readonly<{
   snapshotDigest: string
   identity: LunaShippingIdentityV1
   destination: LunaShippingDestinationV1
-  salePriceUsd: number
+  salePriceUsd: number | null
   supplierCostUsd: number
   productName: string
   economicRefresh?: Readonly<{
@@ -449,13 +449,15 @@ export function normalizeLunaChromeShippingJobV1(
 ) : LunaChromeShippingJobV1 {
   const identity = normalizeIdentity(input.identity)
   const destination = normalizeLunaChromeShippingDestinationV1(input.destination)
-  const salePriceUsd = money(input.salePriceUsd)
+  const salePriceUsd = input.salePriceUsd === null
+    ? null : money(input.salePriceUsd)
   const supplierCostUsd = money(input.supplierCostUsd)
   const productName = safeProductName(input.productName)
   if (input.contractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION ||
       !UUID.test(input.captureSessionId) || !NONCE.test(input.nonce) ||
       !SHA256.test(input.snapshotDigest) ||
-      salePriceUsd === null || salePriceUsd <= 0 ||
+      (input.salePriceUsd !== null &&
+        (salePriceUsd === null || salePriceUsd <= 0)) ||
       supplierCostUsd === null || productName === null) {
     throw new Error("LUNA_SHIPPING_EXTENSION_JOB_INVALID")
   }
@@ -542,11 +544,12 @@ export function certifyLunaChromeShippingVisibleCaptureV1(input: Readonly<{
     destinationProfileDigest: job.destination.profileDigest,
     noPurchase: true as const, noPayment: true as const,
   })
-  const economicsResult = calculateEbayUnitEconomics({
-    salePrice: job.salePriceUsd,
-    supplierCost: job.supplierCostUsd,
-  }, { estimatedOutboundShipping: shippingUsd })
-  const economics = Object.freeze({
+  const economicsResult = job.salePriceUsd === null ? null
+    : calculateEbayUnitEconomics({
+      salePrice: job.salePriceUsd,
+      supplierCost: job.supplierCostUsd,
+    }, { estimatedOutboundShipping: shippingUsd })
+  const economics = economicsResult === null ? null : Object.freeze({
     status: economicsResult.ready && economicsResult.passesProfitGate
       ? "PROVEN_PROFITABLE" as const : "PROVEN_UNPROFITABLE" as const,
     contributionProfitUsd: economicsResult.estimatedNetProfit,

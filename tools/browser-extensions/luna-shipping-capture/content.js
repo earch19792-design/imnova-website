@@ -4,7 +4,7 @@ const CHECKOUT_OBSERVATION_ONLY = false
 const checkoutBootstrapAckPromise = CHECKOUT_OBSERVATION_ONLY ? Promise.resolve(false) : new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.56" },
+      extensionBuildVersion: "1.0.57" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -96,7 +96,8 @@ function jobValidationReason(value) {
   ]) if (!(field in owner)) return `JOB_MISSING_FIELD:${
     owner === identity ? "identity." : owner === destination ? "destination." : ""}${field}`
   if (typeof job.captureSessionId !== "string" || typeof job.nonce !== "string" ||
-      typeof job.productName !== "string" || typeof job.salePriceUsd !== "number" ||
+      typeof job.productName !== "string" ||
+      (job.salePriceUsd !== null && typeof job.salePriceUsd !== "number") ||
       typeof job.supplierCostUsd !== "number") return "JOB_INVALID_TYPE:job"
   if (typeof identity.candidateId !== "string" ||
       typeof identity.canonicalProductUrl !== "string" ||
@@ -128,7 +129,8 @@ function jobValidationReason(value) {
       !/^sha256:[0-9a-f]{64}$/.test(destination.profileDigest) ||
       destination.country !== "US" || !/^[A-Z]{2}$/.test(destination.province) ||
       !/^\d{5}(?:-\d{4})?$/.test(destination.postalCode) ||
-      !Number.isFinite(job.salePriceUsd) || job.salePriceUsd <= 0 ||
+      (job.salePriceUsd !== null &&
+        (!Number.isFinite(job.salePriceUsd) || job.salePriceUsd <= 0)) ||
       !Number.isFinite(job.supplierCostUsd) || job.supplierCostUsd < 0 ||
       job.productName.trim().length < 2 || job.productName.length > 240) {
     return "JOB_INVALID_TYPE:job"
@@ -2071,7 +2073,7 @@ chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
   if (message?.type === "SELLER_OS_LUNA_CHECKOUT_OBSERVER_HELLO_V1") {
     if (location.hostname !== "shop.app" || typeof message.nonce !== "string") return false
     sendResponse({ contract: "LUNA_CHECKOUT_OBSERVER_HANDSHAKE_V1", nonce: message.nonce,
-      version: "1.0.56", loaded: true })
+      version: "1.0.57", loaded: true })
     return false
   }
   if (message?.type === BIND_ELIGIBILITY_PROBE) {

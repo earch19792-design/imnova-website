@@ -1276,7 +1276,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
     ])
     const certificationPass = market.everyObservedComparableAccountedFor &&
       market.samplingSufficientBeforeDemandUnproven &&
-      safeClaimTruth.identitySufficient &&
+      productTruth.gate.traceProductTruthSufficient &&
       shipping?.noPurchase === true && shipping.noCredentials === true
     const recommendedTitle = market.finalEbayTitle
     const itemSpecifics = safeClaimTruth.safeClaims.filter((entry) =>
@@ -1293,7 +1293,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
     })
     const decisionLoop = buildCommercialDecisionLoopSnapshotV1_1({
       analysisComplete: true, finalDecision: decision.finalDecision,
-      productTruthSufficient: safeClaimTruth.identitySufficient,
+      productTruthSufficient: productTruth.gate.traceProductTruthSufficient,
       safeClaimsPresent: safeClaimTruth.safeClaims.length > 0,
       stockValid: variant.available,
       shippingQty1Fresh: Boolean(shipping),
