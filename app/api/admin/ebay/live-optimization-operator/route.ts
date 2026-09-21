@@ -69,6 +69,8 @@ import {
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 import { nextAuthorizedTeoPreResearchPlanV1 } from
   "@/lib/ebay/teo-pre-research-control-plane-v1"
+import { nextCurrentPackageKeywordPlanV1 } from
+  "@/lib/seller-os/current-keyword-continuation-v2-1"
 import {
   claimCommercialTracePricingEnrichmentV1,
   completeCommercialTracePricingEnrichmentV1,
@@ -577,6 +579,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, result,
         safety: { globalQueueFallback: 0, marketplaceWrites: 0,
           priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "GET_NEXT_CURRENT_PACKAGE_KEYWORD_PLAN") {
+    if (auth.validation.accessRole !== SELLER_OS_ACCESS_ROLES.owner) {
+      return NextResponse.json({ success: false, error: "CURRENT_KEYWORD_OWNER_REQUIRED" },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } })
+    }
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await nextCurrentPackageKeywordPlanV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { globalQueueFallback: 0, marketplaceWrites: 0, priceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {
       return NextResponse.json({ success: false, error: safeCode(error) },

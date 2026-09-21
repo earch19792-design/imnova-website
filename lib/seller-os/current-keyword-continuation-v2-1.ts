@@ -18,6 +18,72 @@ import {
 export const CURRENT_FACTORY_KEYWORD_CONTINUATION_V2_1 =
   "CURRENT_FACTORY_KEYWORD_CONTINUATION_V2_1" as const
 
+/** Read-only selection; the existing browser lease/claim RPC remains authority.
+ * Only canonical CURRENT_ONLY draft packages qualify, never the global queue.
+ */
+export async function nextCurrentPackageKeywordPlanV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  now?: Date
+}>) {
+  const now = (input.now ?? new Date()).getTime()
+  const waiting = await input.supabase.from("ebay_current_listing_packages_v1")
+    .select("id").eq("account_key", input.accountKey).eq("status", "draft")
+    .eq("package_data->preparationStatus->>keyword", "WAITING_FOR_CANONICAL_KEYWORD_HANDOFF")
+    .order("created_at", { ascending: true }).limit(25)
+  if (waiting.error) throw new Error("CURRENT_KEYWORD_PACKAGE_READ_FAILED")
+  if (!waiting.data?.length) return { planId: null, listingPackageId: null,
+    globalQueueFallback: false, marketplaceWrites: 0 }
+  const plans = await input.supabase.from("marketplace_product_research_query_plans")
+    .select("id,marketplace_account_key,current_listing_package_id,source_opportunity_id,source_candidate_key,source_luna_product_id,subject_supplier_variant_id,source_supplier_sku,worker_lease_expires_at,worker_next_retry_at")
+    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+    .eq("source_context", "QUICK_PICK_RESEARCH_REQUIRED").eq("status", "ACTIVE")
+    .in("current_listing_package_id", waiting.data.map((pkg) => pkg.id))
+    .not("current_listing_package_id", "is", null).lt("worker_claim_count", 5)
+    .order("created_at", { ascending: true }).limit(25)
+  if (plans.error) throw new Error("CURRENT_KEYWORD_SELECTION_READ_FAILED")
+  for (const plan of plans.data ?? []) {
+    if ([plan.worker_lease_expires_at, plan.worker_next_retry_at].some(
+      (value) => value !== null && value !== undefined &&
+        (!Number.isFinite(Date.parse(String(value))) || Date.parse(String(value)) > now))) continue
+    const [pkg, opportunity, task] = await Promise.all([
+      input.supabase.from("ebay_current_listing_packages_v1")
+        .select("id,account_key,opportunity_id,candidate_key,status,package_data")
+        .eq("id", plan.current_listing_package_id).eq("account_key", input.accountKey)
+        .eq("status", "draft").maybeSingle(),
+      input.supabase.from("ebay_luna_opportunity_queue")
+        .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,product_title,assessment")
+        .eq("id", plan.source_opportunity_id).eq("candidate_key", plan.source_candidate_key)
+        .maybeSingle(),
+      input.supabase.from("marketplace_product_research_query_tasks").select("id")
+        .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
+        .eq("marketplace", "EBAY_US").eq("status", "PENDING").limit(1),
+    ])
+    if (pkg.error || opportunity.error || task.error) {
+      throw new Error("CURRENT_KEYWORD_BINDING_READ_FAILED")
+    }
+    if (!pkg.data || !opportunity.data || !task.data?.length) continue
+    if (record(record(pkg.data.package_data).preparationStatus).keyword !==
+        "WAITING_FOR_CANONICAL_KEYWORD_HANDOFF") continue
+    const identity = projectCurrentFactoryKeywordIdentityV2_1({
+      listingPackage: pkg.data, opportunity: opportunity.data,
+    })
+    if (!identity.exact || pkg.data.account_key !== input.accountKey ||
+        plan.marketplace_account_key !== input.accountKey ||
+        identity.opportunityId !== plan.source_opportunity_id ||
+        identity.candidateKey !== plan.source_candidate_key ||
+        identity.productId !== plan.source_luna_product_id ||
+        identity.variantId !== plan.subject_supplier_variant_id ||
+        identity.supplierSku !== plan.source_supplier_sku ||
+        record(record(pkg.data.package_data).currentPublicationFactoryV1)
+          .publicationAuthorized !== false) continue
+    return { planId: plan.id, listingPackageId: pkg.data.id,
+      globalQueueFallback: false, marketplaceWrites: 0 }
+  }
+  return { planId: null, listingPackageId: null,
+    globalQueueFallback: false, marketplaceWrites: 0 }
+}
+
 type JsonRecord = Record<string, unknown>
 
 function text(value: unknown, maximum = 350) {

@@ -286,6 +286,9 @@ export function buildLunaExactProductEvidenceSetV1(input: Readonly<{
     lunaProductId: text(input.opportunity.supplier_product_id, 30),
     lunaVariantId: text(input.opportunity.supplier_variant_id, 30),
     supplierSku: text(input.opportunity.supplier_sku, 120),
+    sourceSnapshotId: exactIdentity ? text(row?.snapshot_id, 80) || null : null,
+    sourceFingerprint: exactIdentity ? text(row?.source_fingerprint, 80) || null : null,
+    catalogObservedAt: exactIdentity ? text(row?.captured_at, 80) || null : null,
     title,
     variantTitle,
     description,
@@ -417,6 +420,7 @@ export type LunaFullPageRequiredFactResolutionV1 = Readonly<{
   evidenceEntailsValue: true
   materialConflict: false
   factInvented: false
+  semanticClass?: "SUPPLIER_CLAIM"
   fullPageGapDiagnostic: "CAPTURED_BUT_NOT_EXTRACTED" |
     "EXTRACTED_BUT_NOT_PROMOTED_TO_PRODUCT_TRUTH" |
     "SEMANTIC_MAPPING_GAP"
@@ -450,6 +454,27 @@ export function resolveLunaFullPageRequiredFactV1(input: Readonly<{
   const aspectHasMaterialConflict = input.evidence.sourceConflicts.some(
     (conflict) => conflict.affectedFacts.some((name) => key(name) === aspect))
   if (aspectHasMaterialConflict) return null
+  // A supplier's explicit compatibility target is not the product's Brand or
+  // own Model. Accept only a single terminal target with a model code; never
+  // turn intended-use prose, negation, or a list of possible targets into it.
+  if (aspect === "compatible model") {
+    const evidence = input.evidence
+    if (/\b(?:not|except|excluding|incompatible)\b/iu.test(
+      `${evidence.title} ${evidence.description}`)) return null
+    const match = evidence.title.match(
+      /\b(?:compatible\s+with|for)\s+((?:[A-Za-z][A-Za-z'&-]*\s+){0,3}[A-Za-z0-9][A-Za-z0-9-]{1,39})\s*$/iu,
+    )
+    const target = match?.[1]
+    const code = target?.split(/\s+/).at(-1) ?? ""
+    if (!match || !target || !/[A-Za-z]/.test(code) || !/\d/.test(code)
+        || /\b(?:and|or|with|without)\b/iu.test(target)) return null
+    const value = officialValue({ proposed: target,
+      freeTextAllowed: input.freeTextAllowed, allowedValues: input.allowedValues,
+      allowedValuesComplete: input.allowedValuesComplete, maxLength: input.maxLength })
+    return value ? result({ value, source: "EXPLICIT_LUNA_EVIDENCE",
+      sourceField: "TITLE", sourceExcerpt: match[0],
+      semanticClass: "SUPPLIER_CLAIM" }) : null
+  }
   const exactImageFact = input.evidence.imageExactFacts.find((fact) =>
     key(fact.specificName) === aspect)
   if (exactImageFact) {

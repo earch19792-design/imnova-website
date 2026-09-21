@@ -249,6 +249,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     sourceField?: string | null
     sourceExcerpt?: string | null
     fullPageGapDiagnostic?: string | null
+    semanticClass?: string | null
   }>> = {}
   for (const aspect of resolutionAspects) {
     const requestedName = aspect.name
@@ -259,6 +260,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     let sourceField: string | null = null
     let sourceExcerpt: string | null = null
     let fullPageGapDiagnostic: string | null = null
+    let semanticClass: string | null = null
     const priorEntry = Object.entries(provenProductValues).find(([name]) =>
       aspectKey(name) === requestedAspectKey)
     const prior = priorEntry?.[1]
@@ -294,6 +296,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
         sourceExcerpt = text(priorResolution.sourceExcerpt, 500) || null
         fullPageGapDiagnostic = text(
           priorResolution.fullPageGapDiagnostic, 120) || null
+        semanticClass = text(priorResolution.semanticClass, 80) || null
       }
     }
     if (!value && exactIdentity && requestedAspectKey === "brand") {
@@ -304,7 +307,8 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
         source = "LUNA_EXACT_STRUCTURED_VENDOR"
       }
     }
-    if (!value && exactIdentity && requestedAspectKey !== "brand") {
+    if (!value && exactIdentity && !["brand", "model", "compatible model"]
+      .includes(requestedAspectKey)) {
       value = firstExactTitleValue(aspect, exactTitle)
       if (value) source = "LUNA_EXACT_PRODUCT_TITLE"
     }
@@ -324,6 +328,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
       sourceField = fullPageResolution.sourceField
       sourceExcerpt = fullPageResolution.sourceExcerpt
       fullPageGapDiagnostic = fullPageResolution.fullPageGapDiagnostic
+      semanticClass = fullPageResolution.semanticClass ?? null
     }
     if (value) provenProductValues[aspect.name] = value
     resolutions[requestedName] = Object.freeze({
@@ -336,6 +341,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
         sourceField,
         sourceExcerpt,
         fullPageGapDiagnostic,
+        semanticClass,
       } : {}),
     })
   }

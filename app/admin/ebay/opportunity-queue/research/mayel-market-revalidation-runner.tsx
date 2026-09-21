@@ -337,13 +337,20 @@ export function MayelMarketRevalidationRunner() {
         const next = await authorizedPost({
           action: "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN",
         })
-        const result = next.result && typeof next.result === "object"
+        let result = next.result && typeof next.result === "object"
           ? next.result as JsonRecord : {}
+        if (result.planId === null) {
+          const keyword = await authorizedPost({
+            action: "GET_NEXT_CURRENT_PACKAGE_KEYWORD_PLAN",
+          })
+          result = keyword.result && typeof keyword.result === "object"
+            ? keyword.result as JsonRecord : {}
+        }
         const nextPlanId = typeof result.planId === "string" &&
           /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
             .test(result.planId) ? result.planId : null
         if (!nextPlanId) {
-          setState("Worker Research V2 disponible · sin lote autorizado pendiente")
+          setState("Worker Research V2 disponible · sin lote o keyword de paquete actual pendiente")
           const delayMs = controller.nextDelayMs()
           await new Promise<void>((resolve) => {
             const reload = window.setTimeout(() => {
