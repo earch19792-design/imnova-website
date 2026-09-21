@@ -304,6 +304,8 @@ export function MayelMarketRevalidationRunner() {
               soldFilterProven: captured.soldFilterProven,
               paginationAutomated: captured.paginationAutomated,
               extensionMarketplaceWrites: captured.marketplaceWrites,
+              extensionVersion: captured.extensionVersion,
+              extensionId: captured.extensionId,
             })
           } catch (error) {
             await authorizedPost({

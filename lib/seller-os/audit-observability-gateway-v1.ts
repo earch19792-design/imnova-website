@@ -553,7 +553,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
     queue.source_canonical_url), 2_000)
   const [approvalRead, executionRead, publicationRead, childRead,
     economicsRead, researchRead, keywordRead, shippingRead,
-    commercialTraceRead] = await Promise.all([
+    commercialTraceRead, pricingEnrichmentRead] = await Promise.all([
       packageId ? budget.read({ dependency: "AUTHORIZATION",
         authority: "ebay_draft_only_approvals", query: () => input.supabase
           .from("ebay_draft_only_approvals").select("*").eq("listing_package_id", packageId)
@@ -606,6 +606,16 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
             .order("started_at", { ascending: false }).limit(1).maybeSingle() })
         : budget.skip("COMMERCIAL_TRACE",
           "seller_os_live_commercial_traces_v1"),
+      variantId ? budget.read({ dependency: "TRACE_PRICING_ENRICHMENT",
+        authority: "seller_os_commercial_trace_pricing_enrichment_jobs_v1",
+        query: () => input.supabase.from(
+          "seller_os_commercial_trace_pricing_enrichment_jobs_v1")
+          .select("job_id,trace_id,receipt_digest,mechanism_version,generation,completed_at")
+          .eq("marketplace_account_key", input.accountKey)
+          .eq("luna_variant_id", variantId).eq("state", "COMPLETED")
+          .order("generation", { ascending: false }).limit(10) })
+        : budget.skip("TRACE_PRICING_ENRICHMENT",
+          "seller_os_commercial_trace_pricing_enrichment_jobs_v1"),
     ])
   const approval = latest(rows(approvalRead.data)) ?? {}
   const execution = latest(rows(executionRead.data)) ?? {}
@@ -619,6 +629,7 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
   const publisherRevision=publicationRevisionPublisherViewV1(publication,revisionImages?.error?null:revisionImages?.data,publisherError)
   const economics = record(economicsRead.data)
   const research = rows(researchRead.data)
+  const pricingEnrichmentReceipts = rows(pricingEnrichmentRead.data)
   const shipping = record(shippingRead.data)
   const commercialTrace = record(commercialTraceRead.data)
   const commercialTraceResult = record(commercialTrace.result)
@@ -658,9 +669,15 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
       failure: commercialTrace.state === "FAILED"
         ? first(commercialTraceResult.failureCode,
           "COMMERCIAL_TRACE_FAILED_CLOSED") : null },
-    MARKET_RESEARCH: { status: research.length ? "PROVEN" : "MISSING",
-      authority: "marketplace_product_research_capture_observations",
-      observedAt: research[0]?.created_at, receipt: research[0]?.capture_batch_id },
+    MARKET_RESEARCH: { status: research.length || pricingEnrichmentReceipts.length
+        ? "PROVEN" : "MISSING",
+      authority: research.length
+        ? "marketplace_product_research_capture_observations"
+        : "seller_os_commercial_trace_pricing_enrichment_jobs_v1.receipt",
+      observedAt: first(research[0]?.created_at,
+        pricingEnrichmentReceipts[0]?.completed_at),
+      receipt: first(research[0]?.capture_batch_id,
+        pricingEnrichmentReceipts[0]?.receipt_digest) },
     RADAR: { status: Object.keys(record(assessment.radarFactoryCandidateV1)).length
       ? "PROVEN" : "UNPROVEN", authority: "ebay_luna_opportunity_queue.assessment",
       observedAt: queueObserved, receipt: queue.id },
@@ -884,7 +901,9 @@ async function readProductCaseWithinBudgetV1(input: ProductCaseAuditInputV1,
       executionId: execution.id ?? null, publicationId: publication.id ?? null,
       publisherChildReceiptId: batchChild.receipt_id ?? null,
       shippingReceiptId: shipping.id ?? null,
-      researchEvidenceIds: research.map((entry) => entry.id).filter(Boolean),
+      researchEvidenceIds: [...research.map((entry) => entry.id),
+        ...pricingEnrichmentReceipts.map((entry) =>
+          first(entry.receipt_digest, entry.job_id))].filter(Boolean),
       reusedExistingAuthorities: true, newRuntimeCreated: false,
       newLedgerCreated: false } : undefined,
     safety: { readOnly: true, arbitrarySql: false, arbitraryUrl: false,

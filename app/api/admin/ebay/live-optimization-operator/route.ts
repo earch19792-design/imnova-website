@@ -502,6 +502,8 @@ export async function POST(request: Request) {
         soldFilterProven: body?.soldFilterProven,
         paginationAutomated: body?.paginationAutomated,
         extensionMarketplaceWrites: body?.extensionMarketplaceWrites,
+        extensionVersion: body?.extensionVersion,
+        extensionId: body?.extensionId,
       })
       return NextResponse.json({ success: true, result,
         safety: { arbitraryUrls: 0, marketplaceWrites: 0, priceWrites: 0,

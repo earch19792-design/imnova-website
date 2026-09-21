@@ -1247,7 +1247,8 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         evidenceRowCount: pricingEnrichment.rows.length,
         marketplaceWrites: 0 }
       : null
-    if (!pricingEnrichment && decision.finalDecision ===
+    if ((!pricingEnrichment || pricingEnrichment.refreshEligible) &&
+        decision.finalDecision ===
         "HOLD_PRICING_EVIDENCE_QUALITY") {
       try {
         const dispatch = await enqueueCommercialTracePricingEnrichmentV1({
