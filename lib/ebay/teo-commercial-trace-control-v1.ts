@@ -46,6 +46,15 @@ function rpcRow(value: unknown) {
   return record(Array.isArray(value) ? value[0] : value)
 }
 
+export function decideTeoCommercialTracePricingReplayV1(
+  receipt: Readonly<{ refreshEligible: boolean }> | null,
+) {
+  if (!receipt) return "DISPATCH_INITIAL" as const
+  return receipt.refreshEligible
+    ? "DISPATCH_REFRESH" as const
+    : "REEVALUATE_TRACE" as const
+}
+
 export class TeoCommercialTraceControlErrorV1 extends Error {
   readonly code: string
 
@@ -282,7 +291,9 @@ export async function requestTeoCommercialTraceV1(input: Readonly<{
         supplierSku: input.sku,
         sourceFingerprint: canonical.sourceFingerprint,
       })
-      if (pricingReceipt) {
+      const pricingReplayAction = decideTeoCommercialTracePricingReplayV1(
+        pricingReceipt)
+      if (pricingReplayAction === "REEVALUATE_TRACE") {
         try {
           await runSellerOsLiveCommercialTraceV1({ supabase: input.supabase,
             accountKey: input.accountKey, productUrl: canonical.canonicalUrl,
@@ -294,6 +305,9 @@ export async function requestTeoCommercialTraceV1(input: Readonly<{
           fail("TEO_COMMERCIAL_TRACE_EXECUTION_FAILED")
         }
       } else {
+        // A refresh generation must be admitted while the durable Trace still
+        // proves COMPLETED/HOLD_PRICING_EVIDENCE_QUALITY. Reopening the Trace
+        // first would intentionally fail the enqueue RPC's state binding.
         const productTruth = record(result.PRODUCT_TRUTH)
         try {
           await enqueueCommercialTracePricingEnrichmentV1({
