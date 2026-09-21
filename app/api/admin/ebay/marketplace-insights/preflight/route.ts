@@ -12,7 +12,9 @@ import {
 import { runMarketplaceInsightsPreflight } from "@/lib/ebay/ebay-marketplace-insights-preflight"
 
 export async function POST(req: Request) {
-  const auth = await authorizeListingAiRequest(req)
+  const auth = await authorizeListingAiRequest(req, {
+    allowMarketplaceInsightsPreflight: true,
+  })
   if (!auth.ok) return auth.response
   try {
     enforceListingAiRouteRateLimit(auth.actorId, "WRITE")

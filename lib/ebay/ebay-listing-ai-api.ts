@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
+import { isMarketplaceInsightsPreflightRouteAllowed } from "./ebay-marketplace-insights-preflight"
 import { getListingAiConfiguration } from "./ebay-openai-listing-factory-v2"
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "../supabase-admin"
@@ -68,7 +69,10 @@ export function listingAiIdempotencyKey(req: Request) {
   return value
 }
 
-export async function authorizeListingAiRequest(req: Request) {
+export async function authorizeListingAiRequest(
+  req: Request,
+  options: { allowMarketplaceInsightsPreflight?: boolean } = {},
+) {
   const validation = await validateAdminApiRequest(req)
   if (!validation.ok || !validation.userId) return {
     ok: false as const,
@@ -83,7 +87,11 @@ export async function authorizeListingAiRequest(req: Request) {
     response: listingAiResponse({ success: false, error: "LISTING_AI_ACCOUNT_REQUIRED" }, 409),
   }
   const boundary = getListingAiConfiguration()
-  if (!boundary.preview || !boundary.staging) return {
+  const marketplaceInsightsPreflightAllowed =
+    options.allowMarketplaceInsightsPreflight === true &&
+    isMarketplaceInsightsPreflightRouteAllowed(req.url)
+  if ((!boundary.preview || !boundary.staging) &&
+    !marketplaceInsightsPreflightAllowed) return {
     ok: false as const,
     response: listingAiResponse({
       success: false,

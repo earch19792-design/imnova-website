@@ -1,3 +1,6 @@
+// @ts-expect-error Node direct TypeScript tests require the explicit extension.
+import { getEbayProRuntimeBoundary, SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION } from "./environment-boundaries.ts"
+
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const MARKETPLACE_INSIGHTS_ENDPOINT =
   "https://api.ebay.com/buy/marketplace-insights/v1_beta/item_sales/search"
@@ -24,8 +27,9 @@ export type MarketplaceInsightsPreflightCategory =
   | "NOT_EXECUTED"
 
 export type MarketplaceInsightsPreflightResult = {
-  environment: "PREVIEW" | "BLOCKED"
+  environment: "PREVIEW" | "DEDICATED_PREPROD" | "BLOCKED"
   preview: boolean
+  dedicatedPreprod: boolean
   staging: boolean
   branchMatch: boolean
   clientPair: "PRESENT" | "MISSING"
@@ -65,10 +69,27 @@ export function getMarketplaceInsightsPreflightConfiguration(
   const preview = environment.VERCEL_ENV === "preview"
   const staging = stagingRef(environment) === STAGING_REF
   const branchMatch = environment.VERCEL_GIT_COMMIT_REF === PREVIEW_BRANCH
+  const runtimeBoundary = getEbayProRuntimeBoundary({
+    vercelEnv: environment.VERCEL_ENV ?? "",
+    vercelTargetEnv: environment.VERCEL_TARGET_ENV ?? "",
+    vercelSystem: environment.VERCEL ?? "",
+    vercelProjectId: environment.VERCEL_PROJECT_ID ?? "",
+    vercelProjectProductionUrl:
+      environment.VERCEL_PROJECT_PRODUCTION_URL ?? "",
+    ebayProRuntime: environment.EBAY_PRO_RUNTIME ?? "",
+    supabaseUrl: environment.NEXT_PUBLIC_SUPABASE_URL ?? "",
+  })
+  const dedicatedPreprod =
+    runtimeBoundary.boundaryClassification ===
+      SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION &&
+    runtimeBoundary.dedicatedPreprod.certified &&
+    !runtimeBoundary.isProductionRuntime
   const clientIdPresent = Boolean(environment.EBAY_CLIENT_ID?.trim())
   const clientSecretPresent = Boolean(environment.EBAY_CLIENT_SECRET?.trim())
+  const environmentAllowed = (preview && staging && branchMatch) || dedicatedPreprod
   return {
     preview,
+    dedicatedPreprod,
     staging,
     branchMatch,
     clientPair: clientIdPresent && clientSecretPresent
@@ -77,8 +98,21 @@ export function getMarketplaceInsightsPreflightConfiguration(
     configuredFlag: environment.EBAY_MARKETPLACE_INSIGHTS_ENABLED?.trim() === "true"
       ? "TRUE" as const
       : "FALSE" as const,
-    configured: preview && staging && branchMatch && clientIdPresent && clientSecretPresent,
+    configured: environmentAllowed && clientIdPresent && clientSecretPresent,
   }
+}
+
+export function isMarketplaceInsightsPreflightRouteAllowed(
+  requestUrl: string,
+  environment: PreflightEnvironment = process.env,
+) {
+  try {
+    if (new URL(requestUrl).pathname !==
+      "/api/admin/ebay/marketplace-insights/preflight") return false
+  } catch {
+    return false
+  }
+  return getMarketplaceInsightsPreflightConfiguration(environment).configured
 }
 
 function categoryFromToken(status: number, oauthError: string) {
@@ -113,10 +147,13 @@ function baseResult(
 ): MarketplaceInsightsPreflightResult {
   const configuration = getMarketplaceInsightsPreflightConfiguration(environment)
   return {
-    environment: configuration.preview && configuration.staging && configuration.branchMatch
-      ? "PREVIEW"
-      : "BLOCKED",
+    environment: configuration.dedicatedPreprod
+      ? "DEDICATED_PREPROD"
+      : configuration.preview && configuration.staging && configuration.branchMatch
+        ? "PREVIEW"
+        : "BLOCKED",
     preview: configuration.preview,
+    dedicatedPreprod: configuration.dedicatedPreprod,
     staging: configuration.staging,
     branchMatch: configuration.branchMatch,
     clientPair: configuration.clientPair,
