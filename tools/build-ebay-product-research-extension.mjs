@@ -14,11 +14,25 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex")
 }
 
+export function extensionIdFromManifestKey(value) {
+  if (typeof value !== "string" || !value.length) {
+    throw new Error("PRODUCT_RESEARCH_EXTENSION_KEY_REQUIRED")
+  }
+  const publicKey = Buffer.from(value, "base64")
+  if (publicKey.length < 256 || publicKey.toString("base64") !== value) {
+    throw new Error("PRODUCT_RESEARCH_EXTENSION_KEY_INVALID")
+  }
+  return [...createHash("sha256").update(publicKey).digest().subarray(0, 16)]
+    .flatMap((byte) => [byte >> 4, byte & 15])
+    .map((nibble) => String.fromCharCode(97 + nibble)).join("")
+}
+
 export function buildProductResearchExtensionArtifact(root) {
   const manifest = JSON.parse(readFileSync(resolve(root, "manifest.json"), "utf8"))
   if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) {
     throw new Error("PRODUCT_RESEARCH_EXTENSION_VERSION_INVALID")
   }
+  const extensionId = extensionIdFromManifestKey(manifest.key)
   const sources = PRODUCT_RESEARCH_EXTENSION_FILES.map((name) =>
     [name, new Uint8Array(readFileSync(resolve(root, name)))])
   const archive = zipSync(Object.fromEntries(sources), {
@@ -35,6 +49,7 @@ export function buildProductResearchExtensionArtifact(root) {
     archive,
     artifactSha256,
     sourceTreeSha256,
+    extensionId,
     buildId: artifactSha256,
   })
 }
@@ -51,6 +66,7 @@ export function writeProductResearchExtensionArtifact({ root, outputRoot }) {
     version: artifact.version,
     artifactSha256: artifact.artifactSha256,
     sourceTreeSha256: artifact.sourceTreeSha256,
+    extensionId: artifact.extensionId,
     buildId: artifact.buildId,
     archiveBytes: artifact.archive.byteLength,
     versioned,

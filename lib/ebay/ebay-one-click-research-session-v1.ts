@@ -26,17 +26,17 @@ export const EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES = Object.freeze([
 ] as const)
 
 export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
-  version: "1.2.39",
+  version: "1.2.40",
   buildId:
-    "a105de6ad08996efe0cc604f2833ba1211a2c1c9b18b76e5f522d4baa7a30455",
+    "9a4d67ffe9729b737340c21ee2b450d692c63ca68d6bb79666cd132f79b39e43",
   artifactSha256:
-    "a105de6ad08996efe0cc604f2833ba1211a2c1c9b18b76e5f522d4baa7a30455",
+    "9a4d67ffe9729b737340c21ee2b450d692c63ca68d6bb79666cd132f79b39e43",
   sourceTreeSha256:
-    "4997928823a6b2e26c75805640fd3c193e5ebca95b09a1c88f078ce01130ba87",
-  extensionId: "ajplldjfkdgigcibbplcffhafendcnei",
+    "5f0ccde772d32a9327f4e9533cf45fdb72fc235ef6638d3038b493015b0fce03",
+  extensionId: "llngdlffmjbnbmbffkfbknkkddjoknka",
   expectedCapabilities: EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES,
   archivePath:
-    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.39.zip",
+    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.40.zip",
 })
 
 export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
@@ -57,9 +57,15 @@ export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([
     browserRestartRecoverySupported: true as const }),
   Object.freeze({ version: "1.2.38",
     buildId: "4b9f4f0fa632bbde95108dfab7ebc566b5d1cf2ce060bb50862ff3bf09325c8c",
+    extensionId: "ajplldjfkdgigcibbplcffhafendcnei",
+    browserRestartRecoverySupported: true as const }),
+  Object.freeze({ version: "1.2.39",
+    buildId: "a105de6ad08996efe0cc604f2833ba1211a2c1c9b18b76e5f522d4baa7a30455",
+    extensionId: "ajplldjfkdgigcibbplcffhafendcnei",
     browserRestartRecoverySupported: true as const }),
   Object.freeze({ version: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version,
     buildId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.buildId,
+    extensionId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.extensionId,
     browserRestartRecoverySupported: true as const }),
 ])
 
@@ -73,9 +79,8 @@ export function attestEbayOneClickResearchExtensionArtifact(input: Readonly<{
   if (!artifact || input.manifestOriginMatch !== true) {
     throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT_MISMATCH")
   }
-  if (artifact.version === EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version &&
-      input.extensionId !== undefined &&
-      input.extensionId !== EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.extensionId) {
+  if ("extensionId" in artifact && input.extensionId !== undefined &&
+      input.extensionId !== artifact.extensionId) {
     throw new Error("ONE_CLICK_RESEARCH_EXTENSION_IDENTITY_MISMATCH")
   }
   return Object.freeze({

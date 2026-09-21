@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — eBay Product Research Capture",
-  "version": "1.2.39",
+  "version": "1.2.40",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3wPK9qB1dHpjR/d0wJ2kuU76Fapg4q2hNbMgtkSW9QZwY3zknj4TPntBbTbQGOASr4mQERSlnGKjMzzBDM8qfBTjfzUtaVPvb78W2foNhAj1KhUTIfG+XhVN9MK/hhXC+wanB4CIJGvLsiR1m9HU6sN4okWENAl/0wUzRLlKyADvnlNwaqZ90oTSOCY9TOmKKsiWPaibShoT+kELAMvitxVFFzBjcH95oFLahSpSY2PPAeDVC+9LXM1zgPpa0YA3UjTdM22P0/k6vxRMmNsUp9PcVaP8wbly8fShYx4K7JxDW4eIBCl1z/mwmBKavFzZ+WUuaQTDijvK+jMd/83TCwIDAQAB",
   "minimum_chrome_version": "106",
   "description": "Automatiza una sesión acotada de Product Research y Sold desde Seller OS.",
   "permissions": [
