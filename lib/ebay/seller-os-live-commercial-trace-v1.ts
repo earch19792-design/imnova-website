@@ -22,6 +22,8 @@ import {
   enqueueCommercialTracePricingEnrichmentV1,
   readCommercialTracePricingEvidenceV1,
 } from "./seller-os-commercial-trace-pricing-enrichment-v1"
+import { buildCommercialActiveMarketAuthorityV1, readCommercialPricingContextV1,
+  type CommercialPricingContextV1 } from "./seller-os-commercial-pricing-authority-v1"
 
 export const SELLER_OS_LIVE_COMMERCIAL_TRACE_V1 =
   "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1" as const
@@ -85,7 +87,7 @@ export async function readCanonicalTraceProductTruthV1(input: Readonly<{
     "LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_READ_FAILED")
   const snapshotId = String(latest.data.snapshot_id ?? "")
   const variants = await input.supabase.from("luna_catalog_snapshot_variants_v1")
-    .select("snapshot_id,product_id,variant_id,sku,canonical_url,title,price,availability,source_fingerprint,preflight_status,field_truth_v1")
+    .select("snapshot_id,product_id,variant_id,sku,canonical_url,title,product_type,identity_result,price,availability,source_fingerprint,preflight_status,field_truth_v1")
     .eq("snapshot_id", snapshotId).eq("canonical_url", input.canonicalUrl)
     .order("variant_id").limit(3)
   if (variants.error) throw new Error(
@@ -466,6 +468,8 @@ export function buildCommercialMarketProjectionV1(
   report: EbaySellerKeywordDemandReport | null,
   safeClaims: readonly SafeCommercialClaimV1[] = [],
   doNotUseClaims: readonly Readonly<{ value: string }>[] = [],
+  pricingContext: CommercialPricingContextV1 | null = null,
+  now = new Date(),
 ) {
   const observed = (report?.comparableEvidence ?? []).map((entry) =>
     record(entry))
@@ -483,6 +487,8 @@ export function buildCommercialMarketProjectionV1(
     : []
   const verifiedPricingCandidates = pricingCandidates.filter((entry) =>
     (number(entry.verifiedSoldQuantity) ?? 0) > 0 &&
+    (entry.soldHistorySource === "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" ||
+      entry.realizedPriceStatus === "REALIZED_PRICE_CONFIRMED") &&
     ["CONFIRMED_DURABLE_SOLD", "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"]
       .includes(String(entry.soldHistorySource ?? "")))
   // Price authority follows SOLD provenance: confirmed durable and other
@@ -494,6 +500,8 @@ export function buildCommercialMarketProjectionV1(
     (number(entry.price) ?? 0) > 0)
   const confirmedPricingAuthority = pricedAuthority.filter((entry) =>
     (number(entry.verifiedSoldQuantity) ?? 0) > 0 &&
+    (entry.soldHistorySource === "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" ||
+      entry.realizedPriceStatus === "REALIZED_PRICE_CONFIRMED") &&
     ["CONFIRMED_DURABLE_SOLD", "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"]
       .includes(String(entry.soldHistorySource ?? "")))
   const confirmedPricingSellers = new Set(confirmedPricingAuthority.map((entry) =>
@@ -672,6 +680,13 @@ export function buildCommercialMarketProjectionV1(
     structuredModelConflicts: Object.freeze(structuredModelConflicts),
     priceRange: range,
     pricingEvidenceQuality,
+    activeMarketAuthority: buildCommercialActiveMarketAuthorityV1(observed, now),
+    aggregateSoldAuthority: pricingContext?.aggregateSold ?? null,
+    strongDemandProven: pricingContext?.demandProven === true ||
+      (report?.demandValidationPassed === true &&
+        report.demandValidationBasis === "VERIFIED_HISTORICAL_MULTI_SELLER"),
+    demandReceipt: pricingContext?.demandReceipt ?? null,
+    pricingContextReadStatus: pricingContext?.readStatus ?? "NOT_READ",
     nearExactSoldEnrichment,
     observedComparableCount: observed.length,
     candidateFoundCount: report?.evidenceBuckets.candidateFoundCount ?? 0,
@@ -711,17 +726,38 @@ export function buildCommercialDecisionV1(input: Readonly<{
   const floor = input.shipping === null ? null : calculateEbayMinimumOperatorPrice({
     supplierCost: input.supplierCost,
   }, { estimatedOutboundShipping: input.shipping })
-  const marketMedian = input.market.priceRange?.median ?? null
-  const marketMaximum = input.market.priceRange?.maximum ?? null
   const floorPrice = floor?.minimumOperatorPrice ?? null
-  const recommendedPrice = floorPrice !== null && marketMedian !== null &&
+  const strong = input.market.pricingEvidenceQuality.strongDecisionAllowed
+  const aggregate = input.market.strongDemandProven &&
+    input.market.aggregateSoldAuthority?.sufficient === true
+  const active = input.market.activeMarketAuthority
+  const testable = input.market.strongDemandProven && active.sufficient &&
+    floorPrice !== null && active.sellerBalancedTarget !== null &&
+    active.sellerBalancedTarget >= floorPrice
+  const pricingMode = strong ? "SOLD_PRICE_STRONG" as const
+    : aggregate ? "AGGREGATE_SOLD_PRICING" as const
+    : testable ? "MARKET_PRICE_TESTABLE" as const
+    : "INSUFFICIENT_MARKET_EVIDENCE" as const
+  const pricingAuthoritySufficient = pricingMode !== "INSUFFICIENT_MARKET_EVIDENCE"
+  const selectedPriceRange = strong ? input.market.priceRange
+    : aggregate ? input.market.aggregateSoldAuthority?.priceRange ?? null
+    : testable ? active.priceRange : null
+  const marketMedian = testable && !strong && !aggregate
+    ? active.sellerBalancedTarget : selectedPriceRange?.median ?? null
+  const marketMaximum = selectedPriceRange?.maximum ?? null
+  const recommendedPrice = pricingAuthoritySufficient && floorPrice !== null && marketMedian !== null &&
       marketMaximum !== null && floorPrice <= marketMaximum
     ? round(Math.max(floorPrice, marketMedian)) : null
-  const economics = recommendedPrice === null || input.shipping === null
+  const calculatedEconomics = recommendedPrice === null || input.shipping === null
     ? null : calculateEbayUnitEconomics({ salePrice: recommendedPrice,
         supplierCost: input.supplierCost }, {
         estimatedOutboundShipping: input.shipping,
       })
+  const economics = calculatedEconomics ? Object.freeze({ ...calculatedEconomics,
+    pricingAuthorityMode: pricingMode,
+    realizedSoldPriceProven: strong,
+    postSalePriceReviewRequired: pricingMode === "MARKET_PRICE_TESTABLE",
+  }) : null
   const floorComponents = floor?.ready ? floor.components : null
   const bindingFloorEntry = floorComponents ? Object.entries(floorComponents)
     .sort((left, right) => Number(right[1]) - Number(left[1]))[0] : null
@@ -761,9 +797,9 @@ export function buildCommercialDecisionV1(input: Readonly<{
     finalDecision = "HOLD_CLAIM_CONFLICTS"
   }
   else if (input.shipping === null) finalDecision = "HOLD_SHIPPING_UNPROVEN"
-  else if (!input.market.demandValidationPassed) {
+  else if (!input.market.demandValidationPassed && !input.market.strongDemandProven) {
     finalDecision = "HOLD_DEMAND_UNPROVEN"
-  } else if (!input.market.pricingEvidenceQuality.strongDecisionAllowed) {
+  } else if (!pricingAuthoritySufficient) {
     finalDecision = "HOLD_PRICING_EVIDENCE_QUALITY"
   } else if (floorPrice !== null && marketMaximum !== null &&
       floorPrice > marketMaximum) finalDecision = "REJECT_ECONOMICS"
@@ -776,6 +812,25 @@ export function buildCommercialDecisionV1(input: Readonly<{
     ? "HIGH" : input.market.demandValidationPassed ? "MEDIUM" : "LOW"
   return Object.freeze({ landedCost, minimumMarginSafePrice: floorPrice,
     economicFloorExplanation, recommendedPrice, economics, finalDecision,
+    pricingMode, pricingAuthoritySufficient, selectedPriceRange,
+    pricingAuthority: Object.freeze({
+      contractVersion: "SELLER_OS_COMMERCIAL_PRICING_AUTHORITY_V1",
+      sufficient: pricingAuthoritySufficient,
+      pricingMode, pricingConfidence: strong ? "HIGH" : pricingAuthoritySufficient ? "MEDIUM" : "LOW",
+      realizedSoldPriceStatus: strong ? "PROVEN" : "UNAVAILABLE",
+      aggregateSoldPricingStatus: aggregate ? "PROVEN" : "UNAVAILABLE",
+      activeMarketPriceStatus: active.sufficient ? "PROVEN" : "INSUFFICIENT",
+      demandStatus: input.market.strongDemandProven ? "PROVEN" : "UNPROVEN",
+      demandReceipt: input.market.demandReceipt,
+      activeMarket: active,
+      aggregateSold: input.market.aggregateSoldAuthority,
+      economicFloor: floorPrice, targetPrice: recommendedPrice,
+      economicsPricingMode: pricingMode,
+      initialMarketEntry: pricingMode === "MARKET_PRICE_TESTABLE" ? "CONSERVATIVE" : null,
+      postSalePriceReviewRequired: pricingMode === "MARKET_PRICE_TESTABLE",
+      marketplaceInsightsRequired: false,
+      contextReadStatus: input.market.pricingContextReadStatus,
+    }),
     confidence })
 }
 
@@ -1080,8 +1135,27 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
     } catch (error) {
       marketFailure = safeCode(error)
     }
+    let pricingContext: CommercialPricingContextV1 | null = null
+    try {
+      pricingContext = await readCommercialPricingContextV1({
+        supabase: input.supabase, accountKey: input.accountKey,
+        productTruthRow: productTruth.row })
+    } catch {
+      // Failure to read an optional fallback cannot mint authority or downgrade
+      // proven sold pricing. Its absence is explicit in the persisted receipt.
+      pricingContext = { demandProven: false, demandReceipt: null,
+        aggregateSold: null, readStatus: "CANONICAL_CONTEXT_READ_FAILED" }
+    }
     const market = buildCommercialMarketProjectionV1(report,
-      safeClaimTruth.safeClaims, safeClaimTruth.doNotUseClaims)
+      safeClaimTruth.safeClaims, safeClaimTruth.doNotUseClaims, pricingContext)
+    const decision = buildCommercialDecisionV1({
+      supplierCost: variant.sourceUnitPrice,
+      shipping: shipping?.amountUsd ?? null,
+      claimConflictCount: conflicts.length,
+      materialClaimConflictCount: safeClaimTruth.materialConflictCount,
+      complianceStatus: compliance.status,
+      market,
+    })
     await emit("MARKET_SEARCH_PROGRESS", report ? "PASS" : "BLOCKED",
       report
         ? `eBay devolvió ${market.returnedCandidateCount} candidatos; ${market.observedComparableCount} fueron enriquecidos y todos quedaron contabilizados como aceptados o excluidos.`
@@ -1153,31 +1227,23 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         excludedCount: market.excludedComparables.length,
         everyObservedComparableAccountedFor:
           market.everyObservedComparableAccountedFor })
-    await emit("DEMAND_CLASSIFICATION", market.demandValidationPassed
+    await emit("DEMAND_CLASSIFICATION", market.demandValidationPassed || market.strongDemandProven
       ? "PASS" : "BLOCKED",
       `Clasificación autónoma de demanda: ${market.demandClassification}.`,
       { demandClassification: market.demandClassification,
-        demandValidationBasis: market.demandValidationBasis })
-    await emit("PRICE_RANGE", market.priceRange ? "PASS" : "BLOCKED",
-      market.priceRange
-        ? `Rango observado con comparables elegibles que traen señal de demanda: USD ${market.priceRange.minimum.toFixed(2)}–${market.priceRange.maximum.toFixed(2)}; mediana USD ${market.priceRange.median?.toFixed(2)}.`
+        demandValidationBasis: market.demandValidationBasis,
+        canonicalDemandReceipt: market.demandReceipt })
+    const selectedRange = decision.selectedPriceRange ?? market.priceRange
+    await emit("PRICE_RANGE", selectedRange ? "PASS" : "BLOCKED",
+      selectedRange
+        ? `Rango observado (${decision.pricingMode}): USD ${selectedRange.minimum.toFixed(2)}–${selectedRange.maximum.toFixed(2)}; mediana USD ${selectedRange.median?.toFixed(2)}.`
         : "No hay una distribución de precios suficientemente sustentada para usarla en decisión.",
-      { priceRange: market.priceRange })
+      { priceRange: selectedRange, pricingMode: decision.pricingMode })
     await emit("PRICING_EVIDENCE_QUALITY",
-      market.pricingEvidenceQuality.strongDecisionAllowed ? "PASS" : "BLOCKED",
-      market.pricingEvidenceQuality.strongDecisionAllowed
-        ? "La autoridad de pricing está confirmada entre múltiples vendedores."
-        : "El rango permanece visible, pero no autoriza una decisión fuerte porque la muestra de pricing es insuficiente o depende de ventas estimadas.",
-      { pricingEvidenceQuality: market.pricingEvidenceQuality })
-
-    const decision = buildCommercialDecisionV1({
-      supplierCost: variant.sourceUnitPrice,
-      shipping: shipping?.amountUsd ?? null,
-      claimConflictCount: conflicts.length,
-      materialClaimConflictCount: safeClaimTruth.materialConflictCount,
-      complianceStatus: compliance.status,
-      market,
-    })
+      decision.pricingAuthoritySufficient ? "PASS" : "BLOCKED",
+      `Autoridad de pricing: ${decision.pricingMode}; precio activo nunca equivale a precio vendido realizado.`,
+      { pricingEvidenceQuality: market.pricingEvidenceQuality,
+        pricingAuthority: decision.pricingAuthority })
     await emit("RECOMMENDED_PRICE", decision.recommendedPrice === null
       ? "BLOCKED" : "PASS", decision.recommendedPrice === null
         ? "Seller OS no recomienda precio: el mercado y el piso de margen no están ambos demostrados."
@@ -1197,10 +1263,12 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
     const knownUncertainties = Object.freeze([
       ...conflicts.map((entry) => entry.code),
       ...market.sourceLimitations,
-      ...(!market.demandValidationPassed ? ["DEMAND_NOT_PROVEN"] : []),
+      ...(!market.demandValidationPassed && !market.strongDemandProven ? ["DEMAND_NOT_PROVEN"] : []),
       ...(!market.priceRange ? ["MARKET_PRICE_DISTRIBUTION_UNPROVEN"] : []),
-      ...(!market.pricingEvidenceQuality.strongDecisionAllowed
+      ...(!decision.pricingAuthoritySufficient
         ? [market.pricingEvidenceQuality.reason] : []),
+      ...(decision.pricingMode === "MARKET_PRICE_TESTABLE"
+        ? ["REALIZED_SOLD_PRICE_UNAVAILABLE", "POST_SALE_PRICE_REVIEW_REQUIRED"] : []),
       ...(decision.economics?.feePolicy?.exactFeeClaimed === false
         ? ["EXACT_EBAY_CATEGORY_FEE_UNPROVEN"] : []),
       ...(variant.sourceInventoryQuantityExplicit !== true
@@ -1229,9 +1297,9 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       safeClaimsPresent: safeClaimTruth.safeClaims.length > 0,
       stockValid: variant.available,
       shippingQty1Fresh: Boolean(shipping),
-      marketAuthoritySufficient: market.demandValidationPassed,
+      marketAuthoritySufficient: market.demandValidationPassed || market.strongDemandProven,
       pricingAuthoritySufficient:
-        market.pricingEvidenceQuality.strongDecisionAllowed,
+        decision.pricingAuthoritySufficient,
       economicsPass: decision.economics?.passesProfitGate === true,
       primaryKeywordComplete: Boolean(market.primaryKeywordFamily),
       titleComplete: Boolean(recommendedTitle),
@@ -1319,7 +1387,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         quantity: variant.sourceInventoryQuantity ?? null },
       PRODUCT_COST: variant.sourceUnitPrice,
       SHIPPING_QTY1: shipping?.amountUsd ?? null,
-      PRICE_RANGE: market.priceRange,
+      PRICE_RANGE: selectedRange,
       MINIMUM_MARGIN_SAFE_PRICE: decision.minimumMarginSafePrice,
       ECONOMIC_FLOOR_EXPLANATION: decision.economicFloorExplanation,
       ECONOMICS: decision.economics,
@@ -1331,6 +1399,13 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       RAW_KEYWORD_EVIDENCE: market.rawKeywordEvidence,
       KEYWORD_PROVENANCE: market.keywordProvenance,
       PRICING_EVIDENCE_QUALITY: market.pricingEvidenceQuality,
+      PRICING_AUTHORITY: decision.pricingAuthority,
+      PRICING_MODE: decision.pricingMode,
+      PRICING_CONFIDENCE: decision.pricingAuthority.pricingConfidence,
+      REALIZED_SOLD_PRICE_STATUS: decision.pricingAuthority.realizedSoldPriceStatus,
+      AGGREGATE_SOLD_PRICING_STATUS: decision.pricingAuthority.aggregateSoldPricingStatus,
+      ACTIVE_MARKET_PRICE_STATUS: decision.pricingAuthority.activeMarketPriceStatus,
+      DEMAND_STATUS: decision.pricingAuthority.demandStatus,
       AUTONOMOUS_PRICING_ENRICHMENT: pricingEnrichmentDispatch,
       DEMAND_CLASSIFICATION: market.demandClassification,
       ACCEPTED_COMPARABLES: market.acceptedComparables,

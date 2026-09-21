@@ -439,6 +439,19 @@ function mapComparable(
     returnsAccepted: returnTerms.returnsAccepted === true,
     itemOriginDate: text(item.itemOriginDate),
     itemEndDate: text(item.itemEndDate),
+    activeMarketObservation: source === "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+      ? null : {
+        observedAt: new Date().toISOString(),
+        itemPrice: numberOrNull(record(item.price).value),
+        shippingPrice: numberOrNull(shippingCost.value),
+        currency: text(record(item.price).currency),
+        shippingCurrency: text(shippingCost.currency),
+        sellerUsername: text(seller.username ?? seller.userId),
+        conditionId: text(item.conditionId),
+        active: text(availability.estimatedAvailabilityStatus) === "IN_STOCK" &&
+          (!text(item.itemEndDate) || Date.parse(text(item.itemEndDate)) > Date.now()),
+        sponsored: item.priorityListing === true,
+      },
     visualEvidence: buildOfficialEbayVisualMetadata(item),
     source,
   }
@@ -645,19 +658,20 @@ async function enrichActiveListing(value: unknown, token: string) {
 async function mappedActiveComparable(value: unknown, token: string) {
   const summary = record(value)
   const itemId = text(summary.itemId)
-  // V2 invalidates rows that selected a parent from the category breadcrumb.
-  const key = itemId ? `item-v2:${itemId}` : ""
+  // V3 preserves observation time/condition/explicit shipping for active pricing.
+  const key = itemId ? `item-v3:${itemId}` : ""
   const cached = key
     ? await readPersistentReadonlyCache<EbaySellerComparableInput>("BROWSE_ITEM_DETAIL", key)
     : null
-  if (cached) return cached
+  if (cached?.activeMarketObservation && Date.now() - Date.parse(
+    cached.activeMarketObservation.observedAt) <= 24 * 60 * 60_000) return cached
   const mapped = mapComparable(await enrichActiveListing(summary, token), "EBAY_BROWSE_ACTIVE_LISTING")
   if (key) {
     await writePersistentReadonlyCache("BROWSE_ITEM_DETAIL", key, {
       ...mapped,
       imageUrl: null,
       itemWebUrl: null,
-    }, 48 * 60 * 60_000)
+    }, 24 * 60 * 60_000)
   }
   return mapped
 }

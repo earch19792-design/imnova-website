@@ -57,6 +57,18 @@ export type EbaySellerComparableInput = {
   returnsAccepted?: boolean | null
   itemOriginDate?: string | null
   itemEndDate?: string | null
+  // Official Browse observation only; never reconstructed from sold evidence.
+  activeMarketObservation?: Readonly<{
+    observedAt: string
+    itemPrice: number | null
+    shippingPrice: number | null
+    currency: string
+    shippingCurrency: string
+    sellerUsername: string
+    conditionId: string
+    active: boolean
+    sponsored: boolean
+  }> | null
   visualEvidence?: {
     imageCount?: number | null
     mainImageBackground?: string | null
@@ -829,6 +841,7 @@ export function buildEbaySellerKeywordDemandValidation(
       returnsAccepted: entry.returnsAccepted === true,
       itemOriginDate: cleanText(entry.itemOriginDate) || null,
       itemEndDate: cleanText(entry.itemEndDate) || null,
+      activeMarketObservation: entry.activeMarketObservation ?? null,
       visualEvidence: entry.visualEvidence && typeof entry.visualEvidence === "object"
         ? {
             imageCount: numberOrNull(entry.visualEvidence.imageCount),

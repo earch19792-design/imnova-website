@@ -142,7 +142,10 @@ function safeComparable(entry: JsonRecord, nativePackCount: number,
   }
 }
 
-function competitiveActiveEntries(entries: SafeComparable[]) {
+type DistributionEntry = Pick<SafeComparable,
+  "landedPrice" | "seller" | "soldQuantity" | "packResolution">
+
+function competitiveActiveEntries(entries: DistributionEntry[]) {
   if (entries.length < 5) return { entries, excludedOutlierCount: 0 }
   const sorted = [...entries].sort((left, right) => left.landedPrice - right.landedPrice)
   const middle = median(sorted.map((entry) => entry.landedPrice))
@@ -170,7 +173,7 @@ function competitiveActiveEntries(entries: SafeComparable[]) {
   }
 }
 
-function distribution(sourceEntries: SafeComparable[], activeMarket = false) {
+function distribution(sourceEntries: DistributionEntry[], activeMarket = false) {
   const sourcePrices = sourceEntries.map((entry) => entry.landedPrice)
   const filtered = activeMarket
     ? competitiveActiveEntries(sourceEntries)
@@ -203,6 +206,16 @@ function distribution(sourceEntries: SafeComparable[], activeMarket = false) {
     structuredPackCount: sampleSize - titleDerivedCount,
     titleDerivedPackCount: titleDerivedCount,
   }
+}
+
+// Shared reducer. Callers must prove identity/condition/shipping/freshness before
+// supplying rows. This does not infer pack size or confer sold-price authority.
+export function buildEbayBoundedPriceDistributionV1(
+  entries: readonly Readonly<{ landedPrice: number; seller: string;
+    soldQuantity: number }>[], activeMarket = false,
+) {
+  return distribution(entries.slice(0, 100).map((entry) => ({ ...entry,
+    packResolution: "STRUCTURED" as const })), activeMarket)
 }
 
 export function aggregateEbayMarketPricingByPack(input: {

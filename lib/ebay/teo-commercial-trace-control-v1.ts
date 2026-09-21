@@ -173,6 +173,7 @@ function boundedTraceReadback(value: Awaited<ReturnType<
   const productTruth = record(result.PRODUCT_TRUTH)
   const fieldTruth = record(productTruth.fieldTruthV1)
   const economics = record(result.ECONOMICS)
+  const pricing = record(result.PRICING_AUTHORITY)
   const safety = record(trace.safety)
   return Object.freeze({
     traceId: uuid(trace.trace_id),
@@ -193,6 +194,18 @@ function boundedTraceReadback(value: Awaited<ReturnType<
       estimatedNetProfit: economics.estimatedNetProfit ?? null,
       estimatedNetMarginPercent: economics.estimatedNetMarginPercent ?? null,
       passesProfitGate: economics.passesProfitGate === true,
+    }) : null,
+    pricingAuthority: Object.keys(pricing).length ? Object.freeze({
+      sufficient: pricing.sufficient === true,
+      pricingMode: text(pricing.pricingMode, 80),
+      pricingConfidence: text(pricing.pricingConfidence, 20),
+      realizedSoldPriceStatus: text(pricing.realizedSoldPriceStatus, 40),
+      aggregateSoldPricingStatus: text(pricing.aggregateSoldPricingStatus, 40),
+      activeMarketPriceStatus: text(pricing.activeMarketPriceStatus, 40),
+      demandStatus: text(pricing.demandStatus, 40),
+      targetPrice: pricing.targetPrice ?? null,
+      economicFloor: pricing.economicFloor ?? null,
+      postSalePriceReviewRequired: pricing.postSalePriceReviewRequired === true,
     }) : null,
     readiness: Object.freeze({ state: text(decisionLoop.state, 120) || null,
       listingPackageReady: decisionLoop.state === "LISTING_PACKAGE_READY" }),
