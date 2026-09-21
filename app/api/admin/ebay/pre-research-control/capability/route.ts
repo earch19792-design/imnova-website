@@ -20,6 +20,13 @@ import {
   authorizeSellerOsControlConsentV1,
   parseSellerOsControlAuthorizationRequestV1,
 } from "@/lib/ebay/teo-pre-research-control-authorization-v1"
+import {
+  getMarketplaceInsightsPreflightConfiguration,
+  MARKETPLACE_INSIGHTS_OWNER_PREFLIGHT_ACTION,
+  parseMarketplaceInsightsOwnerPreflightAction,
+  projectMarketplaceInsightsOwnerPreflightResult,
+  runMarketplaceInsightsPreflight,
+} from "@/lib/ebay/ebay-marketplace-insights-preflight"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
@@ -228,17 +235,45 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null) as Record<string, unknown> | null
     const parsed = body?.action === "AUTHORIZE"
       ? parseSellerOsControlAuthorizationRequestV1(body) : null
-    const traceAuthorization = parsed ? null
+    const marketplaceInsightsPreflight =
+      body?.action === MARKETPLACE_INSIGHTS_OWNER_PREFLIGHT_ACTION
+        ? parseMarketplaceInsightsOwnerPreflightAction(body) : null
+    const traceAuthorization = parsed || marketplaceInsightsPreflight ? null
       : parseTraceCapabilityAuthorization(body)
     const auth = await validateAdminApiRequest(request)
     const actor = assertSellerOsOwnerAdminPreResearchV1(auth)
     const admin = getSupabaseAdminClient()
     await consumeControlCsrf(request, actor.actorSubject, admin)
     consumed = true
-    const accessToken = token(request)
-    const oauthClient = controlOAuthClient(accessToken)
     const account = getEbaySellerAccountScopeConfiguration()
     if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+    if (marketplaceInsightsPreflight) {
+      const configuration = getMarketplaceInsightsPreflightConfiguration()
+      if (!configuration.dedicatedPreprod || !configuration.configured) {
+        throw new Error("MARKETPLACE_INSIGHTS_PREFLIGHT_PREPROD_REQUIRED")
+      }
+      if (configuration.configuredFlag !== "FALSE") {
+        throw new Error("MARKETPLACE_INSIGHTS_PREFLIGHT_REQUIRES_DISABLED_FLAG")
+      }
+      const preflight = projectMarketplaceInsightsOwnerPreflightResult(
+        await runMarketplaceInsightsPreflight(),
+      )
+      const replacementCsrf = issueSellerOsControlCsrfV1(
+        csrfContext(request, actor.actorSubject), {
+          signingSecret: csrfSigningSecret(),
+        })
+      const response = NextResponse.json({ success: true,
+        preflight, csrf: replacementCsrf,
+        safety: { marketplaceWrites: 0, publisherAuthority: 0,
+          commercialTraces: 0, credentialsExposed: false,
+          tokensExposed: false } }, { headers: HEADERS })
+      response.cookies.set(CSRF_COOKIE, replacementCsrf.csrfToken,
+        cookieOptions(request,
+          Math.floor(SELLER_OS_CONTROL_CSRF_TTL_MS / 1_000)))
+      return response
+    }
+    const accessToken = token(request)
+    const oauthClient = controlOAuthClient(accessToken)
     if (traceAuthorization) {
       const existingControl = await admin.from(
         "seller_os_pre_research_command_capabilities_v1")

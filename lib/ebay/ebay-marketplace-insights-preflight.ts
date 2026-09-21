@@ -6,6 +6,8 @@ const MARKETPLACE_INSIGHTS_ENDPOINT =
   "https://api.ebay.com/buy/marketplace-insights/v1_beta/item_sales/search"
 const MARKETPLACE_INSIGHTS_SCOPE =
   "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
+export const MARKETPLACE_INSIGHTS_OWNER_PREFLIGHT_ACTION =
+  "PREFLIGHT_MARKETPLACE_INSIGHTS" as const
 const STAGING_REF = "vsfthqydfrdzulldbfbe"
 const PREVIEW_BRANCH = "feature/centralize-ebay-mobile-command-center"
 const REQUEST_TIMEOUT_MS = 8_000
@@ -39,6 +41,8 @@ export type MarketplaceInsightsPreflightResult = {
   tokenStatus: "READY" | MarketplaceInsightsPreflightCategory
   entitlement: MarketplaceInsightsPreflightCategory
   historyRequest: "AVAILABLE" | "REJECTED" | "NOT_EXECUTED"
+  tokenHttpStatus: number | null
+  endpointHttpStatus: number | null
   httpStatus: number | null
   observedAt: string
   safety: {
@@ -115,6 +119,43 @@ export function isMarketplaceInsightsPreflightRouteAllowed(
   return getMarketplaceInsightsPreflightConfiguration(environment).configured
 }
 
+export function parseMarketplaceInsightsOwnerPreflightAction(value: unknown) {
+  const body = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : null
+  if (!body || Object.keys(body).join(",") !== "action" ||
+    body.action !== MARKETPLACE_INSIGHTS_OWNER_PREFLIGHT_ACTION) {
+    throw new Error("MARKETPLACE_INSIGHTS_PREFLIGHT_REQUEST_REJECTED")
+  }
+  return Object.freeze({ action: MARKETPLACE_INSIGHTS_OWNER_PREFLIGHT_ACTION })
+}
+
+export function projectMarketplaceInsightsOwnerPreflightResult(
+  result: MarketplaceInsightsPreflightResult,
+) {
+  const tokenPassed = result.tokenStatus === "READY" && result.scopeConfirmed
+  const endpointPassed = result.historyRequest === "AVAILABLE" &&
+    result.entitlement === "AUTHORIZED"
+  const ready = tokenPassed && endpointPassed
+  return Object.freeze({
+    TOKEN_PREFLIGHT: result.tokenStatus === "READY" ? "PASS" as const
+      : result.tokenStatus === "NOT_EXECUTED" ? "NOT_EXECUTED" as const
+        : "FAIL" as const,
+    TOKEN_HTTP_STATUS: result.tokenHttpStatus,
+    INVALID_CLIENT: result.tokenStatus === "CLIENT_CREDENTIAL_MISMATCH"
+      ? "YES" as const : "NO" as const,
+    SCOPE_ACCEPTED: result.scopeConfirmed ? "YES" as const : "NO" as const,
+    MARKETPLACE_INSIGHTS_ENDPOINT_PREFLIGHT:
+      result.historyRequest === "AVAILABLE" ? "PASS" as const
+        : result.historyRequest === "NOT_EXECUTED" ? "NOT_EXECUTED" as const
+          : "FAIL" as const,
+    ENDPOINT_HTTP_STATUS: result.endpointHttpStatus,
+    ENTITLEMENT_STATUS: result.entitlement,
+    MARKETPLACE_INSIGHTS_READY: ready ? "YES" as const : "NO" as const,
+    SAFE_TO_ENABLE: ready && result.configuredFlag === "FALSE"
+      ? "YES" as const : "NO" as const,
+  })
+}
+
 function categoryFromToken(status: number, oauthError: string) {
   if (oauthError === "invalid_scope") return "INVALID_SCOPE" as const
   if (oauthError === "invalid_client") return "CLIENT_CREDENTIAL_MISMATCH" as const
@@ -163,6 +204,8 @@ function baseResult(
     tokenStatus: "NOT_EXECUTED",
     entitlement: "NOT_EXECUTED",
     historyRequest: "NOT_EXECUTED",
+    tokenHttpStatus: null,
+    endpointHttpStatus: null,
     httpStatus: null,
     observedAt: now.toISOString(),
     safety: {
@@ -213,6 +256,8 @@ export async function runMarketplaceInsightsPreflight(input: {
     result.entitlement = category
     return result
   }
+
+  result.tokenHttpStatus = tokenResponse.status
 
   const tokenPayload = await tokenResponse.json().catch(() => ({})) as Record<string, unknown>
   if (!tokenResponse.ok) {
@@ -266,6 +311,7 @@ export async function runMarketplaceInsightsPreflight(input: {
   }
 
   result.httpStatus = insightsResponse.status
+  result.endpointHttpStatus = insightsResponse.status
   result.safety.requestMethod = "GET"
   await insightsResponse.body?.cancel().catch(() => undefined)
   if (insightsResponse.ok) {
