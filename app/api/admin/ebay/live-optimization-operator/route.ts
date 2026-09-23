@@ -70,6 +70,9 @@ import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 import { nextAuthorizedTeoPreResearchPlanV1,
   prepareAuthorizedTeoPreResearchRunnerV1 } from
   "@/lib/ebay/teo-pre-research-control-plane-v1"
+import { assertPreResearchCanaryPlanClaimV1,
+  readPreResearchCanaryGateV1 } from
+  "@/lib/ebay/pre-research-canary-gate-v1"
 import { nextCurrentPackageKeywordPlanV1 } from
   "@/lib/seller-os/current-keyword-continuation-v2-1"
 import {
@@ -557,6 +560,8 @@ export async function POST(request: Request) {
         }, safety: { marketplaceWrites: 0, priceWrites: 0 } },
         { headers: { "Cache-Control": "private, no-store" } })
       }
+      await assertPreResearchCanaryPlanClaimV1({ supabase,
+        planId: uuid(body?.planId), gate: readPreResearchCanaryGateV1() })
       const result = await claimMayelAutonomousResearchPlanV1({
         supabase, accountKey: account.accountKey,
         workerId: body?.workerId, workerCapability: body?.workerCapability,
@@ -586,10 +591,22 @@ export async function POST(request: Request) {
       })
       if (!authority.claimAuthorityGranted) throw new Error(
         "PRODUCT_RESEARCH_CLAIM_AUTHORITY_REQUIRED")
+      const gate = readPreResearchCanaryGateV1()
+      if (gate.state !== "CANARY") {
+        return NextResponse.json({ success: true, result: {
+          healedBatches: 0, recoveredLeases: 0, marketplaceWrites: 0,
+        }, canaryGate: { state: gate.state,
+          allowedBatchCount: gate.allowedBatchCount },
+        safety: { marketplaceWrites: 0, priceWrites: 0 } },
+        { headers: { "Cache-Control": "private, no-store" } })
+      }
       const result = await prepareAuthorizedTeoPreResearchRunnerV1({
         supabase, accountKey: account.accountKey,
+        allowedBatchIds: gate.allowedBatchIds,
       })
       return NextResponse.json({ success: true, result,
+        canaryGate: { state: gate.state,
+          allowedBatchCount: gate.allowedBatchCount },
         safety: { marketplaceWrites: 0, priceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {
@@ -601,10 +618,24 @@ export async function POST(request: Request) {
     try {
       const account = getEbaySellerAccountScopeConfiguration()
       if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const gate = readPreResearchCanaryGateV1()
+      if (gate.state !== "CANARY") {
+        return NextResponse.json({ success: true, result: {
+          batchId: null, memberId: null, planId: null,
+          globalQueueFallback: 0,
+        }, canaryGate: { state: gate.state,
+          allowedBatchCount: gate.allowedBatchCount },
+        safety: { globalQueueFallback: 0, marketplaceWrites: 0,
+          priceWrites: 0 } },
+        { headers: { "Cache-Control": "private, no-store" } })
+      }
       const result = await nextAuthorizedTeoPreResearchPlanV1({
         supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        allowedBatchIds: gate.allowedBatchIds,
       })
       return NextResponse.json({ success: true, result,
+        canaryGate: { state: gate.state,
+          allowedBatchCount: gate.allowedBatchCount },
         safety: { globalQueueFallback: 0, marketplaceWrites: 0,
           priceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })

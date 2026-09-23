@@ -77,8 +77,8 @@ end $function$;
 
 -- Explicit worker preparation performs bounded lease recovery. The separate
 -- next-plan lookup below remains strictly read-only.
-create or replace function public.prepare_seller_os_pre_research_batch_runner_v1(
-  p_marketplace_account_key text)
+create or replace function public.prepare_seller_os_pre_research_batch_runner_canary_v1(
+  p_marketplace_account_key text,p_allowed_batch_ids uuid[])
 returns jsonb language plpgsql security definer set search_path = '' as $function$
 declare
   v_stale record;
@@ -89,6 +89,10 @@ begin
   if not public.is_seller_os_service_role_request_v1()
       or char_length(coalesce(p_marketplace_account_key,'')) not between 8 and 160
     then raise exception 'TEO_PRE_RESEARCH_RUNNER_PREPARE_DENIED'; end if;
+  if coalesce(cardinality(p_allowed_batch_ids),0) = 0
+      or array_position(p_allowed_batch_ids,null) is not null then
+    return jsonb_build_object('healedBatches',0,'recoveredLeases',0);
+  end if;
 
   -- Heal historical batches that were stranded by the old batch-state order.
   update public.seller_os_pre_research_batches_v1 batch
@@ -98,6 +102,7 @@ begin
   from public.seller_os_pre_research_command_capabilities_v1 capability
   where capability.capability_id = batch.owner_authorization_id
     and batch.marketplace_account_key = p_marketplace_account_key
+    and batch.batch_id = any(p_allowed_batch_ids)
     and batch.batch_state = 'NEEDS_ATTENTION' and capability.enabled
     and (capability.expires_at is null
       or capability.expires_at > clock_timestamp())
@@ -120,6 +125,7 @@ begin
   join public.seller_os_pre_research_command_capabilities_v1 capability
     on capability.capability_id = batch.owner_authorization_id
   where batch.marketplace_account_key = p_marketplace_account_key
+    and batch.batch_id = any(p_allowed_batch_ids)
     and batch.batch_state in ('AUTHORIZED','RUNNING','NEEDS_ATTENTION')
     and capability.enabled
     and (capability.expires_at is null
@@ -129,6 +135,10 @@ begin
     and plan.marketplace = 'EBAY_US'
     and plan.source_context = 'LUNA_PRE_RESEARCH'
     and plan.pre_research_rerun_cohort_id is null
+    and not exists (select 1
+      from public.seller_os_pre_research_batch_members_v1 attached
+      where attached.plan_id = plan.id
+        and not (attached.batch_id = any(p_allowed_batch_ids)))
     and plan.status = 'ACTIVE'
     and (plan.worker_lease_owner is not null
       or member.execution_state = 'RUNNING'
@@ -179,17 +189,20 @@ begin
         'retrySafe',v_retry_safe,
         'claimCount',v_stale.worker_claim_count)
     from public.seller_os_pre_research_batch_members_v1 member
-    where member.plan_id = v_stale.plan_id;
+    where member.plan_id = v_stale.plan_id
+      and member.batch_id = any(p_allowed_batch_ids);
   end if;
 
   return jsonb_build_object('healedBatches',v_healed,
     'recoveredLeases',v_recovered);
 end $function$;
 
-create or replace function public.next_seller_os_pre_research_batch_plan_v1(
-  p_marketplace_account_key text)
+create or replace function public.next_seller_os_pre_research_batch_plan_canary_v1(
+  p_marketplace_account_key text,p_allowed_batch_ids uuid[])
 returns jsonb language sql security definer set search_path = '' stable as $function$
   select case when not public.is_seller_os_service_role_request_v1()
+    or coalesce(cardinality(p_allowed_batch_ids),0) = 0
+    or array_position(p_allowed_batch_ids,null) is not null
     then null::jsonb else coalesce((select jsonb_build_object(
       'batchId',batch.batch_id,'memberId',member.member_id,
       'planId',member.plan_id)
@@ -201,6 +214,7 @@ returns jsonb language sql security definer set search_path = '' stable as $func
   join public.marketplace_product_research_query_plans plan
     on plan.id = member.plan_id
   where batch.marketplace_account_key = p_marketplace_account_key
+    and batch.batch_id = any(p_allowed_batch_ids)
     and batch.batch_state in ('AUTHORIZED','RUNNING')
     and capability.enabled
     and (capability.expires_at is null
@@ -211,6 +225,10 @@ returns jsonb language sql security definer set search_path = '' stable as $func
     and plan.status = 'ACTIVE'
     and plan.source_context = 'LUNA_PRE_RESEARCH'
     and plan.pre_research_rerun_cohort_id is null
+    and not exists (select 1
+      from public.seller_os_pre_research_batch_members_v1 attached
+      where attached.plan_id = plan.id
+        and not (attached.batch_id = any(p_allowed_batch_ids)))
     and plan.worker_claim_count < 5
     and plan.worker_lease_owner is null
     and (plan.worker_lease_expires_at is null
@@ -223,6 +241,24 @@ returns jsonb language sql security definer set search_path = '' stable as $func
         and task.marketplace = 'EBAY_US')
   order by batch.created_at,member.ordinal limit 1),
     jsonb_build_object('batchId',null,'memberId',null,'planId',null)) end
+$function$;
+
+-- Migration-first safety: older deployed workers still call the one-argument
+-- selector. Never let that path drain the historical backlog.
+create or replace function public.next_seller_os_pre_research_batch_plan_v1(
+  p_marketplace_account_key text)
+returns jsonb language sql security definer set search_path = '' stable as $function$
+  select case when public.is_seller_os_service_role_request_v1()
+    then jsonb_build_object('batchId',null,'memberId',null,'planId',null)
+    else null::jsonb end
+$function$;
+
+create or replace function public.prepare_seller_os_pre_research_batch_runner_v1(
+  p_marketplace_account_key text)
+returns jsonb language sql security definer set search_path = '' as $function$
+  select case when public.is_seller_os_service_role_request_v1()
+    then jsonb_build_object('healedBatches',0,'recoveredLeases',0)
+    else null::jsonb end
 $function$;
 
 -- A resume is selective: a non-retry-safe member cannot hold up a safe one.
@@ -278,11 +314,19 @@ revoke all on function public.next_seller_os_pre_research_batch_plan_v1(text)
   from public,anon,authenticated;
 revoke all on function public.prepare_seller_os_pre_research_batch_runner_v1(text)
   from public,anon,authenticated;
+revoke all on function public.next_seller_os_pre_research_batch_plan_canary_v1(
+  text,uuid[]) from public,anon,authenticated;
+revoke all on function public.prepare_seller_os_pre_research_batch_runner_canary_v1(
+  text,uuid[]) from public,anon,authenticated;
 revoke all on function public.resume_seller_os_pre_research_batch_v1(
   uuid,uuid,text) from public,anon,authenticated;
 grant execute on function public.next_seller_os_pre_research_batch_plan_v1(text)
   to service_role;
 grant execute on function public.prepare_seller_os_pre_research_batch_runner_v1(text)
   to service_role;
+grant execute on function public.next_seller_os_pre_research_batch_plan_canary_v1(
+  text,uuid[]) to service_role;
+grant execute on function public.prepare_seller_os_pre_research_batch_runner_canary_v1(
+  text,uuid[]) to service_role;
 grant execute on function public.resume_seller_os_pre_research_batch_v1(
   uuid,uuid,text) to service_role;

@@ -95,7 +95,10 @@ async function nextAuthorizedBatchPlanId(workerId: string,
   })
   let result = next.result && typeof next.result === "object"
     ? next.result as JsonRecord : {}
-  if (result.planId === null) {
+  // Certification mode is a bounded Pre-Research lane. Do not fall through
+  // into unrelated keyword research while an allowlist is active.
+  if (result.planId === null &&
+      (next.canaryGate as JsonRecord | undefined)?.state === "OFF") {
     const keyword = await authorizedPost({
       action: "GET_NEXT_CURRENT_PACKAGE_KEYWORD_PLAN",
     })

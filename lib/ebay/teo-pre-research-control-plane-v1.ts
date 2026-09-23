@@ -422,10 +422,12 @@ export async function resumeTeoPreResearchBatchV1(input: Readonly<{
 export async function nextAuthorizedTeoPreResearchPlanV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
+  allowedBatchIds: readonly string[]
 }>) {
   const next = await input.supabase.rpc(
-    "next_seller_os_pre_research_batch_plan_v1", {
+    "next_seller_os_pre_research_batch_plan_canary_v1", {
       p_marketplace_account_key: input.accountKey,
+      p_allowed_batch_ids: input.allowedBatchIds,
     })
   if (next.error) fail("TEO_PRE_RESEARCH_BATCH_RUNNER_UNAVAILABLE")
   const row = rpcRow(next.data)
@@ -436,10 +438,12 @@ export async function nextAuthorizedTeoPreResearchPlanV1(input: Readonly<{
 export async function prepareAuthorizedTeoPreResearchRunnerV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
+  allowedBatchIds: readonly string[]
 }>) {
   const prepared = await input.supabase.rpc(
-    "prepare_seller_os_pre_research_batch_runner_v1", {
+    "prepare_seller_os_pre_research_batch_runner_canary_v1", {
       p_marketplace_account_key: input.accountKey,
+      p_allowed_batch_ids: input.allowedBatchIds,
     })
   if (prepared.error) fail("TEO_PRE_RESEARCH_BATCH_RUNNER_PREPARE_FAILED")
   const row = rpcRow(prepared.data)
