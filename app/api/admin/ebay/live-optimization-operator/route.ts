@@ -67,7 +67,8 @@ import {
   resolveRemoteOperatorUserIdV1,
 } from "@/lib/ebay/ebay-remote-operator-safe-mutation-canary-v1"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
-import { nextAuthorizedTeoPreResearchPlanV1 } from
+import { nextAuthorizedTeoPreResearchPlanV1,
+  prepareAuthorizedTeoPreResearchRunnerV1 } from
   "@/lib/ebay/teo-pre-research-control-plane-v1"
 import { nextCurrentPackageKeywordPlanV1 } from
   "@/lib/seller-os/current-keyword-continuation-v2-1"
@@ -560,6 +561,33 @@ export async function POST(request: Request) {
         supabase, accountKey: account.accountKey,
         workerId: body?.workerId, workerCapability: body?.workerCapability,
         planId: body?.planId,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "PREPARE_AUTHORIZED_PRE_RESEARCH_BATCH_RUNNER") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const claimAuthoritySessionId = uuid(body?.leaderSessionId)
+      if (!claimAuthoritySessionId) throw new Error(
+        "PRODUCT_RESEARCH_CLAIM_AUTHORITY_REQUIRED")
+      const supabase = getSupabaseAdminClient()
+      const authority = await verifySellerOsBrowserWorkloadLeaseV1({
+        supabase, accountKey: account.accountKey,
+        workerFamily: "PRODUCT_RESEARCH",
+        workerInstanceId: String(body?.workerId ?? ""),
+        claimAuthoritySessionId,
+      })
+      if (!authority.claimAuthorityGranted) throw new Error(
+        "PRODUCT_RESEARCH_CLAIM_AUTHORITY_REQUIRED")
+      const result = await prepareAuthorizedTeoPreResearchRunnerV1({
+        supabase, accountKey: account.accountKey,
       })
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0 } },

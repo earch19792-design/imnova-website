@@ -84,6 +84,29 @@ async function authorizedPost(body: JsonRecord) {
   })
 }
 
+async function nextAuthorizedBatchPlanId(workerId: string,
+  leaderSessionId: string) {
+  await authorizedPost({
+    action: "PREPARE_AUTHORIZED_PRE_RESEARCH_BATCH_RUNNER",
+    workerId, leaderSessionId,
+  })
+  const next = await authorizedPost({
+    action: "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN",
+  })
+  let result = next.result && typeof next.result === "object"
+    ? next.result as JsonRecord : {}
+  if (result.planId === null) {
+    const keyword = await authorizedPost({
+      action: "GET_NEXT_CURRENT_PACKAGE_KEYWORD_PLAN",
+    })
+    result = keyword.result && typeof keyword.result === "object"
+      ? keyword.result as JsonRecord : {}
+  }
+  return typeof result.planId === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(result.planId) ? result.planId : null
+}
+
 function extensionCommand<T extends JsonRecord>(command: JsonRecord,
   timeoutMs: number): Promise<T & { bridgeExtensionId: string }> {
   const requestId = crypto.randomUUID()
@@ -334,21 +357,8 @@ export function MayelMarketRevalidationRunner() {
         }
       }
       if (gateOnly) {
-        const next = await authorizedPost({
-          action: "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN",
-        })
-        let result = next.result && typeof next.result === "object"
-          ? next.result as JsonRecord : {}
-        if (result.planId === null) {
-          const keyword = await authorizedPost({
-            action: "GET_NEXT_CURRENT_PACKAGE_KEYWORD_PLAN",
-          })
-          result = keyword.result && typeof keyword.result === "object"
-            ? keyword.result as JsonRecord : {}
-        }
-        const nextPlanId = typeof result.planId === "string" &&
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-            .test(result.planId) ? result.planId : null
+        const nextPlanId = claimAuthorityGranted
+          ? await nextAuthorizedBatchPlanId(workerId, leaderSessionId) : null
         if (!nextPlanId) {
           setState("Worker Research V2 disponible · sin lote o keyword de paquete actual pendiente")
           const delayMs = controller.nextDelayMs()
@@ -366,15 +376,26 @@ export function MayelMarketRevalidationRunner() {
         }
         planId = nextPlanId
       }
-      const maximumPlans = browserWorkerControl && planId ? 1
+      const batchControlMode = gateOnly && autonomous
+      const maximumPlans = batchControlMode ? 4
+        : browserWorkerControl && planId ? 1
         : autonomous ? 4 : 1
       let completed = 0
+      let succeeded = 0
+      let failedMembers = 0
+      let releaseFailures = 0
       const pollStartedAt = performance.now()
       const permit = controller.acquirePollPermit()
       if (!permit.allowed || !claimAuthorityGranted) {
         controller.suppressDuplicatePoll()
       } else for (; completed < maximumPlans; completed += 1) {
-        if (completed > 0) heartbeat = await persistHeartbeat("IDLE")
+        if (completed > 0) {
+          heartbeat = await persistHeartbeat("IDLE")
+          if (batchControlMode) {
+            planId = await nextAuthorizedBatchPlanId(workerId, leaderSessionId)
+            if (!planId) break
+          }
+        }
         const claimPayload = await authorizedPost({
           action: "CLAIM_AUTONOMOUS_RESEARCH_PLAN", workerId,
           leaderSessionId,
@@ -454,12 +475,16 @@ export function MayelMarketRevalidationRunner() {
                 pagesCaptured: exactPages,
                 pagesCapturedMinimum: 1, pagesCapturedMaximum: 2 } })
           }
+          succeeded += 1
         } catch (error) {
           workerState = "IDLE"
-          await authorizedPost({ action: "RELEASE_AUTONOMOUS_RESEARCH_PLAN",
+          failedMembers += 1
+          const released = await authorizedPost({ action: "RELEASE_AUTONOMOUS_RESEARCH_PLAN",
             workerId, planId: claimedPlanId,
             errorCode: error instanceof Error ? error.message :
-              "PRODUCT_RESEARCH_WORKER_FAILED" }).catch(() => undefined)
+              "PRODUCT_RESEARCH_WORKER_FAILED" }).then(() => true,
+              () => false)
+          if (!released) releaseFailures += 1
           if (browserWorkerControl && autonomous) continue
           throw error
         }
@@ -467,9 +492,13 @@ export function MayelMarketRevalidationRunner() {
         if (!autonomous) break
       }
       if (browserWorkerControl) {
-        setState(completed > 0
-          ? "Research completado. Buscando trabajo pendiente…"
-          : "Worker disponible · sin trabajo pendiente")
+        setState(releaseFailures > 0
+          ? "La recuperación del lease está pendiente. Buscando otros miembros…"
+          : failedMembers > 0
+            ? `${failedMembers} miembro(s) requieren atención. Buscando otros miembros…`
+            : succeeded > 0
+              ? "Research completado. Buscando trabajo pendiente…"
+              : "Worker disponible · sin trabajo pendiente")
         const delayMs = controller.nextDelayMs()
         await new Promise<void>((resolve) => {
           const reload = window.setTimeout(() => {

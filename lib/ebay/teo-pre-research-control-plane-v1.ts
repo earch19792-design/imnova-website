@@ -236,6 +236,16 @@ function numeric(value: unknown) {
   return Number.isFinite(number) ? number : 0
 }
 
+function boundedTimestamp(value: unknown) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
+    ? value : null
+}
+
+function boundedFailureCode(value: unknown) {
+  return typeof value === "string" && /^[A-Z0-9_]{3,180}$/.test(value)
+    ? value : null
+}
+
 export async function listTeoPreResearchBatchesV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
@@ -301,7 +311,7 @@ export async function readTeoPreResearchBatchV1(input: Readonly<{
     if (planId) {
       const planRead = await input.supabase.from(
         "marketplace_product_research_query_plans")
-        .select("id,status,pre_research_result,pre_research_trace_eligible,pre_research_evidence,pre_research_evidence_digest,pre_research_completed_at,worker_claim_count,worker_lease_owner,worker_lease_expires_at,worker_last_result")
+        .select("id,status,pre_research_result,pre_research_trace_eligible,pre_research_evidence,pre_research_evidence_digest,pre_research_completed_at,worker_claim_count,worker_lease_owner,worker_lease_expires_at,worker_next_retry_at,worker_last_release_code,worker_last_result")
         .eq("id", planId).eq("marketplace_account_key", input.accountKey)
         .eq("source_context", "LUNA_PRE_RESEARCH").limit(1).maybeSingle()
       if (planRead.error || !planRead.data) fail("TEO_PRE_RESEARCH_PLAN_READ_FAILED")
@@ -329,11 +339,31 @@ export async function readTeoPreResearchBatchV1(input: Readonly<{
       }
     }
     const evidence = record(plan.pre_research_evidence)
+    const workerResult = record(plan.worker_last_result)
+    const leaseExpiresAt = boundedTimestamp(plan.worker_lease_expires_at)
+    const leaseState = !plan.worker_lease_owner ? "NONE"
+      : leaseExpiresAt && Date.parse(leaseExpiresAt) > Date.now()
+        ? "ACTIVE" : "STALE"
+    const claimCount = Math.max(0, Math.min(5,
+      Math.trunc(numeric(plan.worker_claim_count))))
     members.push({ ordinal: member.ordinal, productId: member.luna_product_id,
       variantId: member.luna_variant_id, sku: member.luna_sku,
       planId, executionState: member.execution_state,
-      blocker: member.bounded_failure_reason,
+      startedAt: boundedTimestamp(member.started_at),
+      completedAt: boundedTimestamp(member.completed_at),
+      blocker: boundedFailureCode(member.bounded_failure_reason),
       retrySafety: member.retry_safety,
+      claimCount, retryAttempted: claimCount > 1,
+      leaseState, leaseExpiresAt,
+      nextRetryAt: boundedTimestamp(plan.worker_next_retry_at),
+      lastReleaseCode: boundedFailureCode(plan.worker_last_release_code),
+      lastReleaseAt: boundedTimestamp(workerResult.releasedAt) ??
+        boundedTimestamp(workerResult.recoveredAt),
+      lastWorkerState: ["RELEASED_RETRY_SAFE", "RECOVERY_POLICY_EXHAUSTED",
+        "STALE_LEASE_RECOVERED", "STALE_LEASE_REVIEW_REQUIRED",
+        "PRE_RESEARCH_HIGH", "PRE_RESEARCH_MEDIUM", "PRE_RESEARCH_LOW",
+        "INSUFFICIENT_MARKET_EVIDENCE"].includes(String(workerResult.state))
+        ? workerResult.state : null,
       planStatus: plan.status ?? null,
       disposition: plan.pre_research_result ?? "PENDING",
       traceEligible: plan.pre_research_trace_eligible === true,
@@ -349,6 +379,13 @@ export async function readTeoPreResearchBatchV1(input: Readonly<{
         ? "PASS" : "PENDING",
       acceptedEvidence: evidenceRows })
   }
+  const stateCounts = Object.freeze({
+    pending: members.filter((member) => member.executionState === "PENDING").length,
+    running: members.filter((member) => member.executionState === "RUNNING").length,
+    needsAttention: members.filter((member) =>
+      member.executionState === "NEEDS_ATTENTION").length,
+    completed: members.filter((member) => member.executionState === "COMPLETED").length,
+  })
   return Object.freeze({ contractVersion: "TEO_PRE_RESEARCH_CONTROL_PLANE_V1",
     batch: { batchId: batchRead.data.batch_id,
       state: batchRead.data.batch_state,
@@ -357,7 +394,9 @@ export async function readTeoPreResearchBatchV1(input: Readonly<{
       candidateCount: batchRead.data.candidate_count,
       preResearchContractVersion: batchRead.data.contract_version,
       createdAt: batchRead.data.created_at, startedAt: batchRead.data.started_at,
-      completedAt: batchRead.data.completed_at }, members,
+      completedAt: batchRead.data.completed_at,
+      terminal: stateCounts.pending === 0 && stateCounts.running === 0,
+      memberStateCounts: stateCounts }, members,
     safety: { rawSoldAuthority: false, globalQueueFallback: 0,
       commercialTraces: 0, publisherWrites: 0, marketplaceWrites: 0,
       stockGuardMutations: 0 } })
@@ -392,4 +431,25 @@ export async function nextAuthorizedTeoPreResearchPlanV1(input: Readonly<{
   const row = rpcRow(next.data)
   return Object.freeze({ batchId: uuid(row.batchId), memberId: uuid(row.memberId),
     planId: uuid(row.planId), globalQueueFallback: 0 as const })
+}
+
+export async function prepareAuthorizedTeoPreResearchRunnerV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+}>) {
+  const prepared = await input.supabase.rpc(
+    "prepare_seller_os_pre_research_batch_runner_v1", {
+      p_marketplace_account_key: input.accountKey,
+    })
+  if (prepared.error) fail("TEO_PRE_RESEARCH_BATCH_RUNNER_PREPARE_FAILED")
+  const row = rpcRow(prepared.data)
+  const healedBatches = Number(row.healedBatches)
+  const recoveredLeases = Number(row.recoveredLeases)
+  if (!Number.isInteger(healedBatches) || healedBatches < 0 ||
+      !Number.isInteger(recoveredLeases) ||
+      ![0, 1].includes(recoveredLeases)) {
+    fail("TEO_PRE_RESEARCH_BATCH_RUNNER_PREPARE_INVALID")
+  }
+  return Object.freeze({ healedBatches, recoveredLeases,
+    marketplaceWrites: 0 as const })
 }
