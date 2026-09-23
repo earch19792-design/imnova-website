@@ -61,6 +61,8 @@ import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from
 import { buildEconomicEvidenceV1 } from
   "../seller-os/economic-evidence-refresh-v1"
 import { LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS } from "./ebay-live-listing-shipping-evidence-v1"
+import { certifyCommercialTraceShippingReceiptV1 } from
+  "./commercial-trace-shipping-receipt-authority-v1"
 
 export const LUNA_SHIPPING_CANARY_CANDIDATE_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60" as const
@@ -326,44 +328,42 @@ export async function readCommercialTraceShippingReceiptV1(input: Readonly<{
   lunaVariantId: string
   supplierSku: string
   sourceFingerprint: string
+  fieldTruthEvidenceDigest: string
+  allowCrossTraceReuse?: boolean
   now?: number
 }>) {
   const runIds = await accountRunIds(input)
   if (!runIds.length) return null
+  const earliestCapture = new Date((input.now ?? Date.now()) -
+    LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS * 1_000 - 60_000).toISOString()
   const result = await input.supabase.from("ebay_same_day_pilot_events")
-    .select("event_payload,created_at").in("run_id", runIds)
+    .select("id,event_payload,created_at").in("run_id", runIds)
     .eq("event_type", SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1)
+    .gte("created_at", earliestCapture)
+    .contains("event_payload", { lunaProductId: input.lunaProductId,
+      lunaVariantId: input.lunaVariantId, supplierSku: input.supplierSku,
+      sourceFingerprint: input.sourceFingerprint,
+      fieldTruthEvidenceDigest: input.fieldTruthEvidenceDigest,
+      destinationProfileDigest: CANONICAL_DESTINATION.profileDigest,
+      quantity: 1, currency: "USD" })
     .order("created_at", { ascending: false }).limit(500)
   if (result.error) throw new Error(
     "COMMERCIAL_TRACE_SHIPPING_RECEIPT_READ_FAILED")
-  const now = input.now ?? Date.now()
   for (const row of records(result.data)) {
-    const receipt = record(row.event_payload)
-    const observedAt = text(receipt.observedAt, 80)
-    const age = observedAt ? now - Date.parse(observedAt) : Number.POSITIVE_INFINITY
-    const shippingUsd = money(receipt.shippingUsd)
-    if (receipt.contractVersion !==
-          SELLER_OS_COMMERCIAL_TRACE_LUNA_SHIPPING_RECEIPT_V1 ||
-        receipt.shippingContractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION ||
-        receipt.traceId !== input.traceId ||
-        receipt.lunaProductId !== input.lunaProductId ||
-        receipt.lunaVariantId !== input.lunaVariantId ||
-        receipt.supplierSku !== input.supplierSku ||
-        receipt.sourceFingerprint !== input.sourceFingerprint ||
-        receipt.quantity !== 1 || shippingUsd === null ||
-        receipt.currency !== "USD" ||
-        receipt.canonicalDestinationMatch !== true ||
-        receipt.destinationProfileDigest !== CANONICAL_DESTINATION.profileDigest ||
-        !SHA256.test(String(receipt.evidenceDigest ?? "")) ||
-        !Number.isFinite(age) || age < -60_000 ||
-        age > LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS * 1_000) continue
-    return Object.freeze({ amountUsd: shippingUsd, observedAt,
-      evidenceDigest: String(receipt.evidenceDigest),
-      acquisitionMethod: String(receipt.acquisitionMethod),
-      canonicalDestinationMatch: true as const,
-      canonicalDestinationCountryClass: "US" as const,
-      quantity: 1 as const, noPurchase: true as const,
-      noCredentials: true as const })
+    const certified = certifyCommercialTraceShippingReceiptV1({
+      receipt: row.event_payload, receiptId: row.id,
+      capturedAt: row.created_at,
+      expected: { traceId: input.traceId,
+        candidateId: candidateId(input.accountKey, input.lunaProductId,
+          input.lunaVariantId, input.supplierSku),
+        lunaProductId: input.lunaProductId,
+        lunaVariantId: input.lunaVariantId, supplierSku: input.supplierSku,
+        sourceFingerprint: input.sourceFingerprint,
+        fieldTruthEvidenceDigest: input.fieldTruthEvidenceDigest,
+        destinationProfileDigest: CANONICAL_DESTINATION.profileDigest },
+      allowCrossTraceReuse: input.allowCrossTraceReuse, now: input.now,
+    })
+    if (certified) return certified
   }
   return null
 }
@@ -696,7 +696,8 @@ async function resolveCommercialTraceShippingAuthoritiesV1(input: Readonly<{
     const prior = await readCommercialTraceShippingReceiptV1({
       supabase: input.supabase, accountKey: input.accountKey, traceId,
       lunaProductId: productId, lunaVariantId: variantId, supplierSku,
-      sourceFingerprint, now: input.now,
+      sourceFingerprint, fieldTruthEvidenceDigest,
+      allowCrossTraceReuse: true, now: input.now,
     })
     if (prior) continue
     const variant = await input.supabase.from("luna_catalog_snapshot_variants_v1")
@@ -801,7 +802,8 @@ export async function persistCommercialTraceShippingCaptureV1(input: Readonly<{
     lunaProductId: job.identity.lunaProductId,
     lunaVariantId: job.identity.lunaVariantId,
     supplierSku: job.identity.supplierSku,
-    sourceFingerprint: authority.sourceFingerprint, now: input.now,
+    sourceFingerprint: authority.sourceFingerprint,
+    fieldTruthEvidenceDigest: authority.fieldTruthEvidenceDigest, now: input.now,
   })
   if (!readback || readback.evidenceDigest !== certified.quote.evidenceDigest) {
     throw new Error("COMMERCIAL_TRACE_SHIPPING_RECEIPT_READBACK_FAILED")

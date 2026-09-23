@@ -211,6 +211,7 @@ function EconomicsSnapshot({ view }: {
     <div className="mt-4 flex flex-wrap items-center gap-2">
       <ProvenanceBadge value={view.dossier.provenance.shipping} />
       {economics.feesExact === false && <span className="text-xs text-amber-100/70">Fees exactos aún no confirmados</span>}
+      <span className="text-xs text-amber-100/70">Shipping qty1: {economics.shippingStatus} · Fee: {economics.feeAuthorityStatus}</span>
     </div>
   </section>
 }
@@ -471,7 +472,7 @@ function CommercialDossier({ view, error }: {
         <DefinitionGrid items={[
           ["Producto", display(dossier.product.title)],
           ["SKU / Modelo", `${display(dossier.product.sku)} / ${display(dossier.product.model)}`],
-          ["Precio recomendado", money(dossier.pricing.recommendedPrice)],
+          ["Objetivo preliminar (no autorizado)", money(dossier.pricing.recommendedPrice)],
           ["Costo puesto", money(dossier.economics.landed)],
           ["Spread bruto", money(dossier.economics.grossSpread)],
           ["Margen estimado", dossier.economics.marginPercent === null ? "No demostrado" : `${display(dossier.economics.marginPercent)}%`],
@@ -514,7 +515,11 @@ function CommercialDossier({ view, error }: {
         <DefinitionGrid items={[
           ["Costo producto", money(dossier.economics.productCost)],
           ["Shipping qty=1", money(dossier.economics.shipping)],
+          ["Autoridad shipping", display(dossier.economics.shippingStatus)],
+          ["Recibo qty1", display(dossier.economics.shippingReceiptId)],
+          ["Vigente hasta", display(dossier.economics.shippingFreshUntil)],
           ["Costo puesto", money(dossier.economics.landed)],
+          ["Autoridad fee", display(dossier.economics.feeAuthorityStatus)],
           ["Fees estimados", money(dossier.economics.feeEstimate)],
           ["Utilidad neta estimada", money(dossier.economics.netProfit)],
           ["Margen estimado", dossier.economics.marginPercent === null ? "No demostrado" : `${display(dossier.economics.marginPercent)}%`],
@@ -536,9 +541,11 @@ function CommercialDossier({ view, error }: {
         <DefinitionGrid items={[
           ["Rango observado", Object.keys(dossier.pricing.range).length ? `${money(dossier.pricing.range.minimum)} – ${money(dossier.pricing.range.maximum)}` : "No demostrado"],
           ["Mediana", money(dossier.pricing.range.median)],
-          ["Precio recomendado", money(dossier.pricing.recommendedPrice)],
+          ["Objetivo preliminar", money(dossier.pricing.recommendedPrice)],
+          ["Precio final autorizado", money(dossier.pricing.finalAuthorizedPrice)],
+          ["Autorización de precio", dossier.pricing.priceAuthorized ? "Sí" : "No"],
           ["Fallback de prueba", money(dossier.pricing.fallbackPrice)],
-          ["Piso económico", money(dossier.pricing.minimumMarginSafePrice)],
+          ["Piso económico estimado", money(dossier.pricing.minimumMarginSafePrice)],
           ["Razón comercial", dossier.pricing.rationale],
           ["Calidad de evidencia", display(dossier.pricing.evidenceQuality.classification)],
         ]} />

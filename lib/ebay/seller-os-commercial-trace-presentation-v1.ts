@@ -337,6 +337,19 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
   const economicsEvidence = evidence(events, "ECONOMICS")
   const economics = Object.keys(record(result.ECONOMICS)).length
     ? record(result.ECONOMICS) : record(economicsEvidence.economics)
+  const shippingAuthority = record(result.SHIPPING_AUTHORITY)
+  const feeAuthority = record(result.FEE_AUTHORITY)
+  const economicsAuthority = record(result.ECONOMICS_AUTHORITY)
+  const shippingFreshUntil = text(shippingAuthority.freshUntil)
+  const shippingStatus = shippingAuthority.status === "PROVEN" &&
+    (!shippingFreshUntil || !Number.isFinite(Date.parse(shippingFreshUntil)) ||
+      Date.parse(shippingFreshUntil) <= Date.now())
+    ? "STALE" : text(shippingAuthority.status) ?? "UNKNOWN"
+  const finalAuthorizedPrice = number(result.FINAL_AUTHORIZED_PRICE)
+  const priceAuthorized = result.PRICE_AUTHORIZED === true &&
+    shippingStatus === "PROVEN" && feeAuthority.status === "PROVEN" &&
+    economicsAuthority.status === "PROVEN" &&
+    finalAuthorizedPrice !== null && finalAuthorizedPrice > 0
   const economicFloor = Object.keys(record(result.ECONOMIC_FLOOR_EXPLANATION)).length
     ? record(result.ECONOMIC_FLOOR_EXPLANATION)
     : record(economicsEvidence.economicFloorExplanation)
@@ -445,12 +458,33 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
       marginPercent: number(economics.estimatedNetMarginPercent),
       roiPercent: number(economics.estimatedRoiPercent),
       feesExact: economicsEvidence.feePolicyExact === true,
+      shippingStatus,
+      shippingReceiptId: text(shippingAuthority.durableReceiptId),
+      shippingFreshUntil,
+      feeAuthorityStatus: text(feeAuthority.status) ?? "UNKNOWN",
+      finalStatus: text(economicsAuthority.status) ?? "INCOMPLETE",
+      finalValues: Object.keys(record(economicsAuthority.economics)).length
+        ? record(economicsAuthority.economics) : null,
+      finalProfitabilityGate: record(economicsAuthority.profitabilityGate),
+      ownerPricePolicyAuthority:
+        record(result.OWNER_PRICE_POLICY_AUTHORITY),
+      promotedListingsPolicy:
+        record(result.PROMOTED_LISTINGS_AUTHORITY),
+      returnsReservePolicy: record(result.RETURNS_RESERVE_AUTHORITY),
+      otherExplicitCostsPolicy: record(result.OTHER_EXPLICIT_COSTS_AUTHORITY),
+      fulfillmentAuthority: record(result.FULFILLMENT_COST_AUTHORITY),
       floor: economicFloor }),
     pricing: Object.freeze({ range: priceRange, recommendedPrice,
+      priceAuthorized,
+      finalAuthorizedPrice: priceAuthorized
+        ? finalAuthorizedPrice : null,
+      authorizationBlockers: Array.isArray(result.PRICE_AUTHORIZATION_BLOCKERS)
+        ? result.PRICE_AUTHORIZATION_BLOCKERS.filter((entry): entry is string =>
+          typeof entry === "string").slice(0, 12) : [],
       fallbackPrice: decision.tone === "APPROVE" ? minimumMarginSafePrice : null,
       minimumMarginSafePrice,
       rationale: recommendedPrice !== null
-        ? "El precio combina la evidencia utilizable del mercado con el piso económico calculado."
+        ? "Objetivo preliminar: combina evidencia de mercado con un piso económico estimado; no es un precio final autorizado."
         : "No se propone precio porque mercado y piso económico no sostienen todavía una recomendación segura.",
       evidenceQuality: pricingEvidenceQuality }),
     listingStrategy: Object.freeze({

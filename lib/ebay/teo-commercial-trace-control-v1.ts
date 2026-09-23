@@ -173,6 +173,24 @@ function boundedTraceReadback(value: Awaited<ReturnType<
   const productTruth = record(result.PRODUCT_TRUTH)
   const fieldTruth = record(productTruth.fieldTruthV1)
   const economics = record(result.ECONOMICS)
+  const shippingAuthority = record(result.SHIPPING_AUTHORITY)
+  const shippingFreshUntil = text(shippingAuthority.freshUntil, 80)
+  const shippingStatus = shippingAuthority.status === "PROVEN" &&
+    (!shippingFreshUntil || !Number.isFinite(Date.parse(shippingFreshUntil)) ||
+      Date.parse(shippingFreshUntil) <= Date.now())
+    ? "STALE" : text(shippingAuthority.status, 20) || "MISSING"
+  const feeAuthority = record(result.FEE_AUTHORITY)
+  const economicsAuthority = record(result.ECONOMICS_AUTHORITY)
+  const finalAuthorizedPrice = typeof result.FINAL_AUTHORIZED_PRICE === "number" &&
+    Number.isFinite(result.FINAL_AUTHORIZED_PRICE) &&
+    result.FINAL_AUTHORIZED_PRICE > 0 ? result.FINAL_AUTHORIZED_PRICE : null
+  const priceAuthorized = result.PRICE_AUTHORIZED === true &&
+    shippingStatus === "PROVEN" && feeAuthority.status === "PROVEN" &&
+    economicsAuthority.status === "PROVEN" &&
+    finalAuthorizedPrice !== null
+  const promotedListingsAuthority = record(result.PROMOTED_LISTINGS_AUTHORITY)
+  const returnsReserveAuthority = record(result.RETURNS_RESERVE_AUTHORITY)
+  const fulfillmentCostAuthority = record(result.FULFILLMENT_COST_AUTHORITY)
   const pricing = record(result.PRICING_AUTHORITY)
   const safety = record(trace.safety)
   return Object.freeze({
@@ -194,7 +212,90 @@ function boundedTraceReadback(value: Awaited<ReturnType<
       estimatedNetProfit: economics.estimatedNetProfit ?? null,
       estimatedNetMarginPercent: economics.estimatedNetMarginPercent ?? null,
       passesProfitGate: economics.passesProfitGate === true,
+      authority: "ESTIMATED_ADVISORY",
     }) : null,
+    finalEconomics: Object.freeze({
+      status: text(economicsAuthority.status, 30) || "INCOMPLETE",
+      productCostAuthority: record(economicsAuthority.productCost),
+      shippingQty1Authority: record(economicsAuthority.shippingQty1),
+      ownerPolicyAuthority: record(economicsAuthority.ownerPolicyAuthority),
+      feeIntervalAuthority:
+        record(economicsAuthority.economicFloorFeeIntervalAuthority),
+      values: Object.keys(record(economicsAuthority.economics)).length
+        ? record(economicsAuthority.economics) : null,
+      economicFloor: economicsAuthority.economicFloor ?? null,
+      marketSupportedTargetPrice:
+        economicsAuthority.marketSupportedTargetPrice ?? null,
+      profitabilityGate: record(economicsAuthority.profitabilityGate),
+      marketPricingAuthority: record(economicsAuthority.marketPricingAuthority),
+      roiBasis: text(economicsAuthority.roiBasis, 40),
+      formula: text(economicsAuthority.formula, 300),
+    }),
+    shippingAuthority: Object.freeze({
+      status: shippingStatus,
+      amountUsd: shippingStatus === "PROVEN"
+        ? shippingAuthority.amountUsd : null,
+      durableReceiptId: text(shippingAuthority.durableReceiptId, 80) || null,
+      source: text(shippingAuthority.source, 80),
+      evidenceDigest: text(shippingAuthority.evidenceDigest, 100),
+      observedAt: text(shippingAuthority.observedAt, 80) || null,
+      freshUntil: shippingFreshUntil || null,
+      shippingServiceStatus:
+        text(shippingAuthority.shippingServiceStatus, 20) || "UNKNOWN",
+    }),
+    feeAuthority: Object.freeze({
+      status: text(feeAuthority.status, 20) || "MISSING",
+      readReason: text(result.FEE_AUTHORITY_READ_REASON, 120),
+      calculatedFee: feeAuthority.status === "PROVEN"
+        ? feeAuthority.calculatedFee : null,
+      source: text(feeAuthority.source, 200),
+      sourceVersion: text(feeAuthority.sourceVersion, 100),
+      observedAt: text(feeAuthority.observedAt, 80),
+      freshUntil: text(feeAuthority.freshUntil, 80),
+      ebayVariableFee: feeAuthority.status === "PROVEN"
+        ? feeAuthority.ebayVariableFee : null,
+      ebayFixedFee: feeAuthority.status === "PROVEN"
+        ? feeAuthority.ebayFixedFee : null,
+      otherSellerFees: feeAuthority.status === "PROVEN"
+        ? feeAuthority.otherSellerFees : null,
+    }),
+    ownerPricePolicyAuthority: record(result.OWNER_PRICE_POLICY_AUTHORITY),
+    promotedListingsAuthority: Object.freeze({
+      status: text(promotedListingsAuthority.state, 20) || "UNKNOWN",
+      amountUsd: promotedListingsAuthority.amountUsd ?? null,
+      policyVersion: text(promotedListingsAuthority.policyVersion, 80),
+      source: text(promotedListingsAuthority.source, 100) }),
+    returnsReserveAuthority: Object.freeze({
+      status: text(returnsReserveAuthority.state, 20) || "UNKNOWN",
+      amountUsd: returnsReserveAuthority.amountUsd ?? null,
+      policyVersion: text(returnsReserveAuthority.policyVersion, 80),
+      source: text(returnsReserveAuthority.source, 100) }),
+    otherExplicitCostsAuthority: Object.freeze({
+      status: text(record(result.OTHER_EXPLICIT_COSTS_AUTHORITY).state, 20)
+        || "UNKNOWN",
+      amountUsd: record(result.OTHER_EXPLICIT_COSTS_AUTHORITY).amountUsd
+        ?? null }),
+    fulfillmentCostAuthority: Object.freeze({
+      status: text(fulfillmentCostAuthority.status, 20) || "UNKNOWN",
+      restrictionStatus: text(fulfillmentCostAuthority.restrictionStatus, 20)
+        || "UNKNOWN",
+      allowedCarrier: text(fulfillmentCostAuthority.allowedCarrier, 60),
+      allowedService: text(fulfillmentCostAuthority.allowedService, 80),
+      amountUsd: fulfillmentCostAuthority.amountUsd ?? null,
+      restrictionSource:
+        text(fulfillmentCostAuthority.restrictionSource, 100),
+      restrictionEvidenceDigest:
+        text(fulfillmentCostAuthority.restrictionEvidenceDigest, 100),
+      serviceCostSource:
+        text(fulfillmentCostAuthority.serviceCostSource, 100),
+      observedAt: text(fulfillmentCostAuthority.observedAt, 80),
+      freshUntil: text(fulfillmentCostAuthority.freshUntil, 80) }),
+    priceAuthorized,
+    finalAuthorizedPrice: priceAuthorized
+      ? finalAuthorizedPrice : null,
+    priceAuthorizationBlockers: Array.isArray(result.PRICE_AUTHORIZATION_BLOCKERS)
+      ? result.PRICE_AUTHORIZATION_BLOCKERS.slice(0, 12)
+        .map((item) => text(item, 120)) : [],
     pricingAuthority: Object.keys(pricing).length ? Object.freeze({
       sufficient: pricing.sufficient === true,
       pricingMode: text(pricing.pricingMode, 80),
@@ -284,6 +385,7 @@ export async function requestTeoCommercialTraceV1(input: Readonly<{
         lunaProductId: input.productId, lunaVariantId: input.variantId,
         supplierSku: input.sku,
         sourceFingerprint: canonical.sourceFingerprint,
+        fieldTruthEvidenceDigest: canonical.fieldTruthEvidenceDigest,
       })
       if (shippingReceipt) {
         try {

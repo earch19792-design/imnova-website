@@ -1,0 +1,43 @@
+{
+  "contractVersion": "SELLER_OS_COMMERCIAL_TRACE_OWNER_PRICE_POLICY_V1",
+  "policyVersion": "OWNER_PRICE_POLICY_V1_20260923",
+  "marketplace": "EBAY_US",
+  "marketplaceAccountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+  "currency": "USD",
+  "createdAt": "2026-09-23T19:36:02Z",
+  "updatedAt": "2026-09-23T19:36:02Z",
+  "effectiveAt": "2026-09-23T19:36:02Z",
+  "freshUntil": null,
+  "source": "OWNER_CERTIFIED_ACCOUNT_PRICE_POLICY_V1",
+  "approvedByOwner": true,
+  "approvalSource": "OWNER_EXPLICIT_P0_2_FINAL_CLOSURE_2026_09_23",
+  "approvalStatement": "OWNER approved USD pricing for this exact EBAY_US account: minimum net profit 5.00, minimum net margin 0.20, minimum ROI 0.30, returns reserve 0.04 of sale price, Promoted Listings opt-in with default NOT_APPLICABLE and no implicit advertising rate, other explicit costs default NOT_APPLICABLE unless a required cost is discovered, and UNKNOWN never means zero.",
+  "authorizationReferenceDigest": "sha256:eb21a851262a99665ad2354cdc38201fa260baa366b674e588181032cbaabc96",
+  "policyDigest": "sha256:a50be4f14712a7171f0f3a713f31c54764e986aba9e9dd705c9b8e9a6a773a51",
+  "promotedListings": {
+    "mode": "OPT_IN",
+    "defaultState": "NOT_APPLICABLE",
+    "state": "NOT_APPLICABLE",
+    "reason": "OWNER_OPT_IN_DEFAULT_NOT_ENABLED_FOR_CANDIDATE",
+    "provenance": "OWNER_EXPLICIT_P0_2_FINAL_CLOSURE_2026_09_23"
+  },
+  "returnsReserve": {
+    "state": "CONFIGURED",
+    "rateFraction": 0.04,
+    "basis": "SALE_PRICE",
+    "reason": "OWNER_APPROVED_RETURNS_RESERVE",
+    "provenance": "OWNER_EXPLICIT_P0_2_FINAL_CLOSURE_2026_09_23"
+  },
+  "otherExplicitCosts": {
+    "state": "NOT_APPLICABLE",
+    "reason": "OWNER_DEFAULT_UNLESS_REQUIRED_COST_DISCOVERED",
+    "provenance": "OWNER_EXPLICIT_P0_2_FINAL_CLOSURE_2026_09_23"
+  },
+  "profitabilityGates": {
+    "state": "CONFIGURED",
+    "minNetProfit": 5,
+    "minNetMarginFraction": 0.2,
+    "minRoiFraction": 0.3,
+    "provenance": "OWNER_EXPLICIT_P0_2_FINAL_CLOSURE_2026_09_23"
+  }
+}

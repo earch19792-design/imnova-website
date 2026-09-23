@@ -24,12 +24,17 @@ import {
 } from "./seller-os-commercial-trace-pricing-enrichment-v1"
 import { buildCommercialActiveMarketAuthorityV1, readCommercialPricingContextV1,
   type CommercialPricingContextV1 } from "./seller-os-commercial-pricing-authority-v1"
+import { resolveCommercialTraceOwnerPricePolicyV1 } from
+  "./commercial-trace-owner-price-policy-v1"
+import { evaluateCommercialTraceFinalPriceV1 } from
+  "./commercial-trace-final-price-authority-v1"
+import { readCommercialTracePreListingFeeV1 } from
+  "./commercial-trace-prelisting-fee-read-v1"
 
 export const SELLER_OS_LIVE_COMMERCIAL_TRACE_V1 =
   "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1" as const
 export const SELLER_OS_COMMERCIAL_DECISION_LOOP_V1_1 =
   "SELLER_OS_COMMERCIAL_DECISION_LOOP_V1_1" as const
-const SHIPPING_MAX_AGE_MS = 24 * 60 * 60 * 1_000
 type JsonRecord = Record<string, unknown>
 type MarketReaderV1 = (candidate: EbaySellerKeywordCandidate, options?: Readonly<{
   functionalSearchQuery?: string | null
@@ -116,7 +121,8 @@ export async function readCanonicalTraceProductTruthV1(input: Readonly<{
   })
   if (!gate.traceProductTruthSufficient) throw new Error(
     "LIVE_COMMERCIAL_TRACE_PRODUCT_TRUTH_INSUFFICIENT")
-  return Object.freeze({ snapshotId, row, gate,
+  return Object.freeze({ snapshotId,
+    snapshotCompletedAt: String(latest.data.snapshot_completed_at ?? ""), row, gate,
     receipt: record(row.field_truth_v1) })
 }
 
@@ -843,65 +849,18 @@ async function latestShipping(input: Readonly<{
   accountKey: string
   traceId: string
   sourceFingerprint: string
+  fieldTruthEvidenceDigest: string
   productId: string
   variant: DirectedLunaVariant
 }>) {
-  const consumerReceipt = await readCommercialTraceShippingReceiptV1({
+  return readCommercialTraceShippingReceiptV1({
     supabase: input.supabase, accountKey: input.accountKey,
     traceId: input.traceId, lunaProductId: input.productId,
     lunaVariantId: input.variant.id, supplierSku: input.variant.sku,
     sourceFingerprint: input.sourceFingerprint,
+    fieldTruthEvidenceDigest: input.fieldTruthEvidenceDigest,
+    allowCrossTraceReuse: true,
   })
-  if (consumerReceipt) return consumerReceipt
-  // The immutable frontier ledger intentionally revokes direct service-role
-  // table reads. Use its bounded security-definer read contract and then apply
-  // the exact product/variant/SKU predicate in memory.
-  const read = await input.supabase.rpc(
-    "get_seller_os_latest_profitability_frontiers_v1", {
-      p_account_key: input.accountKey,
-      p_marketplace_id: "EBAY_US",
-      p_family_ids: null,
-      p_limit: 100,
-    })
-  if (read.error) throw new Error("LIVE_COMMERCIAL_TRACE_SHIPPING_READ_FAILED")
-  const candidates = (Array.isArray(record(read.data).frontiers)
-    ? record(read.data).frontiers as unknown[] : [])
-    .map((outerValue) => {
-      const outer = record(outerValue)
-      return { outer, frontier: record(outer.frontier) }
-    })
-    .filter(({ frontier }) =>
-      frontier.lunaProductId === input.productId &&
-      frontier.lunaVariantId === input.variant.id &&
-      frontier.lunaSku === input.variant.sku)
-    .sort((left, right) => Date.parse(text(right.outer.calculatedAt, 80) ??
-      text(right.frontier.evaluatedAt, 80) ?? "") -
-      Date.parse(text(left.outer.calculatedAt, 80) ??
-        text(left.frontier.evaluatedAt, 80) ?? ""))
-  if (!candidates.length) return null
-  const selected = candidates[0]
-  const payload = selected.frontier
-  const capture = record(payload.shippingCaptureEvidence)
-  const observedAt = text(capture.observedAt ?? selected.outer.calculatedAt ??
-    payload.evaluatedAt, 80)
-  const age = observedAt ? Date.now() - Date.parse(observedAt) : Number.POSITIVE_INFINITY
-  const valid = payload.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
-    number(payload.shippingValue) !== null &&
-    capture.quantity === 1 && capture.noPurchase === true &&
-    capture.noCredentials === true && capture.canonicalDestinationMatch === true &&
-    capture.lunaProductId === input.productId &&
-    capture.lunaVariantId === input.variant.id &&
-    capture.supplierSku === input.variant.sku &&
-    Number.isFinite(age) && age >= -60_000 && age <= SHIPPING_MAX_AGE_MS
-  if (!valid) return null
-  return Object.freeze({ amountUsd: number(payload.shippingValue) as number,
-    observedAt, evidenceDigest: text(capture.evidenceDigest, 100),
-    acquisitionMethod: text(capture.acquisitionMethod, 120),
-    canonicalDestinationMatch: true as const,
-    canonicalDestinationCountryClass:
-      text(capture.canonicalDestinationCountryClass, 8),
-    quantity: 1 as const, noPurchase: true as const,
-    noCredentials: true as const, rawAddressPersisted: false as const })
 }
 
 async function completeFailure(input: Readonly<{
@@ -1080,6 +1039,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
     const shipping = await latestShipping({ supabase: input.supabase,
       accountKey: input.accountKey, traceId,
       sourceFingerprint: String(productTruth.row.source_fingerprint),
+      fieldTruthEvidenceDigest: String(productTruth.gate.receiptEvidenceDigest),
       productId: product.productId, variant })
     await emit("SHIPPING_QTY1", shipping ? "PASS" : "BLOCKED",
       shipping
@@ -1260,7 +1220,7 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         economicFloorExplanation: decision.economicFloorExplanation,
         feePolicyExact: decision.economics?.feePolicy?.exactFeeClaimed ?? false })
 
-    const knownUncertainties = Object.freeze([
+    const baseKnownUncertainties = Object.freeze([
       ...conflicts.map((entry) => entry.code),
       ...market.sourceLimitations,
       ...(!market.demandValidationPassed && !market.strongDemandProven ? ["DEMAND_NOT_PROVEN"] : []),
@@ -1273,6 +1233,91 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         ? ["EXACT_EBAY_CATEGORY_FEE_UNPROVEN"] : []),
       ...(variant.sourceInventoryQuantityExplicit !== true
         ? ["EXACT_SUPPLIER_QUANTITY_UNPROVEN"] : []),
+    ])
+    const shippingAuthority = shipping ? Object.freeze({
+      status: "PROVEN" as const, amountUsd: shipping.amountUsd,
+      quantity: 1 as const, currency: "USD" as const,
+      source: shipping.acquisitionMethod,
+      durableReceiptId: shipping.durableReceiptId,
+      sourceTraceId: shipping.sourceTraceId,
+      evidenceDigest: shipping.evidenceDigest,
+      sourceFingerprint: shipping.sourceFingerprint,
+      fieldTruthEvidenceDigest: shipping.fieldTruthEvidenceDigest,
+      destinationProfileDigest: shipping.destinationProfileDigest,
+      observedAt: shipping.observedAt, capturedAt: shipping.capturedAt,
+      freshUntil: shipping.freshUntil,
+      shippingServiceStatus: shipping.shippingServiceStatus,
+    }) : Object.freeze({ status: "MISSING" as const,
+      amountUsd: null, quantity: 1 as const, currency: "USD" as const,
+      durableReceiptId: null, observedAt: null, freshUntil: null,
+      shippingServiceStatus: "UNKNOWN" as const })
+    const supplierCostField = Array.isArray(productTruth.receipt.fields)
+      ? productTruth.receipt.fields.map(record).find((entry) =>
+        entry.FIELD === "SUPPLIER_COST") : null
+    // The snapshot gate has already checked the exact source, value and field
+    // evidence. The final-price evaluator independently checks age and binding.
+    const costProof = supplierCostField ? {
+      status: "PROVEN", marketplaceAccountKey: input.accountKey,
+      lunaProductId: product.productId, lunaVariantId: variant.id,
+      supplierSku: variant.sku,
+      sourceFingerprint: String(productTruth.row.source_fingerprint),
+      fieldTruthEvidenceDigest: String(productTruth.gate.receiptEvidenceDigest),
+      amountUsd: variant.sourceUnitPrice,
+      evidenceDigest: supplierCostField.EVIDENCE_ID,
+      source: "LUNA_FIELD_PRODUCT_TRUTH_V1",
+      observedAt: productTruth.snapshotCompletedAt,
+      freshUntil: supplierCostField.FRESH_UNTIL,
+    } : null
+    const marketSupportedTargetPrice =
+      ["SOLD_PRICE_STRONG", "AGGREGATE_SOLD_PRICING"]
+        .includes(decision.pricingMode) &&
+      typeof selectedRange?.median === "number" &&
+      Number.isFinite(selectedRange.median) && selectedRange.median > 0
+        ? round(selectedRange.median) : null
+    const feeRead = await readCommercialTracePreListingFeeV1({
+      supabase: input.supabase,
+      marketplaceAccountKey: input.accountKey,
+      lunaProductId: product.productId, lunaVariantId: variant.id,
+      supplierSku: variant.sku,
+      categoryId: market.resolvedCategoryId,
+      salePrice: marketSupportedTargetPrice,
+    }).catch(() => ({ status: "MISSING" as const,
+      reason: "FEE_CANONICAL_HANDOFF_READ_FAILED", fee: null }))
+    const finalPriceAuthority = evaluateCommercialTraceFinalPriceV1({
+      marketplaceAccountKey: input.accountKey,
+      lunaProductId: product.productId, lunaVariantId: variant.id,
+      supplierSku: variant.sku,
+      sourceFingerprint: String(productTruth.row.source_fingerprint),
+      fieldTruthEvidenceDigest: String(productTruth.gate.receiptEvidenceDigest),
+      salePrice: marketSupportedTargetPrice,
+      categoryId: market.resolvedCategoryId,
+      productCost: costProof,
+      shippingQty1: shipping ? { ...shipping, status: "PROVEN",
+        marketplaceAccountKey: input.accountKey,
+        lunaProductId: product.productId, lunaVariantId: variant.id,
+        supplierSku: variant.sku, currency: "USD" } : null,
+      // Reuse only a current exact pre-sale package handoff if one already
+      // exists. Never create a package or borrow a live/post-sale item fee.
+      fee: feeRead.fee,
+      ownerPolicy: resolveCommercialTraceOwnerPricePolicyV1({
+        marketplaceAccountKey: input.accountKey,
+        lunaProductId: product.productId, lunaVariantId: variant.id,
+        supplierSku: variant.sku,
+        sourceFingerprint: String(productTruth.row.source_fingerprint),
+      }),
+      // Text guards and account policies do not establish product-specific
+      // carrier legality or the cost of an allowed service.
+      fulfillment: null,
+      marketPricing: { sufficient: decision.pricingAuthoritySufficient,
+        pricingMode: decision.pricingMode,
+        marketSupportedTargetPrice },
+    })
+    const priceAuthorizationBlockers = Object.freeze(
+      finalPriceAuthority.blockers)
+    const knownUncertainties = Object.freeze([
+      ...baseKnownUncertainties,
+      ...(!finalPriceAuthority.priceAuthorized
+        ? ["FINAL_PRICE_AUTHORITY_UNPROVEN"] : []),
     ])
     const certificationPass = market.everyObservedComparableAccountedFor &&
       market.samplingSufficientBeforeDemandUnproven &&
@@ -1387,6 +1432,20 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
         quantity: variant.sourceInventoryQuantity ?? null },
       PRODUCT_COST: variant.sourceUnitPrice,
       SHIPPING_QTY1: shipping?.amountUsd ?? null,
+      SHIPPING_AUTHORITY: shippingAuthority,
+      FEE_AUTHORITY: finalPriceAuthority.preListingFeeAuthority,
+      FEE_AUTHORITY_READ_REASON: feeRead.reason,
+      PROMOTED_LISTINGS_AUTHORITY: finalPriceAuthority.promotedListingsPolicy,
+      RETURNS_RESERVE_AUTHORITY: finalPriceAuthority.returnsReservePolicy,
+      OTHER_EXPLICIT_COSTS_AUTHORITY: finalPriceAuthority.otherExplicitCostsPolicy,
+      OWNER_PRICE_POLICY_AUTHORITY: finalPriceAuthority.ownerPolicyAuthority,
+      FULFILLMENT_COST_AUTHORITY: finalPriceAuthority.fulfillmentAuthority,
+      ECONOMICS_AUTHORITY: finalPriceAuthority,
+      PRICE_AUTHORIZED: finalPriceAuthority.priceAuthorized,
+      FINAL_AUTHORIZED_PRICE: finalPriceAuthority.finalAuthorizedPrice,
+      PRICE_AUTHORIZATION_BLOCKERS: priceAuthorizationBlockers,
+      MARKET_SUPPORTED_TARGET_PRICE: marketSupportedTargetPrice,
+      AUTHORITATIVE_ECONOMIC_FLOOR: finalPriceAuthority.economicFloor,
       PRICE_RANGE: selectedRange,
       MINIMUM_MARGIN_SAFE_PRICE: decision.minimumMarginSafePrice,
       ECONOMIC_FLOOR_EXPLANATION: decision.economicFloorExplanation,
