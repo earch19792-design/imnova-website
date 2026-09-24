@@ -9,20 +9,23 @@ import { SellerOsDesktopNavigation } from "./components/seller-os-desktop-naviga
 import { SellerOsMobileNav } from "./components/seller-os-mobile-nav"
 
 function activeArea(pathname: string): SellerOsAreaId {
+  if (pathname === "/admin/ebay/listings" ||
+      pathname.startsWith("/admin/ebay/listings/")) return "listings"
   if (pathname.includes("/quick-pick") ||
       pathname.includes("/product-journey") ||
       pathname.includes("/listing-workspace") ||
-      pathname.includes("/listings/register")) return "publish"
+      pathname.includes("/publish")) return "opportunities"
   if (pathname.includes("/opportunity") ||
       pathname.includes("/mobile-review")) return "opportunities"
   if (pathname.includes("/listing-quality") ||
       pathname.includes("/listing-optimization") ||
       pathname.includes("/seller-performance") ||
-      pathname.endsWith("/monitor")) return "live"
-  if (pathname.includes("/post-sale")) return "post-sale"
-  if (pathname.includes("/mayel")) return "mayel"
-  if (pathname.includes("/sales")) return "sales"
-  if (pathname.includes("/experiments")) return "experiments"
+      pathname.endsWith("/monitor")) return "listings"
+  if (pathname.includes("/post-sale")) return "orders"
+  if (pathname.includes("/mayel")) return "settings"
+  if (pathname.includes("/sales")) return "orders"
+  if (pathname.includes("/seller-performance")) return "analytics"
+  if (pathname.includes("/experiments")) return "settings"
   if (pathname.includes("/stock-guard") ||
       pathname.includes("/luna-supplier-linkage-review")) return "stockguard"
   if (pathname.includes("/operational-readiness") ||
@@ -31,9 +34,9 @@ function activeArea(pathname: string): SellerOsAreaId {
       pathname.includes("/luna-shipping-capture") ||
       pathname.includes("/decisions") || pathname.includes("/learning") ||
       pathname.includes("/copilot") || pathname.includes("/strategic-review")) {
-    return "administration"
+    return "settings"
   }
-  return "home"
+  return "dashboard"
 }
 
 export default function SellerOsEbayLayout({ children }: { children: ReactNode }) {

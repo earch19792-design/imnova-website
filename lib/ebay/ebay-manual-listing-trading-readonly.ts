@@ -32,6 +32,7 @@ export type TradingManualListingResult = {
   ownership: "verified" | "not_owned" | "identity_mismatch" | "inactive"
   itemId: string
   listingStatus: string | null
+  marketplaceSite: string | null
   ebaySku: string | null
   title: string | null
   availableQuantity: number | null
@@ -279,6 +280,8 @@ export function parseTradingManualListingResponses(
           : "inactive",
     itemId: expectedItemId,
     listingStatus: safeIdentifier(listingStatus, 40),
+    marketplaceSite: safeIdentifier(tradingXmlTagValue(item, "Site"), 40) ??
+      safeIdentifier(tradingXmlTagValue(item, "SiteID"), 10),
     ebaySku: safeIdentifier(tradingXmlTagValue(item, "SKU")),
     title: safeListingTitle(tradingXmlTagValue(item, "Title")),
     availableQuantity,

@@ -1,195 +1,124 @@
 "use client"
 
-import { AlertTriangle, ArrowLeft, Box, ImageOff, Link2, PackageCheck,
-  RefreshCw, ShieldCheck } from "lucide-react"
-import Image from "next/image"
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-import type { CommercialListingReadModel, CommercialMonitorGetDto } from
+import type { CommercialMonitorGetDto } from
   "@/lib/ebay/commercial-monitor-readonly-contract"
-import {
-  buildCanonicalLiveListingDashboardMetricsV1,
-  presentStockGuardInventoryIdentityV1,
-  selectCanonicalCurrentLiveListingsV1,
-} from "@/lib/ebay/ebay-commercial-monitor-registry-presentation-v1"
-import { presentSellerOsStatus } from "@/lib/seller-os/presentation"
+import { selectCanonicalCurrentLiveListingsV1 } from
+  "@/lib/ebay/ebay-commercial-monitor-registry-presentation-v1"
+import type { ListingCaseProjectionV1 } from
+  "@/lib/ebay/seller-os-listing-registry-v1"
 import { supabase } from "@/lib/supabase"
 
-type Payload = { success?: boolean; monitor?: CommercialMonitorGetDto; error?: string }
-type PortfolioFilter = "ALL" | "NEEDS_SUPPLIER_LINK" | "EXACT_PROVEN" |
-  "STOCK_RISK" | "STALE" | "UNKNOWN" | "ACTIONABLE"
+type Case = ListingCaseProjectionV1 & { case_id: string;
+  last_reconciled_sweep_id: string | null }
+type RegistryResponse = { success: boolean; error?: string; cases?: Case[];
+  currentLiveCertified?: boolean; lastCertifiedAt?: string | null;
+  currentSweepId?: string | null }
+type MonitorResponse = { success: boolean; monitor?: CommercialMonitorGetDto }
 
-function shown(value: string | number | boolean | null | undefined) {
-  if (value === null || value === undefined || value === "") return "No comprobado"
-  if (typeof value === "boolean") return value ? "Disponible" : "No disponible"
-  return String(value)
-}
-
-function exactSupplierEvidence(listing: CommercialListingReadModel) {
-  return listing.stock.supplierLinkageStatus === "CERTIFIED"
-}
-
-function stockRisk(listing: CommercialListingReadModel) {
-  if (!exactSupplierEvidence(listing)) return "IDENTITY_UNPROVEN"
-  if (listing.stock.state === "OUT_OF_STOCK_SIGNAL") return "OUT_OF_STOCK_CONFIRMED"
-  if (listing.stock.state === "STALE") return "STALE_EVIDENCE"
-  if (listing.stock.state === "SOURCE_FORMAT_CHANGED") return "SOURCE_CHANGED"
-  if (listing.stock.state === "STOCK_CONFLICTED") return "CONFLICT"
-  if (listing.stock.state === "IN_STOCK_SIGNAL") {
-    const supplierQuantity = listing.stock.quantity.value
-    if (supplierQuantity === 0) return "CONFLICT"
-    if (supplierQuantity !== null && Number.isInteger(supplierQuantity) &&
-        supplierQuantity > 0 && supplierQuantity <= 3) return "LOW_STOCK_CONFIRMED"
-    const published = listing.identity.listedQuantity
-    const capacity = listing.composition.bundleCapacity.value
-    if (published !== null && capacity !== null && published > capacity) return "OVERSELL_RISK"
-    return "NO_PROVEN_RISK"
+function stockClass(state: string | null, quantity: number | null) {
+  if (state === "IN_STOCK_SIGNAL") {
+    if (quantity === null) return "UNKNOWN_STALE"
+    return quantity <= 3 ? "LOW_STOCK" : "SAFE"
   }
-  return "STOCK_UNKNOWN"
-}
-
-function recommendedAction(risk: string) {
-  if (["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk)) return "Revisión humana requerida"
-  if (risk === "LOW_STOCK_CONFIRMED") return "Revisar exposición publicada y prioridad de recaptura"
-  if (["STALE_EVIDENCE", "SOURCE_CHANGED"].includes(risk)) return "Actualizar evidencia de Luna"
-  if (risk === "IDENTITY_UNPROVEN") return "Capturar y aprobar un vínculo exacto del proveedor"
-  if (risk === "STOCK_UNKNOWN") return "Completar evidencia de disponibilidad del proveedor"
-  return "Supervisar"
+  if (state === "OUT_OF_STOCK_SIGNAL") return "LOW_STOCK"
+  return "UNKNOWN_STALE"
 }
 
 export default function StockGuardPage() {
+  const [registry, setRegistry] = useState<RegistryResponse | null>(null)
   const [monitor, setMonitor] = useState<CommercialMonitorGetDto | null>(null)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<PortfolioFilter>("ALL")
+  const [status, setStatus] = useState("ALL")
+  const [origin, setOrigin] = useState("ALL")
+  const [marketplace, setMarketplace] = useState("ALL")
+  const [account, setAccount] = useState("ALL")
   const load = useCallback(async () => {
     setLoading(true); setError("")
     try {
-      const { data, error: sessionError } = await supabase.auth.getSession()
-      if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
-      const response = await fetch("/api/admin/ebay/monitor", { cache: "no-store",
-        headers: { Authorization: `Bearer ${data.session.access_token}` } })
-      const result = await response.json() as Payload
-      if (!response.ok || !result.success || !result.monitor) {
-        throw new Error(result.error ?? "STOCK_GUARD_READ_FAILED")
+      const { data, error: authError } = await supabase.auth.getSession()
+      if (authError || !data.session) throw new Error("AUTH_REQUIRED")
+      const headers = { Authorization: `Bearer ${data.session.access_token}` }
+      const [registryResponse, monitorResponse] = await Promise.all([
+        fetch("/api/admin/ebay/listings/registry", { cache: "no-store", headers }),
+        fetch("/api/admin/ebay/monitor", { cache: "no-store", headers }),
+      ])
+      const registryData = await registryResponse.json() as RegistryResponse
+      if (!registryResponse.ok || !registryData.success) {
+        throw new Error(registryData.error ?? "STOCKGUARD_REGISTRY_READ_FAILED")
       }
-      setMonitor(result.monitor)
+      setRegistry(registryData)
+      if (monitorResponse.ok) {
+        const monitorData = await monitorResponse.json() as MonitorResponse
+        if (monitorData.success && monitorData.monitor) setMonitor(monitorData.monitor)
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "STOCK_GUARD_READ_FAILED")
+      setError(caught instanceof Error ? caught.message : "STOCKGUARD_READ_FAILED")
     } finally { setLoading(false) }
   }, [])
   useEffect(() => { void load() }, [load])
-  const liveListings = useMemo(() => monitor
-    ? selectCanonicalCurrentLiveListingsV1(monitor) : [], [monitor])
-  const rows = useMemo(() => liveListings.map((listing) => ({ listing,
-    exact: exactSupplierEvidence(listing), risk: stockRisk(listing) })), [liveListings])
-  const canonicalInventory = useMemo(() => monitor
-    ? buildCanonicalLiveListingDashboardMetricsV1(monitor) : null, [monitor])
-  const currentLiveAvailable = canonicalInventory?.currentAuthorityState ===
-    "CURRENT_FRESH"
-  const exactCount = currentLiveAvailable
-    ? canonicalInventory?.exactSupplierLinked ?? null : null
-  const needsLinkCount = currentLiveAvailable
-    ? canonicalInventory?.needsLinkage ?? 0 : 0
-  const needsLinkDisplay = currentLiveAvailable ? needsLinkCount : null
-  const stockRiskCount = currentLiveAvailable ? rows.filter((row) => ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK",
-    "LOW_STOCK_CONFIRMED"].includes(row.risk)).length : null
-  const staleCount = currentLiveAvailable
-    ? rows.filter((row) => row.risk === "STALE_EVIDENCE").length : null
-  const unknownCount = currentLiveAvailable
-    ? canonicalInventory?.stockUnknown ?? null : null
-  const actionableCount = currentLiveAvailable ? rows.filter((row) =>
-    row.listing.stock.state !== "STOCK_UNKNOWN" &&
-    row.risk !== "NO_PROVEN_RISK" && row.risk !== "STOCK_UNKNOWN").length : null
-  const visibleRows = rows.filter((row) => filter === "ALL" ||
-    filter === "NEEDS_SUPPLIER_LINK" && !row.exact ||
-    filter === "EXACT_PROVEN" && row.exact ||
-    filter === "STOCK_RISK" && ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK",
-      "LOW_STOCK_CONFIRMED"].includes(row.risk) ||
-    filter === "STALE" && row.risk === "STALE_EVIDENCE" ||
-    filter === "UNKNOWN" && row.listing.stock.state === "STOCK_UNKNOWN" ||
-    filter === "ACTIONABLE" && row.listing.stock.state !== "STOCK_UNKNOWN" &&
-      row.risk !== "NO_PROVEN_RISK" && row.risk !== "STOCK_UNKNOWN")
-  const filters: Array<[PortfolioFilter, string, number | null]> = [
-    ["ALL", "Todo", currentLiveAvailable ? rows.length : null], ["NEEDS_SUPPLIER_LINK", "Necesita vínculo", needsLinkDisplay],
-    ["EXACT_PROVEN", "Exacto comprobado", exactCount], ["STOCK_RISK", "Riesgo de stock", stockRiskCount],
-    ["STALE", "Evidencia vencida", staleCount], ["UNKNOWN", "Desconocido", unknownCount],
-    ["ACTIONABLE", "Accionable", actionableCount],
-  ]
 
-  return <main className="min-h-screen bg-[#eef2f6] p-4 text-slate-950 md:p-7">
-    <div className="mx-auto max-w-[1500px] space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
-        <div><Link href="/admin/ebay/monitor" className="inline-flex items-center gap-2 text-sm font-bold text-cyan-700"><ArrowLeft size={14} />Monitor comercial</Link><h1 className="mt-3 text-[28px] font-black md:text-[32px]">Inventario y Stock Guard</h1><p className="mt-1 text-base text-slate-500">Evidencia exacta del proveedor vinculada a Item IDs activos autoritativos. Desconocido no equivale a riesgo.</p></div>
-        <div className="flex items-center gap-2"><Link href="/admin/ebay/copilot?surface=STOCK" className="rounded-lg border border-violet-200 px-3 py-2 text-sm font-black text-violet-700">Preguntar al Copilot</Link><span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700"><ShieldCheck size={15} />Solo lectura</span><button onClick={() => void load()} disabled={loading} className="rounded-lg border border-slate-200 p-2 text-slate-600 disabled:opacity-40" aria-label="Actualizar Stock Guard"><RefreshCw size={16} /></button></div>
-      </header>
-      {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">La lectura se detuvo de forma segura: {error}</div>}
-      {canonicalInventory?.currentAuthorityState === "CURRENT_UNAVAILABLE" && <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-black">Estado LIVE no comprobable ahora.</p><p className="mt-1">Conservamos la última evidencia certificada{canonicalInventory.lastCertifiedLiveCount === null ? ". Aún no existe una cohorte certificada bajo este contrato." : `: ${canonicalInventory.lastCertifiedLiveCount} listings · ${shown(canonicalInventory.lastCertifiedAt)}.`}</p><p className="mt-1 text-amber-800">Seller OS reintentará automáticamente. No necesitas hacer nada.</p></section>}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
-        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Paridad canónica</p><p className={`mt-2 font-black ${canonicalInventory?.monitorAndInventoryCanonicalParity ? "text-emerald-700" : "text-amber-800"}`}>{canonicalInventory?.monitorAndInventoryCanonicalParity ? "Monitor = Inventory" : "No comprobada"}</p></article>
-        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Publicaciones live canónicas</p><p className="mt-2 text-xl font-black">{canonicalInventory?.liveCount ?? "—"}</p></article>
-        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Vínculo exacto certificado</p><p className="mt-2 text-xl font-black">{canonicalInventory?.exactSupplierLinked ?? "—"}</p><p className="mt-1 text-[13px] text-slate-500">supplierLinkage = CERTIFIED</p></article>
-        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Necesita vínculo</p><p className="mt-2 text-xl font-black">{canonicalInventory?.needsLinkage ?? "—"}</p><p className="mt-1 text-[13px] text-slate-500">No se deriva de stock desconocido</p></article>
-        <article className="rounded-xl border border-emerald-200 bg-white p-4"><p className="text-[13px] font-black text-emerald-800">Señal in stock</p><p className="mt-2 text-xl font-black">{canonicalInventory?.inStockSignal ?? "—"}</p><p className="mt-1 text-[13px] text-slate-500">No equivale a vínculo exacto</p></article>
-        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Stock desconocido</p><p className="mt-2 text-xl font-black">{canonicalInventory?.stockUnknown ?? "—"}</p><p className="mt-1 text-[13px] text-slate-500">No implica acción</p></article>
-        <article className="rounded-xl border border-amber-200 bg-white p-4"><p className="text-[13px] font-black text-amber-800">Mismatch de identidad</p><p className="mt-2 text-xl font-black">{canonicalInventory?.identityMismatch ?? "—"}</p><p className="mt-1 text-[13px] text-slate-500">Sólo linkage CERTIFIED</p></article>
-        <article className="rounded-xl border border-cyan-200 bg-white p-4"><p className="text-[13px] font-black text-cyan-800">Live monitoreados</p><p className="mt-2 text-xl font-black">{canonicalInventory?.monitoredLive ?? "—"}</p></article>
-        <article className="rounded-xl border border-violet-200 bg-white p-4"><p className="text-[13px] font-black text-violet-800">StockGuard inscritos</p><p className="mt-2 text-xl font-black">{canonicalInventory?.stockGuardEnrolled ?? "—"}</p></article>
-        <article className="rounded-xl border border-cyan-200 bg-white p-4"><p className="text-[13px] font-black text-cyan-800">Accionable</p><p className="mt-2 text-xl font-black">{monitor ? actionableCount : "—"}</p><p className="mt-1 text-[13px] text-slate-500">Excluye STOCK_UNKNOWN</p></article>
+  const cases = useMemo(() => registry?.cases ?? [], [registry])
+  const currentCases = cases.filter((row) => registry?.currentLiveCertified &&
+    row.last_reconciled_sweep_id === registry.currentSweepId)
+  const stockByItem = useMemo(() => new Map((monitor && registry?.currentLiveCertified
+    ? selectCanonicalCurrentLiveListingsV1(monitor) : []).map((listing) =>
+    [listing.identity.itemId, stockClass(listing.stock.state,
+      listing.stock.quantity.value)])), [monitor, registry])
+  const visible = cases.filter((row) =>
+    (status === "ALL" || row.stockguard_link_status === status) &&
+    (origin === "ALL" || row.origin === origin) &&
+    (marketplace === "ALL" || row.marketplace_id === marketplace) &&
+    (account === "ALL" || row.account_key === account))
+  const linked = currentCases.filter((row) => row.stockguard_link_status.startsWith("LINKED_"))
+  const currentCount = (predicate: (row: Case) => boolean) =>
+    registry?.currentLiveCertified ? currentCases.filter(predicate).length : "—"
+  const counts = [
+    ["Total linked listings", registry?.currentLiveCertified ? linked.length : "—"],
+    ["Monitoring", currentCount((row) => row.stockguard_link_status === "LINKED_MONITOR_ONLY")],
+    ["Safe", registry?.currentLiveCertified ? linked.filter((row) =>
+      stockByItem.get(row.ebay_item_id) === "SAFE").length : "—"],
+    ["Low stock", registry?.currentLiveCertified ? linked.filter((row) =>
+      stockByItem.get(row.ebay_item_id) === "LOW_STOCK").length : "—"],
+    ["Unknown/stale stock", registry?.currentLiveCertified ? linked.filter((row) =>
+      !stockByItem.has(row.ebay_item_id) ||
+      stockByItem.get(row.ebay_item_id) === "UNKNOWN_STALE").length : "—"],
+    ["Blocked identity", currentCount((row) => row.stockguard_link_status === "BLOCKED_IDENTITY")],
+    ["Needs OWNER review", currentCount((row) => row.stockguard_link_status === "NEEDS_OWNER_REVIEW")],
+  ] as const
+
+  return <main className="min-h-screen bg-slate-50 px-4 pb-28 pt-7 text-slate-900 md:px-8">
+    <div className="mx-auto max-w-7xl space-y-5">
+      <header className="flex flex-wrap items-start justify-between gap-3"><div>
+        <h1 className="text-3xl font-black">StockGuard</h1>
+        <p className="mt-1 text-sm text-slate-600">Una vista desde el registro canónico. El vínculo y el monitoreo no autorizan escrituras de cantidad en eBay.</p>
+      </div><div className="flex gap-2"><Link href="/admin/ebay/copilot?surface=STOCK" className="rounded-lg border px-3 py-2 text-sm font-bold text-violet-800">Copilot</Link><Link href="/admin/ebay/listings" className="rounded-lg border px-3 py-2 text-sm font-bold text-cyan-800">Listings</Link>
+        <button type="button" onClick={() => void load()} disabled={loading} className="rounded-lg border px-3 py-2 text-sm font-bold disabled:opacity-50">Actualizar</button></div></header>
+      {error && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">{error}</p>}
+      {!registry?.currentLiveCertified && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">LIVE actual no certificado. Los casos guardados son historial; las señales de stock se ocultan hasta una lectura fresca. Última certificación: {registry?.lastCertifiedAt ?? "ninguna"}.</p>}
+      <section aria-label="Resumen StockGuard" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {counts.map(([label, count]) => <div key={label} className="rounded-xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">{label}</p><p className="mt-1 text-2xl font-black">{count}</p></div>)}
       </section>
-      {monitor && needsLinkCount > 0 && <section className="rounded-2xl border border-cyan-200 bg-cyan-50 p-5"><div className="flex gap-3"><Link2 className="shrink-0 text-cyan-700" /><div><h2 className="text-lg font-black">Listing necesita vinculación</h2><p className="mt-1 text-sm text-cyan-950">Seller OS vincula automáticamente sólo una identidad exacta y determinista. Estas excepciones permanecen abiertas porque falta una coincidencia única o existe un conflicto.</p><p className="mt-3 text-sm font-bold">No se infiere identidad por similitud de título. Resuelve la identidad exacta mediante el intake manual existente.</p><Link href="/admin/ebay/listings/register" className="mt-3 inline-flex min-h-10 items-center rounded-lg bg-cyan-800 px-3 text-sm font-black text-white">Resolver</Link></div></div></section>}
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-200 px-4 py-3"><div className="flex items-center justify-between"><div><h2 className="text-lg font-black">Portafolio activo</h2><p className="text-sm text-slate-500">Una fila por Item ID autoritativo de Trading</p></div><span className="text-sm font-bold text-slate-500">{loading ? "Leyendo…" : currentLiveAvailable ? `${visibleRows.length} de ${rows.length} publicaciones` : "Estado LIVE no disponible"}</span></div><div className="mt-3 flex flex-wrap gap-2" aria-label="Filtros del portafolio de Stock Guard">{filters.map(([value, label, count]) => <button type="button" key={value} onClick={() => setFilter(value)} aria-pressed={filter === value} className={`rounded-full border px-3 py-1.5 text-[13px] font-black ${filter === value ? "border-cyan-600 bg-cyan-50 text-cyan-800" : "border-slate-200 text-slate-500"}`}>{label} · {shown(count)}</button>)}</div></div>
-        <div className="divide-y divide-slate-100">
-          {visibleRows.map(({ listing, risk }) => {
-            const inventoryPresentation =
-              presentStockGuardInventoryIdentityV1(listing)
-            const hardOverride = listing.experiment.status === "AVAILABLE" &&
-              listing.experiment.lifecycleState === "RUNNING" &&
-              ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk)
-            return (
-              <article key={listing.identity.itemId} className="grid min-h-[88px] gap-4 p-4 lg:grid-cols-[minmax(280px,1.4fr)_repeat(4,minmax(145px,1fr))]">
-                <div className="flex min-w-0 gap-3">
-                  {listing.identity.primaryImageUrl
-                    ? <Image src={listing.identity.primaryImageUrl} alt="" width={64} height={64} unoptimized className="h-16 w-16 shrink-0 rounded-xl border border-slate-200 object-cover" />
-                    : <span className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-400"><ImageOff size={20} /></span>}
-                  <div className="min-w-0">
-                    <h3 className="truncate text-[15px] font-black">{listing.identity.title ?? `Item ${listing.identity.itemId}`}</h3>
-                    <p className="mt-1 text-[13px] text-slate-500">Item {listing.identity.itemId} · SKU {shown(listing.identity.sku)}</p>
-                    <p className="mt-1 text-[13px] font-bold text-cyan-700">{listing.identity.primaryImageUrl ? "Imagen disponible" : "Imagen no comprobada"}</p>
-                  </div>
-                </div>
-                <div>
-                  <p className="text-[13px] font-black uppercase text-slate-400">Vínculo del proveedor</p>
-                  <p className="mt-1 text-sm font-bold">{inventoryPresentation.supplierLinkageLabel}</p>
-                  <p className="mt-1 text-[13px] leading-5 text-slate-500">Producto {shown(listing.stock.supplierProductId)} · Variante {shown(listing.stock.supplierVariantId)} · SKU {shown(listing.stock.supplierSku)}</p>
-                </div>
-                <div>
-                  <p className="text-[13px] font-black uppercase text-slate-400">Evidencia de stock</p>
-                  <p className="mt-1 text-sm font-bold">{inventoryPresentation.stockLabel ?? presentSellerOsStatus(listing.stock.state)}</p>
-                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{inventoryPresentation.stockDetail ?? `Proveedor ${shown(listing.stock.quantity.value)} · Publicado ${shown(listing.identity.listedQuantity)} · Capacidad segura ${shown(listing.composition.bundleCapacity.value)}`}</p>
-                </div>
-                <div>
-                  <p className="text-[13px] font-black uppercase text-slate-400">Vigencia</p>
-                  <p className="mt-1 text-sm font-bold">{inventoryPresentation.freshnessLabel ?? presentSellerOsStatus(listing.stock.freshness.status)}</p>
-                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{inventoryPresentation.freshnessDetail ?? `Antigüedad ${shown(listing.stock.freshness.ageSeconds)} s · fuente ${presentSellerOsStatus(listing.stock.sourceContractStatus)}`}</p>
-                </div>
-                <div>
-                  <p className="text-[13px] font-black uppercase text-slate-400">Riesgo y acción</p>
-                  <p className={`mt-1 text-sm font-black ${["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk) ? "text-rose-700" : "text-slate-700"}`}>{inventoryPresentation.riskLabel ?? presentSellerOsStatus(risk)}</p>
-                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{inventoryPresentation.recommendedAction ?? recommendedAction(risk)}</p>
-                  {!exactSupplierEvidence(listing) && <Link href="/admin/ebay/listings/register" className="mt-2 inline-flex min-h-9 items-center rounded-lg border border-cyan-200 px-3 text-[13px] font-black text-cyan-800">Resolver</Link>}
-                  {hardOverride && <p className="mt-1 flex items-center gap-1 text-[13px] font-black text-rose-700"><AlertTriangle size={14} />Excepción crítica · revisión humana</p>}
-                  <details className="mt-2"><summary className="cursor-pointer text-[13px] font-bold text-cyan-700">Ver códigos técnicos</summary><p className="mt-1 font-mono text-[13px] text-slate-500">{risk} · {listing.stock.state} · {listing.stock.limitationCode ?? "NO_LIMITATION"} · {listing.stock.sourceContractStatus}</p></details>
-                </div>
-              </article>
-            )
-          })}
-          {!loading && currentLiveAvailable && visibleRows.length === 0 && <div className="flex items-center gap-3 p-6 text-sm text-slate-500"><Box />Ninguna publicación coincide con este filtro de evidencia.</div>}
-          {!loading && !currentLiveAvailable && <div className="flex items-center gap-3 p-6 text-sm text-slate-500"><Box />La cohorte LIVE actual no está disponible. La última evidencia certificada se conserva sin presentarla como estado fresco.</div>}
+      <section className="rounded-xl border bg-white">
+        <div className="flex flex-wrap gap-2 border-b p-4">
+          <select aria-label="Filtrar por estado" value={status} onChange={(event) => setStatus(event.target.value)} className="rounded-lg border px-2 py-2 text-sm">
+            {["ALL", "LINKED_ACTIVE", "LINKED_MONITOR_ONLY", "BLOCKED_IDENTITY", "BLOCKED_STOCK_SOURCE", "NEEDS_OWNER_REVIEW"].map((value) => <option key={value} value={value}>{value === "ALL" ? "Todos los estados" : value}</option>)}</select>
+          <select aria-label="Filtrar por origen" value={origin} onChange={(event) => setOrigin(event.target.value)} className="rounded-lg border px-2 py-2 text-sm">
+            {["ALL", "SELLER_OS", "MANUAL_EBAY", "IMPORTED_LEGACY"].map((value) => <option key={value} value={value}>{value === "ALL" ? "Todos los orígenes" : value}</option>)}</select>
+          <select aria-label="Filtrar por marketplace" value={marketplace} onChange={(event) => setMarketplace(event.target.value)} className="rounded-lg border px-2 py-2 text-sm"><option value="ALL">Todos los marketplaces</option>{[...new Set(cases.map((row) => row.marketplace_id))].map((value) => <option key={value} value={value}>{value}</option>)}</select>
+          <select aria-label="Filtrar por seller account" value={account} onChange={(event) => setAccount(event.target.value)} className="rounded-lg border px-2 py-2 text-sm"><option value="ALL">Todas las cuentas</option>{[...new Set(cases.map((row) => row.account_key))].map((value) => <option key={value} value={value}>{value}</option>)}</select>
         </div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-sm"><thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">eBay Item ID / SKU</th><th className="p-3">Origen</th><th className="p-3">Identidad</th><th className="p-3">StockGuard</th><th className="p-3">Stock</th><th className="p-3">Siguiente bloqueo</th></tr></thead>
+          <tbody>{visible.map((row) => {
+            const current = registry?.currentLiveCertified &&
+              row.last_reconciled_sweep_id === registry.currentSweepId
+            return <tr key={row.case_id} className="border-t"><td className="p-3 font-bold">{row.ebay_item_id}<br /><span className="font-normal">{row.ebay_custom_label ?? "Sin Custom Label"}</span></td><td className="p-3">{row.origin}<br /><span className="text-xs text-slate-500">{current ? "LIVE ACTUAL" : "HISTÓRICO"}</span></td><td className="p-3">{row.identity_status}</td><td className="p-3">{row.stockguard_link_status}</td><td className="p-3">{current ? stockByItem.get(row.ebay_item_id) ?? "UNKNOWN_STALE" : "NO_CURRENT_READ"}</td><td className="p-3">{row.next_blocker ?? "—"}</td></tr>
+          })}</tbody></table></div>
+        {!loading && !visible.length && <p className="p-5 text-sm text-slate-500">No hay casos con estos filtros.</p>}
       </section>
-      <p className="flex items-center gap-2 rounded-xl bg-slate-900 p-3 text-sm text-white"><PackageCheck size={15} />0 escrituras en eBay · 0 escrituras de inventario · 0 escrituras del registro · sólo recomendaciones</p>
     </div>
   </main>
 }

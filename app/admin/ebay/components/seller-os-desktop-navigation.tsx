@@ -1,11 +1,8 @@
 import {
-  Activity,
   BarChart3,
   Boxes,
-  FlaskConical,
-  Gauge,
   Home,
-  PackageCheck,
+  ListChecks,
   Settings2,
   ShoppingBag,
   Sparkles,
@@ -13,23 +10,20 @@ import {
 } from "lucide-react"
 
 import {
+  canonicalSellerOsArea,
   SELLER_OS_PRIMARY_NAVIGATION,
-  SELLER_OS_SYSTEM_NAVIGATION,
   type SellerOsAreaId,
   type SellerOsNavigationItem,
 } from "@/lib/seller-os/navigation"
 
 const icons: Record<SellerOsNavigationItem["icon"], LucideIcon> = {
-  home: Home,
-  publish: PackageCheck,
+  dashboard: Home,
   opportunities: Sparkles,
-  live: Activity,
-  sales: ShoppingBag,
-  "post-sale": Gauge,
-  mayel: BarChart3,
+  listings: ListChecks,
   stockguard: Boxes,
-  administration: Settings2,
-  experiments: FlaskConical,
+  orders: ShoppingBag,
+  analytics: BarChart3,
+  settings: Settings2,
 }
 
 function NavigationGroup({ label, items, active }: {
@@ -44,7 +38,7 @@ function NavigationGroup({ label, items, active }: {
     <div className="mt-1.5 space-y-1">
       {items.map((item) => {
         const Icon = icons[item.icon]
-        const selected = item.id === active
+        const selected = item.id === canonicalSellerOsArea(active)
         return <div key={item.id}>
           <a href={item.href} aria-current={selected ? "page" : undefined}
             title={item.description}
@@ -73,8 +67,8 @@ function NavigationGroup({ label, items, active }: {
 export function SellerOsDesktopNavigation({ active }: {
   active: SellerOsAreaId
 }) {
-  const activeItem = [...SELLER_OS_PRIMARY_NAVIGATION,
-    ...SELLER_OS_SYSTEM_NAVIGATION].find((item) => item.id === active) ??
+  const activeItem = SELLER_OS_PRIMARY_NAVIGATION.find((item) =>
+    item.id === canonicalSellerOsArea(active)) ??
       SELLER_OS_PRIMARY_NAVIGATION[0]
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[272px] flex-col overflow-y-auto border-r border-white/10 bg-[#101b2c] px-3 py-4 text-slate-100 xl:flex">
@@ -90,8 +84,6 @@ export function SellerOsDesktopNavigation({ active }: {
       </a>
 
       <NavigationGroup label="Operación" items={SELLER_OS_PRIMARY_NAVIGATION}
-        active={active} />
-      <NavigationGroup label="Sistema" items={SELLER_OS_SYSTEM_NAVIGATION}
         active={active} />
 
       <section aria-label={`Ayuda de ${activeItem.label}`}
