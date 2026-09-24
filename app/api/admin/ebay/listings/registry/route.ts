@@ -26,6 +26,7 @@ import { buildListingIdentityReviewQueueV1, buildOperationalListingBucketsV1,
   packageIdFromCustomLabelV1 } from
   "@/lib/ebay/seller-os-listing-identity-review-v1"
 import { persistListingCasesV1, projectSellerOsListingCasesV1,
+  projectProvenListingCaseReadModelV1,
   readListingRegistryEvidenceV1 } from
   "@/lib/ebay/seller-os-listing-registry-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
@@ -103,15 +104,16 @@ export async function GET(req: Request) {
     if ((cases.data?.length ?? 0) >= 1000) {
       throw new Error("LISTING_REGISTRY_CASE_PAGINATION_REQUIRED")
     }
-    const currentCases = (cases.data ?? []).filter((row) =>
+    const storedCurrentCases = (cases.data ?? []).filter((row) =>
       row.last_reconciled_sweep_id === sweep.data?.sweep_id)
-    const labels = [...new Set(currentCases.flatMap((row) =>
+    const labels = [...new Set(storedCurrentCases.flatMap((row) =>
       row.ebay_custom_label ? [String(row.ebay_custom_label)] : []))]
     const packageIds = [...new Set(labels.flatMap((label) => {
       const id = packageIdFromCustomLabelV1(label)
       return id ? [id] : []
     }))]
-    const [snapshot, packageRead, decisionRead, skuOpportunityRead, ownerActionRead] = await Promise.all([
+    const [snapshot, packageRead, decisionRead, skuOpportunityRead,
+      ownerActionRead, authorityRead, quarantineRead] = await Promise.all([
       supabase.from("luna_catalog_snapshots_v1")
         .select("snapshot_id").eq("snapshot_status", "COMPLETE")
         .order("snapshot_completed_at", { ascending: false }).limit(1).maybeSingle(),
@@ -119,31 +121,45 @@ export async function GET(req: Request) {
         .select("id,opportunity_id,candidate_key").eq("account_key", scope.accountKey)
         .in("id", packageIds).limit(packageIds.length + 1) :
         Promise.resolve({ data: [], error: null }),
-      currentCases.length ? supabase.from("seller_os_luna_linkage_decisions")
-        .select("ebay_item_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,decision,decision_version,evidence_observed_at")
+      storedCurrentCases.length ? supabase.from("seller_os_luna_linkage_decisions")
+        .select("decision_id,account_key,marketplace_id,ebay_item_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,decision,decision_version,evidence_observed_at")
         .eq("account_key", scope.accountKey).eq("marketplace_id", "EBAY_US")
-        .in("ebay_item_id", currentCases.map((row) => row.ebay_item_id))
+        .in("ebay_item_id", storedCurrentCases.map((row) => row.ebay_item_id))
         .order("decision_version", { ascending: false }).limit(500) :
         Promise.resolve({ data: [], error: null }),
       labels.length ? supabase.from("ebay_luna_opportunity_queue")
         .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku")
         .in("supplier_sku", labels).limit(200) :
         Promise.resolve({ data: [], error: null }),
-      currentCases.length ? supabase.from("seller_os_listing_case_events_v1")
+      storedCurrentCases.length ? supabase.from("seller_os_listing_case_events_v1")
         .select("case_id,current_state,recorded_at,event_id")
         .eq("event_type", "OWNER_REVIEW_ACTION")
-        .in("case_id", currentCases.map((row) => row.case_id))
+        .in("case_id", storedCurrentCases.map((row) => row.case_id))
         .order("event_id", { ascending: false }).limit(500) :
         Promise.resolve({ data: [], error: null }),
+      supabase.from("seller_os_listing_product_link_authorities_v1")
+        .select("*").eq("account_key", scope.accountKey)
+        .eq("marketplace_id", "EBAY_US").eq("lifecycle_state", "ACTIVE")
+        .limit(500),
+      supabase.from("seller_os_listing_identity_quarantines_v1")
+        .select("ebay_item_id,quarantine_state")
+        .eq("account_key", scope.accountKey).eq("marketplace_id", "EBAY_US")
+        .eq("quarantine_state", "ACTIVE").limit(500),
     ])
     if (snapshot.error || packageRead.error || decisionRead.error ||
         skuOpportunityRead.error || ownerActionRead.error ||
+        authorityRead.error || quarantineRead.error ||
         (packageRead.data?.length ?? 0) > packageIds.length ||
         (decisionRead.data?.length ?? 0) >= 500 ||
         (skuOpportunityRead.data?.length ?? 0) >= 200 ||
-        (ownerActionRead.data?.length ?? 0) >= 500) {
+        (ownerActionRead.data?.length ?? 0) >= 500 ||
+        (authorityRead.data?.length ?? 0) >= 500 ||
+        (quarantineRead.data?.length ?? 0) >= 500) {
       throw new Error("LISTING_REGISTRY_REVIEW_EVIDENCE_READ_FAILED")
     }
+    const currentCases = projectProvenListingCaseReadModelV1(
+      storedCurrentCases, authorityRead.data ?? [], decisionRead.data ?? [],
+      quarantineRead.data ?? [])
     const opportunityIds = [...new Set((packageRead.data ?? []).map((row) =>
       row.opportunity_id))]
     const opportunityRead = opportunityIds.length
@@ -205,7 +221,11 @@ export async function GET(req: Request) {
       Date.parse(sweep.data.official_observed_at) - Date.now() <= 60_000 &&
       sweep.data.official_live_item_count === currentCases.length &&
       sweep.data.reconciled_item_count === currentCases.length)
-    return NextResponse.json({ success: true, cases: cases.data ?? [],
+    const currentByItem = new Map(currentCases.map((row) =>
+      [row.ebay_item_id, row]))
+    return NextResponse.json({ success: true, cases: (cases.data ?? []).map((row) =>
+      row.last_reconciled_sweep_id === sweep.data?.sweep_id
+        ? currentByItem.get(row.ebay_item_id) ?? row : row),
       reviewQueue, operationalBuckets, bucketCounts,
       reviewSweepId: sweep.data?.sweep_id ?? null,
       currentLiveCertified: fresh,
@@ -486,7 +506,7 @@ export async function POST(req: Request) {
         return fail("LISTING_REGISTRY_LINK_INPUT_INVALID", 400)
       }
       const previous = await supabase.from("seller_os_listing_cases_v1")
-        .select("ebay_item_id,ebay_custom_label,ebay_observed_at,origin,identity_status")
+        .select("ebay_item_id,ebay_title,ebay_image_url,ebay_custom_label,ebay_observed_at,origin,identity_status")
         .eq("account_key", scope.accountKey).eq("marketplace_id", "EBAY_US")
         .eq("ebay_item_id", body.ebayItemId!).maybeSingle()
       if (previous.error || !previous.data ||
@@ -495,6 +515,25 @@ export async function POST(req: Request) {
           .includes(previous.data.identity_status) ||
         Date.now() - Date.parse(previous.data.ebay_observed_at) > 20 * 60_000) {
         return fail("LISTING_REGISTRY_FRESH_IMPORTED_CASE_REQUIRED", 409)
+      }
+      const decisionRead = ownerConfirmation && !ownerConfirmation.directSku
+        ? await supabase.from("seller_os_luna_linkage_decisions")
+          .select("decision_id,account_key,marketplace_id,ebay_item_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,decision,decision_version")
+          .eq("account_key", scope.accountKey).eq("marketplace_id", "EBAY_US")
+          .eq("ebay_item_id", body.ebayItemId!)
+          .order("decision_version", { ascending: false }).limit(1).maybeSingle()
+        : null
+      if (decisionRead?.error) {
+        throw new Error("LISTING_REGISTRY_DURABLE_LINK_READ_FAILED")
+      }
+      const decision = decisionRead?.data ?? null
+      if (decision && ownerConfirmation &&
+        (decision.decision !== "APPROVE_EXACT_LINKAGE" ||
+          decision.ebay_sku !== previous.data.ebay_custom_label ||
+          decision.luna_product_id !== ownerConfirmation.candidate.productId ||
+          decision.luna_variant_id !== ownerConfirmation.candidate.variantId ||
+          decision.luna_sku !== ownerConfirmation.candidate.sku)) {
+        return fail("LISTING_REGISTRY_DURABLE_LINK_CONFLICT", 409)
       }
       let verifiedSku: string
       let verifiedTitle: string | null
@@ -548,6 +587,26 @@ export async function POST(req: Request) {
         verifiedPrice = observed.price
         verifiedCurrency = observed.currency
         verifiedObservedAt = observed.observedAt
+      } else if (decision && ownerConfirmation) {
+        // A pending manual candidate may be bound to an older Item ID. Its
+        // uniqueness guard cannot stand in for this exact durable decision.
+        const authority = await ensureStockguardAuthorityFromDecisionP0({
+          supabase, accountKey: scope.accountKey,
+          ebayItemId: body.ebayItemId!, sourceDecisionId: decision.decision_id,
+          actorUserId: auth.userId, automatedDeterministic: false,
+        })
+        if (!authority.stockguardEligible ||
+          authority.authority?.luna_product_id !== ownerConfirmation.candidate.productId ||
+          authority.authority?.luna_variant_id !== ownerConfirmation.candidate.variantId ||
+          authority.authority?.luna_sku !== ownerConfirmation.candidate.sku) {
+          throw new Error("LISTING_REGISTRY_STOCKGUARD_LINK_READBACK_UNPROVEN")
+        }
+        verifiedSku = previous.data.ebay_custom_label
+        verifiedTitle = previous.data.ebay_title
+        verifiedQuantity = null
+        verifiedPrice = null
+        verifiedCurrency = null
+        verifiedObservedAt = previous.data.ebay_observed_at
       } else {
         const input = parseManualListingRegistrationInput({
           ebayItemId: body.ebayItemId, opportunityId: body.opportunityId,
@@ -572,7 +631,8 @@ export async function POST(req: Request) {
       evidence = await readListingRegistryEvidenceV1(supabase, scope.accountKey)
       listings = [{ itemId: body.ebayItemId!, sku: verifiedSku,
         customLabel: verifiedSku, variationKey: null,
-        title: verifiedTitle, primaryImageUrl: null, listingState: "ACTIVE",
+        title: verifiedTitle, primaryImageUrl: previous.data.ebay_image_url,
+        listingState: "ACTIVE",
         listingFormat: null, startTime: null,
         availableQuantity: verifiedQuantity, price: verifiedPrice,
         currency: verifiedCurrency, marketplaceSite: "US",

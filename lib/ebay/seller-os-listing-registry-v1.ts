@@ -53,6 +53,10 @@ type Publication = Readonly<{
   phase: string
 }>
 type StockState = Readonly<{ itemId: string; stockState: string; stockSourceCertified: boolean }>
+type DurableDecision = Readonly<{ decision_id: string; account_key: string;
+  marketplace_id: string; ebay_item_id: string; ebay_sku: string;
+  luna_product_id: string; luna_variant_id: string; luna_sku: string;
+  decision: string; decision_version: number }>
 
 function normalized(value: string | null | undefined) {
   return value?.trim().toUpperCase() || null
@@ -61,6 +65,82 @@ function normalized(value: string | null | undefined) {
 function candidateTuple(candidateKey: string | null) {
   const match = candidateKey?.match(/^luna-portex:(\d{1,30}):(\d{1,30})$/)
   return match ? { productId: match[1], variantId: match[2] } : null
+}
+
+/** Repairs stale case presentation from the exact durable decision/authority
+ * pair; an intermediate candidate or decision alone cannot count as linked. */
+export function projectProvenListingCaseReadModelV1<T extends ListingCaseProjectionV1>(
+  cases: readonly T[], authorities: readonly ListingLinkAuthorityRowV1[],
+  decisions: readonly DurableDecision[],
+  quarantines: readonly { ebay_item_id: string; quarantine_state: string }[],
+): T[] {
+  const labelCount = new Map<string, number>()
+  for (const row of cases) {
+    const label = normalized(row.ebay_custom_label)
+    if (label) labelCount.set(label, (labelCount.get(label) ?? 0) + 1)
+  }
+  return cases.map((row) => {
+    if (row.listing_status !== "ACTIVE" ||
+        !["LINKED_EXACT", "MISSING_LUNA_IDENTITY", "LINKABLE_EXACT"]
+          .includes(row.identity_status)) return row
+    const duplicateLabel = Boolean(row.ebay_custom_label &&
+      (labelCount.get(normalized(row.ebay_custom_label) ?? "") ?? 0) !== 1)
+    const quarantined = quarantines.some((item) =>
+      item.ebay_item_id === row.ebay_item_id &&
+      item.quarantine_state === "ACTIVE")
+    const active = authorities.filter((authority) =>
+      authority.account_key === row.account_key &&
+      authority.marketplace_id === row.marketplace_id &&
+      authority.ebay_item_id === row.ebay_item_id &&
+      authority.lifecycle_state === "ACTIVE")
+    const authorityConflict = active.length > 1 || active.length === 1 &&
+      authorities.some((authority) => authority !== active[0] &&
+          authority.account_key === row.account_key &&
+          authority.marketplace_id === row.marketplace_id &&
+          authority.lifecycle_state === "ACTIVE" &&
+          authority.identity_key === active[0].identity_key)
+    const history = decisions.filter((decision) =>
+      decision.account_key === row.account_key &&
+      decision.marketplace_id === row.marketplace_id &&
+      decision.ebay_item_id === row.ebay_item_id)
+      .sort((left, right) => right.decision_version - left.decision_version)
+    const decision = history[0]
+    const proven = Boolean(row.ebay_custom_label && !duplicateLabel &&
+      !quarantined && !authorityConflict && active.length === 1 && decision &&
+      decision.decision === "APPROVE_EXACT_LINKAGE" &&
+      decision.decision_id === active[0].source_decision_id &&
+      normalized(active[0].ebay_sku) === normalized(row.ebay_custom_label) &&
+      normalized(decision.ebay_sku) === normalized(row.ebay_custom_label) &&
+      decision.luna_product_id === active[0].luna_product_id &&
+      decision.luna_variant_id === active[0].luna_variant_id &&
+      decision.luna_sku === active[0].luna_sku)
+    if (proven) return { ...row, supplier_sku: active[0].luna_sku,
+      luna_product_id: active[0].luna_product_id,
+      luna_variant_id: active[0].luna_variant_id,
+      identity_status: "LINKED_EXACT",
+      stockguard_link_status: row.identity_status === "LINKED_EXACT" &&
+        row.stockguard_link_status === "LINKED_ACTIVE"
+        ? "LINKED_ACTIVE" : "LINKED_MONITOR_ONLY",
+      stockguard_authority_id: active[0].authority_id,
+      next_blocker: row.identity_status === "LINKED_EXACT" &&
+        row.stockguard_link_status === "LINKED_ACTIVE" ? null :
+        "FRESH_SUPPLIER_STOCK_EVIDENCE_REQUIRED",
+      identity_source: "STOCKGUARD_LINK_AUTHORITY_AND_OFFICIAL_EBAY" } as T
+    const conflict = authorityConflict || active.length > 0 ||
+      Boolean(decision && decision.decision !== "APPROVE_EXACT_LINKAGE")
+    if (row.identity_status !== "LINKED_EXACT" && !duplicateLabel &&
+        !quarantined && !conflict) return row
+    return { ...row, supplier_sku: null, luna_product_id: null,
+      luna_variant_id: null, stockguard_authority_id: null,
+      identity_status: duplicateLabel ? "DUPLICATE_IDENTITY" :
+        quarantined ? "AMBIGUOUS" : conflict ? "NEEDS_OWNER_REVIEW" :
+          "MISSING_LUNA_IDENTITY",
+      stockguard_link_status: duplicateLabel || quarantined || conflict
+        ? "NEEDS_OWNER_REVIEW" : "BLOCKED_IDENTITY",
+      next_blocker: duplicateLabel || quarantined || conflict
+        ? "OWNER_IDENTITY_REVIEW_REQUIRED" : "EXACT_LUNA_IDENTITY_REQUIRED",
+      identity_source: "OFFICIAL_EBAY_ONLY" } as T
+  })
 }
 
 export function projectSellerOsListingCasesV1(input: Readonly<{

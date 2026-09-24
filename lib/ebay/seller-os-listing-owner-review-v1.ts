@@ -55,10 +55,38 @@ export async function readCurrentListingOwnerReviewTargetV1(input: {
     fail("LISTING_REGISTRY_COMPLETE_CURRENT_COHORT_REQUIRED")
   }
   const target = cases.find((row) => row.ebay_item_id === itemId)
-  if (!target || target.listing_status !== "ACTIVE" ||
-    target.identity_status === "LINKED_EXACT") {
+  if (!target || target.listing_status !== "ACTIVE") {
     fail("LISTING_REGISTRY_UNRESOLVED_ACTIVE_CASE_REQUIRED")
   }
+  const [authorityRead, decisionRead] = await Promise.all([
+    supabase.from("seller_os_listing_product_link_authorities_v1")
+      .select("authority_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,source_decision_id")
+      .eq("account_key", accountKey).eq("marketplace_id", "EBAY_US")
+      .eq("ebay_item_id", itemId).eq("lifecycle_state", "ACTIVE").limit(2),
+    supabase.from("seller_os_luna_linkage_decisions")
+      .select("decision_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,decision")
+      .eq("account_key", accountKey).eq("marketplace_id", "EBAY_US")
+      .eq("ebay_item_id", itemId)
+      .order("decision_version", { ascending: false }).limit(1).maybeSingle(),
+  ])
+  if (authorityRead.error || decisionRead.error) {
+    fail("LISTING_REGISTRY_DURABLE_LINK_READ_FAILED")
+  }
+  const authorities = authorityRead.data ?? []
+  const authority = authorities[0]
+  const decision = decisionRead.data
+  const proven = authorities.length === 1 && Boolean(decision &&
+    decision.decision === "APPROVE_EXACT_LINKAGE" &&
+    decision.decision_id === authority.source_decision_id &&
+    decision.ebay_sku === target.ebay_custom_label &&
+    authority.ebay_sku === target.ebay_custom_label &&
+    decision.luna_product_id === authority.luna_product_id &&
+    decision.luna_variant_id === authority.luna_variant_id &&
+    decision.luna_sku === authority.luna_sku)
+  if (proven) fail("LISTING_REGISTRY_UNRESOLVED_ACTIVE_CASE_REQUIRED")
+  if (authorities.length) fail("LISTING_REGISTRY_CONFLICTING_DURABLE_LINKAGE")
+  const unresolvedTarget = target.identity_status === "LINKED_EXACT"
+    ? { ...target, identity_status: "MISSING_LUNA_IDENTITY" } : target
   const label = target.ebay_custom_label?.trim() || null
   const duplicateItemIds = label ? cases.filter((row) =>
     row.ebay_item_id !== itemId &&
@@ -124,10 +152,10 @@ export async function readCurrentListingOwnerReviewTargetV1(input: {
   const candidates = [...new Map(candidateRows.map((row) =>
     [`${row.productId}:${row.variantId}:${row.sku}`, row])).values()]
   const lastAction = actionRead.data?.current_state as Record<string, unknown> | null ?? null
-  return { target, cases, sweepId: sweep.sweep_id as string, snapshotId,
+  return { target: unresolvedTarget, cases, sweepId: sweep.sweep_id as string, snapshotId,
     candidates, duplicateItemIds, lastAction,
     canConfirm: canConfirmListingOwnerCandidateV1({
-      identityStatus: target.identity_status, duplicateItemIds, candidates,
+      identityStatus: unresolvedTarget.identity_status, duplicateItemIds, candidates,
       alreadyLinkedToOtherLiveItem: candidates.length === 1 && cases.some((row) =>
         row.ebay_item_id !== itemId &&
         row.identity_status === "LINKED_EXACT" &&
