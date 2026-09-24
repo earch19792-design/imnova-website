@@ -1,0 +1,30 @@
+{
+  "contractVersion": "EBAY_US_NO_STORE_FVF_OFFICIAL_CAPTURE_V1",
+  "policyVersion": "EBAY_US_NO_STORE_FVF_POLICY_V1",
+  "sourceUrl": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+  "sourceAuthority": "EBAY_OFFICIAL_HELP",
+  "marketplace": "EBAY_US",
+  "storeTier": "NO_STORE",
+  "currency": "USD",
+  "capturedAt": "2026-09-23T21:30:00Z",
+  "revalidateAfter": "2026-10-23T21:30:00Z",
+  "captureMethod": "OWNER_IDENTIFIED_OFFICIAL_PAGE_MANUALLY_REVIEWED",
+  "sourceDigestScope": "NORMALIZED_OFFICIAL_BASIC_FVF_TABLE_NOT_RAW_HTML",
+  "sourceDigest": "sha256:d037560297cef3e2a85eb06b59dc9a71721b8db6095ddf4f9f46ce52cc555022",
+  "sourceEffectiveDate": null,
+  "perOrderFeeRule": { "threshold": 10, "atOrBelow": 0.3, "above": 0.4 },
+  "rules": [
+    { "id": "MOST_CATEGORIES", "ruleClass": "MOST_CATEGORIES", "method": "MARGINAL", "categoryLabel": "Most categories", "percentageTiers": [{ "ratePct": 13.6, "upTo": 7500 }, { "ratePct": 2.35, "upTo": null }] },
+    { "id": "BOOKS_MOVIES_MUSIC", "ruleClass": "CATEGORY_EXCEPTION", "method": "MARGINAL", "categoryLabel": "Books & Magazines; Movies & TV except Movie NFTs; Music except Vinyl Records and Music NFTs", "percentageTiers": [{ "ratePct": 15.3, "upTo": 7500 }, { "ratePct": 2.35, "upTo": null }] },
+    { "id": "COINS_EXCEPT_BULLION", "ruleClass": "CATEGORY_EXCEPTION", "method": "MARGINAL", "categoryLabel": "Coins & Paper Money except Bullion", "percentageTiers": [{ "ratePct": 13.25, "upTo": 7500 }, { "ratePct": 2.35, "upTo": null }] },
+    { "id": "COINS_BULLION", "ruleClass": "CATEGORY_EXCEPTION", "method": "WHOLE_AMOUNT", "categoryLabel": "Coins & Paper Money > Bullion", "percentageTiers": [{ "ratePct": 13.6, "upTo": 7500 }, { "ratePct": 7, "upTo": null }] },
+    { "id": "WOMENS_BAGS", "ruleClass": "CATEGORY_EXCEPTION", "method": "WHOLE_AMOUNT", "categoryLabel": "Clothing, Shoes & Accessories > Women > Women's Bags & Handbags", "percentageTiers": [{ "ratePct": 15, "upTo": 2000 }, { "ratePct": 9, "upTo": null }] },
+    { "id": "SELECT_COLLECTIBLES", "ruleClass": "CATEGORY_EXCEPTION", "method": "MARGINAL", "categoryLabel": "Select Collectibles categories; Sports Trading Cards; Collectible Card Games", "percentageTiers": [{ "ratePct": 13.25, "upTo": 7500 }, { "ratePct": 2.35, "upTo": null }] },
+    { "id": "JEWELRY_EXCEPT_WATCHES", "ruleClass": "CATEGORY_EXCEPTION", "method": "WHOLE_AMOUNT", "categoryLabel": "Jewelry & Watches except Watches, Parts & Accessories", "percentageTiers": [{ "ratePct": 15, "upTo": 5000 }, { "ratePct": 9, "upTo": null }] },
+    { "id": "WATCHES", "ruleClass": "CATEGORY_EXCEPTION", "method": "MARGINAL", "categoryLabel": "Jewelry & Watches > Watches, Parts & Accessories", "percentageTiers": [{ "ratePct": 15, "upTo": 1000 }, { "ratePct": 6.5, "upTo": 7500 }, { "ratePct": 3, "upTo": null }] },
+    { "id": "NFT", "ruleClass": "CATEGORY_EXCEPTION", "method": "FLAT", "categoryLabel": "Listed NFT categories", "percentageTiers": [{ "ratePct": 5, "upTo": null }] },
+    { "id": "SELECT_BUSINESS_INDUSTRIAL", "ruleClass": "CATEGORY_EXCEPTION", "method": "MARGINAL", "categoryLabel": "Select Business & Industrial heavy equipment, printing presses, food trucks", "percentageTiers": [{ "ratePct": 3, "upTo": 15000 }, { "ratePct": 0.5, "upTo": null }] },
+    { "id": "GUITARS_BASSES", "ruleClass": "CATEGORY_EXCEPTION", "method": "MARGINAL", "categoryLabel": "Musical Instruments & Gear > Guitars & Basses", "percentageTiers": [{ "ratePct": 6.7, "upTo": 7500 }, { "ratePct": 2.35, "upTo": null }] },
+    { "id": "ATHLETIC_SHOES", "ruleClass": "CATEGORY_EXCEPTION", "method": "ATHLETIC", "categoryLabel": "Men's and Women's Athletic Shoes", "percentageTiers": [{ "ratePct": 8, "upTo": 150 }, { "ratePct": 13.6, "upTo": null }] }
+  ]
+}

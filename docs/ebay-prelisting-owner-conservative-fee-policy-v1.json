@@ -1,0 +1,32 @@
+{
+  "contractVersion": "EBAY_PRELISTING_OWNER_CONSERVATIVE_FEE_POLICY_V1",
+  "policyVersion": "EBAY_PRELISTING_OWNER_CONSERVATIVE_FEE_20260923_V1",
+  "marketplace": "EBAY_US",
+  "marketplaceAccountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+  "currency": "USD",
+  "source": "OWNER_EXPLICIT_P0_2_OPERATIONAL_CLOSURE_2026_09_23",
+  "officialFeeSourceUrl": "https://www.ebay.com/help/selling/fees-credits-invoices/selling-fees?id=4822",
+  "recordedAt": "2026-09-23T22:05:00Z",
+  "revalidateAfter": "2026-10-23T22:05:00Z",
+  "serviceMetricsSurcharge": {
+    "status": "CONSERVATIVE_BOUND",
+    "rateFraction": 0.06,
+    "approvedByOwner": true,
+    "notRealizedFee": true,
+    "appliesWhenExactCurrentEvaluationUnknown": true,
+    "basis": "KNOWN_PRETAX_SALE_BASIS",
+    "officialRationale": "VERY_HIGH_FOUR_OR_MORE_CONSECUTIVE_MONTHS_ADDITIONAL_FVF_MAX_6_PERCENT"
+  },
+  "buyerDependentFeeReserve": {
+    "contractVersion": "BUYER_DEPENDENT_FEE_RESERVE_V1",
+    "status": "CONSERVATIVE_BOUND",
+    "rateFraction": 0.025,
+    "approvedByOwner": true,
+    "notSalesTaxEstimate": true,
+    "notRealizedFee": true,
+    "basis": "KNOWN_PRETAX_SALE_BASIS",
+    "scope": "US_DOMESTIC_PRELISTING_SCENARIO",
+    "includesTaxDrivenFvfUncertainty": true,
+    "includesPerOrderThresholdUncertainty": true
+  }
+}

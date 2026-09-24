@@ -28,8 +28,21 @@ import { resolveCommercialTraceOwnerPricePolicyV1 } from
   "./commercial-trace-owner-price-policy-v1"
 import { evaluateCommercialTraceFinalPriceV1 } from
   "./commercial-trace-final-price-authority-v1"
+import { evaluateCommercialTraceConservativePrelistingV1 } from
+  "./commercial-trace-conservative-prelisting-v1"
 import { readCommercialTracePreListingFeeV1 } from
   "./commercial-trace-prelisting-fee-read-v1"
+import { readEbayUsNoStoreFvfCategoryV1 } from
+  "./ebay-us-no-store-fvf-category-read-v1"
+import { readEbayFeePerformanceReadonlyV1 } from
+  "./ebay-seller-analytics-readonly-gateway"
+import { getEbaySellerAccountScopeConfiguration } from
+  "./ebay-seller-account-scope"
+import { readEbayUsNoStoreFvfPolicyV1,
+  resolveEbayUsNoStoreFvfPolicyV1,
+  assessEbayUsNoStoreFvfAmountV1,
+  evaluateEbayUsNoStoreConservativeFeeV1 } from
+  "./ebay-us-no-store-fvf-policy-v1"
 
 export const SELLER_OS_LIVE_COMMERCIAL_TRACE_V1 =
   "SELLER_OS_LIVE_COMMERCIAL_TRACE_V1" as const
@@ -1274,6 +1287,38 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       typeof selectedRange?.median === "number" &&
       Number.isFinite(selectedRange.median) && selectedRange.median > 0
         ? round(selectedRange.median) : null
+    const [officialFeePolicy, exactFeeCategory] = market.resolvedCategoryId
+      ? await Promise.all([
+        readEbayUsNoStoreFvfPolicyV1().catch(() => null),
+        readEbayUsNoStoreFvfCategoryV1({
+          categoryId: market.resolvedCategoryId,
+          query: product.title,
+        }).catch(() => null),
+      ]) : [null, null]
+    const noStoreFeePolicy = resolveEbayUsNoStoreFvfPolicyV1({
+      accountKey: input.accountKey, categoryId: market.resolvedCategoryId,
+      categoryAuthority: exactFeeCategory, policy: officialFeePolicy,
+    })
+    const feePerformance = noStoreFeePolicy.status === "PROVEN" &&
+      getEbaySellerAccountScopeConfiguration().accountKey === input.accountKey
+      ? await readEbayFeePerformanceReadonlyV1().catch(() => null) : null
+    const noStoreFeeAmount = assessEbayUsNoStoreFvfAmountV1({
+      policyAuthority: noStoreFeePolicy,
+      supplierSku: variant.sku,
+      itemPrice: marketSupportedTargetPrice,
+      // A sale price is not the whole fee basis. Neither zero buyer shipping
+      // nor zero tax/handling is inferred for a new candidate.
+      buyerShipping: null, handling: null, performance: feePerformance,
+    })
+    const conservativeFee = evaluateEbayUsNoStoreConservativeFeeV1({
+      policyAuthority: noStoreFeePolicy,
+      itemPrice: marketSupportedTargetPrice,
+      buyerShipping: null, handling: null, otherBuyerCharges: null,
+      performance: feePerformance,
+      // No buyer or delivery is selected for a new candidate. This remains
+      // unproven until an explicit US-domestic pricing scenario is bound.
+      domesticScenarioAuthority: null,
+    })
     const feeRead = await readCommercialTracePreListingFeeV1({
       supabase: input.supabase,
       marketplaceAccountKey: input.accountKey,
@@ -1283,6 +1328,12 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       salePrice: marketSupportedTargetPrice,
     }).catch(() => ({ status: "MISSING" as const,
       reason: "FEE_CANONICAL_HANDOFF_READ_FAILED", fee: null }))
+    const ownerPricePolicy = resolveCommercialTraceOwnerPricePolicyV1({
+      marketplaceAccountKey: input.accountKey,
+      lunaProductId: product.productId, lunaVariantId: variant.id,
+      supplierSku: variant.sku,
+      sourceFingerprint: String(productTruth.row.source_fingerprint),
+    })
     const finalPriceAuthority = evaluateCommercialTraceFinalPriceV1({
       marketplaceAccountKey: input.accountKey,
       lunaProductId: product.productId, lunaVariantId: variant.id,
@@ -1299,18 +1350,24 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       // Reuse only a current exact pre-sale package handoff if one already
       // exists. Never create a package or borrow a live/post-sale item fee.
       fee: feeRead.fee,
-      ownerPolicy: resolveCommercialTraceOwnerPricePolicyV1({
-        marketplaceAccountKey: input.accountKey,
-        lunaProductId: product.productId, lunaVariantId: variant.id,
-        supplierSku: variant.sku,
-        sourceFingerprint: String(productTruth.row.source_fingerprint),
-      }),
+      ownerPolicy: ownerPricePolicy,
       // Text guards and account policies do not establish product-specific
       // carrier legality or the cost of an allowed service.
       fulfillment: null,
       marketPricing: { sufficient: decision.pricingAuthoritySufficient,
         pricingMode: decision.pricingMode,
         marketSupportedTargetPrice },
+    })
+    const conservativeEconomics = evaluateCommercialTraceConservativePrelistingV1({
+      finalAuthority: finalPriceAuthority,
+      ownerPolicy: ownerPricePolicy,
+      categoryId: market.resolvedCategoryId,
+      feeAtPrice: (price) => evaluateEbayUsNoStoreConservativeFeeV1({
+        policyAuthority: noStoreFeePolicy, itemPrice: price,
+        buyerShipping: null, handling: null, otherBuyerCharges: null,
+        performance: feePerformance,
+        domesticScenarioAuthority: null,
+      }),
     })
     const priceAuthorizationBlockers = Object.freeze(
       finalPriceAuthority.blockers)
@@ -1434,6 +1491,11 @@ export async function runSellerOsLiveCommercialTraceV1(input: Readonly<{
       SHIPPING_QTY1: shipping?.amountUsd ?? null,
       SHIPPING_AUTHORITY: shippingAuthority,
       FEE_AUTHORITY: finalPriceAuthority.preListingFeeAuthority,
+      FEE_POLICY_AUTHORITY: noStoreFeePolicy,
+      FEE_AMOUNT_AUTHORITY: noStoreFeeAmount,
+      PRELISTING_CONSERVATIVE_FEE_AUTHORITY: conservativeFee,
+      PRELISTING_CONSERVATIVE_ECONOMICS: conservativeEconomics,
+      PRELISTING_PRICE_SAFE: conservativeEconomics.prelistingPriceSafe,
       FEE_AUTHORITY_READ_REASON: feeRead.reason,
       PROMOTED_LISTINGS_AUTHORITY: finalPriceAuthority.promotedListingsPolicy,
       RETURNS_RESERVE_AUTHORITY: finalPriceAuthority.returnsReservePolicy,

@@ -1,0 +1,48 @@
+{
+  "contractVersion": "EBAY_PRELISTING_CANARY_CATEGORY_PROBE_V1",
+  "marketplace": "EBAY_US",
+  "sourceAuthority": "OWNER_VIDEO_DESCRIPTION_PLUS_STAGING_EXACT_DRAFT_READ_PLUS_EBAY_OFFICIAL_CATEGORY_PAGE",
+  "recordedAt": "2026-09-23T22:54:48Z",
+  "authorizesCategoryBinding": false,
+  "items": [
+    {
+      "supplierSku": "ITEM-8058-RED-LU-DE",
+      "ownerObservedListingPath": "Clothing, Shoes & Accessories > Men > Men's Accessories > Sunglasses & Sunglasses Accessories > Sunglasses",
+      "ownerEvidenceDescription": "OWNER reports a continuous eBay editor video showing this SKU and the exact selected five-node category path; video metadata was provided, but the MP4 bytes are not present in this workspace for independent hash verification",
+      "ownerVideoArtifactId": "f2b723af-571d-44d3-87f0-848e2921f828.mp4",
+      "ownerVideoDigest": "sha256:f5de0e6f64822db34d77f2a4e215e1de3b38046c8d4d6926538be2a18e2e13fd",
+      "ownerVideoCapturedAt": "2026-09-23T22:25:59Z",
+      "ownerVideoSizeBytes": 61850353,
+      "ownerVideoEvidenceStatus": "OWNER_ATTESTED_METADATA_FILE_NOT_LOCALLY_VERIFIED",
+      "officialEbayCategoryPageUrl": "https://www.ebay.com/b/Mens-Sunglasses-Sunglasses-Accessories/179239/bn_1650085",
+      "officialPageCategoryId": "179239",
+      "officialPageHasChildCategories": true,
+      "officialSunglassesLeafPageUrl": "https://www.ebay.com/b/Mens-Sunglasses/79720/bn_739004",
+      "officialSunglassesLeafPageCategoryId": "79720",
+      "currentTaxonomyTreeVersion": null,
+      "currentTaxonomyObservedAt": null,
+      "boundListingCategoryId": null,
+      "status": "OWNER_FULL_PATH_ATTESTED_CURRENT_TAXONOMY_UNVERIFIED",
+      "blocker": "CURRENT_OFFICIAL_EBAY_TAXONOMY_LEAF_RESOLUTION_MISSING"
+    },
+    {
+      "supplierSku": "ITEM5674",
+      "ownerObservedListingContext": "Health & Beauty / Women's Fragrances",
+      "officialEbayCategoryPageUrl": "https://www.ebay.com/b/Fragrances-for-Women/11848/bn_693859",
+      "officialPageCategoryId": "11848",
+      "queueSuggestedCategoryId": "180345",
+      "queueTaxonomyVerificationStatus": "CATEGORY_NOT_CONFIRMED",
+      "exactDraftReceipt": {
+        "listingPackageId": "bd8aae4f-4a66-467c-9a89-5c2f757bf855",
+        "listingPackageStatus": "draft",
+        "categoryId": "180345",
+        "categoryName": "Fragrances",
+        "accountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+        "sourceObservedAt": "2026-07-14T04:47:30.808Z"
+      },
+      "boundListingCategoryId": null,
+      "status": "EXACT_DRAFT_ID_PRESENT_BUT_TAXONOMY_UNCONFIRMED",
+      "blocker": "DRAFT_ID_180345_IS_GENERIC_FRAGRANCES_NOT_CONFIRMED_WOMENS_FRAGRANCES_OR_CURRENT_LEAF"
+    }
+  ]
+}

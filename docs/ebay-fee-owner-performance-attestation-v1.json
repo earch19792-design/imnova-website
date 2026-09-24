@@ -1,0 +1,77 @@
+{
+  "contractVersion": "EBAY_FEE_OWNER_PERFORMANCE_ATTESTATION_V1",
+  "marketplace": "EBAY_US",
+  "marketplaceAccountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+  "source": "OWNER_DIRECT_SELLER_ACCOUNT_UI_CONFIRMATION",
+  "recordedAt": "2026-09-23T20:58:06Z",
+  "revalidateAfter": "2026-09-24T20:58:06Z",
+  "uiObservedAt": null,
+  "serviceEvidenceRecordedAt": "2026-09-23T21:08:46Z",
+  "serviceRevalidateAfter": "2026-09-24T21:08:46Z",
+  "pastEvidenceRecordedAt": "2026-09-23T21:20:27Z",
+  "pastRevalidateAfter": "2026-09-24T21:20:27Z",
+  "sellerLevel": {
+    "current": "ABOVE_STANDARD",
+    "ifEvaluatedToday": "ABOVE_STANDARD",
+    "previous": "ABOVE_STANDARD"
+  },
+  "serviceMetrics": [
+    {
+      "categoryFamily": "Clothing, Shoes & Accessories",
+      "metric": "ITEM_NOT_AS_DESCRIBED",
+      "observedRatePct": 0,
+      "totalTransactions": 2,
+      "inadCases": 0,
+      "currentDisplayedWindow": { "fromMonth": "2025-09", "throughMonth": "2026-08" },
+      "projectedWindow": { "fromMonth": "2025-10", "throughMonth": "2026-09" },
+      "pastWindow": { "fromMonth": "2025-08", "throughMonth": "2026-07" },
+      "pastWindowEvidence": {
+        "status": "NO_DATA",
+        "selectorLabel": "Clothing, Shoes & Accessories (0)",
+        "uiMessage": "You don't have any data available for this selection.",
+        "observedRatePct": null,
+        "totalTransactions": null,
+        "inadCases": null,
+        "evaluatedRating": null
+      },
+      "ownerObservedSku": "ITEM-8058-RED-LU-DE",
+      "skuBindingStatus": "OWNER_EXACT_LISTING_UI_PATH_OBSERVED",
+      "listingUiCategoryPath": [
+        "Clothing, Shoes & Accessories",
+        "Men",
+        "Men's Accessories",
+        "Sunglasses & Sunglasses Accessories"
+      ],
+      "rating": null,
+      "evaluatedOn": null,
+      "applicableFeeMonth": null,
+      "exactCategoryId": null
+    },
+    {
+      "categoryFamily": "Health & Beauty",
+      "metric": "ITEM_NOT_AS_DESCRIBED",
+      "observedRatePct": 0,
+      "totalTransactions": 1,
+      "inadCases": 0,
+      "currentDisplayedWindow": { "fromMonth": "2025-09", "throughMonth": "2026-08" },
+      "projectedWindow": { "fromMonth": "2025-10", "throughMonth": "2026-09" },
+      "pastWindow": { "fromMonth": "2025-08", "throughMonth": "2026-07" },
+      "pastWindowEvidence": {
+        "status": "OBSERVED_RATE",
+        "observedRatePct": 0,
+        "totalTransactions": 1,
+        "inadCases": 0,
+        "evaluatedRating": null
+      },
+      "ownerObservedSku": "ITEM5674",
+      "skuBindingStatus": "LISTING_FLOW_CATEGORY_CONTEXT_ONLY",
+      "listingUiCategoryPath": null,
+      "listingFlowCategoryContext": "Women's Fragrances / Health & Beauty",
+      "rating": null,
+      "evaluatedOn": null,
+      "applicableFeeMonth": null,
+      "exactCategoryId": null
+    }
+  ],
+  "provenanceNote": "Recorded OWNER UI reports. Receipt timestamps are not the unknown UI observation time. The Clothing past selection showed NO_DATA, not a zero rate. Health & Beauty past rate was 0 of 1. No exact eBay taxonomy category ID or evaluated rating is invented."
+}

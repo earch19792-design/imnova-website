@@ -259,6 +259,13 @@ function boundedTraceReadback(value: Awaited<ReturnType<
       otherSellerFees: feeAuthority.status === "PROVEN"
         ? feeAuthority.otherSellerFees : null,
     }),
+    feePolicyAuthority: record(result.FEE_POLICY_AUTHORITY),
+    feeAmountAuthority: record(result.FEE_AMOUNT_AUTHORITY),
+    conservativeFeeAuthority:
+      record(result.PRELISTING_CONSERVATIVE_FEE_AUTHORITY),
+    conservativeEconomics:
+      record(result.PRELISTING_CONSERVATIVE_ECONOMICS),
+    prelistingPriceSafe: result.PRELISTING_PRICE_SAFE === true,
     ownerPricePolicyAuthority: record(result.OWNER_PRICE_POLICY_AUTHORITY),
     promotedListingsAuthority: Object.freeze({
       status: text(promotedListingsAuthority.state, 20) || "UNKNOWN",

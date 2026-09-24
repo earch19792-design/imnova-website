@@ -1,0 +1,10 @@
+{
+  "contractVersion": "EBAY_US_NO_STORE_OWNER_ATTESTATION_V1",
+  "marketplace": "EBAY_US",
+  "marketplaceAccountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
+  "storeTier": "NO_STORE",
+  "source": "OWNER_DIRECT_SELLER_ACCOUNT_UI_CONFIRMATION",
+  "capturedAt": "2026-09-23T20:35:20Z",
+  "revalidateAfter": "2026-09-30T20:35:20Z",
+  "statement": "Recorded OWNER's direct seller-account UI confirmation of NO_STORE for this EBAY_US account; capturedAt is record creation, not the unknown time of the UI observation."
+}

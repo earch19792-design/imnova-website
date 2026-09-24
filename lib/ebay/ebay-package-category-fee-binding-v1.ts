@@ -16,7 +16,10 @@ export function exactCategoryAncestryV1(payload: unknown, categoryId: string, tr
   const nodes = [...ancestors, leaf]
   if (new Set(nodes.map(n=>n.categoryId)).size !== nodes.length || nodes.some(n => !/^\d+$/.test(String(n.categoryId)) ||
     typeof n.categoryName !== "string" || !n.categoryName || n.categoryName.length > 200 || /[:\x00-\x1f<>]/.test(n.categoryName))) return null
+  // The official getCategorySuggestions response contains leaf categories.
+  // Retain that endpoint guarantee for manual-editor receipt validation.
   return { source: CATEGORY_ANCESTRY_SOURCE, status: "PROVEN", marketplace: "EBAY_US", categoryId, treeId,
+    leafCategoryTreeNode: true,
     treeVersion: p.categoryTreeVersion, path: nodes.map(n=>n.categoryName).join(":"),
     ancestorIds: ancestors.map(n=>String(n.categoryId)), observedAt: now.toISOString(),
     freshUntil: new Date(now.getTime()+6*3600_000).toISOString(),

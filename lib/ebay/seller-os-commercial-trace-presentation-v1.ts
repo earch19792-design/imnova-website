@@ -462,6 +462,12 @@ export function buildCommercialTracePresentationV1(input: Readonly<{
       shippingReceiptId: text(shippingAuthority.durableReceiptId),
       shippingFreshUntil,
       feeAuthorityStatus: text(feeAuthority.status) ?? "UNKNOWN",
+      feePolicyAuthority: record(result.FEE_POLICY_AUTHORITY),
+      feeAmountAuthority: record(result.FEE_AMOUNT_AUTHORITY),
+      conservativeFeeAuthority:
+        record(result.PRELISTING_CONSERVATIVE_FEE_AUTHORITY),
+      conservativeEconomics:
+        record(result.PRELISTING_CONSERVATIVE_ECONOMICS),
       finalStatus: text(economicsAuthority.status) ?? "INCOMPLETE",
       finalValues: Object.keys(record(economicsAuthority.economics)).length
         ? record(economicsAuthority.economics) : null,
