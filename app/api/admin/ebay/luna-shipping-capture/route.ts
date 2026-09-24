@@ -66,6 +66,13 @@ import { shippingRetryAfterAtV1 } from
   "@/lib/seller-os/economic-shipping-refresh-reclaim-loop-v1"
 import { lunaShippingAutoNavigationCapableV1 } from
   "@/lib/ebay/luna-checkout-observation-v1"
+import {
+  claimLunaShippingQty1OpportunityJobV1,
+  ensureLunaShippingQty1OpportunityJobV1,
+  failLunaShippingQty1OpportunityJobV1,
+  persistLunaShippingQty1OpportunityCaptureV1,
+  readLunaShippingQty1OpportunityReceiptV1,
+} from "@/lib/ebay/luna-shipping-qty1-opportunity-bridge-v1"
 
 function candidateIds(value: unknown) {
   return (Array.isArray(value) ? value : [])
@@ -217,6 +224,48 @@ export async function POST(req: Request) {
   if (!auth.ok) return auth.response
   try {
     const body = await listingAiJson(req)
+    if (body.action === "create_qty1_job") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const opportunityId = String(body.opportunityId ?? "").trim()
+      const job = await ensureLunaShippingQty1OpportunityJobV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        ownerUserId: auth.actorId, opportunityId,
+      })
+      return listingAiResponse({ success: true,
+        job: { jobId: job.job_id, jobType: job.job_type,
+          status: job.status, marketplace: job.marketplace,
+          opportunityId: job.opportunity_id,
+          candidateKey: job.candidate_key, sku: job.sku,
+          productId: job.product_id, variantId: job.variant_id,
+          quantity: job.quantity, destinationProfile: job.destination_profile,
+          createdAt: job.created_at, expiresAt: job.expires_at,
+          attemptCount: job.attempt_count,
+          idempotencyKey: job.idempotency_key },
+        safety: { taxonomyExecutions: 0, economicsExecutions: 0,
+          marketplaceWrites: 0, inventoryWrites: 0 } })
+    }
+    if (body.action === "read_qty1_receipt") {
+      enforceListingAiRouteRateLimit(auth.actorId, "READ")
+      const receipt = await readLunaShippingQty1OpportunityReceiptV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        opportunityId: String(body.opportunityId ?? "").trim(),
+      })
+      return listingAiResponse({ success: true, receipt,
+        safety: { readOnly: true, marketplaceWrites: 0 } })
+    }
+    if (body.action === "fail_qty1_job") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const result = await failLunaShippingQty1OpportunityJobV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        ownerUserId: auth.actorId,
+        jobId: String(body.jobId ?? "").trim(),
+        captureSessionId: String(body.captureSessionId ?? "").trim(),
+        reasonCode: String(body.reasonCode ?? "").trim(),
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { taxonomyExecutions: 0, economicsExecutions: 0,
+          marketplaceWrites: 0, inventoryWrites: 0 } })
+    }
     if (body.action === "heartbeat_worker_capability") {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
       const result = await persistSellerOsBrowserWorkerHeartbeatV1({
@@ -419,6 +468,20 @@ export async function POST(req: Request) {
           }, safety: { jobScans: 0, shippingClaims: 0, lunaRequests: 0,
             marketplaceWrites: 0 } })
         }
+        const qty1Job = await claimLunaShippingQty1OpportunityJobV1({
+          supabase: auth.supabase, accountKey: auth.accountKey,
+          ownerUserId: auth.actorId, runtimeInstanceId: workerInstance,
+          leaderSessionId: claimAuthoritySessionId(body.leaderSessionId),
+          sessionSecret: sessionSecret(),
+        })
+        if (qty1Job) return listingAiResponse({ success: true,
+          jobs: [qty1Job], acquisition: { jobs: [qty1Job],
+            eligiblePendingJobCount: 1, claimedJobCount: 1,
+            leaseConflictCount: 0, claimFailureCount: 0,
+            nextAttemptAt: permit.nextAttemptAt },
+          safety: { durableWriteScope: "LUNA_SHIPPING_QTY1_JOB_CLAIM",
+            taxonomyExecutions: 0, economicsExecutions: 0,
+            marketplaceWrites: 0, inventoryWrites: 0 } })
         const acquisition = await acquireLunaChromeShippingJobsV1({
           supabase: auth.supabase,
           accountKey: auth.accountKey,
@@ -489,6 +552,21 @@ export async function POST(req: Request) {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
       const capture = listingAiRecord(body.capture) as
         LunaShippingCapturePostV1
+      const jobBinding = listingAiRecord(body.jobBinding)
+      const qty1Result = await persistLunaShippingQty1OpportunityCaptureV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        ownerUserId: auth.actorId, capture,
+        binding: jobBinding,
+        sessionSecret: sessionSecret(),
+      })
+      if (jobBinding.jobType === "LUNA_SHIPPING_QTY1" && !qty1Result) {
+        throw new Error("LUNA_SHIPPING_QTY1_JOB_CLAIM_UNPROVEN")
+      }
+      if (qty1Result) return listingAiResponse({ success: true,
+        result: qty1Result,
+        safety: { taxonomyExecutions: 0, economicsExecutions: 0,
+          finalPriceCalculations: 0, marketplaceWrites: 0,
+          inventoryWrites: 0, stockGuardWrites: 0 } })
       const commercialTraceResult =
         await persistCommercialTraceShippingCaptureV1({
           supabase: auth.supabase, accountKey: auth.accountKey,

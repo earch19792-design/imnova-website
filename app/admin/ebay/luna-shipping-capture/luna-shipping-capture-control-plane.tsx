@@ -602,6 +602,9 @@ export function LunaShippingCaptureControlPlane({
   const [portDeliveryDiagnostic, setPortDeliveryDiagnostic] =
     useState<PortDeliveryDiagnostic>(EMPTY_PORT_DELIVERY_DIAGNOSTIC)
   const [legacyRecoveryJobId, setLegacyRecoveryJobId] = useState("")
+  const [qty1OpportunityId, setQty1OpportunityId] = useState("")
+  const [qty1JobStatus, setQty1JobStatus] = useState("")
+  const [qty1JobCreating, setQty1JobCreating] = useState(false)
   const [legacyRecoveryInFlight, setLegacyRecoveryInFlight] = useState(false)
   const [legacyRecoveryReceipts, setLegacyRecoveryReceipts] =
     useState<SellerOsLegacyShippingRecoveryClientReceiptV1[]>([])
@@ -896,6 +899,20 @@ export function LunaShippingCaptureControlPlane({
 
     const fail = (value: unknown, source = "UNCLASSIFIED_ASYNC_FAILURE") => {
       if (!active) return
+      const qty1Job = jobs[index] as (LunaChromeShippingJobV1 & {
+        jobType?: string; jobId?: string
+      }) | undefined
+      if (qty1Job?.jobType === "LUNA_SHIPPING_QTY1" && qty1Job.jobId) {
+        const rawReason = value instanceof Error ? value.message : source
+        const reasonCode = /^[A-Z0-9_]{3,120}$/.test(rawReason)
+          ? rawReason : "LUNA_SHIPPING_QTY1_EXTENSION_FAILED"
+        void adminPost("fail_qty1_job", {
+          jobId: qty1Job.jobId,
+          captureSessionId: qty1Job.captureSessionId,
+          reasonCode,
+        }, `${qty1Job.jobId}:${qty1Job.captureSessionId}:failed`)
+          .catch(() => setError("LUNA_SHIPPING_QTY1_FAILURE_CLOSE_FAILED"))
+      }
       if (mode === "AUTO" && busy) {
         captureProbe = null
         captureNextAttemptAt = Math.max(captureNextAttemptAt, Date.now() + 900_000)
@@ -2066,7 +2083,9 @@ export function LunaShippingCaptureControlPlane({
             ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"), {
             retryAfter: message.retryAfter ?? null,
           }))
-          if (mode === "AUTO") scheduleProductionAcquisition()
+          if (mode === "AUTO" &&
+              (job as LunaChromeShippingJobV1 & { jobType?: string }).jobType !==
+                "LUNA_SHIPPING_QTY1") scheduleProductionAcquisition()
           return
         }
         const exactIdentityMatches = candidateMatches &&
@@ -2215,8 +2234,32 @@ export function LunaShippingCaptureControlPlane({
         }
         const certificationAction = mode === "LIVE"
           ? "certify_live_listing_capture" : "certify_capture"
+        const qty1Binding = job as LunaChromeShippingJobV1 & {
+          jobId?: string; jobType?: string; accountKey?: string
+          marketplace?: string
+          ownerUserId?: string; opportunityId?: string; candidateKey?: string
+          idempotencyKey?: string; leaseExpiresAt?: string
+        }
         const certificationBody = mode === "LIVE"
-          ? { capture, target: requestedLiveTarget } : { capture }
+          ? { capture, target: requestedLiveTarget } : { capture,
+              ...(qty1Binding.jobType === "LUNA_SHIPPING_QTY1" ? {
+                jobBinding: {
+                  jobId: qty1Binding.jobId,
+                  jobType: qty1Binding.jobType,
+                  accountKey: qty1Binding.accountKey,
+                  marketplace: qty1Binding.marketplace,
+                  ownerUserId: qty1Binding.ownerUserId,
+                  opportunityId: qty1Binding.opportunityId,
+                  candidateKey: qty1Binding.candidateKey,
+                  sku: job.identity.supplierSku,
+                  productId: job.identity.lunaProductId,
+                  variantId: job.identity.lunaVariantId,
+                  quantity: job.identity.quantity,
+                  destinationProfile: job.destination.profileId,
+                  idempotencyKey: qty1Binding.idempotencyKey,
+                  leaseExpiresAt: qty1Binding.leaseExpiresAt,
+                },
+              } : {}) }
         void adminPost(certificationAction, certificationBody,
           capture.captureSessionId)
           .then(async (certified) => {
@@ -2264,6 +2307,19 @@ export function LunaShippingCaptureControlPlane({
               shippingUsd: Number(result.capture?.shippingUsd),
               totalUsd: Number(result.capture?.totalUsd),
             })
+            if ((job as LunaChromeShippingJobV1 & { jobType?: string })
+                  .jobType === "LUNA_SHIPPING_QTY1") {
+              if (result.status !== "PROVEN" ||
+                  result.captureResultDurable !== true ||
+                  result.durableReadbackMatch !== true ||
+                  result.economics !== null) {
+                throw new Error("LUNA_SHIPPING_QTY1_READBACK_UNPROVEN")
+              }
+              busy = false
+              setRunning(false)
+              setStatus("SHIPPING_QTY1_RECEIPT_PERSISTED")
+              return
+            }
             if (mode === "RECOVERY" && legacyRecoveryBinding) {
               if (result.economicRefreshJobId !==
                   legacyRecoveryBinding.jobId) {
@@ -2715,6 +2771,42 @@ export function LunaShippingCaptureControlPlane({
         {canonicalDestinationBound
           ? "Ejecutar canary final" : "Ejecutar canary de shipping"}
       </button> : null}
+      {!liveTarget ? <section className="mt-4 rounded-2xl border border-cyan-200/25 p-4">
+        <h2 className="text-sm font-black">Envío qty1 de oportunidad Luna</h2>
+        <p className="mt-2 text-xs text-white/60">
+          Crea un trabajo durable para una oportunidad canónica. La extensión
+          autenticada lo capturará cuando esté disponible.
+        </p>
+        <label className="mt-3 block text-xs font-bold text-cyan-100">
+          Opportunity ID
+          <input value={qty1OpportunityId}
+            onChange={(event) => setQty1OpportunityId(event.target.value.trim())}
+            disabled={qty1JobCreating}
+            placeholder="00000000-0000-4000-8000-000000000000"
+            className="mt-2 w-full rounded-xl border border-white/15 bg-black/25 px-3 py-2 font-mono text-xs text-white outline-none disabled:opacity-40" />
+        </label>
+        <button type="button" disabled={!ownerAdminAuthenticated || qty1JobCreating ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+              .test(qty1OpportunityId)}
+          onClick={() => {
+            setQty1JobCreating(true)
+            setQty1JobStatus("CREATING")
+            void adminPost("create_qty1_job", {
+              opportunityId: qty1OpportunityId,
+            }, `qty1:${qty1OpportunityId}`).then((payload) => {
+              setQty1JobStatus(`${payload.job?.status ?? "UNKNOWN"}: ${payload.job?.jobId ?? "NONE"}`)
+            }).catch((jobError) => {
+              setQty1JobStatus(jobError instanceof Error ? jobError.message :
+                "LUNA_SHIPPING_QTY1_JOB_CREATION_FAILED")
+            }).finally(() => setQty1JobCreating(false))
+          }}
+          className="mt-3 w-full rounded-2xl bg-cyan-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+          Crear trabajo de envío qty1
+        </button>
+        {qty1JobStatus ? <code className="mt-2 block break-all text-xs text-cyan-100">
+          {qty1JobStatus}
+        </code> : null}
+      </section> : null}
       {liveTarget ? <button type="button" disabled={!canStartFinalCanary}
         onClick={() => liveTriggerRef.current?.()}
         className="mt-3 w-full rounded-2xl bg-emerald-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
