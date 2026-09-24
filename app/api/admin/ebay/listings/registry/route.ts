@@ -4,7 +4,7 @@ export const maxDuration = 60
 
 import { NextResponse } from "next/server"
 
-import { getEbayCommercialMonitorLiveReadonly } from
+import { getEbayOfficialLiveListingSweepReadonly } from
   "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import type { EbayLiveListing } from
   "@/lib/ebay/ebay-commercial-monitor-live-readonly-domain"
@@ -105,26 +105,24 @@ export async function POST(req: Request) {
     let listings: EbayLiveListing[]
     let officialObservedAt: string | null = null
     if (body.action === "reconcile_current_live") {
-      const live = await getEbayCommercialMonitorLiveReadonly({
+      const live = await getEbayOfficialLiveListingSweepReadonly({
         accountKey: scope.accountKey, accountAlias: scope.accountAlias,
       })
-      if (live.account.status !== "CERTIFIED" ||
-        live.discovery.coverage !== "COMPLETE" ||
-        !live.discovery.sellerWideEnumeration.itemSetComplete ||
-        !live.discovery.sellerWideEnumeration.identitySetComplete ||
-        live.discovery.gapCodes.length ||
-        !live.discovery.observedAt ||
-        !Number.isFinite(Date.parse(live.discovery.observedAt)) ||
-        Date.now() - Date.parse(live.discovery.observedAt) > 20 * 60_000 ||
-        Date.parse(live.discovery.observedAt) - Date.now() > 60_000 ||
-        live.discovery.currentLiveListings.some((listing) =>
-          !["US_CERTIFIED", "NON_US_CERTIFIED"].includes(
-            listing.marketplaceCertification.status))) {
-        return fail("LISTING_REGISTRY_OFFICIAL_LIVE_COVERAGE_UNPROVEN", 409)
+      if (live.status !== "CERTIFIED_COMPLETE") {
+        return NextResponse.json({ success: false,
+          error: "LISTING_REGISTRY_OFFICIAL_LIVE_COVERAGE_UNPROVEN",
+          failedOperation: live.failedOperation,
+          errorDetail: live.errorCode,
+          officialReadReached: live.officialReadReached,
+          paginationComplete: live.paginationComplete,
+          pagesRead: live.pagesRead, totalPages: live.totalPages,
+          totalEntries: live.totalEntries, gapCodes: live.gapCodes,
+          safety: { ebayWrites: 0, inventoryQuantityWrites: 0 } },
+        { status: 409, headers })
       }
-      listings = live.discovery.currentLiveListings.filter((listing) =>
+      listings = live.listings.filter((listing) =>
         listing.marketplaceCertification.status === "US_CERTIFIED")
-      officialObservedAt = live.discovery.observedAt
+      officialObservedAt = live.observedAt
     } else if (body.action === "link_existing") {
       if (!auth.userId) return fail("LISTING_REGISTRY_OWNER_REQUIRED", 403)
       if (body.confirmation !== "VINCULAR_IDENTIDAD_CANONICA") {

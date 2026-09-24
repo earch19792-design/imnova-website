@@ -3405,13 +3405,15 @@ type ItemMarketplaceCertification = {
 function marketplaceVerificationBudgetAvailable(
   calls: EbayMonitorReadonlyCallEvidence[],
   batchSize: number,
+  downstreamCallReserve = GET_ITEM_DOWNSTREAM_CALL_RESERVE,
+  downstreamTimeReserveMs = GET_ITEM_DOWNSTREAM_TIME_RESERVE_MS,
 ) {
   const budget = requestBudgets.get(calls)
   if (!budget) return true
   return batchSize > 0 &&
-    budget.callsRemaining - batchSize >= GET_ITEM_DOWNSTREAM_CALL_RESERVE &&
+    budget.callsRemaining - batchSize >= downstreamCallReserve &&
     budget.deadlineAt - Date.now() >=
-      GET_ITEM_DOWNSTREAM_TIME_RESERVE_MS + REQUEST_TIMEOUT_MS
+      downstreamTimeReserveMs + REQUEST_TIMEOUT_MS
 }
 
 function exhaustedMarketplaceCertification(): ItemMarketplaceCertification {
@@ -3516,6 +3518,9 @@ async function certifySellerWideItemMarketplaces(input: {
   fetchImpl: FetchLike
   calls: EbayMonitorReadonlyCallEvidence[]
   clock: Clock
+  maximumUniqueItems?: number
+  downstreamCallReserve?: number
+  downstreamTimeReserveMs?: number
 }) {
   const rowsByItem = new Map<string, EbayLiveListing[]>()
   for (const listing of input.listings) {
@@ -3550,8 +3555,10 @@ async function certifySellerWideItemMarketplaces(input: {
         : null,
     })
   }
-  const scheduled = pending.slice(0, GET_ITEM_MARKETPLACE_MAX_UNIQUE_ITEMS)
-  for (const entry of pending.slice(GET_ITEM_MARKETPLACE_MAX_UNIQUE_ITEMS)) {
+  const maximumUniqueItems = input.maximumUniqueItems ??
+    GET_ITEM_MARKETPLACE_MAX_UNIQUE_ITEMS
+  const scheduled = pending.slice(0, maximumUniqueItems)
+  for (const entry of pending.slice(maximumUniqueItems)) {
     certifications.set(entry.itemId, exhaustedMarketplaceCertification())
   }
   for (let offset = 0; offset < scheduled.length;
@@ -3560,7 +3567,8 @@ async function certifySellerWideItemMarketplaces(input: {
       offset,
       offset + GET_ITEM_MARKETPLACE_CONCURRENCY,
     )
-    if (!marketplaceVerificationBudgetAvailable(input.calls, batch.length)) {
+    if (!marketplaceVerificationBudgetAvailable(input.calls, batch.length,
+      input.downstreamCallReserve, input.downstreamTimeReserveMs)) {
       for (const entry of scheduled.slice(offset)) {
         certifications.set(entry.itemId, exhaustedMarketplaceCertification())
       }
@@ -6025,6 +6033,190 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
     return result
   } finally {
     tradingToken = ""
+  }
+}
+
+// Listings needs seller-wide discovery and marketplace certification only. The
+// commercial monitor's 32-item/24-second budget reserves capacity for other
+// readers, so it cannot certify a larger live listing cohort by itself.
+export async function getEbayOfficialLiveListingSweepReadonly(input: {
+  accountKey: string
+  accountAlias: string
+  environment?: NodeJS.ProcessEnv
+  fetchImpl?: FetchLike
+  clock?: Clock
+}) {
+  const environment = input.environment ?? process.env
+  const fetchImpl = input.fetchImpl ?? fetch
+  const clock = input.clock ?? (() => new Date())
+  const configuration = getEbayCommercialMonitorLiveConfigurationState(environment)
+  const identity = getEbayProductionIdentityBindingConfiguration(environment)
+  const expectedAccountKey = configuration.accountAlias && identity.bound
+    ? `${configuration.accountAlias}:${identity.expectedAccountFingerprint}`
+    : null
+  const calls: EbayMonitorReadonlyCallEvidence[] = []
+  let failedOperation = "LOCAL_ACCOUNT_CONFIGURATION"
+  const blocked = (errorCode: string, detail: {
+    pagesRead?: number
+    totalPages?: number | null
+    totalEntries?: number | null
+    observedAt?: string | null
+    gapCodes?: string[]
+    accountCertified?: boolean
+    oauthReached?: boolean
+    officialReadReached?: boolean
+  } = {}) => ({
+    status: "BLOCKED" as const,
+    failedOperation,
+    errorCode,
+    accountCertified: detail.accountCertified ?? false,
+    oauthReached: detail.oauthReached ?? false,
+    officialReadReached: detail.officialReadReached ?? false,
+    paginationComplete: false,
+    pagesRead: detail.pagesRead ?? 0,
+    totalPages: detail.totalPages ?? null,
+    totalEntries: detail.totalEntries ?? null,
+    observedAt: detail.observedAt ?? null,
+    gapCodes: detail.gapCodes ?? [errorCode],
+    listings: [] as EbayLiveListing[],
+    calls,
+  })
+  if (!configuration.configured || !identity.bound ||
+      input.accountKey !== expectedAccountKey ||
+      input.accountAlias !== configuration.accountAlias) {
+    return blocked(!configuration.configured
+      ? "LOCAL_EBAY_AUTH_CONTEXT_UNAVAILABLE"
+      : "EBAY_MONITOR_ACCOUNT_SCOPE_CONFIGURATION_MISMATCH")
+  }
+  requestBudgets.set(calls, {
+    deadlineAt: Date.now() + 40_000,
+    callsRemaining: 100,
+    maximumCalls: 100,
+    callsStarted: 0,
+    perCallTimeoutMs: REQUEST_TIMEOUT_MS,
+  })
+  let oauthReached = false
+  let accountCertified = false
+  let officialReadReached = false
+  try {
+    failedOperation = "OAUTH_REFRESH_FULFILLMENT"
+    const minted = await accessToken({
+      operation: "OAUTH_REFRESH_FULFILLMENT",
+      credentials: canonicalTradingCredentials(environment),
+      scopes: [BASE_SCOPE, FULFILLMENT_READONLY_SCOPE],
+      fetchImpl, calls, clock,
+    })
+    oauthReached = true
+    const grant = scopeGrantEvidence()
+    const missingScopes = registerScopeEvidence({
+      ledger: grant, token: minted,
+      requestedScopes: [BASE_SCOPE, FULFILLMENT_READONLY_SCOPE],
+    })
+    if (missingScopes.includes(BASE_SCOPE)) {
+      return blocked("EBAY_MONITOR_BASE_SCOPE_MISSING", { oauthReached })
+    }
+    failedOperation = "TRADING_GET_USER"
+    const account = await verifyAccount({
+      token: minted.value,
+      expectedUserId: identity.expectedUserId,
+      expectedFingerprint: identity.expectedAccountFingerprint,
+      fetchImpl, calls, clock,
+      fulfillmentSellerIdentityFallback: true,
+    })
+    accountCertified = account.site === "US" && account.fingerprintMatch
+    if (!accountCertified) {
+      return blocked("EBAY_US_MARKETPLACE_BINDING_UNPROVEN", {
+        oauthReached,
+      })
+    }
+    failedOperation = "TRADING_GET_MY_EBAY_SELLING"
+    officialReadReached = true
+    const sellerWide = await sellerWideDiscovery({
+      token: minted.value, fetchImpl, calls, clock,
+    })
+    const coverage = normalizeLiveDiscoveryCoverage({
+      pagesRead: sellerWide.pagesRead,
+      totalPages: sellerWide.totalPages,
+      totalEntries: sellerWide.totalEntries,
+      reachedPageLimit: sellerWide.reachedPageLimit,
+      pageFailed: sellerWide.pageFailed,
+      paginationMetadataConflict: sellerWide.paginationMetadataConflict,
+      sourceIdentityConflict: sellerWide.sourceIdentityConflict,
+      reportedItemCountMismatch: false,
+    })
+    const readDetail = {
+      oauthReached, accountCertified, officialReadReached,
+      pagesRead: sellerWide.pagesRead,
+      totalPages: sellerWide.totalPages,
+      totalEntries: sellerWide.totalEntries,
+      observedAt: sellerWide.observedAt,
+    }
+    if (coverage.status !== "COMPLETE" || sellerWide.limitationCode) {
+      failedOperation = "SELLER_WIDE_PAGINATION_COMPLETENESS"
+      return blocked(sellerWide.limitationCode ??
+        coverage.gapCodes[0] ?? "SELLER_WIDE_IDENTITY_INCOMPLETE", {
+        ...readDetail,
+        gapCodes: [...coverage.gapCodes,
+          ...(sellerWide.limitationCode ? [sellerWide.limitationCode] : [])],
+      })
+    }
+    failedOperation = "TRADING_GET_ITEM_MARKETPLACE"
+    const marketplace = await certifySellerWideItemMarketplaces({
+      token: minted.value,
+      listings: sellerWide.listings,
+      totalEntries: sellerWide.totalEntries,
+      fetchImpl, calls, clock,
+      maximumUniqueItems: 80,
+      downstreamCallReserve: 2,
+      downstreamTimeReserveMs: 2_000,
+    })
+    const certification = marketplace.marketplaceCertification
+    const itemSetComplete = certification.sellerWideItemsParsed ===
+        sellerWide.totalEntries &&
+      sellerWide.totalEntries !== null &&
+      sellerWide.totalEntries < 25_000 &&
+      sellerWide.totalPages !== null &&
+      sellerWide.pagesRead === sellerWide.totalPages &&
+      !sellerWide.reachedPageLimit && !sellerWide.pageFailed &&
+      !sellerWide.paginationMetadataConflict &&
+      !sellerWide.sourceIdentityConflict
+    if (!itemSetComplete || marketplace.incomplete ||
+        marketplace.gapCodes.length ||
+        marketplace.currentLiveListings.some((listing) =>
+          !["US_CERTIFIED", "NON_US_CERTIFIED"].includes(
+            listing.marketplaceCertification.status))) {
+      return blocked(marketplace.gapCodes[0] ??
+        "SELLER_WIDE_MARKETPLACE_CERTIFICATION_INCOMPLETE", {
+        ...readDetail, gapCodes: marketplace.gapCodes,
+      })
+    }
+    const observedAt = sellerWide.observedAt
+    if (!observedAt || !Number.isFinite(Date.parse(observedAt)) ||
+        Date.now() - Date.parse(observedAt) > 20 * 60_000 ||
+        Date.parse(observedAt) - Date.now() > 60_000) {
+      failedOperation = "OFFICIAL_OBSERVATION_FRESHNESS"
+      return blocked("SELLER_WIDE_OBSERVATION_STALE", readDetail)
+    }
+    return {
+      status: "CERTIFIED_COMPLETE" as const,
+      failedOperation: null,
+      errorCode: null,
+      accountCertified,
+      oauthReached,
+      officialReadReached,
+      paginationComplete: true,
+      pagesRead: sellerWide.pagesRead,
+      totalPages: sellerWide.totalPages,
+      totalEntries: sellerWide.totalEntries,
+      observedAt,
+      gapCodes: [] as string[],
+      listings: marketplace.currentLiveListings,
+      calls,
+    }
+  } catch (error) {
+    return blocked(safeCode(error, "EBAY_OFFICIAL_LISTING_SWEEP_READ_FAILED"), {
+      oauthReached, accountCertified, officialReadReached,
+    })
   }
 }
 

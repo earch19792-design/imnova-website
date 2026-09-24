@@ -8,6 +8,7 @@ import type { ListingCaseProjectionV1 } from
 type Case = ListingCaseProjectionV1 & { case_id: string;
   last_reconciled_sweep_id: string | null }
 type RegistryResponse = { success: boolean; error?: string; cases?: Case[];
+  failedOperation?: string | null; errorDetail?: string | null;
   currentLiveCertified?: boolean; lastCertifiedLiveCount?: number | null;
   lastCertifiedAt?: string | null; durableReadback?: string;
   currentSweepId?: string | null; currentLiveCaseCount?: number | null }
@@ -38,7 +39,12 @@ export default function ListingsPage() {
           confirmation: action === "link_existing" ? "VINCULAR_IDENTIDAD_CANONICA" : undefined }) : undefined,
       })
       const result = await response.json() as RegistryResponse
-      if (!response.ok || !result.success) throw new Error(result.error ?? "LISTING_REGISTRY_READ_FAILED")
+      if (!response.ok || !result.success) {
+        const detail = [result.failedOperation, result.errorDetail]
+          .filter(Boolean).join(" · ")
+        throw new Error([result.error ?? "LISTING_REGISTRY_READ_FAILED", detail]
+          .filter(Boolean).join(" · "))
+      }
       if (action) {
         const refreshed = await fetch("/api/admin/ebay/listings/registry", {
           cache: "no-store", headers: {
