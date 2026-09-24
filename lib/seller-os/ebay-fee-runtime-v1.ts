@@ -22,6 +22,7 @@ async function readPackageFeeInputV1(input: Scope & { packageId: string; sku: st
   const q = (input.readBudget ? await input.readBudget.read({ dependency: "FEE_HANDOFF", authority: "ebay_luna_opportunity_queue", query: () => qq }) : await qq) as Awaited<typeof qq>
   if (q.error || !q.data?.supplier_sku || input.sku && input.sku !== q.data.supplier_sku) throw Error("FEE_PACKAGE_SKU_CONFLICT")
   return { data: p.data.package_data, sku: String(q.data.supplier_sku), revision: feePackageRevisionV1(p.data.package_data),
+    opportunityId: p.data.opportunity_id, candidateKey: p.data.candidate_key,
     productId: q.data.supplier_product_id, variantId: q.data.supplier_variant_id }
 }
 
@@ -81,7 +82,9 @@ export async function persistProducedEbayFeeV1(input: Scope & { itemId: string |
       identity: { accountKey: input.accountKey, sku: pkg.sku,
         productId: String(pkg.productId ?? ""),
         variantId: String(pkg.variantId ?? ""),
-        categoryId: String(listing.categoryId ?? "") },
+        categoryId: String(listing.categoryId ?? ""),
+        opportunityId: pkg.opportunityId, candidateKey: pkg.candidateKey,
+        packageId: input.packageId },
       now: input.now,
     })
     if (category.status === "PROVEN") {

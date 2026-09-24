@@ -29,6 +29,9 @@ import {
   prepareVerifiedActiveListingTitle,
 } from "@/lib/ebay/ebay-active-listing-title-revision-service"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { inheritEbayOpportunityCategoryReceiptV1,
+  readEbayListingCategoryAuthorityV1 } from
+  "@/lib/ebay/ebay-listing-category-authority-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 import {
   CAKE_TURNTABLE_LISTING_INTAKE_KEY,
@@ -1131,6 +1134,17 @@ export async function POST(req: Request) {
         }, { status: 409 })
       }
       const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
+      const inheritedIdentity = {
+        accountKey, opportunityId, candidateKey,
+        sku: String(sourceOpportunity.supplier_sku ?? ""),
+        productId: String(sourceOpportunity.supplier_product_id ?? ""),
+        variantId: String(sourceOpportunity.supplier_variant_id ?? ""),
+      }
+      const inheritCategory = (packageData: Record<string, unknown>) =>
+        inheritEbayOpportunityCategoryReceiptV1({
+          assessment: sourceOpportunity.assessment,
+          packageData, identity: inheritedIdentity,
+        })
       const initialSeed = buildInitialPackage(
         effectiveOpportunity,
         smartStockingEvidence,
@@ -1184,7 +1198,16 @@ export async function POST(req: Request) {
               : "SAFE_EVIDENCE_ONLY_USER_FIELDS_PRESERVED",
           },
         }, selectedSafeDefaults)
-        const categoryBinding = await resolveAndBindEbayListingCategoryV1({
+        const inherited = inheritCategory(refreshedPackageSeed)
+        if (inherited.status === "CONTRADICTED") {
+          throw new Error("COMMAND_CENTER_OPPORTUNITY_CATEGORY_CONFLICT")
+        }
+        const categoryBinding = inherited.status === "PROVEN"
+          ? { packageData: object(inherited.packageData),
+            resolution: { status: "PROVEN_OPPORTUNITY_RECEIPT",
+              categoryReceiptId: object(object(object(inherited.packageData)
+                .categoryAuthorityV1).current).receiptId } }
+          : await resolveAndBindEbayListingCategoryV1({
           supabase,
           accountKey,
           context: {
@@ -1202,7 +1225,7 @@ export async function POST(req: Request) {
             authorityClass: smartStockingEvidence.authorityClass,
             exactProductIdentityVerified: true,
           } : null,
-        })
+          })
         const refreshedPackageData = categoryBinding.packageData
         const sourceObservedAt = sameDayContext?.sourceObservedAt
           ?? latestEvidenceTimestamp(sourceOpportunity)
@@ -1296,6 +1319,15 @@ export async function POST(req: Request) {
         const persistedRefreshedPackageData = object(
           persistedPackage.package_data,
         )
+        if (inherited.status === "PROVEN" &&
+          readEbayListingCategoryAuthorityV1({
+            packageData: persistedRefreshedPackageData,
+            identity: { ...inheritedIdentity,
+              packageId: existing.id,
+              categoryId: String(object(inherited.packageData).categoryId ?? "") },
+          }).status !== "PROVEN") {
+          throw new Error("COMMAND_CENTER_OPPORTUNITY_CATEGORY_READBACK_FAILED")
+        }
         return NextResponse.json({
           success: true,
           listingPackage: persistedPackage,
@@ -1311,7 +1343,13 @@ export async function POST(req: Request) {
           safety: { ebayWriteUsed: false, canPublish: false },
         })
       }
-      const packageSeed = applySafeSellerDefaults(seed, selectedSafeDefaults)
+      const inherited = inheritCategory(seed)
+      if (inherited.status === "CONTRADICTED") {
+        throw new Error("COMMAND_CENTER_OPPORTUNITY_CATEGORY_CONFLICT")
+      }
+      const packageSeed = applySafeSellerDefaults(
+        inherited.status === "PROVEN"
+          ? object(inherited.packageData) : seed, selectedSafeDefaults)
       const { data: created, error } = await supabase
         .from("ebay_listing_packages").insert({
         account_key: accountKey,
@@ -1326,7 +1364,12 @@ export async function POST(req: Request) {
       if (error || !created) {
         throw new Error("COMMAND_CENTER_PACKAGE_CREATE_FAILED")
       }
-      const categoryBinding = await resolveAndBindEbayListingCategoryV1({
+      const categoryBinding = inherited.status === "PROVEN"
+        ? { packageData: packageSeed,
+          resolution: { status: "PROVEN_OPPORTUNITY_RECEIPT",
+            categoryReceiptId: object(object(
+              packageSeed.categoryAuthorityV1).current).receiptId } }
+        : await resolveAndBindEbayListingCategoryV1({
         supabase,
         accountKey,
         context: {
@@ -1344,7 +1387,7 @@ export async function POST(req: Request) {
           authorityClass: smartStockingEvidence.authorityClass,
           exactProductIdentityVerified: true,
         } : null,
-      })
+        })
       const { data: savedData, error: saveError } = await supabase.rpc(
         "ebay_save_listing_package_guarded",
         {
@@ -1367,6 +1410,14 @@ export async function POST(req: Request) {
           saveError,
           "COMMAND_CENTER_PACKAGE_CATEGORY_BIND_FAILED",
         ))
+      }
+      if (inherited.status === "PROVEN" &&
+        readEbayListingCategoryAuthorityV1({
+          packageData: saved.package_data,
+          identity: { ...inheritedIdentity, packageId: String(saved.id),
+            categoryId: String(packageSeed.categoryId ?? "") },
+        }).status !== "PROVEN") {
+        throw new Error("COMMAND_CENTER_OPPORTUNITY_CATEGORY_READBACK_FAILED")
       }
       return NextResponse.json({
         success: true,

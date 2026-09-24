@@ -1234,6 +1234,7 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
 const CANONICAL_CATEGORY_BINDING_FIELDS = [
   "categoryId",
   "categoryName",
+  "categoryAuthorityV1",
   "aspects",
   "taxonomyPreflight",
   "categoryResolverV1",

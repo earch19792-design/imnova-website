@@ -20,6 +20,7 @@ export const EBAY_LISTING_CATEGORY_AUTHORITY_VERSION =
 type Identity = Readonly<{
   accountKey: string; sku: string; productId: string; variantId: string
   categoryId: string
+  opportunityId?: string; candidateKey?: string; packageId?: string | null
 }>
 
 /** Called only with a server-recorded OWNER category selection or an exact
@@ -36,10 +37,13 @@ export function createEbayListingCategoryReceiptV1(input: Readonly<{
   const official = record(input.officialAncestry)
   const identity = input.identity
   const selectedAt = Date.parse(String(selection.selectedAt ?? ""))
+  const opportunitySelection =
+    selection.source === "OWNER_SELLER_OS_OPPORTUNITY_SELECTION"
   const allowedSource = selection.source === "OWNER_SELLER_OS_PACKAGE_SELECTION"
+    || opportunitySelection
     || selection.source === "EBAY_OFFICIAL_DRAFT_CATEGORY_READ"
   const exactSelection = allowedSource &&
-    (selection.source !== "OWNER_SELLER_OS_PACKAGE_SELECTION" ||
+    (selection.source === "EBAY_OFFICIAL_DRAFT_CATEGORY_READ" ||
       typeof selection.actorUserId === "string" &&
       selection.actorUserId.length >= 8) &&
     selection.accountKey === identity.accountKey &&
@@ -49,6 +53,16 @@ export function createEbayListingCategoryReceiptV1(input: Readonly<{
     selection.categoryId === identity.categoryId &&
     typeof selection.sourceId === "string" &&
     selection.sourceId.length >= 8 && selection.sourceId.length <= 200 &&
+    (!opportunitySelection ||
+      typeof identity.opportunityId === "string" &&
+      /^[0-9a-f-]{36}$/i.test(identity.opportunityId) &&
+      typeof identity.candidateKey === "string" &&
+      identity.candidateKey.length > 0 &&
+      selection.sourceId === identity.opportunityId &&
+      selection.opportunityId === identity.opportunityId &&
+      selection.candidateKey === identity.candidateKey &&
+      selection.marketplace === "EBAY_US" &&
+      selection.packageId === null) &&
     Number.isFinite(selectedAt) && selectedAt <= now.getTime()
   const path = String(official.path ?? "").split(":")
   if (!exactSelection || !identity.accountKey || !identity.sku ||
@@ -78,10 +92,17 @@ export function createEbayListingCategoryReceiptV1(input: Readonly<{
     sourceAuthority: selection.source as string,
     sourceId: selection.sourceId as string,
     ownerActorUserId: selection.source === "OWNER_SELLER_OS_PACKAGE_SELECTION"
+      || opportunitySelection
       ? selection.actorUserId as string : null,
     ownerConfirmedAt: selection.source === "OWNER_SELLER_OS_PACKAGE_SELECTION"
+      || opportunitySelection
       ? selection.selectedAt as string : null,
     selectedAt: selection.selectedAt as string,
+    ...(opportunitySelection ? {
+      opportunityId: identity.opportunityId as string,
+      candidateKey: identity.candidateKey as string,
+      packageId: null,
+    } : {}),
     officialAncestry: input.officialAncestry,
     status: "PROVEN" as const,
   }
@@ -133,11 +154,20 @@ export function readEbayListingCategoryAuthorityV1(input: Readonly<{
       data.categoryId !== input.identity.categoryId ||
       receipt.leafStatus !== "SELECTABLE_LEAF" ||
       !["OWNER_SELLER_OS_PACKAGE_SELECTION",
+        "OWNER_SELLER_OS_OPPORTUNITY_SELECTION",
         "EBAY_OFFICIAL_DRAFT_CATEGORY_READ"].includes(
         String(receipt.sourceAuthority ?? "")) ||
-      (receipt.sourceAuthority === "OWNER_SELLER_OS_PACKAGE_SELECTION" &&
+      (["OWNER_SELLER_OS_PACKAGE_SELECTION",
+        "OWNER_SELLER_OS_OPPORTUNITY_SELECTION"].includes(
+          String(receipt.sourceAuthority ?? "")) &&
         (typeof receipt.ownerActorUserId !== "string" ||
           receipt.ownerActorUserId.length < 8)) ||
+      (receipt.sourceAuthority === "OWNER_SELLER_OS_OPPORTUNITY_SELECTION" &&
+        (receipt.opportunityId !== input.identity.opportunityId ||
+          receipt.candidateKey !== input.identity.candidateKey ||
+          receipt.packageId !== null ||
+          receipt.sourceId !== input.identity.opportunityId ||
+          !receipt.ownerConfirmedAt)) ||
       receipt.receiptId !== digest(base) ||
       record(receipt.officialAncestry).path !== receipt.categoryPath)
     return { status: "CONTRADICTED" as const, receipt: null }
@@ -147,4 +177,96 @@ export function readEbayListingCategoryAuthorityV1(input: Readonly<{
       receipt.taxonomyTreeVersion !== input.currentTreeVersion)
     return { status: "STALE" as const, receipt: null }
   return { status: "PROVEN" as const, receipt }
+}
+
+/** Account-scoped opportunity evidence uses the existing durable assessment.
+ * Each account retains its own current receipt and supersession history. */
+export function reconcileEbayOpportunityCategoryReceiptV1(input: Readonly<{
+  assessment: unknown; accountKey: string
+  nextReceipt: ReturnType<typeof createEbayListingCategoryReceiptV1>
+}>) {
+  const assessment = record(input.assessment)
+  if (!input.nextReceipt ||
+      input.nextReceipt.sourceAuthority !==
+        "OWNER_SELLER_OS_OPPORTUNITY_SELECTION" ||
+      input.nextReceipt.accountKey !== input.accountKey) return assessment
+  const byAccount = record(assessment.categoryAuthorityByAccountV1)
+  const currentState = record(byAccount[input.accountKey])
+  const reconciled = reconcileEbayListingCategoryReceiptV1({
+    categoryId: input.nextReceipt.categoryId,
+    categoryAuthorityV1: currentState,
+  }, input.nextReceipt)
+  return {
+    ...assessment,
+    categoryAuthorityByAccountV1: {
+      ...byAccount,
+      [input.accountKey]: record(reconciled.categoryAuthorityV1),
+    },
+  }
+}
+
+export function readEbayOpportunityCategoryAuthorityV1(input: Readonly<{
+  assessment: unknown; identity: Identity; now?: Date
+  currentTreeVersion?: string | null
+}>) {
+  const assessment = record(input.assessment)
+  const byAccount = record(assessment.categoryAuthorityByAccountV1)
+  const state = record(byAccount[input.identity.accountKey])
+  return readEbayListingCategoryAuthorityV1({
+    packageData: { categoryId: input.identity.categoryId,
+      categoryAuthorityV1: state },
+    identity: input.identity,
+    now: input.now,
+    currentTreeVersion: input.currentTreeVersion,
+  })
+}
+
+/** Carry the exact opportunity receipt into a later eligible package. The
+ * receipt ID remains unchanged; a conflicting package category fails closed. */
+export function inheritEbayOpportunityCategoryReceiptV1(input: Readonly<{
+  assessment: unknown; packageData: unknown; identity: Omit<Identity, "categoryId">
+  now?: Date
+}>) {
+  const assessment = record(input.assessment)
+  const accountState = record(record(assessment.categoryAuthorityByAccountV1)[
+    input.identity.accountKey])
+  const receipt = record(accountState.current)
+  if (!receipt.receiptId) return { status: "MISSING" as const,
+    packageData: input.packageData }
+  const identity = { ...input.identity, categoryId: String(receipt.categoryId ?? "") }
+  const read = readEbayOpportunityCategoryAuthorityV1({
+    assessment, identity, now: input.now,
+  })
+  if (read.status !== "PROVEN") return { status: read.status,
+    packageData: input.packageData }
+  const data = record(input.packageData)
+  const existingCategory = String(data.categoryId ?? "")
+  const prior = record(record(data.categoryAuthorityV1).current)
+  const priorOpportunityReceipt = prior.receiptId &&
+    prior.sourceAuthority === "OWNER_SELLER_OS_OPPORTUNITY_SELECTION" &&
+    prior.accountKey === input.identity.accountKey &&
+    prior.opportunityId === input.identity.opportunityId &&
+    prior.candidateKey === input.identity.candidateKey &&
+    prior.sku === input.identity.sku &&
+    prior.productId === input.identity.productId &&
+    prior.variantId === input.identity.variantId
+  if (prior.receiptId && (
+      prior.receiptId === receipt.receiptId && existingCategory &&
+        existingCategory !== identity.categoryId ||
+      prior.receiptId !== receipt.receiptId && !priorOpportunityReceipt)) {
+    return { status: "CONTRADICTED" as const, packageData: input.packageData }
+  }
+  const changedCategory = Boolean(existingCategory &&
+    existingCategory !== identity.categoryId)
+  return { status: "PROVEN" as const, packageData: {
+    ...data, categoryId: identity.categoryId,
+    categoryName: String(receipt.categoryPath).split(":").at(-1),
+    ...(changedCategory ? { aspects: {}, taxonomyPreflight: null,
+      categoryResolverV1: null } : {}),
+    categoryAuthorityV1: {
+      contractVersion: EBAY_LISTING_CATEGORY_AUTHORITY_VERSION,
+      current: read.receipt,
+      history: Array.isArray(accountState.history) ? accountState.history : [],
+    },
+  } }
 }

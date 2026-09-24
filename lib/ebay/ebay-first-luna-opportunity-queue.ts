@@ -1,4 +1,5 @@
 import type { EbayLunaOpportunityAssessment } from "./ebay-luna-demand-opportunity-engine"
+import { canonicalLunaOpportunityCandidateKeyV1 } from "./ebay-luna-opportunity-identity-v1"
 import type { EbayBestSellingProductSignal } from "./ebay-seller-keyword-demand-gateway"
 import type { LunaOpportunityCandidateInput } from "./ebay-luna-opportunity-types"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
@@ -332,7 +333,10 @@ export function mapLatestVariantToLunaCandidate(
       )
     : []
   return {
-    candidateKey: `luna-portex:${row.supplier_product_id ?? row.product_id}:${row.supplier_variant_id ?? row.sku ?? "default"}`,
+    candidateKey: canonicalLunaOpportunityCandidateKeyV1(
+      row.supplier_product_id ?? row.product_id,
+      row.supplier_variant_id ?? row.sku ?? "default",
+    ),
     marketRadarProductId: row.product_id,
     supplierProductId: row.supplier_product_id,
     supplierVariantId: row.supplier_variant_id,

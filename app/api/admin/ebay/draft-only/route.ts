@@ -4162,13 +4162,20 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
   })
   const categoryIdentity = {
     accountKey: sellerAccountKey,
+    opportunityId: expectedOpportunityId,
+    candidateKey: expectedCandidateKey,
+    packageId,
     sku: text(sourceOpportunity.supplier_sku),
     productId: text(sourceOpportunity.supplier_product_id),
     variantId: text(sourceOpportunity.supplier_variant_id),
     categoryId,
   }
+  const inheritedAuthority = readEbayListingCategoryAuthorityV1({
+    packageData, identity: categoryIdentity,
+  })
   const selection = record(packageData.ownerCategorySelectionV1)
-  const officialAncestry = selection.categoryId === categoryId &&
+  const officialAncestry = inheritedAuthority.status !== "PROVEN" &&
+    selection.categoryId === categoryId &&
     selection.sourceId === listingPackage.id &&
     selection.actorUserId === actor &&
     selection.source === "OWNER_SELLER_OS_PACKAGE_SELECTION"
