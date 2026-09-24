@@ -1391,6 +1391,7 @@ function ListingWorkspacePageContent() {
   const [workspaceMode, setWorkspaceMode] = useState<"CREATION" | "ACTIVE_MAINTENANCE">("CREATION")
   const [maintenance, setMaintenance] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
+  const [confirmedCategoryId, setConfirmedCategoryId] = useState("")
   const [message, setMessage] = useState("Cargando datos reales del producto…")
   const [error, setError] = useState("")
   const [currentPrewriteFailure, setCurrentPrewriteFailure] =
@@ -2840,10 +2841,13 @@ function ListingWorkspacePageContent() {
         candidateKey: opportunity.candidate_key,
         packageId: listingPackage.id,
         packageData: packageDataPayload(),
+        confirmCategorySelection: confirmedCategoryId === form.categoryId &&
+          /^\d{1,20}$/.test(form.categoryId),
         markReady,
       })
       setListingPackage(payload.listingPackage)
       setForm(fromPackage(object(payload.listingPackage?.package_data)))
+      setConfirmedCategoryId("")
       setMessage(markReady
         ? "Paquete listo para revisión humana. No se creó ni publicó nada en eBay."
         : `Guardado en servidor · ${new Intl.DateTimeFormat("es", { timeStyle: "short" }).format(new Date(payload.savedAt))}`)
@@ -2902,10 +2906,13 @@ function ListingWorkspacePageContent() {
       candidateKey: opportunity.candidate_key,
       packageId: listingPackage.id,
       packageData: packageDataPayload(),
+      confirmCategorySelection: confirmedCategoryId === form.categoryId &&
+        /^\d{1,20}$/.test(form.categoryId),
       markReady: false,
     })
     setListingPackage(payload.listingPackage)
     setForm(fromPackage(object(payload.listingPackage?.package_data)))
+    setConfirmedCategoryId("")
   }
 
   function assertImageEvidence() {
@@ -3779,6 +3786,7 @@ function ListingWorkspacePageContent() {
       }
       setListingPackage(nextPackage)
       setForm(fromPackage(object(nextPackage.package_data)))
+      setConfirmedCategoryId("")
       setDraftState((current) => ({
         ...current,
         taxonomy: {
@@ -3792,9 +3800,13 @@ function ListingWorkspacePageContent() {
       ) ? payload.unresolvedRequiredAspectNames.filter(
           (entry): entry is string => typeof entry === "string",
         ) : []
+      const categoryAuthority = object(payload.categoryAuthority)
+      const categoryAuthorityMessage = categoryAuthority.status === "PROVEN"
+        ? ` Categoría leaf confirmada: ${String(categoryAuthority.categoryPath ?? "").replaceAll(":", " > ")} (Taxonomy ${String(categoryAuthority.taxonomyTreeVersion ?? "")}).`
+        : " Autoridad de categoría aún no probada; se requiere confirmación del OWNER y leaf exacto de Taxonomy."
       setMessage(unresolved.length
-        ? `Taxonomy consultado y guardado. Faltan valores de producto probados para: ${unresolved.join(", ")}.`
-        : "Taxonomy consultado y guardado con readback durable. No se creó ni publicó nada en eBay.")
+        ? `Taxonomy consultado y guardado. Faltan valores de producto probados para: ${unresolved.join(", ")}.${categoryAuthorityMessage}`
+        : `Taxonomy consultado y guardado con readback durable.${categoryAuthorityMessage} No se creó ni publicó nada en eBay.`)
     } catch (requestError) {
       setError(getMobileReviewRequestError(
         requestError,
@@ -5189,7 +5201,8 @@ function ListingWorkspacePageContent() {
 
           <section className="space-y-4 rounded-3xl border border-white/15 bg-white/[0.04] p-4">
             <label className="block"><span className="font-black">Título eBay · máximo 80 caracteres</span><input value={form.title} maxLength={80} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /><span className="mt-1 block text-right text-xs text-white/50">{form.title.length}/80</span></label>
-            <div className="grid gap-3 sm:grid-cols-2"><label><span className="font-black">Category ID</span><input inputMode="numeric" value={form.categoryId} onChange={(event) => setForm((current) => ({ ...current, categoryId: event.target.value.replace(/\D/g, "") }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label><label><span className="font-black">Categoría</span><input value={form.categoryName} onChange={(event) => setForm((current) => ({ ...current, categoryName: event.target.value }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label></div>
+            <div className="grid gap-3 sm:grid-cols-2"><label><span className="font-black">Category ID</span><input inputMode="numeric" value={form.categoryId} onChange={(event) => { setConfirmedCategoryId(""); setForm((current) => ({ ...current, categoryId: event.target.value.replace(/\D/g, "") })) }} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label><label><span className="font-black">Categoría</span><input value={form.categoryName} onChange={(event) => { setConfirmedCategoryId(""); setForm((current) => ({ ...current, categoryName: event.target.value })) }} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label></div>
+            <label className="mt-2 flex gap-2 text-sm"><input type="checkbox" checked={confirmedCategoryId === form.categoryId && Boolean(form.categoryId)} onChange={(event) => setConfirmedCategoryId(event.target.checked ? form.categoryId : "")} />Confirmo que seleccioné esta categoría para este producto. Seller OS verificará el leaf y la ruta en Taxonomy antes de autorizar la categoría.</label>
             <div className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-3">
               <label className="block"><span className="font-black">{finalSmartStockingEconomics ? "Precio final USD" : "Precio objetivo USD"}</span><input inputMode="decimal" readOnly={finalSmartStockingEconomics} value={form.pricing.targetPrice ?? ""} onChange={(event) => setForm((current) => ({ ...current, pricing: {
                 ...current.pricing,

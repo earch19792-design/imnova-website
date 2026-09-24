@@ -80,6 +80,13 @@ import {
   getEbayTaxonomyListingIntelligence,
   type EbayTaxonomyListingIntelligence,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { readEbayUsNoStoreFvfCategoryV1 } from
+  "@/lib/ebay/ebay-us-no-store-fvf-category-read-v1"
+import {
+  createEbayListingCategoryReceiptV1,
+  readEbayListingCategoryAuthorityV1,
+  reconcileEbayListingCategoryReceiptV1,
+} from "@/lib/ebay/ebay-listing-category-authority-v1"
 import {
   assertOneClickControlledPublicationIntentV1,
   bindOneClickControlledPublicationIntentV1,
@@ -4153,8 +4160,28 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
     unprovenAspectEvidenceRequirements:
       productTruth.unprovenAspectEvidenceRequirements,
   })
+  const categoryIdentity = {
+    accountKey: sellerAccountKey,
+    sku: text(sourceOpportunity.supplier_sku),
+    productId: text(sourceOpportunity.supplier_product_id),
+    variantId: text(sourceOpportunity.supplier_variant_id),
+    categoryId,
+  }
+  const selection = record(packageData.ownerCategorySelectionV1)
+  const officialAncestry = selection.categoryId === categoryId &&
+    selection.sourceId === listingPackage.id &&
+    selection.actorUserId === actor &&
+    selection.source === "OWNER_SELLER_OS_PACKAGE_SELECTION"
+    ? await readEbayUsNoStoreFvfCategoryV1({
+      categoryId, query: text(packageData.title).slice(0, 350),
+    }).catch(() => null) : null
+  const categoryReceipt = officialAncestry
+    ? createEbayListingCategoryReceiptV1({
+      identity: categoryIdentity, selection,
+      officialAncestry,
+    }) : null
   const nextPackageData = {
-    ...packageData,
+    ...reconcileEbayListingCategoryReceiptV1(packageData, categoryReceipt),
     categoryName: taxonomy.categoryName ?? packageData.categoryName,
     aspects: preflight.resolvedAspects,
     taxonomyPreflight: preflight,
@@ -4185,6 +4212,14 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
     return jsonError(new Error(code), code.includes("STALE_VERSION") ? 409 : 502)
   }
   const readback = record(record(saved.package_data).taxonomyPreflight)
+  const categoryAuthority = readEbayListingCategoryAuthorityV1({
+    packageData: saved.package_data, identity: categoryIdentity,
+  })
+  if (categoryReceipt && categoryAuthority.status !== "PROVEN") {
+    return jsonError(new Error(
+      "EBAY_LISTING_CATEGORY_RECEIPT_READBACK_MISMATCH",
+    ), 502)
+  }
   assertTaxonomySnapshotContextV1({
     expected: context,
     taxonomyPreflight: readback,
@@ -4210,6 +4245,14 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
     success: true,
     taxonomy,
     preflight,
+    categoryAuthority: {
+      status: categoryAuthority.status,
+      receiptId: categoryAuthority.receipt?.receiptId ?? null,
+      categoryId: categoryAuthority.receipt?.categoryId ?? null,
+      categoryPath: categoryAuthority.receipt?.categoryPath ?? null,
+      taxonomyTreeVersion: categoryAuthority.receipt?.taxonomyTreeVersion ?? null,
+      taxonomyObservedAt: categoryAuthority.receipt?.taxonomyObservedAt ?? null,
+    },
     listingPackage: saved,
     durableReadbackMatch,
     unresolvedRequiredAspectNames: preflight.unprovenRequiredAspectNames,

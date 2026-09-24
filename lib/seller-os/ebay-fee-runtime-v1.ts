@@ -5,6 +5,7 @@ import type { SafeMarketplaceOrder } from "../marketplace/commercial-monitor-dom
 import { produceEbayFeeAuthorityV1, feeRecordV1, feeDigestV1, feePackageRevisionV1 } from "./ebay-fee-producer-v1"
 import { reconcileObservedEbayFeesV1 } from "./ebay-fee-reconciliation-v1"
 import { bindPackageCategoryFeeV1 } from "../ebay/ebay-package-category-fee-binding-v1"
+import { readEbayListingCategoryAuthorityV1 } from "../ebay/ebay-listing-category-authority-v1"
 
 const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: boolean) => T }>(q: T) =>
   q.abortSignal(AbortSignal.timeout(8000)).retry(false)
@@ -75,7 +76,20 @@ export async function persistProducedEbayFeeV1(input: Scope & { itemId: string |
     if (listing.categoryId !== packageData.categoryId || listing.price !== pricing.targetPrice ||
       (listing.currency !== undefined && listing.currency !== pricing.currency)) throw Error("FEE_PACKAGE_CONTEXT_CONFLICT")
     if (listing.saleFormat === "FIXED_PRICE") context.listing = { ...listing, saleFormat: "FixedPriceItem" }
-    if (!context.categoryFeePolicy || provided.categoryAuthority !== undefined) context.categoryFeePolicy = bindPackageCategoryFeeV1({
+    const category = readEbayListingCategoryAuthorityV1({
+      packageData: pkg.data,
+      identity: { accountKey: input.accountKey, sku: pkg.sku,
+        productId: String(pkg.productId ?? ""),
+        variantId: String(pkg.variantId ?? ""),
+        categoryId: String(listing.categoryId ?? "") },
+      now: input.now,
+    })
+    if (category.status === "PROVEN") {
+      context.categoryAuthority = category.receipt.officialAncestry
+      context.categoryReceiptId = category.receipt.receiptId
+    }
+    if (!context.categoryFeePolicy || provided.categoryAuthority !== undefined ||
+        category.status === "PROVEN") context.categoryFeePolicy = bindPackageCategoryFeeV1({
       ancestry: context.categoryAuthority, policySnapshot: context.officialFeePolicySnapshot, store: context.resolvedStoreContext,
       accountKey: input.accountKey, packageId: input.packageId!, packageRevision: pkg.revision, sku: pkg.sku,
       categoryId: String(listing.categoryId), now: input.now })

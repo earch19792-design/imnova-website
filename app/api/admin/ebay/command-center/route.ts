@@ -1473,6 +1473,22 @@ export async function POST(req: Request) {
         ? currentPackageData.categoryId : form.categoryId
       const effectiveCategoryName = categoryAutoSelected
         ? currentPackageData.categoryName : form.categoryName
+      const categoryChanged = effectiveCategoryId !== currentPackageData.categoryId
+      const ownerCategorySelection = body.confirmCategorySelection === true &&
+        /^\d{1,20}$/.test(String(effectiveCategoryId ?? "")) &&
+        sourceOpportunity.supplier_product_id &&
+        sourceOpportunity.supplier_variant_id &&
+        sourceOpportunity.supplier_sku
+        ? {
+          source: "OWNER_SELLER_OS_PACKAGE_SELECTION",
+          accountKey, sku: sourceOpportunity.supplier_sku,
+          productId: sourceOpportunity.supplier_product_id,
+          variantId: sourceOpportunity.supplier_variant_id,
+          categoryId: effectiveCategoryId,
+          sourceId: packageId,
+          actorUserId: reviewer,
+          selectedAt: new Date().toISOString(),
+        } : categoryChanged ? null : currentPackageData.ownerCategorySelectionV1 ?? null
       const packageForValidation = {
         ...form,
         categoryId: effectiveCategoryId,
@@ -1542,6 +1558,8 @@ export async function POST(req: Request) {
             : currentPackageData.evidenceSnapshot ?? sourceSeed.evidenceSnapshot,
           taxonomyPreflight: currentPackageData.taxonomyPreflight ?? null,
           categoryResolverV1: currentPackageData.categoryResolverV1 ?? null,
+          ownerCategorySelectionV1: ownerCategorySelection,
+          categoryAuthorityV1: currentPackageData.categoryAuthorityV1 ?? null,
           sourceRefresh: currentPackageData.sourceRefresh ?? null,
           safeDefaults: currentPackageData.safeDefaults ?? null,
           sameDayPilot: currentPackageData.sameDayPilot ?? null,
