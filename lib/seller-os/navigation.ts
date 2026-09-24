@@ -57,10 +57,9 @@ export const SELLER_OS_NAVIGATION: readonly SellerOsNavigationItem[] = Object.fr
   item("listings", "Listings", "/admin/ebay/listings",
     "Registro canónico, importación y reconciliación de publicaciones eBay.",
     "Resolver la identidad y el siguiente bloqueo de cada Item ID.", 3, [
-      child("import-existing", "Link / Import Existing eBay Listing", "/admin/ebay/listings#import-existing"),
+      child("identity-review", "Identity Review", "/admin/ebay/listings#identity-review"),
       child("publication", "Publicación", "/admin/ebay/publish"),
       child("quality", "Listing Quality", "/admin/ebay/listing-quality"),
-      child("live-monitor", "Monitor LIVE", "/admin/ebay/monitor"),
     ]),
   item("stockguard", "StockGuard", "/admin/ebay/stock-guard",
     "Vínculos exactos, vigilancia de stock y excepciones.",

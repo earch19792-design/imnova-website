@@ -72,6 +72,8 @@ export function projectSellerOsListingCasesV1(input: Readonly<{
   stockStates?: readonly StockState[]
   manualImportItemIds?: readonly string[]
   existingOrigins?: Readonly<Record<string, ListingOriginV1>>
+  existingOpportunities?: Readonly<Record<string, { opportunityId: string;
+    productId: string; variantId: string; sku: string }>>
 }>): readonly ListingCaseProjectionV1[] {
   const byItem = new Map<string, EbayLiveListing[]>()
   for (const listing of input.listings) {
@@ -125,6 +127,12 @@ export function projectSellerOsListingCasesV1(input: Readonly<{
     } : manualTuple && manual?.supplier_sku &&
         manual.supplier_variant_id === manualTuple.variantId
       ? { ...manualTuple, sku: manual.supplier_sku } : null
+    const previousOpportunity = input.existingOpportunities?.[listing.itemId]
+    const inheritedOpportunityId = previousOpportunity && tuple &&
+      previousOpportunity.productId === tuple.productId &&
+      previousOpportunity.variantId === tuple.variantId &&
+      previousOpportunity.sku === tuple.sku
+      ? previousOpportunity.opportunityId : null
     const quarantine = input.quarantines.some((row) =>
       row.account_key === input.accountKey && row.marketplace_id === "EBAY_US" &&
       row.ebay_item_id === listing.itemId && row.quarantine_state === "ACTIVE")
@@ -170,7 +178,8 @@ export function projectSellerOsListingCasesV1(input: Readonly<{
       supplier_sku: tuple?.sku ?? null,
       luna_product_id: tuple?.productId ?? null,
       luna_variant_id: tuple?.variantId ?? null,
-      opportunity_id: publication?.opportunity_id ?? manual?.opportunity_id ?? null,
+      opportunity_id: publication?.opportunity_id ?? manual?.opportunity_id ??
+        inheritedOpportunityId,
       listing_package_id: publication?.listing_package_id ?? null,
       origin,
       listing_status: "ACTIVE" as const,

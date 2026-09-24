@@ -17,13 +17,18 @@ export type ListingIdentityReviewV1 = {
   currentTitle: string | null
   origin: string
   identitySource: string
+  identityStatus: string
+  stockguardStatus: string
   classification: "DUPLICATE" | "NEEDS_OWNER_REVIEW" |
     "MANUAL_EBAY_NO_LUNA" | "SOURCE_MISSING"
   reasonCode: string
+  confidenceBasis: string
   recommendedOwnerAction: string
   conflictingItemIds: string[]
   candidates: Array<{ productId: string; variantId: string; sku: string;
     opportunityId: string | null; source: string; preflightStatus: string | null }>
+  lastOwnerAction: string | null
+  lastOwnerActionAt: string | null
 }
 
 export function packageIdFromCustomLabelV1(label: string | null) {
@@ -38,6 +43,8 @@ export function buildListingIdentityReviewQueueV1(input: {
   decisions: readonly Decision[]
   packages: readonly Package[]
   opportunities: readonly Opportunity[]
+  ownerActions?: readonly { caseId: string; action: string; candidateProductId: string | null;
+    candidateVariantId: string | null; candidateSku: string | null; recordedAt: string }[]
 }): ListingIdentityReviewV1[] {
   const byLabel = new Map<string, string[]>()
   for (const row of input.cases) {
@@ -53,6 +60,7 @@ export function buildListingIdentityReviewQueueV1(input: {
       const conflicts = labelKey ? (byLabel.get(labelKey) ?? [])
         .filter((itemId) => itemId !== row.ebay_item_id) : []
       const candidates: ListingIdentityReviewV1["candidates"] = []
+      const ownerAction = input.ownerActions?.find((action) => action.caseId === row.case_id) ?? null
       const append = (candidate: ListingIdentityReviewV1["candidates"][number]) => {
         if (!candidates.some((existing) => existing.productId === candidate.productId &&
             existing.variantId === candidate.variantId && existing.sku === candidate.sku)) {
@@ -144,15 +152,38 @@ export function buildListingIdentityReviewQueueV1(input: {
       } else if (candidates[0].preflightStatus !== "PREFLIGHT_PASS") {
         reasonCode = "LUNA_IDENTITY_PREFLIGHT_NOT_PASSED"
         recommendedOwnerAction = "Resolver el preflight de identidad antes del vínculo StockGuard."
+      } else if (!["CURRENT_LUNA_CATALOG_EXACT_SKU",
+        "EXACT_PACKAGE_LABEL_LINEAGE"].includes(candidates[0].source)) {
+        reasonCode = "HISTORICAL_DECISION_REQUIRES_CURRENT_IDENTITY"
+        recommendedOwnerAction = "Comprobar identidad Luna actual y el Item ID oficial antes de vincular."
       } else {
         reasonCode = "EXACT_CANDIDATE_REQUIRES_GUARDED_LINK"
         recommendedOwnerAction = "Verificar el Item ID oficial y vincular la oportunidad exacta."
       }
+      if (row.identity_status === "MISSING_LUNA_IDENTITY" &&
+        ownerAction?.action === "KEEP_MANUAL_NO_LUNA") {
+        classification = "MANUAL_EBAY_NO_LUNA"
+        reasonCode = "OWNER_CONFIRMED_NO_LUNA_SOURCE"
+        recommendedOwnerAction = "Conservar el caso manual; revisar sólo si aparece nueva evidencia exacta."
+      } else if (row.identity_status === "MISSING_LUNA_IDENTITY" &&
+        ownerAction?.action === "REJECT_CANDIDATE" &&
+        candidates.some((candidate) => candidate.productId === ownerAction.candidateProductId &&
+          candidate.variantId === ownerAction.candidateVariantId &&
+          candidate.sku === ownerAction.candidateSku)) {
+        reasonCode = "OWNER_REJECTED_CURRENT_CANDIDATE"
+        recommendedOwnerAction = "Revisar el conflicto con evidencia nueva antes de vincular."
+      }
       return { itemId: row.ebay_item_id, customLabel: label,
         currentTitle: row.ebay_title, origin: row.origin,
-        identitySource: row.identity_source, classification,
-        reasonCode, recommendedOwnerAction,
-        conflictingItemIds: conflicts, candidates }
+        identitySource: row.identity_source, identityStatus: row.identity_status,
+        stockguardStatus: row.stockguard_link_status, classification,
+        reasonCode, confidenceBasis: candidates.length === 1
+          ? candidates[0].source : candidates.length > 1
+            ? "CONFLICTING_DURABLE_SOURCES" : "NO_EXACT_SOURCE",
+        recommendedOwnerAction,
+        conflictingItemIds: conflicts, candidates,
+        lastOwnerAction: ownerAction?.action ?? null,
+        lastOwnerActionAt: ownerAction?.recordedAt ?? null }
     })
     .sort((a, b) => a.itemId.localeCompare(b.itemId))
 }

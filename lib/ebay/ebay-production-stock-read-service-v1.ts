@@ -18,7 +18,8 @@ type LiveRow = Readonly<{
 
 export async function readProductionStockGuardV1(input: {
   supabase: SupabaseClient; accountKey: string; accountAlias: string;
-  itemId: string | null; now?: Date
+  itemId: string | null; now?: Date;
+  includeKnownListingStockEvidence?: boolean
 }) {
   const now = input.now ?? new Date()
   const scope = input.itemId ? { itemIds: [input.itemId], stockCheckJobIds: [] } : undefined
@@ -49,8 +50,6 @@ export async function readProductionStockGuardV1(input: {
     throw Error("PRODUCTION_STOCK_LINK_AUTHORITY_UNAVAILABLE")
   }
   const ids = new Set(live.currentItemIds)
-  const rows = registry.rows.filter(row => row.account_key === input.accountKey &&
-    row.ebay_item_id && (input.itemId ? row.ebay_item_id === input.itemId : ids.has(row.ebay_item_id)))
   const liveListings = registry.rows.filter((row): row is typeof row &
     { ebay_item_id: string } => row.account_key === input.accountKey &&
       Boolean(row.ebay_item_id)).map((row) => ({ ebay_item_id: row.ebay_item_id,
@@ -69,6 +68,13 @@ export async function readProductionStockGuardV1(input: {
   }[]
   const currentCases = sweepCases.filter((row) =>
     row.last_reconciled_sweep_id === sweep?.sweep_id)
+  const knownExactIds = new Set(input.includeKnownListingStockEvidence
+    ? currentCases.filter((row) => row.identity_status === "LINKED_EXACT" &&
+      Boolean(row.stockguard_authority_id)).map((row) => row.ebay_item_id)
+    : [])
+  const rows = registry.rows.filter(row => row.account_key === input.accountKey &&
+    row.ebay_item_id && (input.itemId ? row.ebay_item_id === input.itemId
+      : ids.has(row.ebay_item_id) || knownExactIds.has(row.ebay_item_id)))
   const canonicalFresh = Boolean(sweep && !caseRead.error &&
     sweepCases.length < 1000 &&
     now.getTime() - Date.parse(sweep.official_observed_at) <= 20 * 60_000 &&
@@ -108,6 +114,13 @@ export async function readProductionStockGuardV1(input: {
       marketplace: { marketplaceId: "EBAY_US", accountAlias: input.accountAlias }, now,
       decisions, jobs, observations })
     const stock = projection.stock
+    const stockObservedAt = authority
+      ? stock?.evidenceReferences?.at(-1)?.capturedAt ?? null : null
+    const maximumAgeSeconds = stock?.freshness.maximumAgeSeconds
+    const stockFreshUntil = stockObservedAt && maximumAgeSeconds &&
+      Number.isFinite(Date.parse(stockObservedAt))
+      ? new Date(Date.parse(stockObservedAt) + maximumAgeSeconds * 1_000).toISOString()
+      : null
     const components = authority && Array.isArray(authority.components)
       ? authority.components.map((component) => ({
           supplierProductId: component.lunaProductId ?? component.luna_product_id,
@@ -128,9 +141,13 @@ export async function readProductionStockGuardV1(input: {
       components,
       supplierAvailability: stock?.state === "IN_STOCK_SIGNAL" ? "IN_STOCK"
         : stock?.state === "CERTIFIED_OOS" ? "OUT_OF_STOCK" : "UNKNOWN",
+      certifiedListingCapacity: authority &&
+        stock?.freshness.status === "FRESH" &&
+        projection.composition?.bundleCapacity.availability === "AVAILABLE"
+        ? projection.composition.bundleCapacity.value : null,
       stockGuardState: authority ? stock?.state ?? "STOCK_UNKNOWN" : "STOCK_UNKNOWN",
       stockFreshness: authority ? stock?.freshness.status ?? "UNKNOWN" : "UNKNOWN",
-      stockObservedAt: authority ? stock?.evidenceReferences?.at(-1)?.capturedAt ?? null : null,
+      stockObservedAt, stockFreshUntil,
       limitationCode: canonicalFresh && !caseExact
         ? "CANONICAL_LISTING_CASE_IDENTITY_BLOCKED"
         : authorityGate.stockguardEligible

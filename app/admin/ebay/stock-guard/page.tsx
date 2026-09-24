@@ -17,8 +17,22 @@ type RegistryResponse = { success: boolean; error?: string; cases?: Case[];
   currentLiveCertified?: boolean; lastCertifiedAt?: string | null;
   currentSweepId?: string | null }
 type MonitorResponse = { success: boolean; monitor?: CommercialMonitorGetDto }
+type FreshnessRow = { itemId: string; sku: string | null;
+  identityStatus: string | null; stockguardLinkStatus: string | null;
+  linkAuthorityState: string | null; supplierLinkage: string;
+  components: Array<{ supplierProductId: string | null;
+    supplierVariantId: string | null; supplierSku: string | null }>;
+  supplierAvailability: string; certifiedListingCapacity: number | null;
+  stockGuardState: string;
+  stockFreshness: "FRESH" | "STALE" | "UNKNOWN";
+  stockObservedAt: string | null; stockFreshUntil: string | null;
+  marketplaceWriteAuthorized: "NOT_EVALUATED" }
+type FreshnessResponse = { success: boolean; listings?: FreshnessRow[];
+  error?: string; sourceStatus?: { listingRegistry: string } }
 
-function stockClass(state: string | null, quantity: number | null) {
+function stockClass(state: string | null, quantity: number | null,
+  freshness: string | null) {
+  if (freshness !== "FRESH") return "UNKNOWN_STALE"
   if (state === "IN_STOCK_SIGNAL") {
     if (quantity === null) return "UNKNOWN_STALE"
     return quantity <= 3 ? "LOW_STOCK" : "SAFE"
@@ -30,6 +44,7 @@ function stockClass(state: string | null, quantity: number | null) {
 export default function StockGuardPage() {
   const [registry, setRegistry] = useState<RegistryResponse | null>(null)
   const [monitor, setMonitor] = useState<CommercialMonitorGetDto | null>(null)
+  const [freshness, setFreshness] = useState<FreshnessResponse | null>(null)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState("ALL")
@@ -42,9 +57,10 @@ export default function StockGuardPage() {
       const { data, error: authError } = await supabase.auth.getSession()
       if (authError || !data.session) throw new Error("AUTH_REQUIRED")
       const headers = { Authorization: `Bearer ${data.session.access_token}` }
-      const [registryResponse, monitorResponse] = await Promise.all([
+      const [registryResponse, monitorResponse, freshnessResponse] = await Promise.all([
         fetch("/api/admin/ebay/listings/registry", { cache: "no-store", headers }),
         fetch("/api/admin/ebay/monitor", { cache: "no-store", headers }),
+        fetch("/api/admin/ebay/stockguard-freshness", { cache: "no-store", headers }),
       ])
       const registryData = await registryResponse.json() as RegistryResponse
       if (!registryResponse.ok || !registryData.success) {
@@ -55,6 +71,9 @@ export default function StockGuardPage() {
         const monitorData = await monitorResponse.json() as MonitorResponse
         if (monitorData.success && monitorData.monitor) setMonitor(monitorData.monitor)
       }
+      const freshnessData = await freshnessResponse.json() as FreshnessResponse
+      setFreshness(freshnessResponse.ok && freshnessData.success ?
+        freshnessData : null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "STOCKGUARD_READ_FAILED")
     } finally { setLoading(false) }
@@ -64,10 +83,14 @@ export default function StockGuardPage() {
   const cases = useMemo(() => registry?.cases ?? [], [registry])
   const currentCases = cases.filter((row) => registry?.currentLiveCertified &&
     row.last_reconciled_sweep_id === registry.currentSweepId)
+  const freshnessByItem = useMemo(() => new Map((freshness?.listings ?? [])
+    .map((row) => [row.itemId, row])), [freshness])
   const stockByItem = useMemo(() => new Map((monitor && registry?.currentLiveCertified
     ? selectCanonicalCurrentLiveListingsV1(monitor) : []).map((listing) =>
     [listing.identity.itemId, stockClass(listing.stock.state,
-      listing.stock.quantity.value)])), [monitor, registry])
+      listing.stock.quantity.value,
+      freshnessByItem.get(listing.identity.itemId)?.stockFreshness ?? null)])),
+  [monitor, registry, freshnessByItem])
   const visible = cases.filter((row) =>
     (status === "ALL" || row.stockguard_link_status === status) &&
     (origin === "ALL" || row.origin === origin) &&
@@ -86,6 +109,12 @@ export default function StockGuardPage() {
     ["Unknown/stale stock", registry?.currentLiveCertified ? linked.filter((row) =>
       !stockByItem.has(row.ebay_item_id) ||
       stockByItem.get(row.ebay_item_id) === "UNKNOWN_STALE").length : "—"],
+    ["Stock FRESH", currentCount((row) => row.stockguard_link_status.startsWith("LINKED_") &&
+      freshnessByItem.get(row.ebay_item_id)?.stockFreshness === "FRESH")],
+    ["Stock STALE", currentCount((row) => row.stockguard_link_status.startsWith("LINKED_") &&
+      freshnessByItem.get(row.ebay_item_id)?.stockFreshness === "STALE")],
+    ["Stock UNKNOWN", currentCount((row) => row.stockguard_link_status.startsWith("LINKED_") &&
+      !["FRESH", "STALE"].includes(freshnessByItem.get(row.ebay_item_id)?.stockFreshness ?? "UNKNOWN"))],
     ["Blocked identity", currentCount((row) => row.stockguard_link_status === "BLOCKED_IDENTITY")],
     ["Needs OWNER review", currentCount((row) => row.stockguard_link_status === "NEEDS_OWNER_REVIEW")],
   ] as const
@@ -96,9 +125,10 @@ export default function StockGuardPage() {
         <h1 className="text-3xl font-black">StockGuard</h1>
         <p className="mt-1 text-sm text-slate-600">Una vista desde el registro canónico. El vínculo y el monitoreo no autorizan escrituras de cantidad en eBay.</p>
       </div><div className="flex gap-2"><Link href="/admin/ebay/copilot?surface=STOCK" className="rounded-lg border px-3 py-2 text-sm font-bold text-violet-800">Copilot</Link><Link href="/admin/ebay/listings" className="rounded-lg border px-3 py-2 text-sm font-bold text-cyan-800">Listings</Link>
-        <button type="button" onClick={() => void load()} disabled={loading} className="rounded-lg border px-3 py-2 text-sm font-bold disabled:opacity-50">Actualizar</button></div></header>
+        <button type="button" onClick={() => void load()} disabled={loading} className="rounded-lg border px-3 py-2 text-sm font-bold disabled:opacity-50">Actualizar lectura</button></div></header>
       {error && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">{error}</p>}
-      {!registry?.currentLiveCertified && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">LIVE actual no certificado. Los casos guardados son historial; las señales de stock se ocultan hasta una lectura fresca. Última certificación: {registry?.lastCertifiedAt ?? "ninguna"}.</p>}
+      {!registry?.currentLiveCertified && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">LIVE actual no certificado. Los casos guardados son historial; la fecha y frescura del stock pueden verse, pero no prueban que el listing siga activo. Última certificación: {registry?.lastCertifiedAt ?? "ninguna"}.</p>}
+      {!freshness && !loading && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Frescura de stock no disponible. Se muestra UNKNOWN hasta recuperar el lector canónico.</p>}
       <section aria-label="Resumen StockGuard" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {counts.map(([label, count]) => <div key={label} className="rounded-xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">{label}</p><p className="mt-1 text-2xl font-black">{count}</p></div>)}
       </section>
@@ -111,11 +141,12 @@ export default function StockGuardPage() {
           <select aria-label="Filtrar por marketplace" value={marketplace} onChange={(event) => setMarketplace(event.target.value)} className="rounded-lg border px-2 py-2 text-sm"><option value="ALL">Todos los marketplaces</option>{[...new Set(cases.map((row) => row.marketplace_id))].map((value) => <option key={value} value={value}>{value}</option>)}</select>
           <select aria-label="Filtrar por seller account" value={account} onChange={(event) => setAccount(event.target.value)} className="rounded-lg border px-2 py-2 text-sm"><option value="ALL">Todas las cuentas</option>{[...new Set(cases.map((row) => row.account_key))].map((value) => <option key={value} value={value}>{value}</option>)}</select>
         </div>
-        <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-sm"><thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">eBay Item ID / SKU</th><th className="p-3">Origen</th><th className="p-3">Identidad</th><th className="p-3">StockGuard</th><th className="p-3">Stock</th><th className="p-3">Siguiente bloqueo</th></tr></thead>
+        <div className="overflow-x-auto"><table className="w-full min-w-[1250px] text-left text-sm"><thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">eBay Item ID / SKU</th><th className="p-3">Origen</th><th className="p-3">Identidad Luna</th><th className="p-3">StockGuard / estados</th><th className="p-3">Stock proveedor</th><th className="p-3">Observado / vence</th><th className="p-3">Frescura</th><th className="p-3">Siguiente bloqueo</th></tr></thead>
           <tbody>{visible.map((row) => {
             const current = registry?.currentLiveCertified &&
               row.last_reconciled_sweep_id === registry.currentSweepId
-            return <tr key={row.case_id} className="border-t"><td className="p-3 font-bold">{row.ebay_item_id}<br /><span className="font-normal">{row.ebay_custom_label ?? "Sin Custom Label"}</span></td><td className="p-3">{row.origin}<br /><span className="text-xs text-slate-500">{current ? "LIVE ACTUAL" : "HISTÓRICO"}</span></td><td className="p-3">{row.identity_status}</td><td className="p-3">{row.stockguard_link_status}</td><td className="p-3">{current ? stockByItem.get(row.ebay_item_id) ?? "UNKNOWN_STALE" : "NO_CURRENT_READ"}</td><td className="p-3">{row.next_blocker ?? "—"}</td></tr>
+            const observed = freshnessByItem.get(row.ebay_item_id)
+            return <tr key={row.case_id} className="border-t"><td className="p-3 font-bold">{row.ebay_item_id}<br /><span className="font-normal">{row.ebay_custom_label ?? "Sin Custom Label"}</span></td><td className="p-3">{row.origin}<br /><span className="text-xs text-slate-500">{current ? "LIVE ACTUAL" : "HISTÓRICO"}</span></td><td className="p-3 text-xs">{row.identity_status}<br />{row.supplier_sku ?? "Sin Luna"}<br />{row.luna_product_id ?? "—"} / {row.luna_variant_id ?? "—"}</td><td className="p-3 text-xs">{row.stockguard_link_status}<br />IDENTITY_LINKED={row.identity_status === "LINKED_EXACT" ? "YES" : "NO"}<br />STOCK_MONITORING_ACTIVE={observed?.linkAuthorityState === "ACTIVE" ? "YES" : "NO"}<br />STOCK_EVIDENCE_FRESH={observed?.stockFreshness === "FRESH" ? "YES" : "NO"}<br />MARKETPLACE_WRITE_AUTHORIZED=NOT_EVALUATED</td><td className="p-3">{observed?.supplierAvailability ?? "UNKNOWN"}<br /><span className="text-xs">Capacidad certificada: {observed?.certifiedListingCapacity ?? "—"}<br />{current ? stockByItem.get(row.ebay_item_id) ?? "UNKNOWN_STALE" : "NO_CURRENT_READ"}</span></td><td className="p-3 text-xs">{observed?.stockObservedAt ?? "Sin observación"}<br />{observed?.stockFreshUntil ?? "Sin vencimiento probado"}</td><td className="p-3 font-bold">{observed?.stockFreshness ?? "UNKNOWN"}</td><td className="p-3">{row.next_blocker ?? "—"}</td></tr>
           })}</tbody></table></div>
         {!loading && !visible.length && <p className="p-5 text-sm text-slate-500">No hay casos con estos filtros.</p>}
       </section>
