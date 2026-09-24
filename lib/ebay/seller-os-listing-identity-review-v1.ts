@@ -134,6 +134,13 @@ export function buildListingIdentityReviewQueueV1(input: {
       } else if (candidates.length > 1) {
         reasonCode = "CONFLICTING_CANONICAL_IDENTITY_CANDIDATES"
         recommendedOwnerAction = "Seleccionar sólo con evidencia exacta de producto y variante."
+      } else if (candidates.length === 1 && input.cases.some((other) =>
+        other.ebay_item_id !== row.ebay_item_id &&
+        other.identity_status === "LINKED_EXACT" &&
+        other.luna_product_id === candidates[0].productId &&
+        other.luna_variant_id === candidates[0].variantId)) {
+        reasonCode = "ACTIVE_SUPPLIER_IDENTITY_ALREADY_LINKED"
+        recommendedOwnerAction = "Revisar la relación con el otro Item ID antes de cualquier reemplazo."
       } else if (candidates[0].preflightStatus !== "PREFLIGHT_PASS") {
         reasonCode = "LUNA_IDENTITY_PREFLIGHT_NOT_PASSED"
         recommendedOwnerAction = "Resolver el preflight de identidad antes del vínculo StockGuard."
