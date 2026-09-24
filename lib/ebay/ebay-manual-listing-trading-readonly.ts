@@ -127,6 +127,29 @@ export function tradingXmlContainers(xml: string, tag: string) {
   return [...xml.matchAll(pattern)].map((match) => match[1] ?? "")
 }
 
+function tradingXmlDirectChildValue(xml: string, wanted: string) {
+  const tags = /<\/?(?:[A-Za-z0-9_-]+:)?([A-Za-z0-9_-]+)(?:\s[^>]*)?\/?>/g
+  let depth = 0
+  let start = -1
+  for (const match of xml.matchAll(tags)) {
+    const index = match.index ?? -1
+    if (index < 0) continue
+    const token = match[0]
+    const name = match[1]
+    if (token.startsWith("</")) {
+      if (depth === 1 && name === wanted && start >= 0) {
+        return decodeXml(xml.slice(start, index))
+          .replace(/<[^>]*>/g, " ").trim() || null
+      }
+      depth = Math.max(0, depth - 1)
+    } else if (!token.endsWith("/>")) {
+      if (depth === 0 && name === wanted) start = index + token.length
+      depth += 1
+    }
+  }
+  return null
+}
+
 function safeIdentifier(value: string | null, maximumLength = 100) {
   return value &&
     value.length <= maximumLength &&
@@ -280,8 +303,8 @@ export function parseTradingManualListingResponses(
           : "inactive",
     itemId: expectedItemId,
     listingStatus: safeIdentifier(listingStatus, 40),
-    marketplaceSite: safeIdentifier(tradingXmlTagValue(item, "Site"), 40) ??
-      safeIdentifier(tradingXmlTagValue(item, "SiteID"), 10),
+    marketplaceSite: safeIdentifier(tradingXmlDirectChildValue(item, "Site"), 40) ??
+      safeIdentifier(tradingXmlDirectChildValue(item, "SiteID"), 10),
     ebaySku: safeIdentifier(tradingXmlTagValue(item, "SKU")),
     title: safeListingTitle(tradingXmlTagValue(item, "Title")),
     availableQuantity,
