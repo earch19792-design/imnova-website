@@ -1,6 +1,6 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+export const maxDuration = 300
 
 import { NextResponse } from "next/server"
 
@@ -22,7 +22,8 @@ import { readCurrentListingOwnerReviewTargetV1 } from
   "@/lib/ebay/seller-os-listing-owner-review-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
-import { buildListingIdentityReviewQueueV1, packageIdFromCustomLabelV1 } from
+import { buildListingIdentityReviewQueueV1, buildOperationalListingBucketsV1,
+  packageIdFromCustomLabelV1 } from
   "@/lib/ebay/seller-os-listing-identity-review-v1"
 import { persistListingCasesV1, projectSellerOsListingCasesV1,
   readListingRegistryEvidenceV1 } from
@@ -162,7 +163,7 @@ export async function GET(req: Request) {
         row.luna_sku ? [String(row.luna_sku)] : [])])]
     const catalogRead = snapshot.data?.snapshot_id && catalogSkus.length
       ? await supabase.from("luna_catalog_snapshot_variants_v1")
-        .select("product_id,variant_id,sku,preflight_status")
+        .select("product_id,variant_id,sku,preflight_status,title,images")
         .eq("snapshot_id", snapshot.data.snapshot_id)
         .in("sku", catalogSkus).limit(500)
       : { data: [], error: null }
@@ -187,13 +188,26 @@ export async function GET(req: Request) {
       }).filter((row, index, rows) => rows.findIndex((entry) =>
         entry.caseId === row.caseId) === index),
     })
+    const operationalBuckets = buildOperationalListingBucketsV1(currentCases,
+      reviewQueue)
+    const bucketCounts = {
+      LINKED_EXACT: operationalBuckets.filter((row) =>
+        row.bucket === "LINKED_EXACT").length,
+      READY_TO_CONFIRM_EXACT: operationalBuckets.filter((row) =>
+        row.bucket === "READY_TO_CONFIRM_EXACT").length,
+      CONFLICT_REVIEW: operationalBuckets.filter((row) =>
+        row.bucket === "CONFLICT_REVIEW").length,
+      NO_EXACT_SOURCE: operationalBuckets.filter((row) =>
+        row.bucket === "NO_EXACT_SOURCE").length,
+    }
     const fresh = Boolean(sweep.data?.official_observed_at &&
       Date.now() - Date.parse(sweep.data.official_observed_at) <= 20 * 60_000 &&
       Date.parse(sweep.data.official_observed_at) - Date.now() <= 60_000 &&
       sweep.data.official_live_item_count === currentCases.length &&
       sweep.data.reconciled_item_count === currentCases.length)
     return NextResponse.json({ success: true, cases: cases.data ?? [],
-      reviewQueue, reviewSweepId: sweep.data?.sweep_id ?? null,
+      reviewQueue, operationalBuckets, bucketCounts,
+      reviewSweepId: sweep.data?.sweep_id ?? null,
       currentLiveCertified: fresh,
       currentLiveCaseCount: fresh ? currentCases.length : null,
       currentSweepId: fresh ? sweep.data?.sweep_id : null,
@@ -216,9 +230,95 @@ export async function POST(req: Request) {
   }
   try {
     const body = await req.json() as { action?: string; ebayItemId?: string;
+      ebayItemIds?: string[];
       opportunityId?: string; confirmation?: string; candidateSku?: string;
       candidateProductId?: string; candidateVariantId?: string }
     const supabase = getSupabaseAdminClient()
+    if (body.action === "batch_confirm_exact_links") {
+      if (!auth.userId) return fail("LISTING_REGISTRY_OWNER_REQUIRED", 403)
+      const itemIds = body.ebayItemIds
+      if (body.confirmation !== "CONFIRM_SELECTED_EXACT_LINKS" ||
+        !Array.isArray(itemIds) || !itemIds.length || itemIds.length > 200 ||
+        new Set(itemIds).size !== itemIds.length ||
+        itemIds.some((itemId) => !/^\d{9,20}$/.test(itemId))) {
+        return fail("LISTING_REGISTRY_BATCH_SELECTION_INVALID", 400)
+      }
+      const targets = await Promise.all(itemIds.map((itemId) =>
+        readCurrentListingOwnerReviewTargetV1({
+          supabase, accountKey: scope.accountKey!, itemId,
+        })))
+      if (new Set(targets.map((target) => target.sweepId)).size !== 1 ||
+        targets.some((target) => !target.canConfirm ||
+          target.candidates.length !== 1 ||
+          !["CURRENT_LUNA_CATALOG_EXACT_SKU", "EXACT_PACKAGE_LABEL_LINEAGE"]
+            .includes(target.candidates[0].source)) ||
+        new Set(targets.map((target) =>
+          `${target.candidates[0].productId}:${target.candidates[0].variantId}`))
+          .size !== targets.length) {
+        return fail("LISTING_REGISTRY_BATCH_EXACT_SET_CHANGED", 409)
+      }
+      const batchWrite = await supabase.from("seller_os_listing_identity_batches_v1")
+        .insert({ account_key: scope.accountKey, marketplace_id: "EBAY_US",
+          sweep_id: targets[0].sweepId, actor_user_id: auth.userId,
+          requested_item_ids: itemIds })
+        .select("batch_id").single()
+      if (batchWrite.error || !batchWrite.data) {
+        throw new Error("LISTING_REGISTRY_BATCH_AUDIT_WRITE_FAILED")
+      }
+      const receipts: Array<{ itemId: string; eventId: number;
+        authorityId: string }> = []
+      let failure: string | null = null
+      for (const target of targets) {
+        const candidate = target.candidates[0]
+        const single = await POST(new Request(req.url, { method: "POST",
+          headers: { Authorization: req.headers.get("Authorization") ?? "",
+            "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "confirm_exact_link",
+            ebayItemId: target.target.ebay_item_id,
+            candidateSku: candidate.sku,
+            candidateProductId: candidate.productId,
+            candidateVariantId: candidate.variantId,
+            confirmation: "CONFIRM_EXACT_LISTING_LUNA" }),
+        }))
+        const result = await single.json() as { success?: boolean; error?: string;
+          ownerActionEventId?: number; stockguardAuthorityId?: string }
+        if (!single.ok || !result.success || !result.ownerActionEventId ||
+          !result.stockguardAuthorityId) {
+          failure = result.error ?? "LISTING_REGISTRY_BATCH_ITEM_UNPROVEN"
+          break
+        }
+        const receiptWrite = await supabase
+          .from("seller_os_listing_identity_batch_receipts_v1")
+          .insert({ batch_id: batchWrite.data.batch_id,
+            case_id: target.target.case_id,
+            ebay_item_id: target.target.ebay_item_id,
+            owner_event_id: result.ownerActionEventId,
+            authority_id: result.stockguardAuthorityId })
+          .select("owner_event_id").single()
+        if (receiptWrite.error || !receiptWrite.data) {
+          failure = "LISTING_REGISTRY_BATCH_ITEM_AUDIT_WRITE_FAILED"
+          break
+        }
+        receipts.push({ itemId: target.target.ebay_item_id,
+          eventId: result.ownerActionEventId,
+          authorityId: result.stockguardAuthorityId })
+      }
+      const batchStatus = failure ? "PARTIAL" : "COMPLETE"
+      const finalWrite = await supabase.from("seller_os_listing_identity_batches_v1")
+        .update({ status: batchStatus, completed_at: new Date().toISOString() })
+        .eq("batch_id", batchWrite.data.batch_id).eq("status", "PENDING")
+        .select("batch_id,status").single()
+      if (finalWrite.error || !finalWrite.data) {
+        throw new Error("LISTING_REGISTRY_BATCH_AUDIT_WRITE_FAILED")
+      }
+      return NextResponse.json({ success: !failure, error: failure,
+        batchId: batchWrite.data.batch_id, batchStatus, receipts,
+        requestedCount: itemIds.length, confirmedCount: receipts.length,
+        safety: { ebayWrites: 0, inventoryQuantityWrites: 0,
+          priceWrites: 0, contentWrites: 0, publicationWrites: 0 } },
+      { status: failure ? 409 : 200, headers })
+    }
+    let ownerActionEventId: number | null = null
     let ownerConfirmation: { caseId: string; sweepId: string; directSku: boolean;
       candidate: { productId: string; variantId: string; sku: string } } | null = null
     if (["confirm_exact_link", "reject_candidate", "keep_manual_no_luna",
@@ -298,6 +398,7 @@ export async function POST(req: Request) {
         sku: row.supplier_sku! }]))
     let listings: EbayLiveListing[]
     let officialObservedAt: string | null = null
+    const nativeAutoLinkBlockers: string[] = []
     if (body.action === "reconcile_current_live") {
       const live = await getEbayOfficialLiveListingSweepReadonly({
         accountKey: scope.accountKey, accountAlias: scope.accountAlias,
@@ -317,6 +418,61 @@ export async function POST(req: Request) {
       listings = live.listings.filter((listing) =>
         listing.marketplaceCertification.status === "US_CERTIFIED")
       officialObservedAt = live.observedAt
+      const native = evidence.publications.filter((publication) =>
+        publication.listing_id && publication.opportunity_id &&
+        !publication.manual_registration_id &&
+        (publication.publish_attempt_count ?? 0) > 0 &&
+        publication.phase === "monitor_registered" &&
+        listings.some((listing) => listing.itemId === publication.listing_id))
+      if (native.length) {
+        const [opportunityRead, decisionRead] = await Promise.all([
+          supabase.from("ebay_luna_opportunity_queue")
+            .select("id,supplier_product_id,supplier_variant_id,supplier_sku")
+            .in("id", native.map((row) => row.opportunity_id!)).limit(native.length + 1),
+          supabase.from("seller_os_luna_linkage_decisions")
+            .select("decision_id,ebay_item_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,decision")
+            .eq("account_key", scope.accountKey).eq("marketplace_id", "EBAY_US")
+            .in("ebay_item_id", native.map((row) => row.listing_id!))
+            .eq("decision", "APPROVE_EXACT_LINKAGE").limit(native.length + 1),
+        ])
+        if (opportunityRead.error || decisionRead.error ||
+          (opportunityRead.data?.length ?? 0) > native.length ||
+          (decisionRead.data?.length ?? 0) > native.length) {
+          throw new Error("LISTING_REGISTRY_NATIVE_LINEAGE_READ_FAILED")
+        }
+        for (const publication of native) {
+          const opportunity = opportunityRead.data?.find((row) =>
+            row.id === publication.opportunity_id)
+          const matching = (decisionRead.data ?? []).filter((decision) =>
+            decision.ebay_item_id === publication.listing_id &&
+            decision.luna_product_id === opportunity?.supplier_product_id &&
+            decision.luna_variant_id === opportunity?.supplier_variant_id &&
+            decision.luna_sku === opportunity?.supplier_sku &&
+            decision.ebay_sku === listings.find((listing) =>
+              listing.itemId === publication.listing_id)?.customLabel)
+          if (matching.length !== 1) continue
+          const already = evidence.authorities.some((authority) =>
+            authority.ebay_item_id === publication.listing_id &&
+            authority.lifecycle_state === "ACTIVE" &&
+            authority.source_decision_id === matching[0].decision_id)
+          if (already) continue
+          if (evidence.authorities.some((authority) =>
+            authority.ebay_item_id === publication.listing_id &&
+            authority.lifecycle_state === "ACTIVE")) {
+            nativeAutoLinkBlockers.push(publication.listing_id!)
+            continue
+          }
+          try {
+            await ensureStockguardAuthorityFromDecisionP0({ supabase,
+              accountKey: scope.accountKey, ebayItemId: publication.listing_id!,
+              sourceDecisionId: matching[0].decision_id,
+              actorUserId: null, automatedDeterministic: true })
+          } catch {
+            nativeAutoLinkBlockers.push(publication.listing_id!)
+          }
+        }
+        evidence = await readListingRegistryEvidenceV1(supabase, scope.accountKey)
+      }
     } else if (body.action === "link_existing" ||
       body.action === "confirm_exact_link") {
       if (!auth.userId) return fail("LISTING_REGISTRY_OWNER_REQUIRED", 403)
@@ -490,7 +646,7 @@ export async function POST(req: Request) {
         !linkedCase.stockguard_authority_id) {
         throw new Error("LISTING_REGISTRY_OWNER_LINK_READBACK_UNPROVEN")
       }
-      await recordOwnerReviewActionV1(supabase, {
+      ownerActionEventId = await recordOwnerReviewActionV1(supabase, {
         caseId: ownerConfirmation.caseId, itemId: body.ebayItemId!,
         sweepId: ownerConfirmation.sweepId, actorUserId: auth.userId!,
         action: "CONFIRM_EXACT_LINK", candidate: ownerConfirmation.candidate,
@@ -507,6 +663,11 @@ export async function POST(req: Request) {
       }
     }
     return NextResponse.json({ success: true, cases: readback.data,
+      nativeAutoLinkBlockers,
+      ownerActionEventId,
+      stockguardAuthorityId: ownerConfirmation ?
+        readback.data?.find((row) => row.case_id === ownerConfirmation.caseId)
+          ?.stockguard_authority_id ?? null : null,
       reconciliationCount: projected.length,
       durableReadback: "PASS", currentLiveCertified:
         body.action === "reconcile_current_live",

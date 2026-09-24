@@ -127,6 +127,19 @@ export async function readProductionStockGuardV1(input: {
           supplierVariantId: component.lunaVariantId ?? component.luna_variant_id,
           supplierSku: component.lunaSku ?? component.luna_sku,
         })) : []
+    const latestExactObservation = authority && components.length === 1
+      ? observations.rows.filter((observation) =>
+          observation.ebay_item_id === itemId &&
+          observation.luna_product_id === authority.luna_product_id &&
+          observation.luna_variant_id === authority.luna_variant_id &&
+          observation.luna_sku === authority.luna_sku &&
+          observation.source_status === "AVAILABLE")
+        .sort((a, b) => Date.parse(b.observed_at) - Date.parse(a.observed_at))[0]
+      : null
+    const observedQuantity = latestExactObservation?.observed_supplier_quantity
+    const supplierStockQuantity = observedQuantity === null ||
+      observedQuantity === undefined || !Number.isSafeInteger(Number(observedQuantity))
+      ? null : Number(observedQuantity)
     return { itemId, sku: row.ebay_sku,
       canonicalCaseId: listingCase?.case_id ?? null,
       listingOrigin: listingCase?.origin ?? null,
@@ -148,6 +161,8 @@ export async function readProductionStockGuardV1(input: {
       stockGuardState: authority ? stock?.state ?? "STOCK_UNKNOWN" : "STOCK_UNKNOWN",
       stockFreshness: authority ? stock?.freshness.status ?? "UNKNOWN" : "UNKNOWN",
       stockObservedAt, stockFreshUntil,
+      supplierStockQuantity,
+      lastSuccessfulSource: latestExactObservation?.acquisition_method ?? null,
       limitationCode: canonicalFresh && !caseExact
         ? "CANONICAL_LISTING_CASE_IDENTITY_BLOCKED"
         : authorityGate.stockguardEligible

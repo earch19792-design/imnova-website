@@ -10,17 +10,22 @@ type Case = ListingCaseProjectionV1 & { case_id: string;
 type ReviewCase = { itemId: string; customLabel: string | null;
   currentTitle: string | null; origin: string; identitySource: string;
   identityStatus: string; stockguardStatus: string; classification: string;
+  bucket: "READY_TO_CONFIRM_EXACT" | "CONFLICT_REVIEW" | "NO_EXACT_SOURCE";
   confidenceBasis: string; lastOwnerAction: string | null;
   lastOwnerActionAt: string | null;
   reasonCode: string; recommendedOwnerAction: string;
   conflictingItemIds: string[]; candidates: Array<{ productId: string;
     variantId: string; sku: string; opportunityId: string | null;
-    source: string; preflightStatus: string | null }> }
+    source: string; preflightStatus: string | null; title?: string | null;
+    imageUrl?: string | null }> }
 type RegistryResponse = { success: boolean; error?: string; cases?: Case[];
   failedOperation?: string | null; errorDetail?: string | null;
   currentLiveCertified?: boolean; lastCertifiedLiveCount?: number | null;
   lastCertifiedAt?: string | null; durableReadback?: string;
-  currentSweepId?: string | null; currentLiveCaseCount?: number | null }
+  currentSweepId?: string | null; currentLiveCaseCount?: number | null;
+  operationalBuckets?: Array<{ itemId: string; bucket: string }>;
+  bucketCounts?: Record<string, number>; batchId?: string;
+  confirmedCount?: number; requestedCount?: number }
   & { reviewQueue?: ReviewCase[]; reviewSweepId?: string | null }
 
 function show(value: string | null | undefined) { return value || "Por verificar" }
@@ -41,6 +46,39 @@ export default function ListingsPage() {
   const [reviewConfirmed, setReviewConfirmed] = useState(false)
   const [notice, setNotice] = useState("")
   const [filter, setFilter] = useState("ALL")
+  const [bucket, setBucket] = useState("READY_TO_CONFIRM_EXACT")
+  const [selectedExact, setSelectedExact] = useState<string[]>([])
+  const batchConfirm = useCallback(async () => {
+    if (!selectedExact.length) return
+    setBusy(true); setError(""); setNotice("")
+    try {
+      const { data: session, error: authError } = await supabase.auth.getSession()
+      if (authError || !session.session) throw new Error("AUTH_REQUIRED")
+      const headers = { Authorization: `Bearer ${session.session.access_token}`,
+        "Content-Type": "application/json" }
+      const response = await fetch("/api/admin/ebay/listings/registry", {
+        method: "POST", cache: "no-store", headers,
+        body: JSON.stringify({ action: "batch_confirm_exact_links",
+          ebayItemIds: selectedExact,
+          confirmation: "CONFIRM_SELECTED_EXACT_LINKS" }),
+      })
+      const result = await response.json() as RegistryResponse
+      if (!response.ok || !result.success) {
+        throw new Error(`${result.error ?? "BATCH_CONFIRMATION_FAILED"} · ${result.confirmedCount ?? 0}/${result.requestedCount ?? selectedExact.length} confirmed${result.batchId ? ` · batch ${result.batchId}` : ""}`)
+      }
+      const refreshed = await fetch("/api/admin/ebay/listings/registry", {
+        cache: "no-store", headers })
+      const readback = await refreshed.json() as RegistryResponse
+      if (!refreshed.ok || !readback.success) throw new Error("LISTING_REGISTRY_DURABLE_READBACK_FAILED")
+      setData(readback)
+      setSelectedExact((readback.reviewQueue ?? [])
+        .filter((row) => row.bucket === "READY_TO_CONFIRM_EXACT")
+        .map((row) => row.itemId))
+      setNotice(`Batch ${result.batchId}: ${result.confirmedCount} exact links confirmed.`)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "BATCH_CONFIRMATION_FAILED")
+    } finally { setBusy(false) }
+  }, [selectedExact])
   const request = useCallback(async (action?: string, ebayItemId?: string,
     selectedOpportunityId?: string, candidate?: ReviewCase["candidates"][number] | null) => {
     setBusy(true); setError(""); setNotice("")
@@ -77,7 +115,15 @@ export default function ListingsPage() {
         const readback = await refreshed.json() as RegistryResponse
         if (!refreshed.ok || !readback.success) throw new Error("LISTING_REGISTRY_DURABLE_READBACK_FAILED")
         setData(readback)
-      } else setData(result)
+        setSelectedExact((readback.reviewQueue ?? [])
+          .filter((row) => row.bucket === "READY_TO_CONFIRM_EXACT")
+          .map((row) => row.itemId))
+      } else {
+        setData(result)
+        setSelectedExact((result.reviewQueue ?? [])
+          .filter((row) => row.bucket === "READY_TO_CONFIRM_EXACT")
+          .map((row) => row.itemId))
+      }
       if (action === "import_existing" && ebayItemId) setLinkItemId(ebayItemId)
       if (["confirm_exact_link", "reject_candidate", "keep_manual_no_luna",
         "review_conflict"].includes(action ?? "")) {
@@ -110,6 +156,12 @@ export default function ListingsPage() {
     }
     return [...groups.entries()].filter(([, rows]) => rows.length > 1)
   }, [data])
+  const ready = (data?.reviewQueue ?? []).filter((row) =>
+    data?.currentLiveCertified && row.bucket === "READY_TO_CONFIRM_EXACT")
+  const visibleBucket = (data?.operationalBuckets ?? []).filter((row) =>
+    data?.currentLiveCertified && row.bucket === bucket)
+  const caseByItem = new Map(currentCases.map((row) => [row.ebay_item_id, row]))
+  const reviewByItem = new Map((data?.reviewQueue ?? []).map((row) => [row.itemId, row]))
   return <main className="min-h-screen bg-slate-50 px-4 pb-28 pt-7 text-slate-900 md:px-8">
     <div className="mx-auto max-w-7xl space-y-5">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -125,12 +177,83 @@ export default function ListingsPage() {
         <strong>LIVE actual pendiente de certificación.</strong> Los casos guardados se muestran como historial.
         {data?.lastCertifiedLiveCount != null && <> Última cohorte: {data.lastCertifiedLiveCount} · {show(data.lastCertifiedAt)}.</>}
       </section>}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Resumen de reconciliación">
+      <section className="hidden grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Resumen de reconciliación">
         {[["Casos exactos", counts.linked], ["Revisión de identidad", counts.ambiguous],
           ["Sin Luna", counts.missing], ["StockGuard vinculado", counts.stockguard]].map(([label, value]) =>
           <div key={label} className="rounded-xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">{label}</p><p className="mt-1 text-2xl font-black">{data?.currentLiveCertified ? value : "—"}</p></div>)}
       </section>
-      <section id="identity-review" className="overflow-hidden rounded-xl border bg-white">
+      <nav aria-label="Listing identity buckets" className="grid gap-2 sm:grid-cols-4">
+        {[["LINKED_EXACT", "Linked"], ["READY_TO_CONFIRM_EXACT", "Ready to link"],
+          ["CONFLICT_REVIEW", "Conflicts"], ["NO_EXACT_SOURCE", "No exact source"]]
+          .map(([value, label]) => <button key={value} type="button"
+            onClick={() => setBucket(value)} aria-pressed={bucket === value}
+            className={`rounded-xl border p-4 text-left ${bucket === value ? "border-cyan-700 bg-cyan-50" : "bg-white"}`}>
+            <span className="text-sm font-bold">{label}</span><span className="mt-1 block text-2xl font-black">
+              {data?.currentLiveCertified ? data.bucketCounts?.[value] ?? 0 : "—"}</span></button>)}
+      </nav>
+      {bucket === "READY_TO_CONFIRM_EXACT" && <section className="rounded-xl border bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+          <div><h2 className="text-xl font-black">Ready to link</h2>
+            <p className="text-sm text-slate-600">Exact supplier identity candidates from the current official LIVE cohort.</p></div>
+          <div className="flex flex-wrap gap-2"><button type="button"
+            disabled={busy || !ready.length} onClick={() => setSelectedExact(ready.map((row) => row.itemId))}
+            className="rounded-lg border px-3 py-2 text-sm font-bold disabled:opacity-50">SELECT ALL EXACT</button>
+            <button type="button" disabled={busy || !data?.currentLiveCertified || !selectedExact.length}
+              onClick={() => void batchConfirm()}
+              className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">
+              CONFIRM SELECTED EXACT LINKS ({selectedExact.length})</button></div>
+        </div>
+        <div className="space-y-3 p-4">{ready.map((review) => {
+          const row = caseByItem.get(review.itemId)
+          const candidate = review.candidates[0]
+          if (!row || !candidate) return null
+          return <article key={review.itemId} className="grid gap-4 rounded-lg border p-4 md:grid-cols-[auto_1fr_1fr_1fr]">
+            <label className="flex items-start gap-2 text-sm font-bold"><input type="checkbox"
+              aria-label={`Select exact link ${review.itemId}`}
+              checked={selectedExact.includes(review.itemId)}
+              onChange={(event) => setSelectedExact((before) => event.target.checked
+                ? [...before, review.itemId] : before.filter((id) => id !== review.itemId))} />Select</label>
+            <div><h3 className="font-black">eBay</h3>
+              {row.ebay_image_url && <img src={row.ebay_image_url} alt="eBay listing"
+                className="my-2 h-24 w-24 object-contain" />}
+              <p className="font-bold">{review.itemId}</p><p>{show(row.ebay_title)}</p>
+              <p className="text-xs">Custom Label: {show(review.customLabel)}</p></div>
+            <div><h3 className="font-black">Luna</h3>
+              {candidate.imageUrl && <img src={candidate.imageUrl} alt="Luna product"
+                className="my-2 h-24 w-24 object-contain" />}
+              <p className="font-bold">{candidate.sku}</p><p>{show(candidate.title)}</p>
+              <p className="text-xs">Product {candidate.productId}<br />Variant {candidate.variantId}</p></div>
+            <div><h3 className="font-black">Evidence</h3>
+              <p className="text-sm">{review.confidenceBasis}</p>
+              <p className="text-xs">Provenance: {candidate.source}<br />
+                Identity preflight: {candidate.preflightStatus}<br />Contradiction: none found</p></div>
+          </article>
+        })}{!ready.length && <p className="text-sm text-slate-500">No clean exact candidates in this cohort.</p>}</div>
+      </section>}
+      {bucket !== "READY_TO_CONFIRM_EXACT" && <section className="rounded-xl border bg-white">
+        <div className="border-b p-4"><h2 className="text-xl font-black">
+          {bucket === "LINKED_EXACT" ? "Linked" : bucket === "CONFLICT_REVIEW" ? "Conflicts" : "No exact source"}</h2>
+          {bucket === "NO_EXACT_SOURCE" && <p className="text-sm text-slate-600">These are legitimate eBay listings without a proven Luna source. No routine OWNER click is needed.</p>}</div>
+        <div className="divide-y">{visibleBucket.map(({ itemId }) => {
+          const row = caseByItem.get(itemId)
+          const review = reviewByItem.get(itemId)
+          if (!row) return null
+          return <article key={itemId} className="grid gap-2 p-4 text-sm md:grid-cols-[1fr_2fr_2fr]">
+            <div className="font-black">{itemId}<p className="font-normal">{show(row.ebay_custom_label)}</p></div>
+            <div>{show(row.ebay_title)}<p className="text-xs text-slate-500">{row.origin} · {row.identity_source}</p></div>
+            <div>{bucket === "LINKED_EXACT"
+              ? <><strong>{row.supplier_sku}</strong><p>{row.luna_product_id} / {row.luna_variant_id}</p>
+                <p className="text-xs">StockGuard: {row.stockguard_link_status}</p></>
+              : <><strong>{review?.reasonCode ?? "IDENTITY_REVIEW_REQUIRED"}</strong>
+                {review?.conflictingItemIds.length ? <p>Conflicting Item IDs: {review.conflictingItemIds.join(", ")}</p> : null}
+                {review?.candidates.map((candidate) => <p key={`${candidate.productId}:${candidate.variantId}`}>
+                  {candidate.sku} · {candidate.productId} / {candidate.variantId} · {candidate.source}</p>)}
+                {bucket === "NO_EXACT_SOURCE" && <a href="/admin/ebay/listings/register"
+                  className="font-bold text-cyan-800">Link source if new evidence exists</a>}</>}</div>
+          </article>
+        })}{!visibleBucket.length && <p className="p-4 text-sm text-slate-500">No cases in this bucket.</p>}</div>
+      </section>}
+      <section id="identity-review" className="hidden overflow-hidden rounded-xl border bg-white">
         <div className="border-b p-4"><h2 className="text-lg font-black">Revisión de identidad · {data?.reviewQueue?.length ?? 0}</h2>
           <p className="text-sm text-slate-600">Casos pendientes del barrido certificado {show(data?.reviewSweepId)}. Confirma cada vínculo con la cuenta e identidad oficiales. Si el barrido vence, usa «Reconciliar LIVE oficial» antes de confirmar.</p></div>
         {duplicateGroups.map(([label, rows]) => <div key={label} className="m-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
@@ -195,7 +318,7 @@ export default function ListingsPage() {
           </tr>)}</tbody>
         </table></div>
       </section>
-      <details id="import-existing" className="rounded-xl border bg-white p-5"><summary className="cursor-pointer font-bold">Importar un Item ID fuera del barrido actual</summary>
+      <details id="import-existing" className="hidden rounded-xl border bg-white p-5"><summary className="cursor-pointer font-bold">Importar un Item ID fuera del barrido actual</summary>
         <h2 className="text-lg font-black">Link / Import Existing eBay Listing</h2>
         <p className="mt-1 text-sm text-slate-600">Lee Item ID, vendedor, estado y Custom Label desde eBay. Si falta identidad Luna, guarda el caso para revisión.</p>
         <form className="mt-3 flex flex-wrap gap-2" onSubmit={(event) => {
@@ -208,7 +331,7 @@ export default function ListingsPage() {
           <button disabled={busy} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Leer e importar</button>
         </form>
       </details>
-      <details id="link-identity" className="rounded-xl border bg-white p-5"><summary className="cursor-pointer font-bold">Vínculo manual de compatibilidad</summary>
+      <details id="link-identity" className="hidden rounded-xl border bg-white p-5"><summary className="cursor-pointer font-bold">Vínculo manual de compatibilidad</summary>
         <h2 className="text-lg font-black">Vincular identidad canónica</h2>
         <p className="mt-1 text-sm text-slate-600">Selecciona el Item ID importado y una oportunidad canónica exacta. El flujo existente verifica la cuenta, el Custom Label y la identidad Luna antes de activar el vínculo.</p>
         <form className="mt-3 space-y-3" onSubmit={(event) => {
@@ -229,7 +352,7 @@ export default function ListingsPage() {
           <button disabled={busy || !confirmed} className="rounded-lg bg-cyan-800 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Verificar y vincular</button>
         </form>
       </details>
-      <section className="overflow-hidden rounded-xl border bg-white">
+      <section className="hidden overflow-hidden rounded-xl border bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
           <h2 className="text-lg font-black">Registro canónico · {rows.length} de {data?.cases?.length ?? 0} casos guardados{data?.currentLiveCertified ? ` · ${currentCases.length} LIVE` : ""}</h2>
           <select aria-label="Filtrar listings" value={filter} onChange={(event) => setFilter(event.target.value)} className="rounded-lg border px-3 py-2 text-sm">

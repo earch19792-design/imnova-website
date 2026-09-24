@@ -1,5 +1,5 @@
 export const runtime = "nodejs"
-export const maxDuration = 60
+export const maxDuration = 300
 
 import { randomUUID } from "node:crypto"
 import { NextResponse } from "next/server"
@@ -15,6 +15,8 @@ import { reconcileActiveListingProtectionRisks } from "@/lib/ebay/ebay-seller-co
 import { autoIngestUnmanagedEbayLiveListingsV1 } from
   "@/lib/ebay/ebay-unmanaged-live-auto-intake-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
+import { POST as reconcileListingRegistry } from
+  "@/app/api/admin/ebay/listings/registry/route"
 
 function safeError(error: unknown) {
   const message = error instanceof Error ? error.message : ""
@@ -141,6 +143,14 @@ export async function POST(req: Request) {
       },
     )
     if (finishError) throw new Error("EBAY_ACTIVE_LISTING_SYNC_FINISH_FAILED")
+    const identityResponse = await reconcileListingRegistry(new Request(req.url, {
+      method: "POST", headers: {
+        Authorization: req.headers.get("Authorization") ?? "",
+        "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reconcile_current_live" }),
+    }))
+    const identityResult = await identityResponse.json() as {
+      success?: boolean; reconciliationCount?: number; error?: string }
     return NextResponse.json({
       success: true,
       sync,
@@ -151,6 +161,11 @@ export async function POST(req: Request) {
         ...unmanagedLiveIntake,
       },
       protection,
+      identityReconciliation: { status: identityResponse.ok &&
+        identityResult.success ? "COMPLETE" : "UNAVAILABLE",
+        currentLiveCount: identityResult.reconciliationCount ?? null,
+        error: identityResponse.ok ? null : identityResult.error ??
+          "LISTING_REGISTRY_RECONCILIATION_UNAVAILABLE" },
     })
   } catch (error) {
     const code = safeError(error)

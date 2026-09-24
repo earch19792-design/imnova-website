@@ -2,7 +2,7 @@ import type { ListingCaseProjectionV1 } from "./seller-os-listing-registry-v1"
 
 type Case = ListingCaseProjectionV1 & { case_id: string }
 type Catalog = { product_id: string; variant_id: string; sku: string;
-  preflight_status: string }
+  preflight_status: string; title?: string | null; images?: unknown }
 type Decision = { ebay_item_id: string; ebay_sku: string;
   luna_product_id: string; luna_variant_id: string; luna_sku: string;
   decision: string; decision_version: number; evidence_observed_at: string }
@@ -25,8 +25,10 @@ export type ListingIdentityReviewV1 = {
   confidenceBasis: string
   recommendedOwnerAction: string
   conflictingItemIds: string[]
+  bucket: "READY_TO_CONFIRM_EXACT" | "CONFLICT_REVIEW" | "NO_EXACT_SOURCE"
   candidates: Array<{ productId: string; variantId: string; sku: string;
-    opportunityId: string | null; source: string; preflightStatus: string | null }>
+    opportunityId: string | null; source: string; preflightStatus: string | null;
+    title?: string | null; imageUrl?: string | null }>
   lastOwnerAction: string | null
   lastOwnerActionAt: string | null
 }
@@ -35,6 +37,18 @@ export function packageIdFromCustomLabelV1(label: string | null) {
   const match = label?.match(/^IMNOVA([0-9A-F]{8})([0-9A-F]{4})([0-9A-F]{4})([0-9A-F]{4})([0-9A-F]{12})$/)
   return match ? `${match[1]}-${match[2]}-${match[3]}-${match[4]}-${match[5]}`
     .toLowerCase() : null
+}
+
+function firstImageUrl(images: unknown): string | null {
+  if (!Array.isArray(images)) return null
+  const first = images[0]
+  if (typeof first === "string") return first
+  if (first && typeof first === "object") {
+    const row = first as Record<string, unknown>
+    return typeof row.url === "string" ? row.url :
+      typeof row.imageUrl === "string" ? row.imageUrl : null
+  }
+  return null
 }
 
 export function buildListingIdentityReviewQueueV1(input: {
@@ -53,7 +67,7 @@ export function buildListingIdentityReviewQueueV1(input: {
   }
   const packageById = new Map(input.packages.map((row) => [row.id, row]))
   const opportunityById = new Map(input.opportunities.map((row) => [row.id, row]))
-  return input.cases.filter((row) => row.identity_status !== "LINKED_EXACT")
+  const rows = input.cases.filter((row) => row.identity_status !== "LINKED_EXACT")
     .map((row) => {
       const label = row.ebay_custom_label?.trim() || null
       const labelKey = label?.toUpperCase() ?? null
@@ -82,7 +96,8 @@ export function buildListingIdentityReviewQueueV1(input: {
           sku: variant.sku,
           opportunityId: exactOpportunities.length === 1 ? exactOpportunities[0].id : null,
           source: "CURRENT_LUNA_CATALOG_EXACT_SKU",
-          preflightStatus: variant.preflight_status })
+          preflightStatus: variant.preflight_status,
+          title: variant.title ?? null, imageUrl: firstImageUrl(variant.images) })
       }
       const packageId = packageIdFromCustomLabelV1(label)
       const listingPackage = packageId ? packageById.get(packageId) : null
@@ -99,11 +114,19 @@ export function buildListingIdentityReviewQueueV1(input: {
           variantId: opportunity.supplier_variant_id,
           sku: opportunity.supplier_sku, opportunityId: opportunity.id,
           source: "EXACT_PACKAGE_LABEL_LINEAGE",
-          preflightStatus: current?.preflight_status ?? null })
+          preflightStatus: current?.preflight_status ?? null,
+          title: current?.title ?? null, imageUrl: firstImageUrl(current?.images) })
       }
       const latestDecision = input.decisions.filter((decision) =>
         decision.ebay_item_id === row.ebay_item_id)
         .sort((a, b) => b.decision_version - a.decision_version)[0]
+      const historicalConflict = input.decisions.some((decision) =>
+        decision.ebay_item_id === row.ebay_item_id &&
+        decision.decision === "APPROVE_EXACT_LINKAGE" &&
+        candidates.length > 0 && !candidates.some((candidate) =>
+          candidate.productId === decision.luna_product_id &&
+          candidate.variantId === decision.luna_variant_id &&
+          candidate.sku === decision.luna_sku))
       if (latestDecision?.decision === "APPROVE_EXACT_LINKAGE" &&
           latestDecision.ebay_sku.toUpperCase() === labelKey) {
         const current = input.catalog.find((variant) =>
@@ -149,6 +172,9 @@ export function buildListingIdentityReviewQueueV1(input: {
         other.luna_variant_id === candidates[0].variantId)) {
         reasonCode = "ACTIVE_SUPPLIER_IDENTITY_ALREADY_LINKED"
         recommendedOwnerAction = "Revisar la relación con el otro Item ID antes de cualquier reemplazo."
+      } else if (historicalConflict) {
+        reasonCode = "CONTRADICTORY_HISTORICAL_LINKAGE"
+        recommendedOwnerAction = "Revisar la decisión histórica antes de vincular."
       } else if (candidates[0].preflightStatus !== "PREFLIGHT_PASS") {
         reasonCode = "LUNA_IDENTITY_PREFLIGHT_NOT_PASSED"
         recommendedOwnerAction = "Resolver el preflight de identidad antes del vínculo StockGuard."
@@ -173,6 +199,17 @@ export function buildListingIdentityReviewQueueV1(input: {
         reasonCode = "OWNER_REJECTED_CURRENT_CANDIDATE"
         recommendedOwnerAction = "Revisar el conflicto con evidencia nueva antes de vincular."
       }
+      const bucket: ListingIdentityReviewV1["bucket"] =
+        reasonCode === "EXACT_CANDIDATE_REQUIRES_GUARDED_LINK" &&
+        row.identity_status === "MISSING_LUNA_IDENTITY" &&
+        !historicalConflict && candidates.length === 1 &&
+        candidates[0].preflightStatus === "PREFLIGHT_PASS" &&
+        !conflicts.length && ownerAction?.action !== "REJECT_CANDIDATE"
+          ? "READY_TO_CONFIRM_EXACT"
+          : !candidates.length && !conflicts.length &&
+              row.identity_status === "MISSING_LUNA_IDENTITY" &&
+              ownerAction?.action !== "REJECT_CANDIDATE"
+            ? "NO_EXACT_SOURCE" : "CONFLICT_REVIEW"
       return { itemId: row.ebay_item_id, customLabel: label,
         currentTitle: row.ebay_title, origin: row.origin,
         identitySource: row.identity_source, identityStatus: row.identity_status,
@@ -181,9 +218,33 @@ export function buildListingIdentityReviewQueueV1(input: {
           ? candidates[0].source : candidates.length > 1
             ? "CONFLICTING_DURABLE_SOURCES" : "NO_EXACT_SOURCE",
         recommendedOwnerAction,
-        conflictingItemIds: conflicts, candidates,
+        conflictingItemIds: conflicts, candidates, bucket,
         lastOwnerAction: ownerAction?.action ?? null,
         lastOwnerActionAt: ownerAction?.recordedAt ?? null }
     })
     .sort((a, b) => a.itemId.localeCompare(b.itemId))
+  const identityCount = new Map<string, number>()
+  for (const row of rows) for (const candidate of row.candidates) {
+    const key = `${candidate.productId}:${candidate.variantId}`
+    identityCount.set(key, (identityCount.get(key) ?? 0) + 1)
+  }
+  return rows.map((row) => row.bucket === "READY_TO_CONFIRM_EXACT" &&
+    row.candidates.some((candidate) =>
+      (identityCount.get(`${candidate.productId}:${candidate.variantId}`) ?? 0) > 1)
+    ? { ...row, bucket: "CONFLICT_REVIEW" as const,
+      reasonCode: "DUPLICATE_SUPPLIER_IDENTITY_CANDIDATE",
+      recommendedOwnerAction: "Revisar los Item IDs que comparten identidad Luna." }
+    : row)
+}
+
+export type OperationalListingBucketV1 = "LINKED_EXACT" |
+  ListingIdentityReviewV1["bucket"]
+
+export function buildOperationalListingBucketsV1(
+  cases: readonly Case[], reviews: readonly ListingIdentityReviewV1[],
+) {
+  const byItem = new Map(reviews.map((row) => [row.itemId, row]))
+  return cases.map((row) => ({ itemId: row.ebay_item_id,
+    bucket: row.identity_status === "LINKED_EXACT" ? "LINKED_EXACT" as const :
+      byItem.get(row.ebay_item_id)?.bucket ?? "CONFLICT_REVIEW" as const }))
 }

@@ -43,6 +43,8 @@ export async function GET(request: Request) {
         stockFreshness: row.stockFreshness,
         stockObservedAt: row.stockObservedAt,
         stockFreshUntil: row.stockFreshUntil,
+        supplierStockQuantity: row.supplierStockQuantity,
+        lastSuccessfulSource: row.lastSuccessfulSource,
         limitationCode: row.limitationCode,
         marketplaceWriteAuthorized: "NOT_EVALUATED" as const,
       })),
