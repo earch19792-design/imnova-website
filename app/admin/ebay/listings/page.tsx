@@ -7,11 +7,19 @@ import type { ListingCaseProjectionV1 } from
 
 type Case = ListingCaseProjectionV1 & { case_id: string;
   last_reconciled_sweep_id: string | null }
+type ReviewCase = { itemId: string; customLabel: string | null;
+  currentTitle: string | null; origin: string; identitySource: string;
+  classification: string;
+  reasonCode: string; recommendedOwnerAction: string;
+  conflictingItemIds: string[]; candidates: Array<{ productId: string;
+    variantId: string; sku: string; opportunityId: string | null;
+    source: string; preflightStatus: string | null }> }
 type RegistryResponse = { success: boolean; error?: string; cases?: Case[];
   failedOperation?: string | null; errorDetail?: string | null;
   currentLiveCertified?: boolean; lastCertifiedLiveCount?: number | null;
   lastCertifiedAt?: string | null; durableReadback?: string;
   currentSweepId?: string | null; currentLiveCaseCount?: number | null }
+  & { reviewQueue?: ReviewCase[]; reviewSweepId?: string | null }
 
 function show(value: string | null | undefined) { return value || "Por verificar" }
 
@@ -92,6 +100,40 @@ export default function ListingsPage() {
           ["Sin Luna", counts.missing], ["StockGuard vinculado", counts.stockguard]].map(([label, value]) =>
           <div key={label} className="rounded-xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">{label}</p><p className="mt-1 text-2xl font-black">{data?.currentLiveCertified ? value : "—"}</p></div>)}
       </section>
+      <section id="identity-review" className="overflow-hidden rounded-xl border bg-white">
+        <div className="border-b p-4"><h2 className="text-lg font-black">Revisión de identidad · {data?.reviewQueue?.length ?? 0}</h2>
+          <p className="text-sm text-slate-600">Casos pendientes del barrido certificado {show(data?.reviewSweepId)}. Los candidatos muestran evidencia exacta; no crean vínculos automáticamente.</p></div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[1180px] text-left text-sm">
+          <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr>
+            <th className="p-3">Item ID</th><th className="p-3">Custom Label / SKU</th>
+            <th className="p-3">Título oficial del barrido</th><th className="p-3">Origen</th>
+            <th className="p-3">Candidatos exactos</th><th className="p-3">Bloqueo</th>
+            <th className="p-3">Acción OWNER</th>
+          </tr></thead>
+          <tbody>{(data?.reviewQueue ?? []).map((row) => <tr key={row.itemId} className="border-t align-top">
+            <td className="p-3 font-bold">{row.itemId}</td>
+            <td className="p-3">{show(row.customLabel)}</td>
+            <td className="p-3">{row.currentTitle ?? "Título oficial pendiente de captura"}</td>
+            <td className="p-3">{row.origin}<br /><span className="text-xs text-slate-500">{row.identitySource}</span></td>
+            <td className="p-3 text-xs">{row.candidates.length ? row.candidates.map((candidate) =>
+              <div key={`${candidate.productId}:${candidate.variantId}:${candidate.sku}`} className="mb-2">
+                {candidate.sku}<br />{candidate.productId} / {candidate.variantId}<br />
+                {candidate.source} · {show(candidate.preflightStatus)}
+              </div>) : "Ninguno probado"}
+              {row.conflictingItemIds.length > 0 && <div>Item IDs en conflicto: {row.conflictingItemIds.join(", ")}</div>}</td>
+            <td className="p-3"><strong>{row.classification}</strong><br />{row.reasonCode}</td>
+            <td className="p-3">{row.recommendedOwnerAction}
+              {row.reasonCode === "EXACT_CANDIDATE_REQUIRES_GUARDED_LINK" &&
+                row.candidates.length === 1 && row.candidates[0].opportunityId &&
+                <a href="#link-identity" onClick={() => {
+                  setLinkItemId(row.itemId)
+                  setOpportunityId(row.candidates[0].opportunityId ?? "")
+                  setConfirmed(false)
+                }} className="mt-2 block font-bold text-cyan-800">Preparar vínculo exacto</a>}
+            </td>
+          </tr>)}</tbody>
+        </table></div>
+      </section>
       <section id="import-existing" className="rounded-xl border bg-white p-5">
         <h2 className="text-lg font-black">Link / Import Existing eBay Listing</h2>
         <p className="mt-1 text-sm text-slate-600">Lee Item ID, vendedor, estado y Custom Label desde eBay. Si falta identidad Luna, guarda el caso para revisión.</p>
@@ -136,15 +178,16 @@ export default function ListingsPage() {
               ["LINKED_ACTIVE", "StockGuard activo"], ["LINKED_MONITOR_ONLY", "Sólo monitoreo"]].map(([value, label]) =>
               <option key={value} value={value}>{label}</option>)}</select>
         </div>
-        <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left text-sm">
+        <div className="overflow-x-auto"><table className="w-full min-w-[1180px] text-left text-sm">
           <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr>
-            <th className="p-3">eBay Item ID</th><th className="p-3">Custom Label / SKU</th>
+            <th className="p-3">eBay Item ID</th><th className="p-3">Título</th><th className="p-3">Custom Label / SKU</th>
             <th className="p-3">Caso / producto</th><th className="p-3">Luna</th>
             <th className="p-3">Origen / estado</th><th className="p-3">Identidad</th>
             <th className="p-3">StockGuard</th><th className="p-3">Siguiente bloqueo</th>
           </tr></thead>
           <tbody>{rows.map((row) => <tr key={row.case_id} className="border-t align-top">
             <td className="p-3 font-bold">{row.ebay_item_id}</td>
+            <td className="p-3">{show(row.ebay_title)}</td>
             <td className="p-3">{show(row.ebay_custom_label)}</td>
             <td className="p-3 text-xs">{row.case_id}<br />Oportunidad {show(row.opportunity_id)}<br />Paquete {show(row.listing_package_id)}</td>
             <td className="p-3 text-xs">Producto {show(row.luna_product_id)}<br />Variante {show(row.luna_variant_id)}<br />SKU {show(row.supplier_sku)}</td>

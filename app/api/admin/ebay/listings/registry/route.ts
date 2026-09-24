@@ -16,6 +16,8 @@ import { registerManualEbayListing } from
   "@/lib/ebay/ebay-manual-listing-service"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
+import { buildListingIdentityReviewQueueV1, packageIdFromCustomLabelV1 } from
+  "@/lib/ebay/seller-os-listing-identity-review-v1"
 import { persistListingCasesV1, projectSellerOsListingCasesV1,
   readListingRegistryEvidenceV1 } from
   "@/lib/ebay/seller-os-listing-registry-v1"
@@ -62,12 +64,78 @@ export async function GET(req: Request) {
     }
     const currentCases = (cases.data ?? []).filter((row) =>
       row.last_reconciled_sweep_id === sweep.data?.sweep_id)
+    const labels = [...new Set(currentCases.flatMap((row) =>
+      row.ebay_custom_label ? [String(row.ebay_custom_label)] : []))]
+    const packageIds = [...new Set(labels.flatMap((label) => {
+      const id = packageIdFromCustomLabelV1(label)
+      return id ? [id] : []
+    }))]
+    const [snapshot, packageRead, decisionRead, skuOpportunityRead] = await Promise.all([
+      supabase.from("luna_catalog_snapshots_v1")
+        .select("snapshot_id").eq("snapshot_status", "COMPLETE")
+        .order("snapshot_completed_at", { ascending: false }).limit(1).maybeSingle(),
+      packageIds.length ? supabase.from("ebay_listing_packages")
+        .select("id,opportunity_id,candidate_key").eq("account_key", scope.accountKey)
+        .in("id", packageIds).limit(packageIds.length + 1) :
+        Promise.resolve({ data: [], error: null }),
+      currentCases.length ? supabase.from("seller_os_luna_linkage_decisions")
+        .select("ebay_item_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,decision,decision_version,evidence_observed_at")
+        .eq("account_key", scope.accountKey).eq("marketplace_id", "EBAY_US")
+        .in("ebay_item_id", currentCases.map((row) => row.ebay_item_id))
+        .order("decision_version", { ascending: false }).limit(500) :
+        Promise.resolve({ data: [], error: null }),
+      labels.length ? supabase.from("ebay_luna_opportunity_queue")
+        .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku")
+        .in("supplier_sku", labels).limit(200) :
+        Promise.resolve({ data: [], error: null }),
+    ])
+    if (snapshot.error || packageRead.error || decisionRead.error ||
+        skuOpportunityRead.error ||
+        (packageRead.data?.length ?? 0) > packageIds.length ||
+        (decisionRead.data?.length ?? 0) >= 500 ||
+        (skuOpportunityRead.data?.length ?? 0) >= 200) {
+      throw new Error("LISTING_REGISTRY_REVIEW_EVIDENCE_READ_FAILED")
+    }
+    const opportunityIds = [...new Set((packageRead.data ?? []).map((row) =>
+      row.opportunity_id))]
+    const opportunityRead = opportunityIds.length
+      ? await supabase.from("ebay_luna_opportunity_queue")
+        .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku")
+        .in("id", opportunityIds).limit(opportunityIds.length + 1)
+      : { data: [], error: null }
+    if (opportunityRead.error) {
+      throw new Error("LISTING_REGISTRY_REVIEW_EVIDENCE_READ_FAILED")
+    }
+    const opportunities = [...new Map([...(opportunityRead.data ?? []),
+      ...(skuOpportunityRead.data ?? [])].map((row) => [row.id, row])).values()]
+    const catalogSkus = [...new Set([...labels,
+      ...opportunities.flatMap((row) =>
+        row.supplier_sku ? [String(row.supplier_sku)] : []),
+      ...(decisionRead.data ?? []).flatMap((row) =>
+        row.luna_sku ? [String(row.luna_sku)] : [])])]
+    const catalogRead = snapshot.data?.snapshot_id && catalogSkus.length
+      ? await supabase.from("luna_catalog_snapshot_variants_v1")
+        .select("product_id,variant_id,sku,preflight_status")
+        .eq("snapshot_id", snapshot.data.snapshot_id)
+        .in("sku", catalogSkus).limit(500)
+      : { data: [], error: null }
+    if (catalogRead.error || (catalogRead.data?.length ?? 0) >= 500) {
+      throw new Error("LISTING_REGISTRY_REVIEW_EVIDENCE_READ_FAILED")
+    }
+    const reviewQueue = buildListingIdentityReviewQueueV1({
+      cases: currentCases,
+      catalog: catalogRead.data ?? [],
+      decisions: decisionRead.data ?? [],
+      packages: packageRead.data ?? [],
+      opportunities,
+    })
     const fresh = Boolean(sweep.data?.official_observed_at &&
       Date.now() - Date.parse(sweep.data.official_observed_at) <= 20 * 60_000 &&
       Date.parse(sweep.data.official_observed_at) - Date.now() <= 60_000 &&
       sweep.data.official_live_item_count === currentCases.length &&
       sweep.data.reconciled_item_count === currentCases.length)
     return NextResponse.json({ success: true, cases: cases.data ?? [],
+      reviewQueue, reviewSweepId: sweep.data?.sweep_id ?? null,
       currentLiveCertified: fresh,
       currentLiveCaseCount: fresh ? currentCases.length : null,
       currentSweepId: fresh ? sweep.data?.sweep_id : null,

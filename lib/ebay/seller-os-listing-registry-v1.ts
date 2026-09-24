@@ -17,6 +17,7 @@ export type ListingCaseProjectionV1 = Readonly<{
   account_key: string
   marketplace_id: "EBAY_US"
   ebay_item_id: string
+  ebay_title: string | null
   ebay_custom_label: string | null
   supplier_sku: string | null
   luna_product_id: string | null
@@ -164,6 +165,7 @@ export function projectSellerOsListingCasesV1(input: Readonly<{
       account_key: input.accountKey,
       marketplace_id: "EBAY_US" as const,
       ebay_item_id: listing.itemId,
+      ebay_title: listing.title ?? null,
       ebay_custom_label: label,
       supplier_sku: tuple?.sku ?? null,
       luna_product_id: tuple?.productId ?? null,
