@@ -33,6 +33,8 @@ export const SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1 =
   "seller_os_internal_read_fee_context" as const
 export const SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1 =
   "seller_os_get_demand_first_broad_net_replay" as const
+export const SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1 =
+  "seller_os_get_replacement_for" as const
 export const SELLER_OS_CLOUD_READ_RELAY_ENVIRONMENT = Object.freeze({
   endpointUrl: "SELLER_OS_CLOUD_READ_RELAY_URL",
   authenticationSecret: "SELLER_OS_CLOUD_READ_RELAY_SECRET",
@@ -60,6 +62,7 @@ const RELAY_TOOL_NAMES = new Set(
     SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1,
     SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1,
     SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1,
+    SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1,
     SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1,
     SELLER_OS_PUBLICATION_PREFLIGHT_READ_V1,
   ],
@@ -155,6 +158,18 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
       ? [] : ["limit"],
   )
   if (toolName === SELLER_OS_PUBLICATION_PREFLIGHT_READ_V1) { allowedKeys.delete("limit");allowedKeys.add("packageId") }
+  if (toolName === SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1) {
+    allowedKeys.delete("limit")
+    allowedKeys.add("itemId")
+    allowedKeys.add("sku")
+    const item = typeof args.itemId === "string" &&
+      /^\d{9,20}$/.test(args.itemId)
+    const sku = typeof args.sku === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9._:+/ -]{0,159}$/.test(args.sku)
+    if (item === sku) throw Error("SELLER_OS_RELAY_REPLACEMENT_IDENTITY_INVALID")
+    if (item) normalized.itemId = args.itemId
+    if (sku) normalized.sku = args.sku
+  }
   if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1) {
     allowedKeys.delete("limit")
     allowedKeys.add("itemId")

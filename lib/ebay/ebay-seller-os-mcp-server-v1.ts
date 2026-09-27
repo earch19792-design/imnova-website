@@ -16,8 +16,10 @@ import { collectSellerOsOfficialOrdersReadV1,
   collectSellerOsWhatsappSaleAlertStatusV1,
   loadSellerOsAssistantMonitorV1 } from "./ebay-seller-os-assistant-runtime"
 import { createSellerOsCloudReadRelayExecutorV1,
+  SELLER_OS_CLOUD_READ_RELAY_PATH,
   SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1,
   SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1,
+  SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1,
   type SellerOsAssistantToolExecutorV1 } from
   "./ebay-seller-os-cloud-read-relay-v1"
 import { collectSellerOsLongitudinalOpportunityReadV1 } from
@@ -107,6 +109,16 @@ import { getLunaCatalogCandidatesV1, getLunaCatalogDeltaV1,
   LUNA_CATALOG_MCP_TOOLS_V1, LUNA_CATALOG_PREFLIGHT_STATUSES_V1 } from
   "./luna-catalog-snapshot-v1"
 
+const REPLACEMENT_FOR_TOOL_V1 = Object.freeze({
+  name: SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1,
+  title: "Find certified Luna replacements for one LIVE listing",
+  description: "Read certified replacement candidates through the bounded Seller OS cloud read relay. No Trading calls or marketplace writes.",
+  annotations: { readOnlyHint: true as const, destructiveHint: false as const,
+    openWorldHint: false as const, idempotentHint: true as const },
+  securitySchemes: [{ type: "oauth2" as const, scopes: ["seller_os.read"] }],
+  sideEffects: false as const,
+})
+
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
   "SELLER_OS_MCP_READONLY_V1_2026_09_20_TRACE_PRODUCT_TRUTH_READBACK"
 export const SELLER_OS_CHATGPT_CONNECTION_STATE = Object.freeze({
@@ -152,6 +164,7 @@ const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
   SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1,
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1,
+  REPLACEMENT_FOR_TOOL_V1,
   ...LUNA_CATALOG_MCP_TOOLS_V1,
 ])
 
@@ -169,6 +182,7 @@ const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
   SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1.name,
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name,
+  REPLACEMENT_FOR_TOOL_V1.name,
   "search",
   "fetch",
   ...LUNA_CATALOG_MCP_TOOLS_V1.map((tool) => tool.name),
@@ -222,6 +236,7 @@ const DEDICATED_READ_TOOLS = Object.freeze([
   SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1,
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1,
+  REPLACEMENT_FOR_TOOL_V1,
   ...LUNA_CATALOG_MCP_TOOLS_V1,
 ])
 
@@ -593,6 +608,48 @@ export function createSellerOsMcpServerV1(options: {
       }
     })
   registeredToolNames.add(SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name)
+  const replacementToolExecutor = options.toolExecutor ??
+    createSellerOsCloudReadRelayExecutorV1({ environment: {
+      ...process.env,
+      SELLER_OS_CLOUD_READ_RELAY_URL:
+        `https://imnova-seller-os-preprod.vercel.app${SELLER_OS_CLOUD_READ_RELAY_PATH}`,
+    } })
+  const replacementForConfig = {
+    title: REPLACEMENT_FOR_TOOL_V1.title,
+    description: REPLACEMENT_FOR_TOOL_V1.description,
+    inputSchema: z.object({
+      itemId: z.string().regex(/^\d{9,20}$/).optional(),
+      sku: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:+/ -]{0,159}$/)
+        .optional(),
+    }).strict().refine((args) => Boolean(args.itemId) !== Boolean(args.sku)),
+    annotations: REPLACEMENT_FOR_TOOL_V1.annotations,
+    securitySchemes,
+    _meta: { securitySchemes },
+  }
+  server.registerTool(REPLACEMENT_FOR_TOOL_V1.name,
+    replacementForConfig, async (args) => {
+      try {
+        if (getSellerOsMcpToolExecutionSourceV1(applicationAuthMode) !==
+            "CLOUD_READ_RELAY") {
+          throw Error("REPLACEMENT_READ_RELAY_REQUIRED")
+        }
+        const result = await replacementToolExecutor({
+          toolName: REPLACEMENT_FOR_TOOL_V1.name,
+          arguments: args as Record<string, unknown>,
+        })
+        return { structuredContent: { result }, content: [{ type: "text" as const,
+          text: "Seller OS returned bounded replacement evidence without marketplace writes." }] }
+      } catch (error) {
+        const result = { ...revenueFailureV1(error, "ASSISTANT_EVIDENCE",
+          "REPLACEMENT_EVIDENCE_READ_FAILED_CLOSED"),
+          status: "CAPABILITY_BLOCKED", marketplaceWrites: 0,
+          tradingReads: 0 }
+        return { isError: true, structuredContent: { result },
+          content: [{ type: "text" as const,
+            text: "Seller OS could not certify replacement evidence." }] }
+      }
+    })
+  registeredToolNames.add(REPLACEMENT_FOR_TOOL_V1.name)
   const runtimeHealthCollector = options.runtimeHealthCollector ??
     collectSellerOsRuntimeHealthV1
   const runtimeHealthConfig = {
