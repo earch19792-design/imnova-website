@@ -37,6 +37,8 @@ export const SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1 =
   "seller_os_get_replacement_for" as const
 export const SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1 =
   "seller_os_get_portfolio_actions" as const
+export const SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1 =
+  "seller_os_get_operations_gateway" as const
 export const SELLER_OS_CLOUD_READ_RELAY_ENVIRONMENT = Object.freeze({
   endpointUrl: "SELLER_OS_CLOUD_READ_RELAY_URL",
   authenticationSecret: "SELLER_OS_CLOUD_READ_RELAY_SECRET",
@@ -66,6 +68,7 @@ const RELAY_TOOL_NAMES = new Set(
     SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1,
     SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1,
     SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1,
+    SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1,
     SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1,
     SELLER_OS_PUBLICATION_PREFLIGHT_READ_V1,
   ],
@@ -172,6 +175,44 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
     if (item === sku) throw Error("SELLER_OS_RELAY_REPLACEMENT_IDENTITY_INVALID")
     if (item) normalized.itemId = args.itemId
     if (sku) normalized.sku = args.sku
+  }
+  if (toolName === SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1) {
+    for (const key of ["view", "itemId", "sku", "productId", "variantId"])
+      allowedKeys.add(key)
+    const views = ["TODAY_PRIORITIES", "PORTFOLIO_STATE",
+      "PORTFOLIO_ACTIONS", "BEST_CANDIDATES", "REPLACEMENT_FOR",
+      "STOCK_RISKS", "ACTIVE_EXPERIMENTS", "LISTING_DRAFT"]
+    const view = args.view ?? "TODAY_PRIORITIES"
+    if (!views.includes(String(view))) throw Error("TEO_GATEWAY_VIEW_INVALID")
+    normalized.view = view
+    if (view === "REPLACEMENT_FOR" &&
+        (typeof args.itemId !== "string" ||
+          !/^\d{9,20}$/.test(args.itemId)))
+      throw Error("TEO_GATEWAY_ITEM_ID_INVALID")
+    if (view === "LISTING_DRAFT" &&
+        (typeof args.sku !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:+/ -]{0,159}$/.test(args.sku) ||
+          !/^\d{1,30}$/.test(String(args.productId ?? "")) ||
+          !/^\d{1,30}$/.test(String(args.variantId ?? ""))))
+      throw Error("TEO_GATEWAY_LUNA_IDENTITY_INVALID")
+    if (args.itemId !== undefined) {
+      if (typeof args.itemId !== "string" ||
+          !/^\d{9,20}$/.test(args.itemId))
+        throw Error("TEO_GATEWAY_ITEM_ID_INVALID")
+      normalized.itemId = args.itemId
+    }
+    if (args.sku !== undefined) {
+      if (typeof args.sku !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:+/ -]{0,159}$/.test(args.sku))
+        throw Error("TEO_GATEWAY_LUNA_IDENTITY_INVALID")
+      normalized.sku = args.sku
+    }
+    for (const key of ["productId", "variantId"]) if (args[key] !== undefined) {
+      if (typeof args[key] !== "string" ||
+          !/^\d{1,30}$/.test(args[key]))
+        throw Error("TEO_GATEWAY_LUNA_IDENTITY_INVALID")
+      normalized[key] = args[key]
+    }
   }
   if (toolName === SELLER_OS_FEE_CONTEXT_RELAY_OPERATION_V1) {
     allowedKeys.delete("limit")
