@@ -19,6 +19,7 @@ import { createSellerOsCloudReadRelayExecutorV1,
   SELLER_OS_CLOUD_READ_RELAY_PATH,
   SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1,
   SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1,
+  SELLER_OS_TEO_DAILY_OPERATING_CYCLE_RELAY_OPERATION_V1,
   SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1,
   SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1,
   SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1,
@@ -139,6 +140,16 @@ const TEO_OPERATIONS_GATEWAY_TOOL_V1 = Object.freeze({
   sideEffects: false as const,
 })
 
+const TEO_DAILY_OPERATING_CYCLE_TOOL_V1 = Object.freeze({
+  name: SELLER_OS_TEO_DAILY_OPERATING_CYCLE_RELAY_OPERATION_V1,
+  title: "Get TEO's daily operating agenda",
+  description: "Read-only coordinated daily agenda grouped into DO_NOW, TODAY, WATCH and HEALTHY. Keeps independent evidence during current LIVE outages.",
+  annotations: { readOnlyHint: true as const, destructiveHint: false as const,
+    openWorldHint: false as const, idempotentHint: true as const },
+  securitySchemes: [{ type: "oauth2" as const, scopes: ["seller_os.read"] }],
+  sideEffects: false as const,
+})
+
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
   "SELLER_OS_MCP_READONLY_V1_2026_09_20_TRACE_PRODUCT_TRUTH_READBACK"
 export const SELLER_OS_CHATGPT_CONNECTION_STATE = Object.freeze({
@@ -187,6 +198,7 @@ const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
   REPLACEMENT_FOR_TOOL_V1,
   PORTFOLIO_ACTIONS_TOOL_V1,
   TEO_OPERATIONS_GATEWAY_TOOL_V1,
+  TEO_DAILY_OPERATING_CYCLE_TOOL_V1,
   ...LUNA_CATALOG_MCP_TOOLS_V1,
 ])
 
@@ -207,6 +219,7 @@ const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
   REPLACEMENT_FOR_TOOL_V1.name,
   PORTFOLIO_ACTIONS_TOOL_V1.name,
   TEO_OPERATIONS_GATEWAY_TOOL_V1.name,
+  TEO_DAILY_OPERATING_CYCLE_TOOL_V1.name,
   "search",
   "fetch",
   ...LUNA_CATALOG_MCP_TOOLS_V1.map((tool) => tool.name),
@@ -263,6 +276,7 @@ const DEDICATED_READ_TOOLS = Object.freeze([
   REPLACEMENT_FOR_TOOL_V1,
   PORTFOLIO_ACTIONS_TOOL_V1,
   TEO_OPERATIONS_GATEWAY_TOOL_V1,
+  TEO_DAILY_OPERATING_CYCLE_TOOL_V1,
   ...LUNA_CATALOG_MCP_TOOLS_V1,
 ])
 
@@ -747,6 +761,36 @@ export function createSellerOsMcpServerV1(options: {
       }
     })
   registeredToolNames.add(TEO_OPERATIONS_GATEWAY_TOOL_V1.name)
+  const dailyCycleConfig = {
+    title: TEO_DAILY_OPERATING_CYCLE_TOOL_V1.title,
+    description: TEO_DAILY_OPERATING_CYCLE_TOOL_V1.description,
+    inputSchema: z.object({ limit: z.number().int().min(1).max(100)
+      .optional() }).strict(),
+    annotations: TEO_DAILY_OPERATING_CYCLE_TOOL_V1.annotations,
+    securitySchemes, _meta: { securitySchemes },
+  }
+  server.registerTool(TEO_DAILY_OPERATING_CYCLE_TOOL_V1.name,
+    dailyCycleConfig, async (args) => {
+    try {
+      if (getSellerOsMcpToolExecutionSourceV1(applicationAuthMode) !==
+          "CLOUD_READ_RELAY") throw Error("TEO_DAILY_CYCLE_READ_RELAY_REQUIRED")
+      const result = await replacementToolExecutor({
+        toolName: TEO_DAILY_OPERATING_CYCLE_TOOL_V1.name,
+        arguments: args as Record<string, unknown>,
+      })
+      return { structuredContent: { result }, content: [{ type: "text" as const,
+        text: "Seller OS returned one read-only daily operating agenda." }] }
+    } catch (error) {
+      const result = { ...revenueFailureV1(error, "ASSISTANT_EVIDENCE",
+        "TEO_DAILY_OPERATING_CYCLE_READ_FAILED_CLOSED"),
+        status: "CAPABILITY_BLOCKED", marketplaceWrites: 0,
+        tradingReads: 0 }
+      return { isError: true, structuredContent: { result },
+        content: [{ type: "text" as const,
+          text: "Seller OS could not certify the daily agenda." }] }
+    }
+  })
+  registeredToolNames.add(TEO_DAILY_OPERATING_CYCLE_TOOL_V1.name)
   const runtimeHealthCollector = options.runtimeHealthCollector ??
     collectSellerOsRuntimeHealthV1
   const runtimeHealthConfig = {
