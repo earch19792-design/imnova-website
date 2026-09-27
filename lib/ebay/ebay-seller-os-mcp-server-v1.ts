@@ -20,6 +20,7 @@ import { createSellerOsCloudReadRelayExecutorV1,
   SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1,
   SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1,
   SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1,
+  SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1,
   type SellerOsAssistantToolExecutorV1 } from
   "./ebay-seller-os-cloud-read-relay-v1"
 import { collectSellerOsLongitudinalOpportunityReadV1 } from
@@ -118,6 +119,15 @@ const REPLACEMENT_FOR_TOOL_V1 = Object.freeze({
   securitySchemes: [{ type: "oauth2" as const, scopes: ["seller_os.read"] }],
   sideEffects: false as const,
 })
+const PORTFOLIO_ACTIONS_TOOL_V1 = Object.freeze({
+  name: SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1,
+  title: "Prioritize current LIVE portfolio actions",
+  description: "Read bounded, evidence-based portfolio recommendations through the Seller OS cloud relay. No Trading reads or marketplace writes.",
+  annotations: { readOnlyHint: true as const, destructiveHint: false as const,
+    openWorldHint: false as const, idempotentHint: true as const },
+  securitySchemes: [{ type: "oauth2" as const, scopes: ["seller_os.read"] }],
+  sideEffects: false as const,
+})
 
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
   "SELLER_OS_MCP_READONLY_V1_2026_09_20_TRACE_PRODUCT_TRUTH_READBACK"
@@ -165,6 +175,7 @@ const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1,
   REPLACEMENT_FOR_TOOL_V1,
+  PORTFOLIO_ACTIONS_TOOL_V1,
   ...LUNA_CATALOG_MCP_TOOLS_V1,
 ])
 
@@ -183,6 +194,7 @@ const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name,
   REPLACEMENT_FOR_TOOL_V1.name,
+  PORTFOLIO_ACTIONS_TOOL_V1.name,
   "search",
   "fetch",
   ...LUNA_CATALOG_MCP_TOOLS_V1.map((tool) => tool.name),
@@ -237,6 +249,7 @@ const DEDICATED_READ_TOOLS = Object.freeze([
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1,
   SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1,
   REPLACEMENT_FOR_TOOL_V1,
+  PORTFOLIO_ACTIONS_TOOL_V1,
   ...LUNA_CATALOG_MCP_TOOLS_V1,
 ])
 
@@ -650,6 +663,38 @@ export function createSellerOsMcpServerV1(options: {
       }
     })
   registeredToolNames.add(REPLACEMENT_FOR_TOOL_V1.name)
+  const portfolioActionsConfig = {
+    title: PORTFOLIO_ACTIONS_TOOL_V1.title,
+    description: PORTFOLIO_ACTIONS_TOOL_V1.description,
+    inputSchema: z.object({ limit: z.number().int().min(1).max(100).optional() }).strict(),
+    annotations: PORTFOLIO_ACTIONS_TOOL_V1.annotations,
+    securitySchemes,
+    _meta: { securitySchemes },
+  }
+  server.registerTool(PORTFOLIO_ACTIONS_TOOL_V1.name,
+    portfolioActionsConfig, async (args) => {
+      try {
+        if (getSellerOsMcpToolExecutionSourceV1(applicationAuthMode) !==
+            "CLOUD_READ_RELAY") {
+          throw Error("PORTFOLIO_ACTIONS_READ_RELAY_REQUIRED")
+        }
+        const result = await replacementToolExecutor({
+          toolName: PORTFOLIO_ACTIONS_TOOL_V1.name,
+          arguments: { limit: args.limit ?? 10 },
+        })
+        return { structuredContent: { result }, content: [{ type: "text" as const,
+          text: "Seller OS returned bounded portfolio recommendations without marketplace writes." }] }
+      } catch (error) {
+        const result = { ...revenueFailureV1(error, "ASSISTANT_EVIDENCE",
+          "PORTFOLIO_ACTIONS_READ_FAILED_CLOSED"),
+          status: "CAPABILITY_BLOCKED", marketplaceWrites: 0,
+          tradingReads: 0 }
+        return { isError: true, structuredContent: { result },
+          content: [{ type: "text" as const,
+            text: "Seller OS could not certify current portfolio actions." }] }
+      }
+    })
+  registeredToolNames.add(PORTFOLIO_ACTIONS_TOOL_V1.name)
   const runtimeHealthCollector = options.runtimeHealthCollector ??
     collectSellerOsRuntimeHealthV1
   const runtimeHealthConfig = {
