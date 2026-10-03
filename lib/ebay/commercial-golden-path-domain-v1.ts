@@ -93,7 +93,7 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
     fresh: e.listingState === "SOLD" && date(e.lastSoldDate) <= now.getTime() && now.getTime() - date(e.lastSoldDate) <= 90 * 86400000 && date(e.capturedAt) <= now.getTime() && now.getTime() - date(e.capturedAt) <= 90 * 86400000 }))
   const sold = classified.filter(e => e.listingState === "SOLD")
   const exact = sold.filter(e => e.classification === "EXACT"), close = sold.filter(e => e.classification === "CLOSE"), family = sold.filter(e => e.classification === "FAMILY")
-  const priced = [...exact, ...close].filter(e => e.fresh && e.currency === "USD" && e.soldQuantity !== null && Number.isSafeInteger(e.soldQuantity) && e.soldQuantity > 0 && e.buyerShipping !== null && e.buyerShipping >= 0 && e.realizedPriceStatus === "PROVEN" && e.realizedSoldPrice !== null && e.realizedSoldPrice > 0 && e.buyerLandedPrice !== null && /^sha256:[0-9a-f]{64}$/.test(e.sourceDigest))
+  const priced = [...exact, ...close].filter(e => e.fresh && date(e.lastSoldDate) <= date(e.capturedAt) && e.currency === "USD" && e.soldQuantity !== null && Number.isSafeInteger(e.soldQuantity) && e.soldQuantity > 0 && e.buyerShipping !== null && e.buyerShipping >= 0 && e.realizedPriceStatus === "PROVEN" && e.realizedSoldPrice !== null && e.realizedSoldPrice > 0 && e.buyerLandedPrice !== null && /^sha256:[0-9a-f]{64}$/.test(e.sourceDigest))
   if (!input.marketComplete) reasons.push("MARKET_EVIDENCE_READ_INCOMPLETE")
   if (!priced.length) reasons.push("EXACT_CLOSE_REALIZED_SOLD_UNPROVEN")
   // Use the lower weighted median of realized buyer-landed prices. Never raise it to the profit floor.

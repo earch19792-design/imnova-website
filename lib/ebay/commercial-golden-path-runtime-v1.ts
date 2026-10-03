@@ -231,9 +231,11 @@ export async function previewGoldenCategoryV1(ctx: GoldenContext, category: stri
 export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandidateKey, rows: Omit<GoldenMarketEvidence, "evidenceId" | "source" | "reviewed">[]) {
   const source = await candidateSource(ctx, key)
   if (!source) throw Error("MANUAL_EVIDENCE_CANONICAL_CANDIDATE_REQUIRED")
-  const target = goldenComparableIdentity(source, key.supplierQuantity, ctx.now), receipts = []
+  const target = goldenComparableIdentity(source, key.supplierQuantity, ctx.now), receipts = [], pending = []
+  // Validate every observation before the single atomic append. Invalid later
+  // rows cannot leave a partially imported manual evidence batch.
   for (const row of rows) {
-    if (row.listingState === "SOLD" && (!Number.isSafeInteger(row.soldQuantity) || !(row.soldQuantity! > 0) || !(row.realizedSoldPrice! > 0) || !row.lastSoldDate || !Number.isFinite(Date.parse(row.lastSoldDate)) || Date.parse(row.lastSoldDate) > ctx.now.getTime())) throw Error("MANUAL_SOLD_QUANTITY_PRICE_DATE_REQUIRED")
+    if (row.listingState === "SOLD" && (!Number.isSafeInteger(row.soldQuantity) || !(row.soldQuantity! > 0) || !(row.realizedSoldPrice! > 0) || !row.lastSoldDate || !Number.isFinite(Date.parse(row.lastSoldDate)) || Date.parse(row.lastSoldDate) > ctx.now.getTime() || Date.parse(row.lastSoldDate) > Date.parse(row.capturedAt))) throw Error("MANUAL_SOLD_QUANTITY_PRICE_DATE_REQUIRED")
     if (row.listingState === "SOLD" && row.activeListingPrice != null) throw Error("SOLD_IS_NOT_ACTIVE_PRICE")
     if (row.listingState === "ACTIVE" && (row.realizedSoldPrice !== null || row.soldQuantity !== null || row.lastSoldDate !== null || row.realizedPriceStatus === "PROVEN")) throw Error("ACTIVE_IS_NOT_SOLD")
     if (!Number.isFinite(Date.parse(row.capturedAt)) || Date.parse(row.capturedAt) > ctx.now.getTime() || !row.sourceLocator || !/^sha256:[0-9a-f]{64}$/.test(row.sourceDigest)) throw Error("MANUAL_MARKET_PROVENANCE_REQUIRED")
@@ -241,11 +243,19 @@ export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandid
     const evidence: GoldenMarketEvidence = { ...row, evidenceId: dedup, source: "OWNER_ATTESTED_MANUAL_TERAPEAK", reviewed: true }
     const classification = classifyGoldenComparable(target, evidence)
     const payload = { ...evidence, classification: classification.classification, reasonCodes: classification.reasonCodes, targetCandidate: key, supplierTruthModified: false }
-    const written = await ctx.supabase.from("seller_os_golden_manual_market_v1").upsert({ evidence_id: dedup, account_key: ctx.accountKey, owner_user_id: ctx.principal.ownerUserId, product_id: key.productId, variant_id: key.variantId, supplier_sku: key.supplierSku, supplier_quantity: key.supplierQuantity, listing_state: row.listingState, classification: classification.classification, payload }, { onConflict: "evidence_id", ignoreDuplicates: true })
-    if (written.error) throw Error("MANUAL_MARKET_DURABLE_IMPORT_FAILED")
-    const readback = await ctx.supabase.from("seller_os_golden_manual_market_v1").select("evidence_id,payload").eq("evidence_id", dedup).eq("account_key", ctx.accountKey).limit(1).maybeSingle()
-    if (readback.error || !readback.data) throw Error("MANUAL_MARKET_READBACK_FAILED")
-    receipts.push(readback.data)
+    pending.push({ evidence_id: dedup, account_key: ctx.accountKey, owner_user_id: ctx.principal.ownerUserId, product_id: key.productId, variant_id: key.variantId, supplier_sku: key.supplierSku, supplier_quantity: key.supplierQuantity, listing_state: row.listingState, classification: classification.classification, payload })
+  }
+  const unique = [...new Map(pending.map(row => [row.evidence_id, row])).values()]
+  const written = await ctx.supabase.from("seller_os_golden_manual_market_v1").upsert(unique, { onConflict: "evidence_id", ignoreDuplicates: true })
+  if (written.error) throw Error("MANUAL_MARKET_DURABLE_IMPORT_FAILED")
+  const readback = await ctx.supabase.from("seller_os_golden_manual_market_v1").select("evidence_id,payload").eq("account_key", ctx.accountKey).in("evidence_id", unique.map(row => row.evidence_id)).limit(51)
+  if (readback.error || readback.data?.length !== unique.length) throw Error("MANUAL_MARKET_READBACK_FAILED")
+  for (const expected of unique) {
+    const stored = readback.data.find(row => row.evidence_id === expected.evidence_id)
+    // A replay preserves its original durable provenance. Changed attestation
+    // is not silently reported as a successfully imported replacement.
+    if (!stored || goldenDigest(stored.payload) !== goldenDigest(expected.payload)) throw Error("MANUAL_MARKET_EXISTING_ATTESTATION_CONFLICT")
+    receipts.push(stored)
   }
   return receipt(ctx, "MANUAL_INTAKE", { contractVersion: GOLDEN_PATH_V1, candidate: key, importedEvidence: receipts, deduplication: "CONTENT_IDEMPOTENT_SOURCE_SALE_OFFER", supplierTruthModified: false, marketScope: "MANUAL_ATTESTATION_NOT_AUTOMATIC_AUTHORITY", safety: { marketplaceWrites: 0, supplierWrites: 0 } })
 }
