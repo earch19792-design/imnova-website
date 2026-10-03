@@ -279,7 +279,11 @@ test("el Item ID histórico y la tupla sintética no existen en el runtime canó
     runtimeSource,
     /impressions\s*:\s*18[\s\S]{0,240}views\s*:\s*1[\s\S]{0,240}transactions\s*:\s*0[\s\S]{0,240}ctr\s*:\s*5\.6/,
   )
-  assert.doesNotMatch(runtimeSource, /\?\?\s*0|\|\|\s*0/)
+  // No source metric may turn UNKNOWN into zero. The sole exception counts
+  // pages actually attempted before a local authentication/configuration block.
+  const allowedTelemetry = 'pagesRead: detail.pagesRead ?? 0'
+  assert.equal(runtimeSource.split(allowedTelemetry).length - 1, 1)
+  assert.doesNotMatch(runtimeSource.replace(allowedTelemetry, ''), /\?\?\s*0|\|\|\s*0/)
   const reconciliation = read(
     "lib/ebay/ebay-commercial-analytics-reconciliation.ts",
   )

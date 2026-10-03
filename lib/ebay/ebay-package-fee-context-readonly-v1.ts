@@ -12,7 +12,7 @@ import { keywordRecord as record } from "../seller-os/keyword-intelligence-hando
 import { exactCategoryAncestryV1, currentCategoryAncestryV1, reusablePackageFeeContextV1 } from "./ebay-package-category-fee-binding-v1"
 import { knownBuyerShippingV1 } from "../seller-os/publication-prevalidation-boundary-v1"
 
-async function readCategoryAncestry(categoryId: string, query: string) {
+export async function readEbayFeeCategoryAncestryReadonlyV1(categoryId: string, query: string) {
   const token=await getEbayBaseApplicationTokenV1()
   const read=async(url: URL)=>{
     const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`,"Accept-Language":"en-US"},cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000)})
@@ -56,7 +56,7 @@ export async function readEbayPackageFeeContextReadonlyV1(packageId: string) {
     cached ? cached.officialFeePolicySnapshot : readCurrentOfficialFeePolicyV1(),
     cached ? cached.feeTaxPolicy : readSellingFeeTaxPolicyV1(),
     cached && currentCategoryAncestryV1(cached.categoryAuthority,p.data.category,new Date()) ? cached.categoryAuthority :
-      readCategoryAncestry(String(p.data.category),productTruthTitle),
+      readEbayFeeCategoryAncestryReadonlyV1(String(p.data.category),productTruthTitle),
     preflightEbayAccountPoliciesReadonly({
       fulfillmentPolicyId:String(canonical.fulfillmentPolicyId??""),
       paymentPolicyId:String(canonical.paymentPolicyId??""),

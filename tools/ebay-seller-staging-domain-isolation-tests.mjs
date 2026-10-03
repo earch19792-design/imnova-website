@@ -94,12 +94,11 @@ test("unauthorized admin pages redirect server-side with a safe internal return 
 test("canonical navigation has intent-based areas and one source", () => {
   const navigation = read("lib/seller-os/navigation.ts")
   const mobile = read("app/admin/ebay/components/seller-os-mobile-nav.tsx")
-  const ids = [...navigation.matchAll(/\{ id: "(home|publish|opportunities|live|sales|post-sale|mayel|stockguard|administration|experiments)"/g)].map((match) => match[1])
-  assert.deepEqual(ids, ["home", "publish", "opportunities", "live",
-    "sales", "post-sale", "mayel", "stockguard", "administration",
-    "experiments"])
+  const ids = [...navigation.matchAll(/item\("(dashboard|opportunities|listings|stockguard|orders|analytics|settings)"/g)].map((match) => match[1])
+  assert.deepEqual(ids, ["dashboard", "opportunities", "listings", "stockguard",
+    "orders", "analytics", "settings"])
   assert.doesNotMatch(navigation, /label: "Quick Pick"/)
-  assert.match(navigation, /label: "Preparar productos"/)
+  assert.match(navigation, /child\("preparation", "Preparación", "\/admin\/ebay\/quick-pick"/)
   assert.match(mobile, /SELLER_OS_MOBILE_NAVIGATION\.map/)
   assert.match(navigation, /objective:/)
   assert.doesNotMatch(mobile, /const destinations|Comunidad|Idea Lab|Productos IMNOVA|Product Development/)
@@ -234,14 +233,11 @@ test("route and bundle surface regress downward", () => {
   // Product Journey adds one canonical read-only product detail page.
   // Revenue-first optimization adds one authenticated, ephemeral Preview page.
   // Their old routes/runtimes remain intact.
-  assert.ok(
-    countNamed("app", "page.tsx") <= 28 + Number(listingOptimizationPreviewPage) + Number(temporarySellerOauthPage) +
-      Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
-      Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage) +
-      Number(lunaQuickPickPage) + Number(productJourneyPage) +
-      Number(commercialTracePage) + Number(preResearchControlConsentPage),
-    "page route count regressed",
-  )
+  const surface = JSON.parse(read("tools/fixtures/seller-os-route-surface-v1.json"))
+  const routeNames = (base, name) => readdirSync(join(root, base), { recursive: true })
+    .filter(path => path === name || path.endsWith(`/${name}`)).map(path => `${base}/${path}`).sort()
+  assert.deepEqual(routeNames("app", "page.tsx"), surface.pages,
+    "Unregistered page added to the controlled Seller OS surface")
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
   // strategic-advisor route -> one Preview-only active-listing Luna monitor
   // -> one isolated, GET-only eBay account-policy preflight route -> two
@@ -287,14 +283,8 @@ test("route and bundle surface regress downward", () => {
     assert.match(route, /productionStockReadTransportV1/)
     assert.match(route, /export const POST = denyWrite/)
   }
-  assert.ok(
-    countNamed("app/api", "route.ts") <= 101 + Number(exists("app/api/admin/ebay/assistant/revenue-engine/route.ts")) + Number(temporarySellerOauthApi) +
-      Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
-      Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
-      Number(lunaQuickPickApi) + Number(productJourneyApi) + Number(productionStockReadApi) +
-      boundedControlApis,
-    "API route count regressed",
-  )
+  assert.deepEqual(routeNames("app/api", "route.ts"), surface.apis,
+    "Unregistered API added to the controlled Seller OS surface")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })

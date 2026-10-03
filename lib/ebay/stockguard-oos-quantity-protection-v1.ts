@@ -129,6 +129,16 @@ async function tradingCall(input: { token: string; siteId: "0" | "100";
 async function protectOne(input: { supabase: SupabaseClient; accountKey: string;
   accountAlias: string; row: CanonicalRow; receipt: StockReceipt;
   fetchImpl: FetchLike }) {
+  const golden = await input.supabase.from("seller_os_golden_managed_listings_v1")
+    .select("marketplace_actions_enabled").eq("account_key", input.accountKey)
+    .eq("ebay_item_id", input.row.itemId).limit(1).maybeSingle()
+  // Fail closed if management policy cannot be read. Golden Path is monitor-only.
+  if (golden.error || golden.data?.marketplace_actions_enabled === false) {
+    return { itemId: input.row.itemId, status: "BLOCKED" as const,
+      blocker: golden.error ? "STOCKGUARD_OOS_MANAGEMENT_POLICY_UNPROVEN"
+        : "STOCKGUARD_OOS_GOLDEN_PATH_MONITOR_ONLY",
+      ebayWriteCount: 0 as const }
+  }
   const component = input.row.components[0]
   const idempotencyKey = `stockguard-oos-v1:sha256:${createHash("sha256")
     .update(JSON.stringify([input.accountKey, "EBAY_US", input.row.itemId,

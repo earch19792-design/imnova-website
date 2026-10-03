@@ -31,9 +31,8 @@ const normalizeEstimateOnlyShippingMigration = readFileSync(
 )
 
 test("mobile command center uses the canonical Seller OS information architecture", () => {
-  for (const label of ["Inicio", "Publicar", "Preparar productos",
-    "Oportunidades", "Listings LIVE", "Ventas", "Postventa", "Mayel",
-    "StockGuard", "Administración", "Experimentos"]) {
+  for (const label of ["Dashboard", "Opportunities", "Listings", "StockGuard",
+    "Orders", "Analytics", "Settings"]) {
     assert.match(canonicalNavigation, new RegExp(label))
   }
   assert.match(mobileNav, /SELLER_OS_MOBILE_NAVIGATION\.map/)

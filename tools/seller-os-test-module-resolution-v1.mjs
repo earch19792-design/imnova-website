@@ -2,6 +2,7 @@ import { registerHooks } from "node:module"
 import { existsSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 registerHooks({ resolve(specifier, context, nextResolve) {
+  if (specifier === "server-only") return { url: "data:text/javascript,export%20default%20%7B%7D", shortCircuit: true }
   try { return nextResolve(specifier, context) } catch (error) {
     if (error.code !== "ERR_MODULE_NOT_FOUND" || !specifier.startsWith(".")) throw error
     for (const suffix of [".ts", ".mjs", ".js", "/index.ts"]) {

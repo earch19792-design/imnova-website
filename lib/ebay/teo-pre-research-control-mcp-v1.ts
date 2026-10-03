@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from
   "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import { z } from "zod"
+import { registerGoldenPathControlToolsV1 } from "./commercial-golden-path-mcp-v1"
 
 import { getEbaySellerAccountScopeConfiguration } from
   "./ebay-seller-account-scope"
@@ -62,6 +63,8 @@ function toolResult(result: unknown, text: string) {
 function createServer(principal: SellerOsControlPrincipalV1) {
   const server = new McpServer({ name: "IMNOVA Seller OS - Control",
     version: "1.0.0" })
+  const goldenOAuth = loadSellerOsControlOAuthConfigurationV1()
+  if (goldenOAuth) registerGoldenPathControlToolsV1(server, principal, goldenOAuth.resource)
   const context = () => {
     const account = getEbaySellerAccountScopeConfiguration()
     const oauth = loadSellerOsControlOAuthConfigurationV1()

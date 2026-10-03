@@ -262,6 +262,13 @@ export function buildAssistantCommercialContextV1(
   const livePortfolioProven = ["AVAILABLE", "PARTIAL"].includes(
     monitor.backend.kpis.activeListings.status) &&
     typeof monitor.backend.kpis.activeListings.value === "number"
+  const linkageReader = monitor.connection?.readers?.find((reader) =>
+    reader.source === "SELLER_OS_LUNA_LINKAGE_DECISIONS_V1")
+  const linkageCountProven = livePortfolioProven &&
+    linkageReader?.status === "AVAILABLE" &&
+    !linkageReader.limitationCode &&
+    monitor.backend.kpis.activeListings.value === integrity.canonicalCohort.listingCount &&
+    liveListings.length === integrity.canonicalCohort.listingCount
   return { contractVersion: SELLER_OS_ASSISTANT_GATEWAY_VERSION,
     generatedFrom: monitor.contractVersion, observedAt: monitor.generatedAt,
     readBudget: (monitor as SellerOsAssistantMonitorWithOfficialOrdersV1).readBudget ?? null,
@@ -319,12 +326,14 @@ export function buildAssistantCommercialContextV1(
       scopeCount: integrity.canonicalCohort.listingCount,
       observedAt: integrity.canonicalCohort.observedAt,
       grain: "REPLACEMENT_CANDIDATE" as const },
-    supplierReadiness: { status: livePortfolioProven
+    supplierReadiness: { status: linkageCountProven
       ? "AVAILABLE" as const : "UNPROVEN" as const,
-      exactLinkedListings: livePortfolioProven ? liveListings.filter((row) =>
+      exactLinkedListings: linkageCountProven ? liveListings.filter((row) =>
         isProvenSupplierLinkageV1(row.stock)).length : null,
       totalLiveListings: livePortfolioProven
         ? integrity.canonicalCohort.listingCount : null,
+      limitationCode: linkageCountProven ? null :
+        linkageReader?.limitationCode ?? "SUPPLIER_LINKAGE_COVERAGE_UNPROVEN",
       currentLiveScopeId: integrity.canonicalCohort.scopeId },
     economicsCompleteness: { status: "UNPROVEN", reason: "PROVEN_COST_INPUTS_REQUIRED" },
     learningSignals: { status: monitor.learning.status,

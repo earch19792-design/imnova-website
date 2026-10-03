@@ -181,7 +181,7 @@ async function executeFixedCheck(name) {
     const temporaryDirectory = await mkdtemp("/tmp/seller-os-validation-tap-")
     const reportPath = resolve(temporaryDirectory, "tap.txt")
     try {
-      const result = await run(process.execPath, ["--test", "--test-reporter=tap",
+      const result = await run(process.execPath, ["--import", "./tools/seller-os-test-module-resolution-v1.mjs", "--test", "--test-concurrency=4", "--test-reporter=tap",
         `--test-reporter-destination=${reportPath}`, "--", ...tests])
       let report = ""
       try {
@@ -231,8 +231,30 @@ async function publishFixedArtifact(evidence) {
   await rename(temporaryPath, ARTIFACT_PATH)
 }
 
+async function readRecorderSubject() {
+  const git = (args) => new Promise((yes, no) => execFile('/usr/bin/git',
+    ['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',...args],
+    {cwd:REPOSITORY_DIRECTORY,encoding:'buffer',timeout:10000,maxBuffer:32*1024*1024},
+    (error, output) => error ? no(error) : yes(output)))
+  return collectSellerOsWorkspaceFingerprintV1({ adapter: {
+    readHead:()=>git(['rev-parse','HEAD']),
+    readStatus:()=>git(['status','--porcelain=v1','-z','--untracked-files=all']),
+    readUnstagedDiff:()=>git(['diff','--binary','--no-ext-diff','--no-textconv']),
+    readStagedDiff:()=>git(['diff','--cached','--binary','--no-ext-diff','--no-textconv']),
+    readUntrackedPaths:()=>git(['ls-files','--others','--exclude-standard','-z']),
+    readUntrackedEntry:async(path)=>{
+      const full=resolve(REPOSITORY_DIRECTORY,path)
+      if(!full.startsWith(`${REPOSITORY_DIRECTORY}/`))throw Error('VALIDATION_PATH_UNSAFE')
+      const stat=await lstat(full)
+      if(stat.isSymbolicLink())return Buffer.concat([Buffer.from('symlink\0'),await readlink(full,'buffer')])
+      if(!stat.isFile()||stat.size>16*1024*1024)throw Error('VALIDATION_PATH_UNBOUNDED')
+      return readFile(full)
+    },
+  }})
+}
+
 export async function recordSellerOsValidationEvidenceV1(dependencies = {}) {
-  const readSubject = dependencies.readSubject ?? collectSellerOsWorkspaceFingerprintV1
+  const readSubject = dependencies.readSubject ?? readRecorderSubject
   const executeCheck = dependencies.executeCheck ?? executeFixedCheck
   const publish = dependencies.publish ?? publishFixedArtifact
   const observedNow = dependencies.now ?? now

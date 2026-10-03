@@ -13,6 +13,8 @@ jobs:
   seller-os:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      NODE_OPTIONS: "--max-old-space-size=6144"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,21 +30,17 @@ jobs:
       - name: Reproducible install
         run: npm ci
 
-      - name: TypeScript
-        run: npx tsc --noEmit --incremental false
-
-      - name: Seller OS suites
-        run: npm run test:seller-os
-
-      - name: Security and migration guards
-        run: npm run audit:seller-os
+      - name: Full Seller OS validation with durable subject
+        run: npm run record:seller-os-validation
 
       - name: Whitespace
+        if: github.event_name == 'pull_request'
         run: git diff --check "origin/${{ github.base_ref }}...HEAD"
 
-      - name: Production build
-        env:
-          EBAY_DRAFT_ONLY_WRITES_ENABLED: "false"
-          EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "false"
-          EBAY_SELLER_WHATSAPP_ENABLED: "false"
-        run: npm run build
+      - name: Keep validation receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seller-os-validation-${{ github.sha }}
+          path: .seller-os/validation-evidence-v1.json
+          if-no-files-found: error

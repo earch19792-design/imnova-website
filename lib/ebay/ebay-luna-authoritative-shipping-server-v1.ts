@@ -1,6 +1,7 @@
 import "server-only"
 
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
+import { getSupabaseAdminClient } from "../supabase-admin"
 
 import { EBAY_LUNA_BOCA_RATON_LOCATION } from
   "./ebay-merchant-location-one-shot-gateway"
@@ -264,8 +265,12 @@ function snapshotItems(body: Record<string, any> | null) {
   if (!Array.isArray(body?.items) || body.items.length > MAX_CART_ITEMS) {
     return null
   }
+  // Do not clear a cart with state this bounded producer cannot restore.
+  if (body.note || Object.keys(body.attributes ?? {}).length ||
+      (body.cart_level_discount_applications?.length ?? 0) > 0) return null
   const items: SafeCartItem[] = []
   for (const item of body.items) {
+    if (Object.keys(item?.properties ?? {}).length || item?.selling_plan_allocation) return null
     const id = String(item?.variant_id ?? item?.id ?? "")
     const quantity = Number(item?.quantity)
     if (!/^\d{8,24}$/.test(id) || !Number.isInteger(quantity) ||
@@ -297,14 +302,41 @@ function limited(input: Readonly<{
   })
 }
 
-export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
+type HttpShippingOptionsV1 = Readonly<{
+  fetchImpl?: typeof fetch
+  resolveProtectedSession?: () => Promise<string | SellerOsLunaProtectedSessionEnvelope | null>
+  cartLease?: Readonly<{ claim: (id: string) => Promise<boolean>; release: (id: string, restored: boolean) => Promise<boolean> }>
+}>
+export async function attemptLunaAuthenticatedHttpShippingQuoteV1(rawIdentity: LunaShippingIdentityV1, options: HttpShippingOptionsV1 = {}): Promise<LunaShippingAttemptV1> {
+  const id = randomUUID()
+  const lease = options.cartLease ?? {
+    claim: async (leaseId: string) => {
+      const r = await getSupabaseAdminClient().rpc("seller_os_claim_golden_shipping_cart_v1", { p_lease_id: leaseId }).abortSignal(AbortSignal.timeout(8000))
+      if (r.error) throw Error("LUNA_HTTP_CART_COORDINATION_UNAVAILABLE")
+      return r.data === true
+    },
+    release: async (leaseId: string, restored: boolean) => {
+      const r = await getSupabaseAdminClient().rpc("seller_os_release_golden_shipping_cart_v1", { p_lease_id: leaseId, p_restore_proven: restored }).abortSignal(AbortSignal.timeout(8000))
+      return !r.error && r.data === true
+    },
+  }
+  let claimed = false, healthy = false, result: LunaShippingAttemptV1 = blocked("LUNA_HTTP_CART_COORDINATION_UNAVAILABLE")
+  try {
+    claimed = await lease.claim(id)
+    if (!claimed) return blocked("LUNA_HTTP_CART_BUSY_OR_INTEGRITY_UNPROVEN")
+    result = await runLunaAuthenticatedHttpShippingQuoteV1(rawIdentity, options)
+    healthy = !(result.status === "BLOCKED" && result.blocker === "LUNA_HTTP_CART_RESTORE_UNPROVEN")
+  } catch {
+    result = blocked("LUNA_HTTP_CART_COORDINATION_OR_ACQUISITION_UNPROVEN")
+  } finally {
+    if (claimed && !await lease.release(id, healthy).catch(() => false)) result = blocked("LUNA_HTTP_CART_LEASE_RELEASE_UNPROVEN")
+  }
+  return result
+}
+
+async function runLunaAuthenticatedHttpShippingQuoteV1(
   rawIdentity: LunaShippingIdentityV1,
-  options: Readonly<{
-    fetchImpl?: typeof fetch
-    resolveProtectedSession?: () => Promise<
-      string | SellerOsLunaProtectedSessionEnvelope | null
-    >
-  }> = {},
+  options: HttpShippingOptionsV1,
 ) : Promise<LunaShippingAttemptV1> {
   const identity = normalizeLunaShippingIdentityV1(rawIdentity)
   const destination = SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1
@@ -330,11 +362,12 @@ export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
     if (parsedSnapshot === null) return blocked("LUNA_HTTP_CART_SNAPSHOT_UNPROVEN")
     originalItems = parsedSnapshot
     snapshotCaptured = true
+    touched = true // A timed-out write may have reached the supplier; restore in finally.
     const clear = await cartRequest({ path: "/cart/clear.js", method: "POST",
       body: {}, fetchImpl, jar })
-    touched = clear.status >= 200 && clear.status < 300
+    const cleared = clear.status >= 200 && clear.status < 300
     if (clear.status === 429) return limited(clear)
-    if (!touched) return result
+    if (!cleared) return result
     const add = await cartRequest({ path: "/cart/add.js", method: "POST",
       body: { id: identity.lunaVariantId, quantity: identity.quantity },
       fetchImpl, jar })
@@ -343,9 +376,10 @@ export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
         identity.lunaProductId &&
       String(add.body?.variant_id ?? add.body?.id ?? "") ===
         identity.lunaVariantId &&
-      String(add.body?.sku ?? "") === identity.supplierSku
-    const subtotalMinor = Number(add.body?.final_line_price ??
-      add.body?.final_price ?? add.body?.line_price ?? add.body?.price)
+      String(add.body?.sku ?? "") === identity.supplierSku &&
+      Number(add.body?.quantity) === identity.quantity
+    const subtotalMinor = Number(add.body?.final_line_price ?? add.body?.line_price ??
+      (identity.quantity === 1 ? add.body?.final_price ?? add.body?.price : NaN))
     const subtotalUsd = Number.isFinite(subtotalMinor) && subtotalMinor >= 0
       ? Math.round(subtotalMinor) / 100 : null
     if (add.status < 200 || add.status >= 300 || !exactIdentity ||
@@ -381,6 +415,7 @@ export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
       lunaProductId: identity.lunaProductId,
       lunaVariantId: identity.lunaVariantId,
       supplierSku: identity.supplierSku,
+      quantity: identity.quantity,
       subtotalUsd,
       shippingAmountUsd: amounts[0],
       currency: "USD" as const,
@@ -418,6 +453,12 @@ export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
           body: { items: originalItems }, fetchImpl, jar }).catch(() => null)
         restoreProven = Boolean(restore && restore.status >= 200 &&
           restore.status < 300)
+      }
+      if (restoreProven) {
+        const readback = await cartRequest({ path: "/cart.js", fetchImpl, jar }).catch(() => null)
+        const restored = readback && readback.status >= 200 && readback.status < 300 ? snapshotItems(readback.body) : null
+        const canonical = (items: readonly SafeCartItem[]) => JSON.stringify([...items].sort((a, b) => a.id.localeCompare(b.id)))
+        restoreProven = restored !== null && canonical(restored) === canonical(originalItems)
       }
     }
   }
