@@ -13,6 +13,7 @@ import { projectGoldenMonitoringV1 } from "./commercial-golden-path-monitoring-v
 import { readGoldenTrafficWindowsV1 } from "./commercial-golden-path-traffic-v1"
 import { readGoldenPresaleAuthorityV1 } from "./commercial-golden-path-presale-authority-v1"
 import { goldenLiveCohortIdentityDigestV1, buildGoldenLiveComparisonReviewV1, applyGoldenLiveComparisonReviewsV1, type GoldenLiveComparisonInput } from "./commercial-golden-path-live-comparison-v1"
+import { buildGoldenOwnerFeePolicyV1, readGoldenOwnerFeePolicyFromReceiptV1, type GoldenOwnerFeePolicyInput } from "./commercial-golden-path-owner-fee-policy-v1"
 import { readEbayFeeHandoffV1 } from "../seller-os/ebay-fee-runtime-v1"
 import { readEbayListingCategoryAuthorityV1 } from "./ebay-listing-category-authority-v1"
 import { getEbayTaxonomyListingIntelligence } from "./ebay-seller-keyword-demand-gateway"
@@ -196,7 +197,7 @@ async function candidateAuthorities(ctx: GoldenContext, key: GoldenCandidateKey,
   const fulfillment = unavailable("BUYER_FULFILLMENT_SHIPPING_UNPROVEN")
   return { policy: normalizedPolicy, compliance, fee, fulfillment }
 }
-export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCandidateKey, targetNetProfit = 4, shared?: { sweep: OfficialSweep; market: Awaited<ReturnType<typeof marketEvidence>>; source: GoldenRecord }) {
+export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCandidateKey, targetNetProfit = 4, shared?: { sweep: OfficialSweep; market: Awaited<ReturnType<typeof marketEvidence>>; source: GoldenRecord }, ownerFeePolicy?: GoldenOwnerFeePolicyInput) {
   const source = shared?.source ?? await candidateSource(ctx, key)
   const [market, sweep, shipping] = await Promise.all([
     shared?.market ?? marketEvidence(ctx, key), shared?.sweep ?? getEbayOfficialLiveListingSweepReadonly({ accountKey: ctx.accountKey, accountAlias: ctx.accountAlias }),
@@ -205,6 +206,17 @@ export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCan
   const missing = unavailable("AUTHORITY_NOT_EVALUATED")
   const initial = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, now: ctx.now, targetNetProfit, source, market: market.rows, marketComplete: market.complete, duplicate, shipping, fee: missing, compliance: missing, policy: missing })
   const authority = await candidateAuthorities(ctx, key, source, initial.market.realizedBuyerLandedPrice).catch(() => ({ policy: missing, compliance: unavailable("COMPLIANCE_AUTHORITY_READ_FAILED"), fee: unavailable("FEE_AUTHORITY_READ_FAILED") }))
+  if (authority.fee.status !== "PROVEN") {
+    const policyContext = { candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, sourceFingerprint: source?.source_fingerprint, price: initial.market.realizedBuyerLandedPrice, now: ctx.now }
+    if (ownerFeePolicy) authority.fee = buildGoldenOwnerFeePolicyV1({ ...policyContext, invocationSource: ctx.invocationSource, policy: ownerFeePolicy })
+    else {
+      const stored = await ctx.supabase.from("seller_os_golden_path_receipts_v1").select("receipt_id,evidence_digest,payload").eq("account_key", ctx.accountKey).eq("owner_user_id", ctx.principal.ownerUserId).eq("kind", "EVALUATION").contains("payload", { candidate: key, economics: { feeAuthority: { status: "PROVISIONAL_OWNER_POLICY", sourceFingerprint: source?.source_fingerprint } } }).order("created_at", { ascending: false }).limit(5)
+      if (!stored.error) for (const row of stored.data ?? []) {
+        const fee = readGoldenOwnerFeePolicyFromReceiptV1(goldenRecord(row), policyContext)
+        if (fee) { authority.fee = fee; break }
+      }
+    }
+  }
   const evaluated = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, now: new Date(), targetNetProfit, source, market: market.rows, marketComplete: market.complete, duplicate, shipping, ...authority })
   return receipt(ctx, "EVALUATION", evaluated)
 }
@@ -248,14 +260,15 @@ export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandid
   // Validate every observation before the single atomic append. Invalid later
   // rows cannot leave a partially imported manual evidence batch.
   for (const row of rows) {
+    if (row.marketplace !== "EBAY_US") throw Error("MANUAL_MARKETPLACE_EBAY_US_REQUIRED")
     if (row.listingState === "SOLD" && (!Number.isSafeInteger(row.soldQuantity) || !(row.soldQuantity! > 0) || !(row.realizedSoldPrice! > 0) || !row.lastSoldDate || !Number.isFinite(Date.parse(row.lastSoldDate)) || Date.parse(row.lastSoldDate) > ctx.now.getTime() || Date.parse(row.lastSoldDate) > Date.parse(row.capturedAt))) throw Error("MANUAL_SOLD_QUANTITY_PRICE_DATE_REQUIRED")
     if (row.listingState === "SOLD" && row.activeListingPrice != null) throw Error("SOLD_IS_NOT_ACTIVE_PRICE")
     if (row.listingState === "ACTIVE" && (row.realizedSoldPrice !== null || row.soldQuantity !== null || row.lastSoldDate !== null || row.realizedPriceStatus === "PROVEN")) throw Error("ACTIVE_IS_NOT_SOLD")
     if (!Number.isFinite(Date.parse(row.capturedAt)) || Date.parse(row.capturedAt) > ctx.now.getTime() || !row.sourceLocator || !/^sha256:[0-9a-f]{64}$/.test(row.sourceDigest)) throw Error("MANUAL_MARKET_PROVENANCE_REQUIRED")
-    const dedup = goldenDigest({ accountKey: ctx.accountKey, key, sourceLocator: row.sourceLocator, listingState: row.listingState, identity: row.identity, lastSoldDate: row.lastSoldDate, soldQuantity: row.soldQuantity, realizedSoldPrice: row.realizedSoldPrice, activeListingPrice: row.activeListingPrice ?? null, buyerShipping: row.buyerShipping })
+    const dedup = goldenDigest({ accountKey: ctx.accountKey, key, marketplace: row.marketplace, sourceLocator: row.sourceLocator, listingState: row.listingState, identity: row.identity, lastSoldDate: row.lastSoldDate, soldQuantity: row.soldQuantity, realizedSoldPrice: row.realizedSoldPrice, activeListingPrice: row.activeListingPrice ?? null, buyerShipping: row.buyerShipping })
     const evidence: GoldenMarketEvidence = { ...row, evidenceId: dedup, source: "OWNER_ATTESTED_MANUAL_TERAPEAK", reviewed: true }
     const classification = classifyGoldenComparable(target, evidence)
-    const payload = { ...evidence, classification: classification.classification, reasonCodes: classification.reasonCodes, targetCandidate: key, supplierTruthModified: false }
+    const payload = { ...evidence, listingTitle: row.identity.productName, buyerLandedPrice: row.listingState === "SOLD" && row.realizedPriceStatus === "PROVEN" && row.realizedSoldPrice !== null && row.buyerShipping !== null ? Math.round((row.realizedSoldPrice + row.buyerShipping) * 100) / 100 : null, classification: classification.classification, reasonCodes: classification.reasonCodes, targetCandidate: key, supplierTruthModified: false }
     pending.push({ evidence_id: dedup, account_key: ctx.accountKey, owner_user_id: ctx.principal.ownerUserId, product_id: key.productId, variant_id: key.variantId, supplier_sku: key.supplierSku, supplier_quantity: key.supplierQuantity, listing_state: row.listingState, classification: classification.classification, payload })
   }
   const unique = [...new Map(pending.map(row => [row.evidence_id, row])).values()]

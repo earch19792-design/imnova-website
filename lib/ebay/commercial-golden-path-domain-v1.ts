@@ -4,6 +4,7 @@ import { evaluateLunaTraceProductTruthGateV1 } from "../seller-os/luna-trace-pro
 // @ts-expect-error Native Node verification uses the explicit TypeScript suffix.
 import { classifyWinnerComparable, normalizeProductIdentity } from "./ebay-winner-evidence-v2.ts"
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2"
+import { validGoldenOwnerFeePolicyV1 } from "./commercial-golden-path-owner-fee-policy-v1"
 
 export const GOLDEN_PATH_V1 = "COMMERCIAL_GOLDEN_PATH_V1"
 export type GoldenRecord = Record<string, unknown>
@@ -23,6 +24,7 @@ export function goldenFresh(v: GoldenRecord, now: Date, maximumMs: number) {
 export type GoldenCandidateKey = { productId: string; variantId: string; supplierSku: string; supplierQuantity: number }
 export type GoldenMarketEvidence = {
   evidenceId: string; source: string; sourceLocator: string; sourceDigest: string
+  marketplace?: "EBAY_US"
   listingState: "SOLD" | "ACTIVE"; identity: ProductIdentityInput
   requestedClassification?: "EXACT" | "CLOSE" | "FAMILY" | "REJECTED_COMPARABLE"
   reviewed: boolean; reviewReason: string | null; soldQuantity: number | null
@@ -123,7 +125,8 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   )
   const fulfillmentCost = fulfillmentValid ? fulfillmentAmount : null
   if (fulfillmentCost === null) reasons.push("BUYER_FULFILLMENT_SHIPPING_UNPROVEN")
-  const feeValid = input.fee.status === "PROVEN" && input.fee.accountKey === input.accountKey && input.fee.productId === key.productId && input.fee.variantId === key.variantId && input.fee.supplierSku === key.supplierSku && input.fee.supplierQuantity === key.supplierQuantity && input.fee.price === marketPrice && input.fee.buyerShipping === 0 && input.fee.currency === "USD" && Boolean(input.fee.receiptId) && goldenFresh(input.fee, now, 24 * 3600000)
+  const provisionalFee = validGoldenOwnerFeePolicyV1(input.fee, { candidate: key, accountKey: input.accountKey, sourceFingerprint: source?.source_fingerprint, price: marketPrice, now })
+  const feeValid = provisionalFee || input.fee.status === "PROVEN" && input.fee.accountKey === input.accountKey && input.fee.productId === key.productId && input.fee.variantId === key.variantId && input.fee.supplierSku === key.supplierSku && input.fee.supplierQuantity === key.supplierQuantity && input.fee.price === marketPrice && input.fee.buyerShipping === 0 && input.fee.currency === "USD" && Boolean(input.fee.receiptId) && goldenFresh(input.fee, now, 24 * 3600000)
   const fees = feeValid ? goldenNumber(input.fee.amountUsd) : null
   if (fees === null || fees < 0) reasons.push("EBAY_FEE_AUTHORITY_UNPROVEN")
   const policyValid = input.policy.status === "PROVEN" && input.policy.accountKey === input.accountKey
@@ -152,9 +155,9 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
     duplicateGate: input.duplicate, supplier: { availability: truth.values.SUPPLIER_AVAILABILITY ?? null, unitCostUsd: unitCost, offerCostUsd: cost, stock: goldenNumber(truth.values.SUPPLIER_STOCK), stockStatus: truth.values.SUPPLIER_STOCK == null ? "UNPROVEN" : "PROVEN" },
     shipping: shippingValid ? input.shipping : { ...input.shipping, status: "UNPROVEN", amountUsd: null, supplierQuantity: key.supplierQuantity, reasonCode: input.shipping.reasonCode ?? "REAL_OFFER_SHIPPING_UNPROVEN", validationReasonCode: "REAL_OFFER_SHIPPING_UNPROVEN" },
     fulfillment: fulfillmentValid ? fulfillment : { ...fulfillment, status: "UNPROVEN", amountUsd: null, reasonCode: "BUYER_FULFILLMENT_SHIPPING_UNPROVEN" },
-    economics: { status: ready ? "PROVEN" : "UNPROVEN", targetNetProfit: input.targetNetProfit, recommendedPrice: marketPrice, buyerShipping: 0, pricingStrategy: "FREE_BUYER_SHIPPING_WITHIN_OBSERVED_LANDED_PRICE", feeAuthority: input.fee, ebayFees: fees, returnsReserve: returns, promotedFee: promoted, promotedState: input.policy.promotedState ?? "UNKNOWN", otherExplicitCosts: other, buyerFulfillmentShipping: fulfillmentCost, expectedNetProfit: net, profitFloor: { netProfitUsd: input.targetNetProfit, requiredPrice: null, status: "INTERVAL_FEE_BOUND_UNPROVEN", diagnosticAtFixedFee: floor }, marginPercent: net !== null ? cents(net / marketPrice! * 100) : null, roiPercent: net !== null && cost! + shippingCost! + fulfillmentCost! > 0 ? cents(net / (cost! + shippingCost! + fulfillmentCost!) * 100) : null },
+    economics: { status: ready ? provisionalFee ? "PROVISIONAL_OWNER_POLICY" : "PROVEN" : "UNPROVEN", targetNetProfit: input.targetNetProfit, recommendedPrice: marketPrice, buyerShipping: 0, pricingStrategy: "FREE_BUYER_SHIPPING_WITHIN_OBSERVED_LANDED_PRICE", feeAuthority: input.fee, ebayFees: fees, returnsReserve: returns, promotedFee: promoted, promotedState: input.policy.promotedState ?? "UNKNOWN", otherExplicitCosts: other, buyerFulfillmentShipping: fulfillmentCost, expectedNetProfit: net, expectedNetProfitBasis: provisionalFee ? "OWNER_PROVISIONAL_FEE_POLICY_PLUS_REAL_INPUTS" : "PRE_SALE_EVIDENCE_AND_EXPLICIT_OWNER_RESERVES", realizedNetProfit: null, realizedNetProfitStatus: "UNPROVEN", realizedNetProfitReasonCode: "REALIZED_ORDER_AND_EXPENSE_AUTHORITY_REQUIRED", realizedProfitUsedForDecision: false, profitFloor: { netProfitUsd: input.targetNetProfit, requiredPrice: null, status: "INTERVAL_FEE_BOUND_UNPROVEN", diagnosticAtFixedFee: floor }, marginPercent: net !== null ? cents(net / marketPrice! * 100) : null, roiPercent: net !== null && cost! + shippingCost! + fulfillmentCost! > 0 ? cents(net / (cost! + shippingCost! + fulfillmentCost!) * 100) : null },
     productTruth: { status: truth.gate.traceProductTruthSufficient ? "CORE_PROVEN" : "UNPROVEN", receiptId: truth.gate.receiptEvidenceDigest, verifiedSpecifics: truth.proven, missingFields: truth.fields.filter(f => f.VALUE == null).map(f => f.FIELD), supplierClaimsExcluded: true },
-    compliance: input.compliance, decision, reasonCodes: [...rejects, ...holds, ...reasons], safety: { marketplaceWrites: 0, publish: false, end: false, supplierPurchases: 0, draftIsLive: false } }
+    compliance: input.compliance, decision, reasonCodes: [...rejects, ...holds, ...reasons, ...(provisionalFee ? ["OWNER_PROVISIONAL_FEE_POLICY_USED_EXPECTED_ONLY"] : [])], safety: { marketplaceWrites: 0, publish: false, end: false, supplierPurchases: 0, draftIsLive: false } }
   return { ...result, evidenceDigest: goldenDigest(result) }
 }
 export function prepareGoldenDraftV1(evaluation: ReturnType<typeof evaluateGoldenCandidateV1>) {

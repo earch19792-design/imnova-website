@@ -2,7 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from
   "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import { z } from "zod"
-import { registerGoldenPathControlToolsV1 } from "./commercial-golden-path-mcp-v1"
+import { registerGoldenPathControlToolsV1, GOLDEN_PATH_MCP_TOOL_NAMES_V1 } from "./commercial-golden-path-mcp-v1"
+import { goldenDigest, goldenRecord } from "./commercial-golden-path-domain-v1"
 
 import { getEbaySellerAccountScopeConfiguration } from
   "./ebay-seller-account-scope"
@@ -46,6 +47,15 @@ const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
   "X-Seller-OS-Marketplace-Write-Capability": "ABSENT" })
 const securitySchemes = [{ type: "oauth2" as const,
   scopes: ["openid", "profile"] }]
+export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.1.0"
+export function readSellerOsControlRegisteredCatalogV1(server: McpServer, resource: string) {
+  // The pinned SDK registry reflects actual successful registration. This is a
+  // diagnostic readback, never a substitute for ChatGPT's imported tools/list.
+  const registry = goldenRecord((server as unknown as { _registeredTools?: unknown })._registeredTools)
+  const names = Object.keys(registry).filter(name => goldenRecord(registry[name]).enabled === true).sort()
+  const goldenNames = names.filter(name => (GOLDEN_PATH_MCP_TOOL_NAMES_V1 as readonly string[]).includes(name))
+  return { source: "AUTHENTICATED_MCP_SERVER_REGISTRATION_READBACK", discoveryScope: "SERVER_REGISTRY_NOT_CHATGPT_IMPORTED_CATALOG", serverVersion: SELLER_OS_CONTROL_SERVER_VERSION_V1, resource, toolCount: names.length, toolNames: names, goldenToolNames: goldenNames, goldenRegistrationStatus: goldenNames.length === GOLDEN_PATH_MCP_TOOL_NAMES_V1.length ? "COMPLETE" : "UNPROVEN", catalogDigest: goldenDigest({ serverVersion: SELLER_OS_CONTROL_SERVER_VERSION_V1, resource, names }), marketplaceWriteCapability: "ABSENT" }
+}
 const candidate = z.object({ productId: z.string().regex(/^\d{1,30}$/),
   variantId: z.string().regex(/^\d{1,30}$/),
   sku: z.string().min(1).max(160) }).strict()
@@ -60,9 +70,9 @@ function toolResult(result: unknown, text: string) {
     text }] }
 }
 
-function createServer(principal: SellerOsControlPrincipalV1) {
+export function createServer(principal: SellerOsControlPrincipalV1) {
   const server = new McpServer({ name: "IMNOVA Seller OS - Control",
-    version: "1.0.0" })
+    version: SELLER_OS_CONTROL_SERVER_VERSION_V1 })
   const goldenOAuth = loadSellerOsControlOAuthConfigurationV1()
   if (goldenOAuth) registerGoldenPathControlToolsV1(server, principal, goldenOAuth.resource)
   const context = () => {
@@ -154,7 +164,7 @@ function createServer(principal: SellerOsControlPrincipalV1) {
   }, async (args) => {
     const request = parseTeoCommercialTraceGetV1(args)
     const result = await getTeoCommercialTraceV1({ ...context(), ...request })
-    return toolResult(result,
+    return toolResult({ ...result, controlCatalog: readSellerOsControlRegisteredCatalogV1(server, loadSellerOsControlOAuthConfigurationV1()!.resource) },
       "Seller OS returned the bounded durable Commercial Trace readback.")
   })
   server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[6], {
