@@ -10,4 +10,4 @@ process.stdout.write(`${JSON.stringify({ artifactVersion: evidence.artifactVersi
   workspaceChangedDuringValidation: evidence.workspaceChangedDuringValidation,
   checks: Object.fromEntries(Object.entries(evidence.checks).map(([name, check]) =>
     [name, { status: check.status, exitCode: check.exitCode }])) })}\n`)
-if (failed || evidence.headChangedDuringValidation) process.exitCode = 1
+if (failed || evidence.headChangedDuringValidation || evidence.workspaceChangedDuringValidation || evidence.validationSubject.type === "UNAVAILABLE" || !evidence.validatedHeadSha) process.exitCode = 1
