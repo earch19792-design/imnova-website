@@ -33,6 +33,8 @@ type CategoryResult = JsonRecord & {
     expectedNetProfit?: number; qualification?: string;
     draftReceiptId?: string; published?: boolean }>
   queuedEvidenceCount?: number | null
+  queuedShippingCount?: number | null
+  readyShippingCount?: number | null
   evidenceAcquisition?: JsonRecord[]
   nextAction?: string
   candidates?: CategoryCandidate[]
@@ -128,13 +130,14 @@ export function AutonomousCategoryAnalysisV1() {
     </p> : null}
 
     {result ? <div className="mt-4 space-y-3">
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
         {[["Estado", result.status ?? "UNPROVEN"],
           ["Revisados", result.screenedSourceCount ?? result.productCount ?? "—"],
           ["Evaluados", result.evaluationCount ?? result.resultCount ?? "—"],
           ["Borradores", `${result.qualifiedDraftCount ?? 0}/10`],
           ["Packs probados", result.packScenarioCount ?? "—"],
-          ["Investigación", result.queuedEvidenceCount ?? 0]]
+          ["Investigación", result.queuedEvidenceCount ?? 0],
+          ["Envíos Luna", `${result.queuedShippingCount ?? 0} pendientes · ${result.readyShippingCount ?? 0} listos`]]
           .map(([label, value]) => <article key={label}
             className="rounded-xl border border-white/[0.07] bg-[#07111d]/70 p-3">
             <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>

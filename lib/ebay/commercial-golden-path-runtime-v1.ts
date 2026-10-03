@@ -27,6 +27,9 @@ import { classifyRapidStockingEvaluationV1,
   SELLER_OS_RAPID_STOCKING_POLICY_V1 } from
   "./commercial-rapid-stocking-policy-v1"
 import { requestLunaPreResearchV1 } from "./luna-pre-research-intake-v1"
+import { ensureLunaShippingQty1OpportunityJobV1,
+  readLunaShippingQty1OpportunityReceiptV1 } from
+  "./luna-shipping-qty1-opportunity-bridge-v1"
 import { readEbayFeeHandoffV1 } from "../seller-os/ebay-fee-runtime-v1"
 import { readEbayListingCategoryAuthorityV1 } from "./ebay-listing-category-authority-v1"
 import { getEbayTaxonomyListingIntelligence } from "./ebay-seller-keyword-demand-gateway"
@@ -310,6 +313,38 @@ async function shippingAuthority(ctx: GoldenContext, key: GoldenCandidateKey, so
   if (key.supplierQuantity === 1) {
     const q = await readCommercialTraceShippingReceiptV1({ supabase: ctx.supabase, accountKey: ctx.accountKey, traceId: randomUUID(), lunaProductId: key.productId, lunaVariantId: key.variantId, supplierSku: key.supplierSku, sourceFingerprint: String(source.source_fingerprint), fieldTruthEvidenceDigest: truth.gate.receiptEvidenceDigest, allowCrossTraceReuse: true, now: ctx.now.getTime() })
     if (q) return { ...q, status: "PROVEN", receiptId: q.durableReceiptId, productId: key.productId, variantId: key.variantId, supplierSku: key.supplierSku, supplierQuantity: 1, currency: "USD", noPayment: true }
+    // The dedicated opportunity bridge is the durable queue consumed by the
+    // Luna Shipping Capture extension. Reuse only a fresh receipt whose exact
+    // supplier identity and current Product Truth binding still match.
+    const opportunities = await ctx.supabase.from("ebay_luna_opportunity_queue")
+      .select("id").eq("supplier_product_id", key.productId)
+      .eq("supplier_variant_id", key.variantId)
+      .eq("supplier_sku", key.supplierSku).limit(2)
+    if (!opportunities.error && opportunities.data?.length === 1) {
+      const captured = await readLunaShippingQty1OpportunityReceiptV1({
+        supabase: ctx.supabase, accountKey: ctx.accountKey,
+        opportunityId: String(opportunities.data[0].id),
+        now: ctx.now.getTime(),
+      })
+      if (captured && captured.productId === key.productId &&
+          captured.variantId === key.variantId &&
+          captured.supplierSku === key.supplierSku &&
+          captured.sourceFingerprint === source.source_fingerprint &&
+          captured.fieldTruthEvidenceDigest ===
+            truth.gate.receiptEvidenceDigest) {
+        return { status: "PROVEN", receiptId: captured.receiptId,
+          amountUsd: captured.shippingAmountUsd, currency: "USD",
+          productId: key.productId, variantId: key.variantId,
+          supplierSku: key.supplierSku, supplierQuantity: 1,
+          sourceFingerprint: captured.sourceFingerprint,
+          fieldTruthEvidenceDigest: captured.fieldTruthEvidenceDigest,
+          observedAt: captured.observedAt, freshUntil: captured.freshUntil,
+          source: "LUNA_SHIPPING_CAPTURE_EXTENSION_QTY1",
+          evidenceDigest: captured.evidenceDigest,
+          destinationProfileDigest: captured.destinationProfileDigest,
+          noPurchase: true, noPayment: true }
+      }
+    }
   }
   return unavailable(key.supplierQuantity === 1
     ? "LUNA_SHIPPING_CAPTURE_REQUIRED"
@@ -613,6 +648,7 @@ export async function runGoldenStockingBatchV1(
   const qualifiedDrafts: GoldenRecord[] = []
   const deferredCandidates: GoldenRecord[] = []
   const evidenceCandidates: GoldenCandidateKey[] = []
+  const shippingCandidates: GoldenCandidateKey[] = []
   const deadline = Date.now() + 210_000
   let productEvaluations = 0, packScenarioCount = 0
   for (const candidate of rankedSources) {
@@ -640,6 +676,15 @@ export async function runGoldenStockingBatchV1(
         draftReceiptId: draft.durableReceipt.receiptId,
         published: false })
       continue
+    }
+
+    if (Array.isArray(unit.reasonCodes) && unit.reasonCodes.includes(
+        "REAL_OFFER_SHIPPING_UNPROVEN") &&
+        candidate.source.preflight_status === "PREFLIGHT_PASS" &&
+        candidate.source.availability === true &&
+        verifiedGoldenFields(candidate.source, ctx.now).gate
+          .traceProductTruthSufficient) {
+      shippingCandidates.push(candidate.key)
     }
 
     if (evidenceCandidates.length <
@@ -684,6 +729,7 @@ export async function runGoldenStockingBatchV1(
   }
 
   const evidenceAcquisition: GoldenRecord[] = []
+  const shippingAcquisition: GoldenRecord[] = []
   if (qualifiedDrafts.length < targetDrafts) {
     for (let offset = 0; offset < evidenceCandidates.length; offset += 10) {
       try {
@@ -701,12 +747,54 @@ export async function runGoldenStockingBatchV1(
           candidateCount: Math.min(10, evidenceCandidates.length - offset) })
       }
     }
+    for (const key of shippingCandidates) {
+      try {
+        const opportunities = await ctx.supabase.from(
+          "ebay_luna_opportunity_queue").select("id")
+          .eq("supplier_product_id", key.productId)
+          .eq("supplier_variant_id", key.variantId)
+          .eq("supplier_sku", key.supplierSku).limit(2)
+        if (opportunities.error || opportunities.data?.length !== 1) {
+          shippingAcquisition.push({ candidate: key,
+            status: "SHIPPING_CAPTURE_NOT_QUEUED",
+            reasonCode: opportunities.error
+              ? "LUNA_SHIPPING_OPPORTUNITY_READ_FAILED"
+              : opportunities.data?.length
+                ? "LUNA_SHIPPING_OPPORTUNITY_AMBIGUOUS"
+                : "LUNA_SHIPPING_OPPORTUNITY_REQUIRED",
+            quantity: 1 })
+          continue
+        }
+        const opportunityId = String(opportunities.data[0].id)
+        const job = goldenRecord(await ensureLunaShippingQty1OpportunityJobV1({
+          supabase: ctx.supabase, accountKey: ctx.accountKey,
+          ownerUserId: ctx.principal.ownerUserId, opportunityId,
+          now: ctx.now.getTime(),
+        }))
+        shippingAcquisition.push({ candidate: key, opportunityId,
+          jobId: job.job_id, status: job.status,
+          quantity: 1,
+          captureAuthority: "LUNA_SHIPPING_CAPTURE_EXTENSION",
+          destinationProfile: job.destination_profile })
+      } catch (error) {
+        shippingAcquisition.push({ candidate: key,
+          status: "SHIPPING_CAPTURE_NOT_QUEUED", quantity: 1,
+          reasonCode: error instanceof Error &&
+            /^[A-Z][A-Z0-9_]+$/.test(error.message)
+            ? error.message : "LUNA_SHIPPING_CAPTURE_QUEUE_FAILED_CLOSED" })
+      }
+    }
   }
   const queuedEvidenceCount = evidenceAcquisition.filter(row =>
     row.status === "PRE_RESEARCH_QUEUED").length
+  const queuedShippingCount = shippingAcquisition.filter(row =>
+    ["PENDING", "CLAIMED"].includes(String(row.status))).length
+  const readyShippingCount = shippingAcquisition.filter(row =>
+    row.status === "COMPLETED").length
   const status = qualifiedDrafts.length >= targetDrafts
     ? "QUALIFIED_TARGET_REACHED"
-    : queuedEvidenceCount > 0
+    : queuedEvidenceCount > 0 || queuedShippingCount > 0 ||
+        readyShippingCount > 0
       ? "EVIDENCE_ACQUISITION_QUEUED"
       : "TARGET_NOT_REACHED"
   return receipt(ctx, "OPPORTUNITIES", {
@@ -720,8 +808,15 @@ export async function runGoldenStockingBatchV1(
     packScenarioCount, qualifiedDraftCount: qualifiedDrafts.length,
     qualifiedDrafts, candidates: evaluations, deferredCandidates,
     evidenceAcquisition, queuedEvidenceCount,
+    shippingAcquisition, queuedShippingCount, readyShippingCount,
     nextAction: status === "EVIDENCE_ACQUISITION_QUEUED"
-      ? "PRODUCT_RESEARCH_WORKER_COMPLETES_QUEUED_TASKS_THEN_RERUN"
+      ? queuedShippingCount > 0 && queuedEvidenceCount > 0
+        ? "PRODUCT_RESEARCH_AND_LUNA_SHIPPING_CAPTURE_COMPLETE_THEN_RERUN"
+        : queuedShippingCount > 0
+          ? "LUNA_SHIPPING_CAPTURE_COMPLETES_EXACT_QUOTES_THEN_RERUN"
+          : readyShippingCount > 0
+            ? "RERUN_TO_CONSUME_FRESH_LUNA_SHIPPING_CAPTURE_RECEIPTS"
+            : "PRODUCT_RESEARCH_WORKER_COMPLETES_QUEUED_TASKS_THEN_RERUN"
       : status === "QUALIFIED_TARGET_REACHED"
         ? "OWNER_REVIEWS_INTERNAL_DRAFTS_BEFORE_ANY_PUBLICATION"
         : "OWNER_OR_SYSTEM_MUST_SUPPLY_MISSING_AUTHORITATIVE_EVIDENCE",
