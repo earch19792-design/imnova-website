@@ -35,6 +35,7 @@ export type GoldenEvaluationInput = {
   candidate: GoldenCandidateKey; accountKey: string; now: Date; targetNetProfit: number
   source: GoldenRecord | null; market: GoldenMarketEvidence[]; marketComplete: boolean
   duplicate: GoldenAuthority; shipping: GoldenAuthority; fee: GoldenAuthority
+  fulfillment?: GoldenAuthority
   compliance: GoldenAuthority; policy: GoldenAuthority
 }
 export function verifiedGoldenFields(source: GoldenRecord | null, now: Date) {
@@ -112,6 +113,16 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   const shippingValid = input.shipping.status === "PROVEN" && input.shipping.supplierQuantity === key.supplierQuantity && input.shipping.productId === key.productId && input.shipping.variantId === key.variantId && input.shipping.supplierSku === key.supplierSku && input.shipping.sourceFingerprint === source?.source_fingerprint && input.shipping.currency === "USD" && goldenNumber(input.shipping.amountUsd) !== null && goldenNumber(input.shipping.amountUsd)! >= 0 && input.shipping.noPurchase === true && input.shipping.noPayment === true && Boolean(input.shipping.receiptId) && goldenFresh(input.shipping, now, 6 * 3600000)
   const shippingCost = shippingValid ? goldenNumber(input.shipping.amountUsd) : null
   if (shippingCost === null || shippingCost < 0) reasons.push("REAL_OFFER_SHIPPING_UNPROVEN")
+  // A supplier quote to the merchant location does not prove delivery to the buyer.
+  // Never silently treat forwarding as free or use a policy reserve as freight authority.
+  const fulfillment = input.fulfillment ?? { status: "UNPROVEN", reasonCode: "BUYER_FULFILLMENT_SHIPPING_UNPROVEN" }
+  const fulfillmentAmount = goldenNumber(fulfillment.amountUsd)
+  const fulfillmentValid = shippingValid && fulfillment.status === "PROVEN" && fulfillment.accountKey === input.accountKey && fulfillment.productId === key.productId && fulfillment.variantId === key.variantId && fulfillment.supplierSku === key.supplierSku && fulfillment.supplierQuantity === key.supplierQuantity && fulfillment.sourceFingerprint === source?.source_fingerprint && fulfillment.supplierShippingReceiptId === input.shipping.receiptId && /^sha256:[0-9a-f]{64}$/.test(String(input.shipping.destinationProfileDigest ?? "")) && fulfillment.destinationProfileDigest === input.shipping.destinationProfileDigest && fulfillment.currency === "USD" && fulfillment.buyerShipping === 0 && fulfillment.buyerCoverageStatus === "PROVEN" && /^sha256:[0-9a-f]{64}$/.test(String(fulfillment.buyerCoverageDigest ?? "")) && /^sha256:[0-9a-f]{64}$/.test(String(fulfillment.sourceDigest ?? "")) && Boolean(fulfillment.receiptId) && fulfillmentAmount !== null && fulfillmentAmount >= 0 && goldenFresh(fulfillment, now, 6 * 3600000) && (
+    fulfillment.source === "REAL_BUYER_FULFILLMENT_SERVICE_QUOTE_V1" && fulfillment.coverage === "ALL_OFFERED_BUYER_DESTINATIONS" ||
+    fulfillment.source === "OWNER_CERTIFIED_DIRECT_SUPPLIER_FULFILLMENT_V1" && fulfillment.coverage === "SUPPLIER_QUOTE_COVERS_ALL_OFFERED_BUYER_DESTINATIONS" && fulfillmentAmount === 0
+  )
+  const fulfillmentCost = fulfillmentValid ? fulfillmentAmount : null
+  if (fulfillmentCost === null) reasons.push("BUYER_FULFILLMENT_SHIPPING_UNPROVEN")
   const feeValid = input.fee.status === "PROVEN" && input.fee.accountKey === input.accountKey && input.fee.productId === key.productId && input.fee.variantId === key.variantId && input.fee.supplierSku === key.supplierSku && input.fee.supplierQuantity === key.supplierQuantity && input.fee.price === marketPrice && input.fee.buyerShipping === 0 && input.fee.currency === "USD" && Boolean(input.fee.receiptId) && goldenFresh(input.fee, now, 24 * 3600000)
   const fees = feeValid ? goldenNumber(input.fee.amountUsd) : null
   if (fees === null || fees < 0) reasons.push("EBAY_FEE_AUTHORITY_UNPROVEN")
@@ -124,8 +135,8 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   const other = policyValid && input.policy.otherState === "NOT_APPLICABLE" ? 0 : goldenNumber(input.policy.otherAmountUsd)
   if (other === null || other < 0) reasons.push("OTHER_REQUIRED_COSTS_UNPROVEN")
   const returns = marketPrice !== null && reserveRate !== null && reserveRate >= 0 && reserveRate <= 0.5 ? cents(marketPrice * reserveRate) : null
-  const ready = exactBinding && truth.gate.traceProductTruthSufficient && !reasons.some(r => /SHIPPING|COST|FEE|RESERVE|COSTS/.test(r)) && marketPrice !== null && cost !== null && shippingCost !== null && fees !== null && returns !== null && promoted !== null && other !== null
-  const net = ready ? Math.floor((marketPrice! - cost! - shippingCost! - fees! - returns! - promoted! - other! + 1e-9) * 100) / 100 : null
+  const ready = exactBinding && truth.gate.traceProductTruthSufficient && !reasons.some(r => /SHIPPING|COST|FEE|RESERVE|COSTS/.test(r)) && marketPrice !== null && cost !== null && shippingCost !== null && fulfillmentCost !== null && fees !== null && returns !== null && promoted !== null && other !== null
+  const net = ready ? Math.floor((marketPrice! - cost! - shippingCost! - fulfillmentCost! - fees! - returns! - promoted! - other! + 1e-9) * 100) / 100 : null
   const floor = net !== null && reserveRate !== null ? Math.ceil((marketPrice! + (input.targetNetProfit - net) / (1 - reserveRate)) * 100) / 100 : null
   // Fixed-price fee quote cannot prove an interval-wide floor; keep the threshold explicit instead.
   if (net !== null && net < input.targetNetProfit) rejects.push("SOLD_MARKET_DOES_NOT_SUPPORT_TARGET_NET")
@@ -140,7 +151,8 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
     market: { status: input.marketComplete ? "AVAILABLE" : "UNPROVEN", exactSold: exact, closeSold: close, familyEvidence: family, rejectedComparables: classified.filter(e => e.classification === "REJECTED_COMPARABLE"), activeCompetition: classified.filter(e => e.listingState === "ACTIVE"), activeCompetitionAuthority: { status: "UNPROVEN", scope: "MANUAL_OBSERVATIONS_ONLY_NO_COMPLETE_COMPETITION_SCAN", exhaustive: false }, soldQuantity: priced.length ? soldUnits : null, realizedBuyerLandedPrice: marketPrice, realizedPriceBasis: "LOWER_QUANTITY_WEIGHTED_MEDIAN_EXACT_CLOSE_SOLD", activePriceUsedForEconomics: false, familyUsedForEconomics: false },
     duplicateGate: input.duplicate, supplier: { availability: truth.values.SUPPLIER_AVAILABILITY ?? null, unitCostUsd: unitCost, offerCostUsd: cost, stock: goldenNumber(truth.values.SUPPLIER_STOCK), stockStatus: truth.values.SUPPLIER_STOCK == null ? "UNPROVEN" : "PROVEN" },
     shipping: shippingValid ? input.shipping : { ...input.shipping, status: "UNPROVEN", amountUsd: null, supplierQuantity: key.supplierQuantity, reasonCode: input.shipping.reasonCode ?? "REAL_OFFER_SHIPPING_UNPROVEN", validationReasonCode: "REAL_OFFER_SHIPPING_UNPROVEN" },
-    economics: { status: ready ? "PROVEN" : "UNPROVEN", targetNetProfit: input.targetNetProfit, recommendedPrice: marketPrice, buyerShipping: 0, pricingStrategy: "FREE_BUYER_SHIPPING_WITHIN_OBSERVED_LANDED_PRICE", feeAuthority: input.fee, ebayFees: fees, returnsReserve: returns, promotedFee: promoted, promotedState: input.policy.promotedState ?? "UNKNOWN", otherExplicitCosts: other, expectedNetProfit: net, profitFloor: { netProfitUsd: input.targetNetProfit, requiredPrice: null, status: "INTERVAL_FEE_BOUND_UNPROVEN", diagnosticAtFixedFee: floor }, marginPercent: net !== null ? cents(net / marketPrice! * 100) : null, roiPercent: net !== null && cost! + shippingCost! > 0 ? cents(net / (cost! + shippingCost!) * 100) : null },
+    fulfillment: fulfillmentValid ? fulfillment : { ...fulfillment, status: "UNPROVEN", amountUsd: null, reasonCode: "BUYER_FULFILLMENT_SHIPPING_UNPROVEN" },
+    economics: { status: ready ? "PROVEN" : "UNPROVEN", targetNetProfit: input.targetNetProfit, recommendedPrice: marketPrice, buyerShipping: 0, pricingStrategy: "FREE_BUYER_SHIPPING_WITHIN_OBSERVED_LANDED_PRICE", feeAuthority: input.fee, ebayFees: fees, returnsReserve: returns, promotedFee: promoted, promotedState: input.policy.promotedState ?? "UNKNOWN", otherExplicitCosts: other, buyerFulfillmentShipping: fulfillmentCost, expectedNetProfit: net, profitFloor: { netProfitUsd: input.targetNetProfit, requiredPrice: null, status: "INTERVAL_FEE_BOUND_UNPROVEN", diagnosticAtFixedFee: floor }, marginPercent: net !== null ? cents(net / marketPrice! * 100) : null, roiPercent: net !== null && cost! + shippingCost! + fulfillmentCost! > 0 ? cents(net / (cost! + shippingCost! + fulfillmentCost!) * 100) : null },
     productTruth: { status: truth.gate.traceProductTruthSufficient ? "CORE_PROVEN" : "UNPROVEN", receiptId: truth.gate.receiptEvidenceDigest, verifiedSpecifics: truth.proven, missingFields: truth.fields.filter(f => f.VALUE == null).map(f => f.FIELD), supplierClaimsExcluded: true },
     compliance: input.compliance, decision, reasonCodes: [...rejects, ...holds, ...reasons], safety: { marketplaceWrites: 0, publish: false, end: false, supplierPurchases: 0, draftIsLive: false } }
   return { ...result, evidenceDigest: goldenDigest(result) }
@@ -159,6 +171,6 @@ export function prepareGoldenDraftV1(evaluation: ReturnType<typeof evaluateGolde
     description: `Offer contains ${evaluation.candidate.supplierQuantity} supplier unit(s); total verified count: ${evaluation.offer.includedCount}.\n` + evaluation.productTruth.verifiedSpecifics.filter(f => ["TITLE", "MATERIAL", "COLOR", "PACKAGE_CONTENTS", "QUANTITY_OR_SET_COUNT", "SIZE_SET", "MODEL"].includes(String(f.FIELD))).map(f => `Supplier unit ${f.FIELD}: ${typeof f.VALUE === "string" ? f.VALUE : JSON.stringify(f.VALUE)}`).join("\n"),
     recommendedPrice: evaluation.economics.recommendedPrice, buyerShipping: 0, promotedListings: "OFF", economics: evaluation.economics,
     imagePlan: { source: "VERIFIED_SUPPLIER_IMAGES_ONLY", imageFieldReceipts: evaluation.productTruth.verifiedSpecifics.filter(f => f.FIELD === "IMAGES"), needsOwnerRightsAndImageReview: true, unsupportedClaimsAllowed: false },
-    evidenceReceipts: [evaluation.evidenceDigest, evaluation.productTruth.receiptId, evaluation.shipping.receiptId, evaluation.compliance.receiptId, evaluation.economics.feeAuthority.receiptId].filter(Boolean),
+    evidenceReceipts: [evaluation.evidenceDigest, evaluation.productTruth.receiptId, evaluation.shipping.receiptId, evaluation.fulfillment.receiptId, evaluation.compliance.receiptId, evaluation.economics.feeAuthority.receiptId].filter(Boolean),
     publication: { mode: "OWNER_MANUAL", marketplaceWrites: 0, publishCapability: false, postPublicationTool: "seller_os_reconcile_and_enroll_listing_v1" } }
 }

@@ -191,7 +191,10 @@ async function candidateAuthorities(ctx: GoldenContext, key: GoldenCandidateKey,
   const compliant = category.status === "PROVEN" && truth.gate.traceProductTruthSufficient && taxonomy?.status === "AVAILABLE" && taxonomy.categoryId === categoryId && taxonomy.categoryResolution === "KNOWN_CATEGORY" && taxonomy.taxonomyMarketplaceId === "EBAY_US" && missingAspects.length === 0 && !conditionalUnknown && identifiers?.safe === true
   const complianceBody = { productId: key.productId, variantId: key.variantId, supplierSku: key.supplierSku, supplierQuantity: key.supplierQuantity, sourceFingerprint: source?.source_fingerprint, observedAt: ctx.now.toISOString(), freshUntil: new Date(+ctx.now + 6 * 3600000).toISOString(), category: category.status === "PROVEN" ? { id: categoryId, name: taxonomy?.categoryName ?? null, receipt: category.receipt } : null, source: "EXACT_PRODUCT_TRUTH_PLUS_OFFICIAL_TAXONOMY_AND_IDENTIFIER_PREFLIGHT", resolvedSpecifics, missingRequiredSpecifics: missingAspects, taxonomy, identifierPreflight: identifiers, blockers: blocks, publicationAuthorized: false }
   const compliance: GoldenAuthority = { ...complianceBody, status: compliant ? "PROVEN" : "UNPROVEN", receiptId: goldenDigest(complianceBody), reasonCode: compliant ? null : "EXACT_CATEGORY_REQUIRED_SPECIFICS_OR_IDENTIFIER_AUTHORITY_UNPROVEN" }
-  return { policy: normalizedPolicy, compliance, fee }
+  // Existing Luna quotes stop at the merchant location. No authoritative producer
+  // currently proves buyer delivery coverage or an additional real service cost.
+  const fulfillment = unavailable("BUYER_FULFILLMENT_SHIPPING_UNPROVEN")
+  return { policy: normalizedPolicy, compliance, fee, fulfillment }
 }
 export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCandidateKey, targetNetProfit = 4, shared?: { sweep: OfficialSweep; market: Awaited<ReturnType<typeof marketEvidence>>; source: GoldenRecord }) {
   const source = shared?.source ?? await candidateSource(ctx, key)
