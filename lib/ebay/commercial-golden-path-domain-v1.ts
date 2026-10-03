@@ -86,6 +86,7 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   const { candidate: key, source, now } = input
   const reasons: string[] = [], holds: string[] = [], rejects: string[] = []
   const truth = verifiedGoldenFields(source, now), identity = goldenComparableIdentity(source, key.supplierQuantity, now)
+  if (identity.packCount === null) reasons.push("OFFER_COUNT_UNPROVEN")
   const exactBinding = source?.product_id === key.productId && source?.variant_id === key.variantId && source?.sku === key.supplierSku
   if (!exactBinding || !truth.gate.traceProductTruthSufficient || source?.preflight_status !== "PREFLIGHT_PASS") reasons.push("LUNA_IDENTITY_PRODUCT_TRUTH_UNPROVEN")
   if (truth.fields.some(f => f.CONTRADICTION === true)) holds.push("PRODUCT_TRUTH_CONTRADICTION")

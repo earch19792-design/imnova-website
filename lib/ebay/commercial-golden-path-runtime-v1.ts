@@ -12,6 +12,7 @@ import { readProductionStockGuardV1 } from "./ebay-production-stock-read-service
 import { projectGoldenMonitoringV1 } from "./commercial-golden-path-monitoring-v1"
 import { readGoldenTrafficWindowsV1 } from "./commercial-golden-path-traffic-v1"
 import { readGoldenPresaleAuthorityV1 } from "./commercial-golden-path-presale-authority-v1"
+import { goldenLiveCohortIdentityDigestV1, buildGoldenLiveComparisonReviewV1, applyGoldenLiveComparisonReviewsV1, type GoldenLiveComparisonInput } from "./commercial-golden-path-live-comparison-v1"
 import { readEbayFeeHandoffV1 } from "../seller-os/ebay-fee-runtime-v1"
 import { readEbayListingCategoryAuthorityV1 } from "./ebay-listing-category-authority-v1"
 import { getEbayTaxonomyListingIntelligence } from "./ebay-seller-keyword-demand-gateway"
@@ -103,8 +104,15 @@ async function duplicateGate(ctx: GoldenContext, key: GoldenCandidateKey, source
   if (!liveIds.size) return { status: "PASS", receiptId: goldenDigest(sweep), source: "OFFICIAL_CERTIFIED_COMPLETE_EMPTY_LIVE_COHORT", observedAt: sweep.observedAt, cohortCount: 0, paginationComplete: true, marketplaceWrites: 0 }
   if (matched.length) return { status: "DUPLICATE", receiptId: goldenDigest({ sweep: sweep.observedAt, matched }), source: "OFFICIAL_LIVE_SUPPLIER_SKU_COLLISION", observedAt: sweep.observedAt, cohortCount: liveIds.size, matchingItemIds: matched, marketplaceWrites: 0 }
   if (liveIds.size > 500) return unavailable("DUPLICATE_COHORT_IDENTITY_BOUND_EXCEEDED")
+  const cohortProof = { cohortIdentityDigest: goldenLiveCohortIdentityDigestV1(ctx.accountKey, key, source?.source_fingerprint, sweep.listings), comparisonTargets: sweep.listings.map(l => ({ itemId: l.itemId, sku: l.sku, title: l.title, variationKey: l.variationKey, sourceLocator: `https://www.ebay.com/itm/${l.itemId}` })), observedAt: sweep.observedAt, cohortCount: liveIds.size, paginationComplete: true, accountCertified: true, marketplaceWrites: 0 }
+  const reviewed = async (base: GoldenAuthority) => {
+    if (base.status === "DUPLICATE" || !Array.isArray(base.unresolvedItemIds) || !base.unresolvedItemIds.length) return base
+    const read = await ctx.supabase.from("seller_os_golden_path_receipts_v1").select("receipt_id,evidence_digest,payload").eq("account_key", ctx.accountKey).eq("owner_user_id", ctx.principal.ownerUserId).eq("kind", "MANUAL_INTAKE").contains("payload", { liveComparisonReview: { candidate: key, sourceFingerprint: source?.source_fingerprint, cohortIdentityDigest: cohortProof.cohortIdentityDigest } }).order("created_at", { ascending: false }).limit(10)
+    if (read.error) return { ...base, manualComparisonReadStatus: "UNPROVEN" }
+    return applyGoldenLiveComparisonReviewsV1({ base, candidate: key, sourceFingerprint: source?.source_fingerprint, ownerUserId: ctx.principal.ownerUserId, now: ctx.now, receipts: (read.data ?? []).map(goldenRecord) })
+  }
   const links = await ctx.supabase.from("seller_os_listing_product_link_authorities_v1").select("ebay_item_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,lifecycle_state,identity_preflight_status,source_fingerprint").eq("account_key", ctx.accountKey).eq("marketplace_id", "EBAY_US").eq("lifecycle_state", "ACTIVE").in("ebay_item_id", [...liveIds]).limit(501)
-  if (links.error || (links.data?.length ?? 0) > 500) return unavailable("DUPLICATE_LINKAGE_READ_UNPROVEN")
+  if (links.error || (links.data?.length ?? 0) > 500) return reviewed({ ...unavailable("DUPLICATE_LINKAGE_READ_UNPROVEN"), ...cohortProof, unresolvedItemIds: [...liveIds], relatedItemIds: [], source: "OFFICIAL_LIVE_COHORT_LEGACY_LINKAGE_UNPROVEN" })
   const unresolvedItemIds: string[] = [], relatedItemIds: string[] = []
   for (const live of sweep.listings) {
     const identity = (links.data ?? []).filter(l => l.ebay_item_id === live.itemId && l.ebay_sku === live.sku && l.identity_preflight_status === "PREFLIGHT_PASS" && l.luna_product_id && l.luna_variant_id && l.luna_sku && /^sha256:[0-9a-f]{64}$/.test(String(l.source_fingerprint)))
@@ -116,7 +124,7 @@ async function duplicateGate(ctx: GoldenContext, key: GoldenCandidateKey, source
   }
   // A dissimilar title cannot prove an unresolved listing is a different product.
   // This reader never initiates historical backfill; missing comparison authority remains explicit.
-  return { status: matched.length ? "DUPLICATE" : unresolvedItemIds.length || relatedItemIds.length ? "UNPROVEN" : "PASS", source: "OFFICIAL_LIVE_PLUS_EXACT_CANONICAL_PRODUCT_COMPARISON_AUTHORITY", receiptId: goldenDigest({ observedAt: sweep.observedAt, itemIds: [...liveIds], matched, unresolvedItemIds, relatedItemIds }), observedAt: sweep.observedAt, cohortCount: liveIds.size, paginationComplete: true, matchingItemIds: matched, unresolvedItemIds, relatedItemIds, reasonCode: unresolvedItemIds.length ? "CANDIDATE_COMPARISON_AGAINST_UNRESOLVED_LIVE_IDENTITIES_UNPROVEN" : relatedItemIds.length ? "RELATED_PRODUCT_VARIANT_LIVE_REVIEW_REQUIRED" : null, historicalBackfillStarted: false, titleSimilarityUsedToProveAbsence: false, marketplaceWrites: 0 }
+  return reviewed({ ...cohortProof, status: matched.length ? "DUPLICATE" : unresolvedItemIds.length || relatedItemIds.length ? "UNPROVEN" : "PASS", source: "OFFICIAL_LIVE_PLUS_EXACT_CANONICAL_PRODUCT_COMPARISON_AUTHORITY", receiptId: goldenDigest({ observedAt: sweep.observedAt, itemIds: [...liveIds], matched, unresolvedItemIds, relatedItemIds }), matchingItemIds: matched, unresolvedItemIds, relatedItemIds, reasonCode: unresolvedItemIds.length ? "CANDIDATE_COMPARISON_AGAINST_UNRESOLVED_LIVE_IDENTITIES_UNPROVEN" : relatedItemIds.length ? "RELATED_PRODUCT_VARIANT_LIVE_REVIEW_REQUIRED" : null, historicalBackfillStarted: false, titleSimilarityUsedToProveAbsence: false, marketplaceWrites: 0 })
 
 }
 async function shippingAuthority(ctx: GoldenContext, key: GoldenCandidateKey, source: GoldenRecord | null): Promise<GoldenAuthority> {
@@ -228,9 +236,11 @@ export async function previewGoldenCategoryV1(ctx: GoldenContext, category: stri
   }
   return receipt(ctx, "OPPORTUNITIES", { contractVersion: GOLDEN_PATH_V1, category, targetNetProfit, observedAt: ctx.now.toISOString(), status: evaluated.some(c => c.market.soldQuantity !== null && c.market.soldQuantity > 0) ? "AVAILABLE_WITH_GATES" : "UNPROVEN", resultCount: sources.length ? evaluated.length : null, candidates: evaluated, deferredCandidates: candidates.slice(evaluated.length).map(c => ({ candidate: c.key, reasonCode: "CATEGORY_REQUEST_TIME_BOUND_REACHED" })), bounded: { maximumSourceRows: MAX_SOURCE_ROWS, maximumMarketRows: MAX_MARKET_ROWS, maximumCandidates: MAX_CANDIDATES, candidateStartDeadlineMs: 120000, sourceTruncated: (read.data?.length ?? 0) > MAX_SOURCE_ROWS, marketTruncated: market.truncated, exhaustiveSearch: false }, packPolicy: "ONLY_COMMERCIALLY_EVIDENCED_OFFER_COUNTS", noSupportedPackReason: candidates.every(c => c.key.supplierQuantity === 1) ? "NO_EXACT_CLOSE_PACK_SOLD_IN_BOUNDED_EVIDENCE" : null, safety: { marketplaceWrites: 0, supplierPurchases: 0, draftIsLive: false } })
 }
-export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandidateKey, rows: Omit<GoldenMarketEvidence, "evidenceId" | "source" | "reviewed">[]) {
+export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandidateKey, rows: Omit<GoldenMarketEvidence, "evidenceId" | "source" | "reviewed">[], liveComparison?: GoldenLiveComparisonInput) {
   const source = await candidateSource(ctx, key)
   if (!source) throw Error("MANUAL_EVIDENCE_CANONICAL_CANDIDATE_REQUIRED")
+  if (!rows.length && !liveComparison || rows.length > 50) throw Error("MANUAL_INTAKE_OBSERVATIONS_OR_LIVE_REVIEW_REQUIRED")
+  const liveComparisonReview = liveComparison ? buildGoldenLiveComparisonReviewV1({ candidate: key, sourceFingerprint: source.source_fingerprint, ownerUserId: ctx.principal.ownerUserId, invocationSource: ctx.invocationSource, now: ctx.now, evaluation: await loadReceipt(ctx, liveComparison.evaluationReceiptId, "EVALUATION"), review: liveComparison }) : null
   const target = goldenComparableIdentity(source, key.supplierQuantity, ctx.now), receipts = [], pending = []
   // Validate every observation before the single atomic append. Invalid later
   // rows cannot leave a partially imported manual evidence batch.
@@ -246,6 +256,7 @@ export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandid
     pending.push({ evidence_id: dedup, account_key: ctx.accountKey, owner_user_id: ctx.principal.ownerUserId, product_id: key.productId, variant_id: key.variantId, supplier_sku: key.supplierSku, supplier_quantity: key.supplierQuantity, listing_state: row.listingState, classification: classification.classification, payload })
   }
   const unique = [...new Map(pending.map(row => [row.evidence_id, row])).values()]
+  if (!unique.length) return receipt(ctx, "MANUAL_INTAKE", { contractVersion: GOLDEN_PATH_V1, candidate: key, importedEvidence: [], liveComparisonReview, supplierTruthModified: false, portfolioLinkageModified: false, marketScope: "OWNER_CANDIDATE_LIVE_COMPARISON_NOT_SOLD_OR_SUPPLIER_TRUTH", safety: { marketplaceWrites: 0, supplierWrites: 0 } })
   const written = await ctx.supabase.from("seller_os_golden_manual_market_v1").upsert(unique, { onConflict: "evidence_id", ignoreDuplicates: true })
   if (written.error) throw Error("MANUAL_MARKET_DURABLE_IMPORT_FAILED")
   const readback = await ctx.supabase.from("seller_os_golden_manual_market_v1").select("evidence_id,payload").eq("account_key", ctx.accountKey).in("evidence_id", unique.map(row => row.evidence_id)).limit(51)
@@ -257,7 +268,7 @@ export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandid
     if (!stored || goldenDigest(stored.payload) !== goldenDigest(expected.payload)) throw Error("MANUAL_MARKET_EXISTING_ATTESTATION_CONFLICT")
     receipts.push(stored)
   }
-  return receipt(ctx, "MANUAL_INTAKE", { contractVersion: GOLDEN_PATH_V1, candidate: key, importedEvidence: receipts, deduplication: "CONTENT_IDEMPOTENT_SOURCE_SALE_OFFER", supplierTruthModified: false, marketScope: "MANUAL_ATTESTATION_NOT_AUTOMATIC_AUTHORITY", safety: { marketplaceWrites: 0, supplierWrites: 0 } })
+  return receipt(ctx, "MANUAL_INTAKE", { contractVersion: GOLDEN_PATH_V1, candidate: key, importedEvidence: receipts, liveComparisonReview, deduplication: "CONTENT_IDEMPOTENT_SOURCE_SALE_OFFER", supplierTruthModified: false, marketScope: "MANUAL_ATTESTATION_NOT_AUTOMATIC_AUTHORITY", safety: { marketplaceWrites: 0, supplierWrites: 0 } })
 }
 export async function prepareGoldenRuntimeV1(ctx: GoldenContext, evaluationReceiptId: string) {
   const previous = await loadReceipt(ctx, evaluationReceiptId, "EVALUATION")

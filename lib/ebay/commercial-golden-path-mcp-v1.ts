@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { SellerOsControlPrincipalV1 } from "./teo-pre-research-control-oauth-v1"
 import { createGoldenContextV1, evaluateGoldenRuntimeV1, previewGoldenCategoryV1, importGoldenManualV1, prepareGoldenRuntimeV1, reconcileGoldenRuntimeV1, readGoldenMonitoringV1 } from "./commercial-golden-path-runtime-v1"
+import type { GoldenLiveComparisonInput } from "./commercial-golden-path-live-comparison-v1"
 
 export const GOLDEN_PATH_MCP_TOOL_NAMES_V1 = [
   "seller_os_preview_category_opportunities_v1", "seller_os_evaluate_candidate_v1",
@@ -12,11 +13,12 @@ export const goldenCandidateSchemaV1 = z.object({ productId: z.string().regex(/^
 const identity = z.object({ productName: z.string().min(1).max(500), manufacturerBrand: z.string().max(160).nullable().optional(), gtin: z.string().max(30).nullable().optional(), mpn: z.string().max(160).nullable().optional(), model: z.string().max(160).nullable().optional(), packCount: z.number().int().min(1).max(1000).nullable(), unitCount: z.number().int().min(1).max(1000).nullable().optional(), size: z.string().max(160).nullable().optional(), color: z.string().max(160).nullable().optional(), scent: z.string().max(160).nullable().optional(), variant: z.string().max(160).nullable().optional(), condition: z.string().max(80).nullable().optional() }).strict()
 export const goldenManualRowSchemaV1 = z.object({ sourceLocator: z.string().min(8).max(1000), sourceDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/), listingState: z.enum(["SOLD", "ACTIVE"]), identity, requestedClassification: z.enum(["EXACT", "CLOSE", "FAMILY", "REJECTED_COMPARABLE"]), reviewReason: z.string().min(8).max(1000), soldQuantity: z.number().int().min(1).max(1000000).nullable(), realizedSoldPrice: z.number().positive().max(1000000).nullable(), activeListingPrice: z.number().positive().max(1000000).nullable().optional(), buyerShipping: z.number().nonnegative().max(10000).nullable(), currency: z.literal("USD"), lastSoldDate: z.iso.datetime().nullable(), capturedAt: z.iso.datetime(), realizedPriceStatus: z.enum(["PROVEN", "UNPROVEN", "UNAVAILABLE"]) }).strict()
 const profit = z.number().min(4).max(10000).default(4)
+const liveComparisonReview = z.object({ evaluationReceiptId: z.string().uuid(), comparisons: z.array(z.object({ itemId: z.string().regex(/^\d{9,20}$/), decision: z.literal("DIFFERENT_PRODUCT"), reason: z.string().min(8).max(1000), sourceLocator: z.string().min(8).max(1000), sourceDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/) }).strict()).min(1).max(500) }).strict()
 export function registerGoldenPathControlToolsV1(server: McpServer, principal: SellerOsControlPrincipalV1, oauthResource: string) {
   const schemas = [
     z.object({ category: z.string().min(1).max(100).default("Personal Care"), limit: z.number().int().min(1).max(20).default(5), targetNetProfit: profit }).strict(),
     z.object({ candidate: goldenCandidateSchemaV1, targetNetProfit: profit }).strict(),
-    z.object({ candidate: goldenCandidateSchemaV1, rows: z.array(goldenManualRowSchemaV1).min(1).max(50), operatorAttested: z.literal(true) }).strict(),
+    z.object({ candidate: goldenCandidateSchemaV1, rows: z.array(goldenManualRowSchemaV1).max(50).default([]), liveComparisonReview: liveComparisonReview.optional(), operatorAttested: z.literal(true) }).strict().refine(a => a.rows.length > 0 || a.liveComparisonReview !== undefined, "Market observations or a candidate LIVE review are required"),
     z.object({ evaluationReceiptId: z.string().uuid() }).strict(),
     z.object({ packageReceiptId: z.string().uuid(), itemId: z.string().regex(/^\d{9,20}$/).optional(), dryRun: z.boolean().default(true) }).strict(),
     z.object({ itemId: z.string().regex(/^\d{9,20}$/) }).strict(),
@@ -24,7 +26,7 @@ export function registerGoldenPathControlToolsV1(server: McpServer, principal: S
   const descriptions = [
     "Commercial Golden Path: demand-first bounded category opportunities, classified EXACT/CLOSE SOLD, separate FAMILY, canonical Luna, official LIVE Duplicate Gate, real shipping, economics and GO/HOLD/REJECT/UNPROVEN. Stores an internal audit receipt. A fresh supplier shipping quote may temporarily change its cart, with verified restoration and no purchase/payment. No marketplace writes.",
     "Deep dive one exact Luna product/variant/supplier SKU/offer quantity. Reuses durable authorities and fails closed on missing evidence. Stores an internal audit receipt. A fresh supplier shipping quote may temporarily change its cart, with verified restoration and no purchase/payment. No marketplace writes.",
-    "Import operator-attested manual Terapeak SOLD or ACTIVE observations with realized price, buyer shipping, sold quantity, last sold date, match classification and source provenance. Deduplicates durably. Never changes supplier Product Truth.",
+    "Import operator-attested manual Terapeak SOLD or ACTIVE observations with realized price, buyer shipping, sold quantity, last sold date, match classification and source provenance. Optionally import an OWNER DIFFERENT_PRODUCT review for unresolved LIVE items from one authenticated evaluation receipt. It is candidate/cohort scoped and never overrides a proven duplicate, repairs historical linkage, changes supplier Product Truth or creates SOLD evidence. Deduplicates durably.",
     "Reevaluate a candidate and prepare a draft-only listing package only when the current decision is GO. Stores the internal package and receipts; OWNER publishes manually. No eBay offer, publish or inventory write.",
     "After OWNER manual publication: authoritative SKU to Item ID discovery and GetItem LIVE readback. dryRun defaults true. With dryRun false, atomically link Registry, StockGuard monitoring and analytics internally. A draft or simulation is never enrollment. No marketplace write.",
     "Read managed listing monitoring for exact 24H/7D/30D windows. Unknown metrics stay null. Enrollment never proves data availability. No automatic END or marketplace writes.",
@@ -39,7 +41,7 @@ export function registerGoldenPathControlToolsV1(server: McpServer, principal: S
         let result: unknown
         if (i === 0) { const a = schemas[0].parse(args) as { category: string; limit: number; targetNetProfit: number }; result = await previewGoldenCategoryV1(ctx, a.category, a.limit, a.targetNetProfit) }
         else if (i === 1) { const a = schemas[1].parse(args) as { candidate: z.infer<typeof goldenCandidateSchemaV1>; targetNetProfit: number }; result = await evaluateGoldenRuntimeV1(ctx, a.candidate, a.targetNetProfit) }
-        else if (i === 2) { const a = schemas[2].parse(args) as { candidate: z.infer<typeof goldenCandidateSchemaV1>; rows: z.infer<typeof goldenManualRowSchemaV1>[] }; result = await importGoldenManualV1(ctx, a.candidate, a.rows) }
+        else if (i === 2) { const a = schemas[2].parse(args) as { candidate: z.infer<typeof goldenCandidateSchemaV1>; rows: z.infer<typeof goldenManualRowSchemaV1>[]; liveComparisonReview?: GoldenLiveComparisonInput }; result = await importGoldenManualV1(ctx, a.candidate, a.rows, a.liveComparisonReview) }
         else if (i === 3) { const a = schemas[3].parse(args) as { evaluationReceiptId: string }; result = await prepareGoldenRuntimeV1(ctx, a.evaluationReceiptId) }
         else if (i === 4) { const a = schemas[4].parse(args) as { packageReceiptId: string; itemId?: string; dryRun: boolean }; result = await reconcileGoldenRuntimeV1(ctx, a.packageReceiptId, a.itemId, a.dryRun) }
         else { const a = schemas[5].parse(args) as { itemId: string }; result = await readGoldenMonitoringV1(ctx, a.itemId) }
