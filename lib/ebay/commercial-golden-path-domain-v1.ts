@@ -6,6 +6,8 @@ import { classifyWinnerComparable, normalizeProductIdentity } from "./ebay-winne
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2"
 import { validGoldenOwnerFeePolicyV1 } from "./commercial-golden-path-owner-fee-policy-v1"
 import { goldenOwnerObservedMarkingsV1 } from "./commercial-golden-path-owner-product-truth-v1"
+import { goldenVisualComparisonForMarketEvidenceV1,
+  type GoldenVisualOutcomeV1 } from "./commercial-golden-path-visual-comparison-v1"
 
 export const GOLDEN_PATH_V1 = "COMMERCIAL_GOLDEN_PATH_V1"
 export type GoldenRecord = Record<string, unknown>
@@ -38,6 +40,7 @@ export type GoldenEvaluationInput = {
   candidate: GoldenCandidateKey; accountKey: string; ownerUserId?: string; now: Date; targetNetProfit: number
   source: GoldenRecord | null; market: GoldenMarketEvidence[]; marketComplete: boolean
   ownerProductTruthEvidence?: GoldenRecord[]
+  visualComparisonEvidence?: GoldenRecord[]
   duplicate: GoldenAuthority; shipping: GoldenAuthority; fee: GoldenAuthority
   fulfillment?: GoldenAuthority
   compliance: GoldenAuthority; policy: GoldenAuthority
@@ -99,7 +102,16 @@ function observedMarkingSupportsCloseV1(
 export function classifyGoldenComparable(
   target: ProductIdentityInput,
   evidence: GoldenMarketEvidence,
-  context?: Readonly<{ observedMarkings?: ReadonlyArray<string> }>,
+  context?: Readonly<{
+    observedMarkings?: ReadonlyArray<string>
+    visualComparison?: Readonly<{
+      outcome: GoldenVisualOutcomeV1
+      reasonCodes: ReadonlyArray<string>
+      evidenceIds: ReadonlyArray<string>
+      visualSimilaritySupport: boolean
+      exactAuthority: false
+    }> | null
+  }>,
 ) {
   const a = normalizeProductIdentity(target), b = normalizeProductIdentity(evidence.identity)
   const base = classifyWinnerComparable(target, evidence.identity)
@@ -114,6 +126,16 @@ export function classifyGoldenComparable(
   if (b.manufacturerBrand && !a.manufacturerBrand && !markingSupport) reasons.push("BRAND_TRANSFER_PROHIBITED")
   if (["INVALID_COMPARABLE", "DIFFERENT_VARIANT"].includes(base.classification)) reasons.push(...base.reasons)
   if (reasons.length) return { classification: "REJECTED_COMPARABLE" as const, reasonCodes: reasons, priceEligible: false }
+  const visual = context?.visualComparison ?? null
+  if (visual?.outcome === "CONTRADICTS"
+    && !visual.reasonCodes.includes("MARKETPLACE_MULTIPACK_TARGET_OFFER_COUNT_UNPROVEN")) {
+    return { classification: "REJECTED_COMPARABLE" as const,
+      reasonCodes: ["VISUAL_CONTRADICTION_REJECTS_COMPARABLE", ...visual.reasonCodes],
+      priceEligible: false }
+  }
+  if (visual?.outcome === "CONTRADICTS") return { classification: "FAMILY" as const,
+    reasonCodes: ["COMPARABLE_MULTIPACK_TARGET_OFFER_COUNT_UNPROVEN",
+      ...visual.reasonCodes], priceEligible: false }
   if (a.packCount !== null && b.packCount !== null && a.packCount !== b.packCount) {
     return { classification: "FAMILY" as const, reasonCodes: ["OFFER_COUNT_MISMATCH"], priceEligible: false }
   }
@@ -131,6 +153,16 @@ export function classifyGoldenComparable(
     "OWNER_OBSERVED_MARKING_SUPPORTS_IDENTITY_ONLY",
     ...(b.manufacturerBrand && !a.manufacturerBrand ? ["COMPARABLE_BRAND_NOT_TRANSFERRED"] : []),
     ...(evidence.requestedClassification === "EXACT" ? ["OBSERVED_MARKING_CANNOT_PROVE_EXACT"] : []),
+    ...(!offerCountExact ? ["OFFER_COUNT_UNPROVEN_PRICE_INELIGIBLE"] : []),
+  ], priceEligible: offerCountExact }
+  const visualClose = visual?.outcome === "SUPPORTS_CLOSE"
+    && visual.visualSimilaritySupport === true && visual.exactAuthority === false
+    && evidence.reviewed && Boolean(evidence.reviewReason)
+    && ["CLOSE", "EXACT"].includes(evidence.requestedClassification ?? "")
+  if (visualClose) return { classification: "CLOSE" as const, reasonCodes: [
+    "VISUAL_SIMILARITY_SUPPORT_CLOSE_ONLY",
+    ...(evidence.requestedClassification === "EXACT"
+      ? ["VISUAL_EVIDENCE_CANNOT_PROVE_EXACT"] : []),
     ...(!offerCountExact ? ["OFFER_COUNT_UNPROVEN_PRICE_INELIGIBLE"] : []),
   ], priceEligible: offerCountExact }
   if (a.packCount === null || b.packCount === null) return { classification: "FAMILY" as const, reasonCodes: ["OFFER_COUNT_NOT_EXACT"], priceEligible: false }
@@ -151,8 +183,20 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   const exactBinding = source?.product_id === key.productId && source?.variant_id === key.variantId && source?.sku === key.supplierSku
   if (!exactBinding || !truth.gate.traceProductTruthSufficient || source?.preflight_status !== "PREFLIGHT_PASS") reasons.push("LUNA_IDENTITY_PRODUCT_TRUTH_UNPROVEN")
   if (truth.fields.some(f => f.CONTRADICTION === true)) holds.push("PRODUCT_TRUTH_CONTRADICTION")
-  const classified = input.market.slice(0, 200).map(e => ({ ...e, ...classifyGoldenComparable(identity, e, { observedMarkings }), buyerLandedPrice: e.listingState === "SOLD" && e.realizedSoldPrice !== null && e.buyerShipping !== null ? cents(e.realizedSoldPrice + e.buyerShipping) : null,
-    fresh: e.listingState === "SOLD" && date(e.lastSoldDate) <= now.getTime() && now.getTime() - date(e.lastSoldDate) <= 90 * 86400000 && date(e.capturedAt) <= now.getTime() && now.getTime() - date(e.capturedAt) <= 90 * 86400000 }))
+  const classified = input.market.slice(0, 200).map(e => {
+    const visualComparison = goldenVisualComparisonForMarketEvidenceV1({
+      evidence: input.visualComparisonEvidence ?? [], candidate: key,
+      accountKey: input.accountKey, ownerUserId: input.ownerUserId ?? "",
+      sourceFingerprint: String(source?.source_fingerprint ?? ""),
+      canonicalUrl: String(source?.canonical_url ?? ""),
+      marketEvidence: { evidenceId: e.evidenceId, listingState: e.listingState,
+        sourceLocator: e.sourceLocator, sourceDigest: e.sourceDigest }, now,
+    })
+    return { ...e, ...classifyGoldenComparable(identity, e,
+      { observedMarkings, visualComparison }), visualComparison,
+      buyerLandedPrice: e.listingState === "SOLD" && e.realizedSoldPrice !== null && e.buyerShipping !== null ? cents(e.realizedSoldPrice + e.buyerShipping) : null,
+      fresh: e.listingState === "SOLD" && date(e.lastSoldDate) <= now.getTime() && now.getTime() - date(e.lastSoldDate) <= 90 * 86400000 && date(e.capturedAt) <= now.getTime() && now.getTime() - date(e.capturedAt) <= 90 * 86400000 }
+  })
   const sold = classified.filter(e => e.listingState === "SOLD")
   const exact = sold.filter(e => e.classification === "EXACT"), close = sold.filter(e => e.classification === "CLOSE"), family = sold.filter(e => e.classification === "FAMILY")
   const priced = [...exact, ...close].filter(e => e.priceEligible === true && e.fresh && date(e.lastSoldDate) <= date(e.capturedAt) && e.currency === "USD" && e.soldQuantity !== null && Number.isSafeInteger(e.soldQuantity) && e.soldQuantity > 0 && e.buyerShipping !== null && e.buyerShipping >= 0 && e.realizedPriceStatus === "PROVEN" && e.realizedSoldPrice !== null && e.realizedSoldPrice > 0 && e.buyerLandedPrice !== null && /^sha256:[0-9a-f]{64}$/.test(e.sourceDigest))
@@ -209,7 +253,7 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   const result = { contractVersion: GOLDEN_PATH_V1, evaluatedAt: now.toISOString(), candidate: key,
     sourceIdentity: { title: typeof truth.values.TITLE === "string" ? truth.values.TITLE : null, observedSourceTitle: source?.title ?? null, canonicalUrl: source?.canonical_url ?? null, sourceFingerprint: source?.source_fingerprint ?? null, snapshotId: source?.snapshot_id ?? null, observedAt: source?.observed_at ?? null },
     offer: { type: identity.packCount === null ? "UNPROVEN" : key.supplierQuantity === 1 && identity.packCount === 1 ? "single" : "pack", supplierQuantity: key.supplierQuantity, includedCount: identity.packCount, listingSku: key.supplierSku },
-    market: { status: input.marketComplete ? "AVAILABLE" : "UNPROVEN", exactSold: exact, closeSold: close, familyEvidence: family, rejectedComparables: classified.filter(e => e.classification === "REJECTED_COMPARABLE"), activeCompetition: classified.filter(e => e.listingState === "ACTIVE"), activeCompetitionAuthority: { status: "UNPROVEN", scope: "MANUAL_OBSERVATIONS_ONLY_NO_COMPLETE_COMPETITION_SCAN", exhaustive: false }, soldQuantity: priced.length ? soldUnits : null, realizedBuyerLandedPrice: marketPrice, realizedPriceBasis: "LOWER_QUANTITY_WEIGHTED_MEDIAN_EXACT_CLOSE_SOLD", activePriceUsedForEconomics: false, familyUsedForEconomics: false },
+    market: { status: input.marketComplete ? "AVAILABLE" : "UNPROVEN", exactSold: exact, closeSold: close, familyEvidence: family, rejectedComparables: classified.filter(e => e.classification === "REJECTED_COMPARABLE"), activeCompetition: classified.filter(e => e.listingState === "ACTIVE"), activeCompetitionAuthority: { status: "UNPROVEN", scope: "MANUAL_OBSERVATIONS_ONLY_NO_COMPLETE_COMPETITION_SCAN", exhaustive: false }, visualComparisonEvidence: input.visualComparisonEvidence ?? [], visualComparisonPolicy: "CLOSE_SUPPORT_OR_CONTRADICTION_NEVER_EXACT", soldQuantity: priced.length ? soldUnits : null, realizedBuyerLandedPrice: marketPrice, realizedPriceBasis: "LOWER_QUANTITY_WEIGHTED_MEDIAN_EXACT_CLOSE_SOLD", activePriceUsedForEconomics: false, familyUsedForEconomics: false },
     duplicateGate: input.duplicate, supplier: { availability: truth.values.SUPPLIER_AVAILABILITY ?? null, unitCostUsd: unitCost, offerCostUsd: cost, stock: goldenNumber(truth.values.SUPPLIER_STOCK), stockStatus: truth.values.SUPPLIER_STOCK == null ? "UNPROVEN" : "PROVEN" },
     shipping: shippingValid ? input.shipping : { ...input.shipping, status: "UNPROVEN", amountUsd: null, supplierQuantity: key.supplierQuantity, reasonCode: input.shipping.reasonCode ?? "REAL_OFFER_SHIPPING_UNPROVEN", validationReasonCode: "REAL_OFFER_SHIPPING_UNPROVEN" },
     fulfillment: fulfillmentValid ? fulfillment : { ...fulfillment, status: "UNPROVEN", amountUsd: null, reasonCode: "BUYER_FULFILLMENT_SHIPPING_UNPROVEN" },

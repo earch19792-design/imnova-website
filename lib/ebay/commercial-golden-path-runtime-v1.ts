@@ -16,6 +16,8 @@ import { goldenLiveCohortIdentityDigestV1, buildGoldenLiveComparisonReviewV1, ap
 import { buildGoldenOwnerFeePolicyV1, readGoldenOwnerFeePolicyFromReceiptV1, type GoldenOwnerFeePolicyInput } from "./commercial-golden-path-owner-fee-policy-v1"
 import { buildGoldenOwnerProductTruthEvidenceV1, isGoldenOwnerProductTruthEvidenceV1,
   type GoldenOwnerProductTruthObservationV1, type GoldenOwnerProductTruthSourceV1 } from "./commercial-golden-path-owner-product-truth-v1"
+import { buildGoldenVisualComparisonEvidenceV1, isGoldenVisualComparisonEvidenceV1,
+  type GoldenVisualRelationV1, type GoldenVisualSourceObservationV1 } from "./commercial-golden-path-visual-comparison-v1"
 import { readEbayFeeHandoffV1 } from "../seller-os/ebay-fee-runtime-v1"
 import { readEbayListingCategoryAuthorityV1 } from "./ebay-listing-category-authority-v1"
 import { getEbayTaxonomyListingIntelligence } from "./ebay-seller-keyword-demand-gateway"
@@ -139,6 +141,25 @@ async function ownerProductTruthEvidence(
     }))
   return { rows, complete: rows.length === (read.data?.length ?? 0) }
 }
+async function visualComparisonEvidence(
+  ctx: GoldenContext,
+  key: GoldenCandidateKey,
+  source: GoldenRecord | null,
+) {
+  if (!source) return { rows: [] as GoldenRecord[], complete: false }
+  const read = await ctx.supabase.from("seller_os_golden_visual_comparison_v1")
+    .select("payload").eq("account_key", ctx.accountKey)
+    .eq("owner_user_id", ctx.principal.ownerUserId)
+    .eq("product_id", key.productId).eq("variant_id", key.variantId)
+    .eq("supplier_sku", key.supplierSku)
+    .eq("supplier_quantity", key.supplierQuantity)
+    .eq("source_fingerprint", String(source.source_fingerprint ?? ""))
+    .order("created_at", { ascending: true }).limit(101)
+  if (read.error || (read.data?.length ?? 0) > 100) {
+    return { rows: [] as GoldenRecord[], complete: false }
+  }
+  return { rows: (read.data ?? []).map(row => goldenRecord(row.payload)), complete: true }
+}
 type OfficialSweep = Awaited<ReturnType<typeof getEbayOfficialLiveListingSweepReadonly>>
 async function duplicateGate(ctx: GoldenContext, key: GoldenCandidateKey, source: GoldenRecord | null, sweep: OfficialSweep): Promise<GoldenAuthority> {
   if (sweep.status !== "CERTIFIED_COMPLETE" || !sweep.paginationComplete || !sweep.accountCertified) return unavailable("OFFICIAL_LIVE_DUPLICATE_COHORT_UNPROVEN")
@@ -241,13 +262,26 @@ async function candidateAuthorities(ctx: GoldenContext, key: GoldenCandidateKey,
 }
 export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCandidateKey, targetNetProfit = 4, shared?: { sweep: OfficialSweep; market: Awaited<ReturnType<typeof marketEvidence>>; source: GoldenRecord }, ownerFeePolicy?: GoldenOwnerFeePolicyInput) {
   const source = shared?.source ?? await candidateSource(ctx, key)
-  const [market, sweep, shipping, ownerTruth] = await Promise.all([
+  const [market, sweep, shipping, ownerTruth, visualEvidence] = await Promise.all([
     shared?.market ?? marketEvidence(ctx, key), shared?.sweep ?? getEbayOfficialLiveListingSweepReadonly({ accountKey: ctx.accountKey, accountAlias: ctx.accountAlias }),
     shippingAuthority(ctx, key, source).catch(() => unavailable("SHIPPING_AUTHORITY_READ_FAILED")),
-    ownerProductTruthEvidence(ctx, key, source) ])
+    ownerProductTruthEvidence(ctx, key, source), visualComparisonEvidence(ctx, key, source) ])
   const duplicate = await duplicateGate(ctx, key, source, sweep).catch(() => unavailable("DUPLICATE_AUTHORITY_READ_FAILED"))
   const missing = unavailable("AUTHORITY_NOT_EVALUATED")
-  const initial = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, now: ctx.now, targetNetProfit, source, market: market.rows, marketComplete: market.complete, ownerProductTruthEvidence: ownerTruth.rows, duplicate, shipping, fee: missing, compliance: missing, policy: missing })
+  const visualReadComplete = visualEvidence.complete && visualEvidence.rows.every(evidence => {
+    const marketEvidenceId = String(evidence.marketEvidenceId ?? "")
+    const bound = market.rows.find(row => row.evidenceId === marketEvidenceId)
+    return Boolean(bound && source && isGoldenVisualComparisonEvidenceV1({
+      evidence, candidate: key, accountKey: ctx.accountKey,
+      ownerUserId: ctx.principal.ownerUserId,
+      sourceFingerprint: String(source.source_fingerprint ?? ""),
+      canonicalUrl: String(source.canonical_url ?? ""),
+      marketEvidence: { evidenceId: bound!.evidenceId,
+        listingState: bound!.listingState, sourceLocator: bound!.sourceLocator,
+        sourceDigest: bound!.sourceDigest }, now: ctx.now,
+    }))
+  })
+  const initial = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, now: ctx.now, targetNetProfit, source, market: market.rows, marketComplete: market.complete && ownerTruth.complete && visualReadComplete, ownerProductTruthEvidence: ownerTruth.rows, visualComparisonEvidence: visualEvidence.rows, duplicate, shipping, fee: missing, compliance: missing, policy: missing })
   const authority = await candidateAuthorities(ctx, key, source, initial.market.realizedBuyerLandedPrice).catch(() => ({ policy: missing, compliance: unavailable("COMPLIANCE_AUTHORITY_READ_FAILED"), fee: unavailable("FEE_AUTHORITY_READ_FAILED") }))
   if (authority.fee.status !== "PROVEN") {
     const policyContext = { candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, sourceFingerprint: source?.source_fingerprint, price: initial.market.realizedBuyerLandedPrice, now: ctx.now }
@@ -260,7 +294,7 @@ export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCan
       }
     }
   }
-  const evaluated = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, now: new Date(), targetNetProfit, source, market: market.rows, marketComplete: market.complete && ownerTruth.complete, ownerProductTruthEvidence: ownerTruth.rows, duplicate, shipping, ...authority })
+  const evaluated = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, now: new Date(), targetNetProfit, source, market: market.rows, marketComplete: market.complete && ownerTruth.complete && visualReadComplete, ownerProductTruthEvidence: ownerTruth.rows, visualComparisonEvidence: visualEvidence.rows, duplicate, shipping, ...authority })
   return receipt(ctx, "EVALUATION", evaluated)
 }
 export async function previewGoldenCategoryV1(ctx: GoldenContext, category: string, limit = 5, targetNetProfit = 4) {
@@ -398,6 +432,98 @@ export async function importGoldenOwnerProductTruthV1(
     unknownFieldsPromoted: false,
     unknownFields: ["MANUFACTURER_BRAND", "UPC", "GTIN", "MPN", "MODEL", "PACK_COUNT"],
     safety: { marketplaceWrites: 0, supplierWrites: 0, supplierPurchases: 0, draftIsLive: false },
+  })
+}
+export async function importGoldenVisualComparisonV1(
+  ctx: GoldenContext,
+  key: GoldenCandidateKey,
+  supplierObservation: GoldenVisualSourceObservationV1,
+  comparisons: ReadonlyArray<Readonly<{
+    marketEvidenceId: string
+    marketplaceObservation: GoldenVisualSourceObservationV1
+    relations: ReadonlyArray<GoldenVisualRelationV1>
+  }>>,
+) {
+  const source = await candidateSource(ctx, key)
+  if (!source || source.preflight_status !== "PREFLIGHT_PASS") {
+    throw Error("VISUAL_COMPARISON_CANONICAL_CANDIDATE_REQUIRED")
+  }
+  if (comparisons.length < 1 || comparisons.length > 20) {
+    throw Error("VISUAL_COMPARISON_BOUNDED_INPUT_REQUIRED")
+  }
+  const market = await marketEvidence(ctx, key)
+  const requested = new Set(comparisons.map(comparison => comparison.marketEvidenceId))
+  const matched = market.rows.filter(row => requested.has(row.evidenceId))
+  if (matched.length !== requested.size) {
+    throw Error("VISUAL_COMPARISON_MARKET_EVIDENCE_REQUIRED")
+  }
+  const evidence = buildGoldenVisualComparisonEvidenceV1({
+    candidate: key, accountKey: ctx.accountKey,
+    ownerUserId: ctx.principal.ownerUserId,
+    sourceFingerprint: String(source.source_fingerprint ?? ""),
+    canonicalUrl: String(source.canonical_url ?? ""), supplierObservation,
+    comparisons: comparisons.map(comparison => {
+      const marketEvidence = matched.find(row =>
+        row.evidenceId === comparison.marketEvidenceId)!
+      return { marketEvidence: { evidenceId: marketEvidence.evidenceId,
+        listingState: marketEvidence.listingState,
+        sourceLocator: marketEvidence.sourceLocator,
+        sourceDigest: marketEvidence.sourceDigest },
+      marketplaceObservation: comparison.marketplaceObservation,
+      relations: comparison.relations }
+    }),
+    operatorAttested: true, now: ctx.now,
+  })
+  const rows = [...new Map(evidence.map(item => [item.evidenceId, {
+    evidence_id: item.evidenceId, account_key: ctx.accountKey,
+    owner_user_id: ctx.principal.ownerUserId, product_id: key.productId,
+    variant_id: key.variantId, supplier_sku: key.supplierSku,
+    supplier_quantity: key.supplierQuantity,
+    source_fingerprint: item.sourceFingerprint,
+    market_evidence_id: item.marketEvidenceId,
+    marketplace_source_role: item.marketplaceObservation.sourceRole,
+    supplier_source_digest: item.supplierObservation.sourceDigest,
+    marketplace_source_digest: item.marketplaceObservation.sourceDigest,
+    outcome: item.outcome, payload: item,
+  }])).values()]
+  const written = await ctx.supabase.from("seller_os_golden_visual_comparison_v1")
+    .upsert(rows, { onConflict: "evidence_id", ignoreDuplicates: true })
+  if (written.error) throw Error("VISUAL_COMPARISON_DURABLE_IMPORT_FAILED")
+  const readback = await ctx.supabase.from("seller_os_golden_visual_comparison_v1")
+    .select("evidence_id,payload,created_at").eq("account_key", ctx.accountKey)
+    .eq("owner_user_id", ctx.principal.ownerUserId)
+    .in("evidence_id", rows.map(row => row.evidence_id)).limit(21)
+  if (readback.error || readback.data?.length !== rows.length) {
+    throw Error("VISUAL_COMPARISON_READBACK_FAILED")
+  }
+  for (const expected of evidence) {
+    const stored = readback.data.find(row => row.evidence_id === expected.evidenceId)
+    const marketEvidence = matched.find(row => row.evidenceId === expected.marketEvidenceId)!
+    if (!stored || !isGoldenVisualComparisonEvidenceV1({
+      evidence: stored.payload, candidate: key, accountKey: ctx.accountKey,
+      ownerUserId: ctx.principal.ownerUserId,
+      sourceFingerprint: String(source.source_fingerprint ?? ""),
+      canonicalUrl: String(source.canonical_url ?? ""),
+      marketEvidence: { evidenceId: marketEvidence.evidenceId,
+        listingState: marketEvidence.listingState,
+        sourceLocator: marketEvidence.sourceLocator,
+        sourceDigest: marketEvidence.sourceDigest }, now: ctx.now,
+    }) || goldenDigest(stored.payload) !== goldenDigest(expected)) {
+      throw Error("VISUAL_COMPARISON_EXISTING_ATTESTATION_CONFLICT")
+    }
+  }
+  return receipt(ctx, "VISUAL_COMPARISON_INTAKE", {
+    contractVersion: GOLDEN_PATH_V1, candidate: key,
+    visualComparisonEvidence: readback.data,
+    outcomes: readback.data.map(row => ({ evidenceId: row.evidence_id,
+      marketEvidenceId: goldenRecord(row.payload).marketEvidenceId,
+      outcome: goldenRecord(row.payload).outcome,
+      reasonCodes: goldenRecord(row.payload).reasonCodes })),
+    deduplication: "CONTENT_ADDRESSED_VISUAL_COMPARISON",
+    visualAuthority: "CLOSE_SUPPORT_OR_CONTRADICTION_NEVER_EXACT",
+    supplierTruthModified: false, manufacturerBrandInferred: false,
+    safety: { marketplaceWrites: 0, supplierWrites: 0,
+      supplierPurchases: 0, draftIsLive: false },
   })
 }
 export async function prepareGoldenRuntimeV1(ctx: GoldenContext, evaluationReceiptId: string) {
