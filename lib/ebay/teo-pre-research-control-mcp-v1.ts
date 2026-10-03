@@ -47,7 +47,7 @@ const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
   "X-Seller-OS-Marketplace-Write-Capability": "ABSENT" })
 const securitySchemes = [{ type: "oauth2" as const,
   scopes: ["openid", "profile"] }]
-export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.1.0"
+export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.2.0"
 export function readSellerOsControlRegisteredCatalogV1(server: McpServer, resource: string) {
   // The pinned SDK registry reflects actual successful registration. This is a
   // diagnostic readback, never a substitute for ChatGPT's imported tools/list.

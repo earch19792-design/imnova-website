@@ -14,6 +14,8 @@ import { readGoldenTrafficWindowsV1 } from "./commercial-golden-path-traffic-v1"
 import { readGoldenPresaleAuthorityV1 } from "./commercial-golden-path-presale-authority-v1"
 import { goldenLiveCohortIdentityDigestV1, buildGoldenLiveComparisonReviewV1, applyGoldenLiveComparisonReviewsV1, type GoldenLiveComparisonInput } from "./commercial-golden-path-live-comparison-v1"
 import { buildGoldenOwnerFeePolicyV1, readGoldenOwnerFeePolicyFromReceiptV1, type GoldenOwnerFeePolicyInput } from "./commercial-golden-path-owner-fee-policy-v1"
+import { buildGoldenOwnerProductTruthEvidenceV1, isGoldenOwnerProductTruthEvidenceV1,
+  type GoldenOwnerProductTruthObservationV1, type GoldenOwnerProductTruthSourceV1 } from "./commercial-golden-path-owner-product-truth-v1"
 import { readEbayFeeHandoffV1 } from "../seller-os/ebay-fee-runtime-v1"
 import { readEbayListingCategoryAuthorityV1 } from "./ebay-listing-category-authority-v1"
 import { getEbayTaxonomyListingIntelligence } from "./ebay-seller-keyword-demand-gateway"
@@ -110,6 +112,32 @@ async function marketEvidence(ctx: GoldenContext, key?: GoldenCandidateKey) {
   // Completeness here means the bounded read succeeded, never market exhaustion.
   const rows = [...(m.data ?? []).map(r => goldenRecord(r.payload) as unknown as GoldenMarketEvidence), ...(a.data ?? []).map(normalizeGoldenStoredMarketV1).filter((row): row is GoldenMarketEvidence => row !== null)]
   return { rows: rows.slice(0, MAX_MARKET_ROWS), complete: (m.data?.length ?? 0) <= MAX_MARKET_ROWS, truncated: rows.length > MAX_MARKET_ROWS, reasonCode: rows.length > MAX_MARKET_ROWS ? "BOUNDED_MARKET_SCAN_PARTIAL_NOT_EXHAUSTIVE" : null }
+}
+async function ownerProductTruthEvidence(
+  ctx: GoldenContext,
+  key: GoldenCandidateKey,
+  source: GoldenRecord | null,
+) {
+  if (!source) return { rows: [] as GoldenRecord[], complete: false }
+  const read = await ctx.supabase.from("seller_os_golden_owner_product_truth_v1")
+    .select("payload").eq("account_key", ctx.accountKey)
+    .eq("owner_user_id", ctx.principal.ownerUserId)
+    .eq("product_id", key.productId).eq("variant_id", key.variantId)
+    .eq("supplier_sku", key.supplierSku)
+    .eq("supplier_quantity", key.supplierQuantity)
+    .eq("source_fingerprint", String(source.source_fingerprint ?? ""))
+    .order("created_at", { ascending: true }).limit(21)
+  if (read.error || (read.data?.length ?? 0) > 20) {
+    return { rows: [] as GoldenRecord[], complete: false }
+  }
+  const rows = (read.data ?? []).map(row => goldenRecord(row.payload))
+    .filter(evidence => isGoldenOwnerProductTruthEvidenceV1({
+      evidence, candidate: key, accountKey: ctx.accountKey,
+      ownerUserId: ctx.principal.ownerUserId,
+      sourceFingerprint: String(source.source_fingerprint ?? ""),
+      canonicalUrl: String(source.canonical_url ?? ""), now: ctx.now,
+    }))
+  return { rows, complete: rows.length === (read.data?.length ?? 0) }
 }
 type OfficialSweep = Awaited<ReturnType<typeof getEbayOfficialLiveListingSweepReadonly>>
 async function duplicateGate(ctx: GoldenContext, key: GoldenCandidateKey, source: GoldenRecord | null, sweep: OfficialSweep): Promise<GoldenAuthority> {
@@ -213,12 +241,13 @@ async function candidateAuthorities(ctx: GoldenContext, key: GoldenCandidateKey,
 }
 export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCandidateKey, targetNetProfit = 4, shared?: { sweep: OfficialSweep; market: Awaited<ReturnType<typeof marketEvidence>>; source: GoldenRecord }, ownerFeePolicy?: GoldenOwnerFeePolicyInput) {
   const source = shared?.source ?? await candidateSource(ctx, key)
-  const [market, sweep, shipping] = await Promise.all([
+  const [market, sweep, shipping, ownerTruth] = await Promise.all([
     shared?.market ?? marketEvidence(ctx, key), shared?.sweep ?? getEbayOfficialLiveListingSweepReadonly({ accountKey: ctx.accountKey, accountAlias: ctx.accountAlias }),
-    shippingAuthority(ctx, key, source).catch(() => unavailable("SHIPPING_AUTHORITY_READ_FAILED")) ])
+    shippingAuthority(ctx, key, source).catch(() => unavailable("SHIPPING_AUTHORITY_READ_FAILED")),
+    ownerProductTruthEvidence(ctx, key, source) ])
   const duplicate = await duplicateGate(ctx, key, source, sweep).catch(() => unavailable("DUPLICATE_AUTHORITY_READ_FAILED"))
   const missing = unavailable("AUTHORITY_NOT_EVALUATED")
-  const initial = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, now: ctx.now, targetNetProfit, source, market: market.rows, marketComplete: market.complete, duplicate, shipping, fee: missing, compliance: missing, policy: missing })
+  const initial = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, now: ctx.now, targetNetProfit, source, market: market.rows, marketComplete: market.complete, ownerProductTruthEvidence: ownerTruth.rows, duplicate, shipping, fee: missing, compliance: missing, policy: missing })
   const authority = await candidateAuthorities(ctx, key, source, initial.market.realizedBuyerLandedPrice).catch(() => ({ policy: missing, compliance: unavailable("COMPLIANCE_AUTHORITY_READ_FAILED"), fee: unavailable("FEE_AUTHORITY_READ_FAILED") }))
   if (authority.fee.status !== "PROVEN") {
     const policyContext = { candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, sourceFingerprint: source?.source_fingerprint, price: initial.market.realizedBuyerLandedPrice, now: ctx.now }
@@ -231,7 +260,7 @@ export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCan
       }
     }
   }
-  const evaluated = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, now: new Date(), targetNetProfit, source, market: market.rows, marketComplete: market.complete, duplicate, shipping, ...authority })
+  const evaluated = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, now: new Date(), targetNetProfit, source, market: market.rows, marketComplete: market.complete && ownerTruth.complete, ownerProductTruthEvidence: ownerTruth.rows, duplicate, shipping, ...authority })
   return receipt(ctx, "EVALUATION", evaluated)
 }
 export async function previewGoldenCategoryV1(ctx: GoldenContext, category: string, limit = 5, targetNetProfit = 4) {
@@ -313,6 +342,63 @@ export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandid
     receipts.push(stored)
   }
   return receipt(ctx, "MANUAL_INTAKE", { contractVersion: GOLDEN_PATH_V1, candidate: key, importedEvidence: receipts, liveComparisonReview, deduplication: "CONTENT_IDEMPOTENT_SOURCE_SALE_OFFER", supplierTruthModified: false, marketScope: "MANUAL_ATTESTATION_NOT_AUTOMATIC_AUTHORITY", safety: { marketplaceWrites: 0, supplierWrites: 0 } })
+}
+export async function importGoldenOwnerProductTruthV1(
+  ctx: GoldenContext,
+  key: GoldenCandidateKey,
+  sourceInput: GoldenOwnerProductTruthSourceV1,
+  observations: ReadonlyArray<GoldenOwnerProductTruthObservationV1>,
+) {
+  const source = await candidateSource(ctx, key)
+  if (!source || source.preflight_status !== "PREFLIGHT_PASS") {
+    throw Error("OWNER_PRODUCT_TRUTH_CANONICAL_CANDIDATE_REQUIRED")
+  }
+  const evidence = buildGoldenOwnerProductTruthEvidenceV1({
+    candidate: key, accountKey: ctx.accountKey,
+    ownerUserId: ctx.principal.ownerUserId,
+    sourceFingerprint: String(source.source_fingerprint ?? ""),
+    expectedCanonicalUrl: String(source.canonical_url ?? ""),
+    source: sourceInput, observations, operatorAttested: true, now: ctx.now,
+  })
+  const rows = [...new Map(evidence.map(item => [item.evidenceId, {
+    evidence_id: item.evidenceId, account_key: ctx.accountKey,
+    owner_user_id: ctx.principal.ownerUserId, product_id: key.productId,
+    variant_id: key.variantId, supplier_sku: key.supplierSku,
+    supplier_quantity: key.supplierQuantity,
+    source_fingerprint: item.sourceFingerprint, fact_class: item.factClass,
+    normalized_value: item.normalizedValue, source_digest: item.sourceDigest,
+    source_captured_at: item.capturedAt, payload: item,
+  }])).values()]
+  const written = await ctx.supabase.from("seller_os_golden_owner_product_truth_v1")
+    .upsert(rows, { onConflict: "evidence_id", ignoreDuplicates: true })
+  if (written.error) throw Error("OWNER_PRODUCT_TRUTH_DURABLE_IMPORT_FAILED")
+  const readback = await ctx.supabase.from("seller_os_golden_owner_product_truth_v1")
+    .select("evidence_id,payload,created_at").eq("account_key", ctx.accountKey)
+    .eq("owner_user_id", ctx.principal.ownerUserId)
+    .in("evidence_id", rows.map(row => row.evidence_id)).limit(21)
+  if (readback.error || readback.data?.length !== rows.length) {
+    throw Error("OWNER_PRODUCT_TRUTH_READBACK_FAILED")
+  }
+  for (const expected of evidence) {
+    const stored = readback.data.find(row => row.evidence_id === expected.evidenceId)
+    if (!stored || !isGoldenOwnerProductTruthEvidenceV1({
+      evidence: stored.payload, candidate: key, accountKey: ctx.accountKey,
+      ownerUserId: ctx.principal.ownerUserId,
+      sourceFingerprint: String(source.source_fingerprint ?? ""),
+      canonicalUrl: String(source.canonical_url ?? ""), now: ctx.now,
+    }) || goldenDigest(stored.payload) !== goldenDigest(expected)) {
+      throw Error("OWNER_PRODUCT_TRUTH_EXISTING_ATTESTATION_CONFLICT")
+    }
+  }
+  return receipt(ctx, "PRODUCT_TRUTH_INTAKE", {
+    contractVersion: GOLDEN_PATH_V1, candidate: key,
+    ownerProductTruthEvidence: readback.data,
+    deduplication: "CONTENT_ADDRESSED_OWNER_EVIDENCE",
+    supplierTruthModified: false, manufacturerBrandPromoted: false,
+    unknownFieldsPromoted: false,
+    unknownFields: ["MANUFACTURER_BRAND", "UPC", "GTIN", "MPN", "MODEL", "PACK_COUNT"],
+    safety: { marketplaceWrites: 0, supplierWrites: 0, supplierPurchases: 0, draftIsLive: false },
+  })
 }
 export async function prepareGoldenRuntimeV1(ctx: GoldenContext, evaluationReceiptId: string) {
   const previous = await loadReceipt(ctx, evaluationReceiptId, "EVALUATION")

@@ -5,6 +5,7 @@ import { evaluateLunaTraceProductTruthGateV1 } from "../seller-os/luna-trace-pro
 import { classifyWinnerComparable, normalizeProductIdentity } from "./ebay-winner-evidence-v2.ts"
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2"
 import { validGoldenOwnerFeePolicyV1 } from "./commercial-golden-path-owner-fee-policy-v1"
+import { goldenOwnerObservedMarkingsV1 } from "./commercial-golden-path-owner-product-truth-v1"
 
 export const GOLDEN_PATH_V1 = "COMMERCIAL_GOLDEN_PATH_V1"
 export type GoldenRecord = Record<string, unknown>
@@ -34,8 +35,9 @@ export type GoldenMarketEvidence = {
 }
 export type GoldenAuthority = GoldenRecord & { status: string; receiptId?: string | null }
 export type GoldenEvaluationInput = {
-  candidate: GoldenCandidateKey; accountKey: string; now: Date; targetNetProfit: number
+  candidate: GoldenCandidateKey; accountKey: string; ownerUserId?: string; now: Date; targetNetProfit: number
   source: GoldenRecord | null; market: GoldenMarketEvidence[]; marketComplete: boolean
+  ownerProductTruthEvidence?: GoldenRecord[]
   duplicate: GoldenAuthority; shipping: GoldenAuthority; fee: GoldenAuthority
   fulfillment?: GoldenAuthority
   compliance: GoldenAuthority; policy: GoldenAuthority
@@ -68,36 +70,92 @@ export function goldenCategoryDiscoveryMatchesV1(category: string, source: Golde
   const title = verifiedGoldenFields(source, now).values.TITLE
   return typeof title === "string" && !/\b(?:laptop|desktop|ipad|iphone|ddr[2345]|dimm|gpu|pcie|processor|hvac|furnace|humidifier|chair)\b/i.test(title) && /\b(?:mouthwash|toothbrush|toothpaste|dental|floss|hair|comb|razor|shaver|shaving|manicure|pedicure|nail|skin|soap|lotion|cream|serum|sunscreen|lip\s+balm|dusting\s+powder|deodorant|perfume|body\s+wash|bath\s+brush|cosmetic|makeup)\b/i.test(title)
 }
+const identityTokens = (value: string | null) => new Set(
+  value?.match(/[a-z0-9]+/g)?.filter(token => token.length > 1) ?? [],
+)
+const GENERIC_IDENTITY_TOKENS = new Set([
+  "brand", "coastal", "color", "dog", "grooming", "no", "one", "pack",
+  "pet", "size", "stainless", "steel", "tool",
+])
+function observedMarkingSupportsCloseV1(
+  targetName: string | null,
+  comparableName: string | null,
+  markings: ReadonlyArray<string>,
+) {
+  const target = identityTokens(targetName), comparable = identityTokens(comparableName)
+  for (const marking of markings) {
+    const markingTokens = identityTokens(marking.toLocaleLowerCase("en-US"))
+    if (!markingTokens.size || ![...markingTokens].every(token => comparable.has(token))) continue
+    const core = [...target].filter(token => !markingTokens.has(token)
+      && !GENERIC_IDENTITY_TOKENS.has(token))
+    if (core.length >= 2 && core.filter(token => comparable.has(token)).length / core.length >= 0.75) {
+      return marking
+    }
+  }
+  return null
+}
+
 /** Manual match labels are reviewed market observations. They cannot repair supplier truth. */
-export function classifyGoldenComparable(target: ProductIdentityInput, evidence: GoldenMarketEvidence) {
+export function classifyGoldenComparable(
+  target: ProductIdentityInput,
+  evidence: GoldenMarketEvidence,
+  context?: Readonly<{ observedMarkings?: ReadonlyArray<string> }>,
+) {
   const a = normalizeProductIdentity(target), b = normalizeProductIdentity(evidence.identity)
   const base = classifyWinnerComparable(target, evidence.identity)
   const reasons: string[] = []
+  const markingSupport = observedMarkingSupportsCloseV1(
+    a.normalizedProductName, b.normalizedProductName,
+    context?.observedMarkings ?? [],
+  )
   if (evidence.requestedClassification === "REJECTED_COMPARABLE") reasons.push("OPERATOR_REJECTED_COMPARABLE")
-  if (b.manufacturerBrand && b.manufacturerBrand !== a.manufacturerBrand) reasons.push("BRAND_TRANSFER_PROHIBITED")
+  if (b.manufacturerBrand && a.manufacturerBrand
+    && b.manufacturerBrand !== a.manufacturerBrand) reasons.push("BRAND_CONFLICT")
+  if (b.manufacturerBrand && !a.manufacturerBrand && !markingSupport) reasons.push("BRAND_TRANSFER_PROHIBITED")
   if (["INVALID_COMPARABLE", "DIFFERENT_VARIANT"].includes(base.classification)) reasons.push(...base.reasons)
-  if (reasons.length) return { classification: "REJECTED_COMPARABLE" as const, reasonCodes: reasons }
-  if (a.packCount === null || b.packCount === null || a.packCount !== b.packCount) return { classification: "FAMILY" as const, reasonCodes: ["OFFER_COUNT_NOT_EXACT"] }
-  if (evidence.requestedClassification === "FAMILY") return { classification: "FAMILY" as const, reasonCodes: ["OPERATOR_FAMILY_ONLY"] }
-  if (base.classification === "EXACT_MATCH") return { classification: "EXACT" as const, reasonCodes: base.reasons }
+  if (reasons.length) return { classification: "REJECTED_COMPARABLE" as const, reasonCodes: reasons, priceEligible: false }
+  if (a.packCount !== null && b.packCount !== null && a.packCount !== b.packCount) {
+    return { classification: "FAMILY" as const, reasonCodes: ["OFFER_COUNT_MISMATCH"], priceEligible: false }
+  }
+  if (a.packCount === null && b.packCount !== null && b.packCount > 1) {
+    return { classification: "FAMILY" as const, reasonCodes: ["COMPARABLE_MULTIPACK_TARGET_OFFER_COUNT_UNPROVEN"], priceEligible: false }
+  }
+  if (evidence.requestedClassification === "FAMILY") return { classification: "FAMILY" as const, reasonCodes: ["OPERATOR_FAMILY_ONLY"], priceEligible: false }
+  const offerCountExact = a.packCount !== null && b.packCount !== null && a.packCount === b.packCount
+  if (base.classification === "EXACT_MATCH") return { classification: "EXACT" as const, reasonCodes: base.reasons, priceEligible: offerCountExact }
   const reviewedClose = evidence.reviewed && Boolean(evidence.reviewReason) && evidence.requestedClassification === "CLOSE" && a.normalizedProductName === b.normalizedProductName
-  if (base.classification === "NEAR_MATCH" || reviewedClose) return { classification: "CLOSE" as const, reasonCodes: reviewedClose ? ["HUMAN_REVIEWED_SAME_PRODUCT_OFFER"] : base.reasons }
-  return { classification: "FAMILY" as const, reasonCodes: ["EXACT_CLOSE_IDENTITY_UNPROVEN"] }
+  if (base.classification === "NEAR_MATCH" || reviewedClose) return { classification: "CLOSE" as const, reasonCodes: reviewedClose ? ["HUMAN_REVIEWED_SAME_PRODUCT_OFFER"] : base.reasons, priceEligible: offerCountExact }
+  const markingClose = markingSupport && evidence.reviewed && Boolean(evidence.reviewReason)
+    && ["CLOSE", "EXACT"].includes(evidence.requestedClassification ?? "")
+  if (markingClose) return { classification: "CLOSE" as const, reasonCodes: [
+    "OWNER_OBSERVED_MARKING_SUPPORTS_IDENTITY_ONLY",
+    ...(b.manufacturerBrand && !a.manufacturerBrand ? ["COMPARABLE_BRAND_NOT_TRANSFERRED"] : []),
+    ...(evidence.requestedClassification === "EXACT" ? ["OBSERVED_MARKING_CANNOT_PROVE_EXACT"] : []),
+    ...(!offerCountExact ? ["OFFER_COUNT_UNPROVEN_PRICE_INELIGIBLE"] : []),
+  ], priceEligible: offerCountExact }
+  if (a.packCount === null || b.packCount === null) return { classification: "FAMILY" as const, reasonCodes: ["OFFER_COUNT_NOT_EXACT"], priceEligible: false }
+  return { classification: "FAMILY" as const, reasonCodes: ["EXACT_CLOSE_IDENTITY_UNPROVEN"], priceEligible: false }
 }
 export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   if (!Number.isFinite(input.targetNetProfit) || input.targetNetProfit < 4 || input.targetNetProfit > 10000) throw Error("TARGET_NET_PROFIT_OUTSIDE_AUTHORIZED_BOUND")
   const { candidate: key, source, now } = input
   const reasons: string[] = [], holds: string[] = [], rejects: string[] = []
   const truth = verifiedGoldenFields(source, now), identity = goldenComparableIdentity(source, key.supplierQuantity, now)
+  const observedMarkings = goldenOwnerObservedMarkingsV1({
+    evidence: input.ownerProductTruthEvidence ?? [], candidate: key,
+    accountKey: input.accountKey, ownerUserId: input.ownerUserId ?? "",
+    sourceFingerprint: String(source?.source_fingerprint ?? ""),
+    canonicalUrl: String(source?.canonical_url ?? ""), now,
+  })
   if (identity.packCount === null) reasons.push("OFFER_COUNT_UNPROVEN")
   const exactBinding = source?.product_id === key.productId && source?.variant_id === key.variantId && source?.sku === key.supplierSku
   if (!exactBinding || !truth.gate.traceProductTruthSufficient || source?.preflight_status !== "PREFLIGHT_PASS") reasons.push("LUNA_IDENTITY_PRODUCT_TRUTH_UNPROVEN")
   if (truth.fields.some(f => f.CONTRADICTION === true)) holds.push("PRODUCT_TRUTH_CONTRADICTION")
-  const classified = input.market.slice(0, 200).map(e => ({ ...e, ...classifyGoldenComparable(identity, e), buyerLandedPrice: e.listingState === "SOLD" && e.realizedSoldPrice !== null && e.buyerShipping !== null ? cents(e.realizedSoldPrice + e.buyerShipping) : null,
+  const classified = input.market.slice(0, 200).map(e => ({ ...e, ...classifyGoldenComparable(identity, e, { observedMarkings }), buyerLandedPrice: e.listingState === "SOLD" && e.realizedSoldPrice !== null && e.buyerShipping !== null ? cents(e.realizedSoldPrice + e.buyerShipping) : null,
     fresh: e.listingState === "SOLD" && date(e.lastSoldDate) <= now.getTime() && now.getTime() - date(e.lastSoldDate) <= 90 * 86400000 && date(e.capturedAt) <= now.getTime() && now.getTime() - date(e.capturedAt) <= 90 * 86400000 }))
   const sold = classified.filter(e => e.listingState === "SOLD")
   const exact = sold.filter(e => e.classification === "EXACT"), close = sold.filter(e => e.classification === "CLOSE"), family = sold.filter(e => e.classification === "FAMILY")
-  const priced = [...exact, ...close].filter(e => e.fresh && date(e.lastSoldDate) <= date(e.capturedAt) && e.currency === "USD" && e.soldQuantity !== null && Number.isSafeInteger(e.soldQuantity) && e.soldQuantity > 0 && e.buyerShipping !== null && e.buyerShipping >= 0 && e.realizedPriceStatus === "PROVEN" && e.realizedSoldPrice !== null && e.realizedSoldPrice > 0 && e.buyerLandedPrice !== null && /^sha256:[0-9a-f]{64}$/.test(e.sourceDigest))
+  const priced = [...exact, ...close].filter(e => e.priceEligible === true && e.fresh && date(e.lastSoldDate) <= date(e.capturedAt) && e.currency === "USD" && e.soldQuantity !== null && Number.isSafeInteger(e.soldQuantity) && e.soldQuantity > 0 && e.buyerShipping !== null && e.buyerShipping >= 0 && e.realizedPriceStatus === "PROVEN" && e.realizedSoldPrice !== null && e.realizedSoldPrice > 0 && e.buyerLandedPrice !== null && /^sha256:[0-9a-f]{64}$/.test(e.sourceDigest))
   if (!input.marketComplete) reasons.push("MARKET_EVIDENCE_READ_INCOMPLETE")
   if (!priced.length) reasons.push("EXACT_CLOSE_REALIZED_SOLD_UNPROVEN")
   // Use the lower weighted median of realized buyer-landed prices. Never raise it to the profit floor.
@@ -156,7 +214,8 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
     shipping: shippingValid ? input.shipping : { ...input.shipping, status: "UNPROVEN", amountUsd: null, supplierQuantity: key.supplierQuantity, reasonCode: input.shipping.reasonCode ?? "REAL_OFFER_SHIPPING_UNPROVEN", validationReasonCode: "REAL_OFFER_SHIPPING_UNPROVEN" },
     fulfillment: fulfillmentValid ? fulfillment : { ...fulfillment, status: "UNPROVEN", amountUsd: null, reasonCode: "BUYER_FULFILLMENT_SHIPPING_UNPROVEN" },
     economics: { status: ready ? provisionalFee ? "PROVISIONAL_OWNER_POLICY" : "PROVEN" : "UNPROVEN", targetNetProfit: input.targetNetProfit, recommendedPrice: marketPrice, buyerShipping: 0, pricingStrategy: "FREE_BUYER_SHIPPING_WITHIN_OBSERVED_LANDED_PRICE", feeAuthority: input.fee, ebayFees: fees, returnsReserve: returns, promotedFee: promoted, promotedState: input.policy.promotedState ?? "UNKNOWN", otherExplicitCosts: other, buyerFulfillmentShipping: fulfillmentCost, expectedNetProfit: net, expectedNetProfitBasis: provisionalFee ? "OWNER_PROVISIONAL_FEE_POLICY_PLUS_REAL_INPUTS" : "PRE_SALE_EVIDENCE_AND_EXPLICIT_OWNER_RESERVES", realizedNetProfit: null, realizedNetProfitStatus: "UNPROVEN", realizedNetProfitReasonCode: "REALIZED_ORDER_AND_EXPENSE_AUTHORITY_REQUIRED", realizedProfitUsedForDecision: false, profitFloor: { netProfitUsd: input.targetNetProfit, requiredPrice: null, status: "INTERVAL_FEE_BOUND_UNPROVEN", diagnosticAtFixedFee: floor }, marginPercent: net !== null ? cents(net / marketPrice! * 100) : null, roiPercent: net !== null && cost! + shippingCost! + fulfillmentCost! > 0 ? cents(net / (cost! + shippingCost! + fulfillmentCost!) * 100) : null },
-    productTruth: { status: truth.gate.traceProductTruthSufficient ? "CORE_PROVEN" : "UNPROVEN", receiptId: truth.gate.receiptEvidenceDigest, verifiedSpecifics: truth.proven, missingFields: truth.fields.filter(f => f.VALUE == null).map(f => f.FIELD), supplierClaimsExcluded: true },
+    productTruth: { status: truth.gate.traceProductTruthSufficient ? "CORE_PROVEN" : "UNPROVEN", receiptId: truth.gate.receiptEvidenceDigest, verifiedSpecifics: truth.proven, missingFields: truth.fields.filter(f => f.VALUE == null).map(f => f.FIELD), supplierClaimsExcluded: true,
+      ownerObservedMarkings: observedMarkings, ownerEvidence: input.ownerProductTruthEvidence ?? [], manufacturerBrand: truth.values.BRAND ?? null, manufacturerBrandStatus: truth.values.BRAND == null ? "UNPROVEN" : "PROVEN_SUPPLIER", ownerEvidencePromotedToManufacturerBrand: false, unknownFieldsPromoted: false },
     compliance: input.compliance, decision, reasonCodes: [...rejects, ...holds, ...reasons, ...(provisionalFee ? ["OWNER_PROVISIONAL_FEE_POLICY_USED_EXPECTED_ONLY"] : [])], safety: { marketplaceWrites: 0, publish: false, end: false, supplierPurchases: 0, draftIsLive: false } }
   return { ...result, evidenceDigest: goldenDigest(result) }
 }
