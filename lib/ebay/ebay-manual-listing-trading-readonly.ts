@@ -46,6 +46,7 @@ export type TradingManualListingResult = {
   safeDefaults: SafeListingDefaults
   categoryPath?: string | null
   saleFormat?: string | null
+  variationCount?: number
   secondaryCategoryId?: string | null
   observedAt: string
 }
@@ -303,8 +304,7 @@ export function parseTradingManualListingResponses(
           : "inactive",
     itemId: expectedItemId,
     listingStatus: safeIdentifier(listingStatus, 40),
-    marketplaceSite: safeIdentifier(tradingXmlDirectChildValue(item, "Site"), 40) ??
-      safeIdentifier(tradingXmlDirectChildValue(item, "SiteID"), 10),
+    marketplaceSite: safeIdentifier(tradingXmlDirectChildValue(item, "Site"), 40),
     ebaySku: safeIdentifier(tradingXmlTagValue(item, "SKU")),
     title: safeListingTitle(tradingXmlTagValue(item, "Title")),
     availableQuantity,
@@ -327,6 +327,8 @@ export function parseTradingManualListingResponses(
     categoryPath: categoryPath && categoryPath.length <= 500 &&
       !Array.from(categoryPath).some(c => c.charCodeAt(0) < 32 || c === "<" || c === ">") ? categoryPath : null,
     saleFormat: safeIdentifier(tradingXmlTagValue(item, "ListingType"), 40),
+    variationCount: tradingXmlContainers(
+      tradingXmlContainer(item, "Variations"), "Variation").length,
     secondaryCategoryId: numericIdentifier(tradingXmlTagValue(tradingXmlContainer(item, "SecondaryCategory"), "CategoryID"), 20),
     observedAt: now.toISOString(),
   }
@@ -425,6 +427,7 @@ function requestXml(callName: "GetUser" | "GetItem", ebayItemId?: string) {
     `<ItemID>${ebayItemId}</ItemID>` +
     [
       "Item.ItemID",
+      "Item.Site",
       "Item.Seller.UserID",
       "Item.SellingStatus.ListingStatus",
       "Item.Title",
@@ -440,6 +443,7 @@ function requestXml(callName: "GetUser" | "GetItem", ebayItemId?: string) {
       "Item.PrimaryCategory.CategoryName",
       "Item.SecondaryCategory.CategoryID",
       "Item.ListingType",
+      "Item.Variations",
       "Item.ConditionID",
       "Item.SellerProfiles.SellerShippingProfile.ShippingProfileID",
       "Item.SellerProfiles.SellerPaymentProfile.PaymentProfileID",

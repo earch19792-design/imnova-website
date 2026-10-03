@@ -39,9 +39,8 @@ export function canonicalLunaOpportunityCandidateKeyV1(
 }
 
 function matchesIdentity(row: OpportunityIdentityRow, identity: ExactLunaIdentity,
-  candidateKey: string, marketRadarProductId: string) {
-  return row.candidate_key === candidateKey &&
-    row.supplier_product_id === identity.supplierProductId &&
+  marketRadarProductId: string) {
+  return row.supplier_product_id === identity.supplierProductId &&
     row.supplier_variant_id === identity.supplierVariantId &&
     row.supplier_sku === identity.supplierSku &&
     row.market_radar_product_id === marketRadarProductId
@@ -87,7 +86,8 @@ export async function materializeCanonicalLunaOpportunityIdentityV1(input: Reado
   const exact = (identityRead.data ?? []) as OpportunityIdentityRow[]
   if (keyRead.error || identityRead.error || keyed.length > 1 || exact.length > 1 ||
     [...keyed, ...exact].some((row) => !matchesIdentity(
-      row, identity, candidateKey, catalog.product_id))) {
+      row, identity, catalog.product_id)) ||
+    keyed.length && exact.length && keyed[0].id !== exact[0].id) {
     throw new Error("LUNA_OPPORTUNITY_IDENTITY_CONFLICT")
   }
   let created = false
@@ -127,17 +127,19 @@ export async function materializeCanonicalLunaOpportunityIdentityV1(input: Reado
     if (write.error) throw new Error("LUNA_OPPORTUNITY_IDENTITY_WRITE_FAILED")
     created = true
   }
+  const selectedKey = (exact[0] ?? keyed[0])?.candidate_key ?? candidateKey
   const readback = await supabase.from("ebay_luna_opportunity_queue")
     .select("id,candidate_key,market_radar_product_id,supplier_product_id,supplier_variant_id,supplier_sku,queue_status,decision")
-    .eq("candidate_key", candidateKey).limit(2)
+    .eq("candidate_key", selectedKey).limit(2)
   const rows = (readback.data ?? []) as (OpportunityIdentityRow & {
     queue_status: string; decision: string
   })[]
   if (readback.error || rows.length !== 1 || !matchesIdentity(
-    rows[0], identity, candidateKey, catalog.product_id)) {
+    rows[0], identity, catalog.product_id)) {
     throw new Error("LUNA_OPPORTUNITY_IDENTITY_READBACK_FAILED")
   }
-  return Object.freeze({ opportunityId: rows[0].id, candidateKey,
+  return Object.freeze({ opportunityId: rows[0].id,
+    candidateKey: rows[0].candidate_key,
     identityReadback: Object.freeze({ ...identity,
       marketRadarProductId: catalog.product_id,
       queueStatus: rows[0].queue_status,

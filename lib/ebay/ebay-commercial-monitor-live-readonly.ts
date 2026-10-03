@@ -5581,6 +5581,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
     perCallTimeoutMs?: number
     signal?: AbortSignal
     isolateIndependentReads?: boolean
+    certifiedPortfolioMode?: boolean
   }
 }): Promise<EbayCommercialMonitorLiveReadonlyResult> {
   const environment = input.environment ?? process.env
@@ -5608,13 +5609,13 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
   const calls: EbayMonitorReadonlyCallEvidence[] = []
   const requestedBudgetMs = input.readLimits?.budgetMs
   const requestedMaximumCalls = input.readLimits?.maximumCalls
-  const maximumCalls = Math.min(
-    REQUEST_MAX_CALLS,
-    Math.max(1, requestedMaximumCalls ?? REQUEST_MAX_CALLS),
-  )
+  const portfolioMode = input.readLimits?.certifiedPortfolioMode === true
+  const maximumCallCap = portfolioMode ? 100 : REQUEST_MAX_CALLS
+  const maximumCalls = Math.min(maximumCallCap,
+    Math.max(1, requestedMaximumCalls ?? maximumCallCap))
   requestBudgets.set(calls, {
     deadlineAt: Date.now() + Math.min(
-      REQUEST_BUDGET_MS,
+      portfolioMode ? 45_000 : REQUEST_BUDGET_MS,
       Math.max(250, requestedBudgetMs ?? REQUEST_BUDGET_MS),
     ),
     callsRemaining: maximumCalls,
@@ -5694,6 +5695,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       fetchImpl,
       calls,
       clock,
+      maximumUniqueItems: portfolioMode ? 80 : undefined,
     })
     const parsedSellerWideItemCount =
       marketplace.marketplaceCertification.sellerWideItemsParsed

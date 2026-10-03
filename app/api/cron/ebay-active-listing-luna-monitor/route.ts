@@ -27,18 +27,14 @@ import { readCommercialMonitorReadonlySources } from
   "@/lib/ebay/commercial-monitor-readonly-repository"
 import { autoIngestUnmanagedEbayLiveListingsV1 } from
   "@/lib/ebay/ebay-unmanaged-live-auto-intake-v1"
-import { runAutomaticCertifiedOosProtectionV1 } from
-  "@/lib/ebay/ebay-auto-certified-oos-protection-v1"
+import { runStockguardOosQuantityProtectionV1 } from
+  "@/lib/ebay/stockguard-oos-quantity-protection-v1"
 import { reconcileSellerOsStockIdentityV1 } from
   "@/lib/ebay/ebay-stock-identity-auto-reconciliation-v1"
 import { selectSellerOsLunaStockFreshnessRenewalsV1 } from
   "@/lib/ebay/ebay-luna-stock-freshness-renewal-v1"
 import { auditSellerOsLunaProtectedSessionV1 } from
   "@/lib/ebay/ebay-luna-protected-session-server-v1"
-import {
-  endLiveInvariantViolationNotAvailableV1,
-  SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
-} from "@/lib/ebay/ebay-commercial-improvement-action-service"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { getSellerOsStockGuardRuntimeBoundary } from
   "@/lib/ebay/environment-boundaries"
@@ -46,17 +42,6 @@ import { runCurrentLiveAuthorityRecoveryV1 } from
   "@/lib/ebay/ebay-current-live-authority-recovery-v1"
 import { authorizeProductionPopulationV1, runProductionCurrentLivePopulationV1 } from
   "@/lib/ebay/ebay-production-current-live-population-v1"
-
-const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
-  "366608128809",
-  "366543596425",
-  "366575102453",
-  "366582630351",
-  "366584136876",
-  "366584249461",
-  "366597780377",
-  "366602466981",
-])
 
 const STOCK_IDENTITY_RECONCILIATION_TARGETS_V1 = Object.freeze([
   "366582586826", "366592485792", "366597434810",
@@ -165,74 +150,13 @@ export async function POST(req: Request) {
 
   const account = getEbaySellerAccountScopeConfiguration()
   const accountKey = account.accountKey
-  if (!accountKey) {
+  if (!accountKey || !account.accountAlias) {
     return NextResponse.json(
       { success: false, error: "TARGETED_ACTIVE_LISTING_ACCOUNT_SCOPE_REQUIRED" },
       { status: 423 },
     )
   }
   const supabase = getSupabaseAdminClient()
-  const bulkEndOutcomes: Array<Record<string, unknown>> = []
-  for (const itemId of activation.productionSchedulerEnabled
-    ? [] : BULK_END_UNLINKED_LIVE_TARGETS_V1) {
-    try {
-      const currentLive = await getEbayCommercialMonitorLiveReadonly({
-        accountKey,
-        accountAlias: account.accountAlias,
-      })
-      const currentMonitor = await getCommercialMonitorReadonly(
-        supabase,
-        { accountKey, accountAlias: account.accountAlias,
-          configurationReason: account.reason },
-        currentLive,
-      )
-      const listing = currentMonitor.listings.find((row) =>
-        row.identity.itemId === itemId) ?? null
-      if (!listing ||
-          listing.discovery.livePresence.status !== "LIVE_ACTIVE") {
-        bulkEndOutcomes.push({ itemId, status: "SKIPPED_NOT_CURRENT_LIVE",
-          ebayWriteCount: 0 })
-        continue
-      }
-      if (listing.stock.supplierLinkageStatus === "CERTIFIED") {
-        bulkEndOutcomes.push({ itemId, status: "SKIPPED_CERTIFIED",
-          ebayWriteCount: 0 })
-        continue
-      }
-      const result = await endLiveInvariantViolationNotAvailableV1({
-        itemId,
-        expectedSku: listing.identity.sku,
-        automationAuthorization:
-          SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
-      })
-      bulkEndOutcomes.push({ itemId, status: result.status,
-        ebayWriteCount: result.ebayWriteCount,
-        officialReadbackNotCurrentLive:
-          result.officialReadbackNotCurrentLive })
-    } catch (error) {
-      bulkEndOutcomes.push({ itemId, status: "FAILED",
-        error: safeCode(error), ebayWriteCount: 0 })
-    }
-  }
-  const bulkEndWriteCount = bulkEndOutcomes.reduce((sum, outcome) => sum +
-    (typeof outcome.ebayWriteCount === "number"
-      ? outcome.ebayWriteCount : 0), 0)
-  const bulkEndFailedCount = bulkEndOutcomes.filter((outcome) =>
-    outcome.status === "FAILED").length
-  if (bulkEndWriteCount > 0 || bulkEndFailedCount > 0) {
-    return NextResponse.json({
-      success: bulkEndFailedCount === 0,
-      status: bulkEndFailedCount === 0
-        ? "bulk_end_unlinked_completed" : "bulk_end_unlinked_partial",
-      targetCount: BULK_END_UNLINKED_LIVE_TARGETS_V1.length,
-      outcomes: bulkEndOutcomes,
-      ebayWriteCount: bulkEndWriteCount,
-      humanInterventionCount: 0,
-      safety: { browserSessionRequired: false, inventoryApiUsed: false,
-        databaseWrites: 0, lunaWrites: 0, otherListingWrites: 0,
-        newSchedulerCreated: false },
-    }, { status: bulkEndFailedCount === 0 ? 200 : 502 })
-  }
   let runId = ""
   let leaseOwned = false
   try {
@@ -390,8 +314,8 @@ export async function POST(req: Request) {
         undefined,
         postPollSources,
       )
-      const automaticOosProtection = await runAutomaticCertifiedOosProtectionV1({
-        monitor: postPollMonitor,
+      const automaticOosProtection = await runStockguardOosQuantityProtectionV1({
+        supabase, accountKey, accountAlias: account.accountAlias,
         allowedItemIds: targetItemIds,
         maxMarketplaceWrites: refreshOnly ? 0 : 1,
       })
@@ -504,8 +428,8 @@ export async function POST(req: Request) {
         configurationReason: account.reason },
       live,
     )
-    const automaticOosProtection = await runAutomaticCertifiedOosProtectionV1({
-      monitor: canonicalMonitor,
+    const automaticOosProtection = await runStockguardOosQuantityProtectionV1({
+      supabase, accountKey, accountAlias: account.accountAlias,
       maxMarketplaceWrites: 1,
     })
     if (automaticOosProtection.ebayWriteCount === 1) {
@@ -521,7 +445,7 @@ export async function POST(req: Request) {
         claimedTasks: automaticOosProtection.eligibleItemIds.length,
         successfulTasks: 1,
         failedTasks: 0,
-        metrics: { stage: "AUTO_CERTIFIED_OOS_END_LISTING",
+        metrics: { stage: "STOCKGUARD_OOS_QUANTITY_ZERO",
           accountKey, automaticOosProtection, heartbeatAvailable: true },
       })
       return NextResponse.json({ success: true, status: "completed",
@@ -560,8 +484,8 @@ export async function POST(req: Request) {
           postReconciliationLive,
         ) : canonicalMonitor
     const postReconciliationProtection =
-      await runAutomaticCertifiedOosProtectionV1({
-        monitor: postReconciliationMonitor,
+      await runStockguardOosQuantityProtectionV1({
+        supabase, accountKey, accountAlias: account.accountAlias,
         allowedItemIds: stockIdentityTargetIds,
         maxMarketplaceWrites: 1,
       })

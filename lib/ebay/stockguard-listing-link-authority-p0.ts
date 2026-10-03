@@ -105,7 +105,8 @@ export function projectStockguardListingAuthorityP0(input: Readonly<{
     normalizedSku(active.ebay_sku) === sku && activeSkuAuthorities.length === 1 &&
     activeIdentityAuthorities.length === 1)
   const stockguardEligible = input.listing.listing_status === "active" &&
-    exactActiveAuthority && !quarantine
+    exactActiveAuthority && (!quarantine ||
+      quarantine.reason_code === "DUPLICATE_LIVE_EBAY_SKU")
   return Object.freeze({
     contractVersion: STOCKGUARD_LISTING_LINK_AUTHORITY_P0,
     itemId,

@@ -14,6 +14,10 @@ import { parseManualListingRegistrationInput } from
   "@/lib/ebay/ebay-manual-listing-domain"
 import { registerManualEbayListing } from
   "@/lib/ebay/ebay-manual-listing-service"
+import { refreshStockAfterExactLinkV1 } from
+  "@/lib/ebay/stockguard-post-link-refresh-v1"
+import { readProductionStockGuardV1 } from
+  "@/lib/ebay/ebay-production-stock-read-service-v1"
 import { ensureStockguardAuthorityFromDecisionP0 } from
   "@/lib/ebay/stockguard-listing-link-authority-p0"
 import { materializeCanonicalLunaOpportunityIdentityV1 } from
@@ -25,7 +29,9 @@ import { getEbaySellerAccountScopeConfiguration } from
 import { buildListingIdentityReviewQueueV1, buildOperationalListingBucketsV1,
   packageIdFromCustomLabelV1 } from
   "@/lib/ebay/seller-os-listing-identity-review-v1"
-import { persistListingCasesV1, projectSellerOsListingCasesV1,
+import { currentOperationalUsListingsV1,
+  operationalUsMarketplaceFromOfficialSiteV1, persistListingCasesV1,
+  projectSellerOsListingCasesV1,
   projectProvenListingCaseReadModelV1,
   readListingRegistryEvidenceV1 } from
   "@/lib/ebay/seller-os-listing-registry-v1"
@@ -33,15 +39,58 @@ import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
 const headers = { "Cache-Control": "private, no-store, max-age=0" }
-function fail(code: string, status = 503) {
+function fail(code: string, status = 503, details?: Record<string, unknown>) {
   return NextResponse.json({ success: false, error: code,
-    safety: { ebayWrites: 0, inventoryQuantityWrites: 0 } },
+    ...details, safety: { ebayWrites: 0, inventoryQuantityWrites: 0 } },
   { status, headers })
 }
 function safeError(error: unknown) {
   const code = error instanceof Error ? error.message : ""
-  return /^(LISTING_REGISTRY|MANUAL_LISTING|LUNA_OPPORTUNITY|LISTING_LINK_AUTHORITY)_[A-Z0-9_]+$/.test(code) ? code :
+  return /^(LISTING_REGISTRY|MANUAL_LISTING|LUNA_OPPORTUNITY|LISTING_LINK_AUTHORITY|EBAY_TRADING)_[A-Z0-9_]+$/.test(code) ? code :
     "LISTING_REGISTRY_REQUEST_FAILED"
+}
+
+function officialExactItemBlocker(observed: Awaited<ReturnType<
+  typeof readManualListingFromTradingApi>>, input: { itemId: string;
+    customLabel: string; requireCommercialFields: boolean }) {
+  if (observed.itemId !== input.itemId) return "LISTING_REGISTRY_OFFICIAL_ITEM_ID_MISMATCH"
+  if (observed.listingStatus?.toLowerCase() !== "active") {
+    return "LISTING_REGISTRY_OFFICIAL_ITEM_NOT_ACTIVE"
+  }
+  if (observed.ownership !== "verified") return "LISTING_REGISTRY_OFFICIAL_OWNERSHIP_UNPROVEN"
+  if (operationalUsMarketplaceFromOfficialSiteV1(observed.marketplaceSite)
+    .siteCertificationStatus !== "PROVEN") {
+    return "LISTING_REGISTRY_OFFICIAL_MARKETPLACE_UNPROVEN"
+  }
+  if (observed.ebaySku !== input.customLabel) {
+    return "LISTING_REGISTRY_OFFICIAL_CUSTOM_LABEL_MISMATCH"
+  }
+  if (!observed.title) return "LISTING_REGISTRY_OFFICIAL_TITLE_UNPROVEN"
+  if (input.requireCommercialFields && observed.availableQuantity === null) {
+    return "LISTING_REGISTRY_OFFICIAL_QUANTITY_UNPROVEN"
+  }
+  if (input.requireCommercialFields && observed.price === null) {
+    return "LISTING_REGISTRY_OFFICIAL_PRICE_UNPROVEN"
+  }
+  if (input.requireCommercialFields && !observed.currency) {
+    return "LISTING_REGISTRY_OFFICIAL_CURRENCY_UNPROVEN"
+  }
+  return null
+}
+
+function officialExactItemCertification(observed: Awaited<ReturnType<
+  typeof readManualListingFromTradingApi>>, expectedItemId: string) {
+  const site = operationalUsMarketplaceFromOfficialSiteV1(
+    observed.marketplaceSite)
+  return { officialExactItemStatus: observed.itemId === expectedItemId &&
+      observed.ownership === "verified" &&
+      observed.listingStatus?.toLowerCase() === "active"
+        ? "PROVEN" : "BLOCKED",
+    officialSite: site.officialSite,
+    operationalMarketplace: site.operationalMarketplace,
+    siteCertificationStatus: site.siteCertificationStatus,
+    vertical: site.vertical,
+    identityStatus: "NOT_EVALUATED" }
 }
 
 async function recordOwnerReviewActionV1(
@@ -49,7 +98,8 @@ async function recordOwnerReviewActionV1(
     caseId: string; itemId: string; sweepId: string; actorUserId: string;
     action: "CONFIRM_EXACT_LINK" | "REJECT_CANDIDATE" |
       "KEEP_MANUAL_NO_LUNA" | "REVIEW_CONFLICT";
-    candidate?: { productId: string; variantId: string; sku: string } | null
+    candidate?: { productId: string; variantId: string; sku: string } | null;
+    officialSite?: string | null
   },
 ) {
   const state = { action: input.action, marketplaceId: "EBAY_US",
@@ -57,7 +107,8 @@ async function recordOwnerReviewActionV1(
     actorUserId: input.actorUserId,
     candidateProductId: input.candidate?.productId ?? null,
     candidateVariantId: input.candidate?.variantId ?? null,
-    candidateSku: input.candidate?.sku ?? null }
+    candidateSku: input.candidate?.sku ?? null,
+    officialSite: input.officialSite ?? null }
   const saved = await supabase.from("seller_os_listing_case_events_v1")
     .insert({ case_id: input.caseId, event_type: "OWNER_REVIEW_ACTION",
       previous_state: null, current_state: state })
@@ -84,6 +135,24 @@ export async function GET(req: Request) {
   const scope = getEbaySellerAccountScopeConfiguration()
   if (!scope.accountKey) return fail("LISTING_REGISTRY_ACCOUNT_SCOPE_REQUIRED")
   try {
+    const exactItemId = new URL(req.url).searchParams.get("exactItemId")
+    if (exactItemId !== null) {
+      if (!/^\d{9,20}$/.test(exactItemId)) {
+        return fail("LISTING_REGISTRY_ITEM_ID_INVALID", 400)
+      }
+      const observed = await readManualListingFromTradingApi(exactItemId)
+      const certification = officialExactItemCertification(observed, exactItemId)
+      return NextResponse.json({ success: true, itemId: exactItemId,
+        ...certification,
+        blocker: certification.officialExactItemStatus !== "PROVEN"
+          ? "LISTING_REGISTRY_OFFICIAL_EXACT_ITEM_UNPROVEN"
+          : certification.siteCertificationStatus !== "PROVEN"
+            ? certification.officialSite
+              ? "LISTING_REGISTRY_OFFICIAL_NON_US_SITE"
+              : "LISTING_REGISTRY_OFFICIAL_SITE_MISSING"
+            : null,
+        safety: { ebayWrites: 0, inventoryQuantityWrites: 0 } }, { headers })
+    }
     const supabase = getSupabaseAdminClient()
     const [cases, sync, sweep] = await Promise.all([
       supabase.from("seller_os_listing_cases_v1").select("*")
@@ -157,9 +226,27 @@ export async function GET(req: Request) {
         (quarantineRead.data?.length ?? 0) >= 500) {
       throw new Error("LISTING_REGISTRY_REVIEW_EVIDENCE_READ_FAILED")
     }
-    const currentCases = projectProvenListingCaseReadModelV1(
+    const projectedCases = projectProvenListingCaseReadModelV1(
       storedCurrentCases, authorityRead.data ?? [], decisionRead.data ?? [],
       quarantineRead.data ?? [])
+    const canonical = await readProductionStockGuardV1({ supabase,
+      accountKey: scope.accountKey, accountAlias: scope.accountAlias ?? "",
+      itemId: null, includeKnownListingStockEvidence: true })
+    const certifiedByItem = new Map(canonical.cohortComplete
+      ? canonical.listings.filter((row) => row.supplierLinkage === "CERTIFIED")
+        .map((row) => [row.itemId, row]) : [])
+    const currentCases = projectedCases.map((row) => {
+      const certified = certifiedByItem.get(row.ebay_item_id)
+      const component = certified?.components[0]
+      return certified && component ? { ...row,
+        identity_status: "LINKED_EXACT" as const,
+        stockguard_link_status: "LINKED_MONITOR_ONLY" as const,
+        supplier_sku: component.supplierSku,
+        luna_product_id: component.supplierProductId,
+        luna_variant_id: component.supplierVariantId,
+        next_blocker: certified.limitationCode,
+      } : row
+    })
     const opportunityIds = [...new Set((packageRead.data ?? []).map((row) =>
       row.opportunity_id))]
     const opportunityRead = opportunityIds.length
@@ -216,7 +303,8 @@ export async function GET(req: Request) {
       NO_EXACT_SOURCE: operationalBuckets.filter((row) =>
         row.bucket === "NO_EXACT_SOURCE").length,
     }
-    const fresh = Boolean(sweep.data?.official_observed_at &&
+    const fresh = Boolean(canonical.cohortComplete &&
+      sweep.data?.official_observed_at &&
       Date.now() - Date.parse(sweep.data.official_observed_at) <= 20 * 60_000 &&
       Date.parse(sweep.data.official_observed_at) - Date.now() <= 60_000 &&
       sweep.data.official_live_item_count === currentCases.length &&
@@ -263,82 +351,159 @@ export async function POST(req: Request) {
         itemIds.some((itemId) => !/^\d{9,20}$/.test(itemId))) {
         return fail("LISTING_REGISTRY_BATCH_SELECTION_INVALID", 400)
       }
-      const targets = await Promise.all(itemIds.map((itemId) =>
-        readCurrentListingOwnerReviewTargetV1({
-          supabase, accountKey: scope.accountKey!, itemId,
-        })))
-      if (new Set(targets.map((target) => target.sweepId)).size !== 1 ||
-        targets.some((target) => !target.canConfirm ||
-          target.candidates.length !== 1 ||
-          !["CURRENT_LUNA_CATALOG_EXACT_SKU", "EXACT_PACKAGE_LABEL_LINEAGE"]
-            .includes(target.candidates[0].source)) ||
-        new Set(targets.map((target) =>
-          `${target.candidates[0].productId}:${target.candidates[0].variantId}`))
-          .size !== targets.length) {
-        return fail("LISTING_REGISTRY_BATCH_EXACT_SET_CHANGED", 409)
+      const [canonical, sweepRead] = await Promise.all([
+        readProductionStockGuardV1({ supabase, accountKey: scope.accountKey,
+          accountAlias: scope.accountAlias, itemId: null,
+          includeKnownListingStockEvidence: true }),
+        supabase.from("seller_os_listing_registry_sweeps_v1")
+          .select("sweep_id").eq("account_key", scope.accountKey)
+          .eq("marketplace_id", "EBAY_US").eq("status", "COMPLETE")
+          .order("completed_at", { ascending: false }).limit(1).maybeSingle(),
+      ])
+      if (!canonical.cohortComplete || canonical.currentLiveState !== "CURRENT_FRESH" ||
+          sweepRead.error || !sweepRead.data) {
+        return fail("LISTING_REGISTRY_CURRENT_CANONICAL_COHORT_REQUIRED", 409)
+      }
+      const canonicalByItem = new Map(canonical.listings.map((row) =>
+        [row.itemId, row]))
+      type BatchPreflight = ReturnType<typeof officialExactItemCertification>
+      const blockedRows: Array<{ itemId: string; blocker: string;
+        preflight?: BatchPreflight }> = []
+      const alreadyLinkedItemIds: string[] = []
+      const targets: Array<Awaited<ReturnType<
+        typeof readCurrentListingOwnerReviewTargetV1>>> = []
+      for (const itemId of itemIds) {
+        const current = canonicalByItem.get(itemId)
+        if (!current || current.liveStatus !== "LIVE_ACTIVE") {
+          blockedRows.push({ itemId,
+            blocker: "LISTING_REGISTRY_CURRENT_LIVE_ITEM_UNPROVEN" })
+          continue
+        }
+        if (current.supplierLinkage === "CERTIFIED") {
+          alreadyLinkedItemIds.push(itemId)
+          continue
+        }
+        try {
+          const target = await readCurrentListingOwnerReviewTargetV1({
+            supabase, accountKey: scope.accountKey, itemId,
+          })
+          if (target.sweepId !== sweepRead.data.sweep_id ||
+              !target.canConfirm || target.candidates.length !== 1 ||
+              !["CURRENT_LUNA_CATALOG_EXACT_SKU", "EXACT_PACKAGE_LABEL_LINEAGE"]
+                .includes(target.candidates[0].source)) {
+            blockedRows.push({ itemId,
+              blocker: "LISTING_REGISTRY_EXACT_CANDIDATE_BLOCKED" })
+          } else targets.push(target)
+        } catch (error) {
+          blockedRows.push({ itemId, blocker: safeError(error) })
+        }
+      }
+      const candidateCounts = new Map<string, number>()
+      for (const target of targets) {
+        const candidate = target.candidates[0]
+        const key = `${candidate.productId}:${candidate.variantId}`
+        candidateCounts.set(key, (candidateCounts.get(key) ?? 0) + 1)
       }
       const batchWrite = await supabase.from("seller_os_listing_identity_batches_v1")
         .insert({ account_key: scope.accountKey, marketplace_id: "EBAY_US",
-          sweep_id: targets[0].sweepId, actor_user_id: auth.userId,
+          sweep_id: sweepRead.data.sweep_id, actor_user_id: auth.userId,
           requested_item_ids: itemIds })
         .select("batch_id").single()
       if (batchWrite.error || !batchWrite.data) {
         throw new Error("LISTING_REGISTRY_BATCH_AUDIT_WRITE_FAILED")
       }
       const receipts: Array<{ itemId: string; eventId: number;
-        authorityId: string }> = []
-      let failure: string | null = null
+        authorityId: string; preflight?: BatchPreflight }> = []
+      const committedItemIds: string[] = []
+      const auditWarnings: Array<{ itemId: string; blocker: string }> = []
       for (const target of targets) {
         const candidate = target.candidates[0]
-        const single = await POST(new Request(req.url, { method: "POST",
-          headers: { Authorization: req.headers.get("Authorization") ?? "",
-            "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "confirm_exact_link",
-            ebayItemId: target.target.ebay_item_id,
-            candidateSku: candidate.sku,
-            candidateProductId: candidate.productId,
-            candidateVariantId: candidate.variantId,
-            confirmation: "CONFIRM_EXACT_LISTING_LUNA" }),
-        }))
-        const result = await single.json() as { success?: boolean; error?: string;
-          ownerActionEventId?: number; stockguardAuthorityId?: string }
-        if (!single.ok || !result.success || !result.ownerActionEventId ||
-          !result.stockguardAuthorityId) {
-          failure = result.error ?? "LISTING_REGISTRY_BATCH_ITEM_UNPROVEN"
-          break
+        const itemId = target.target.ebay_item_id
+        if ((candidateCounts.get(`${candidate.productId}:${candidate.variantId}`)
+          ?? 0) !== 1) {
+          blockedRows.push({ itemId,
+            blocker: "LISTING_REGISTRY_DUPLICATE_SUPPLIER_IDENTITY_CANDIDATE" })
+          continue
         }
-        const receiptWrite = await supabase
-          .from("seller_os_listing_identity_batch_receipts_v1")
-          .insert({ batch_id: batchWrite.data.batch_id,
-            case_id: target.target.case_id,
-            ebay_item_id: target.target.ebay_item_id,
-            owner_event_id: result.ownerActionEventId,
-            authority_id: result.stockguardAuthorityId })
-          .select("owner_event_id").single()
-        if (receiptWrite.error || !receiptWrite.data) {
-          failure = "LISTING_REGISTRY_BATCH_ITEM_AUDIT_WRITE_FAILED"
-          break
+        try {
+          const single = await POST(new Request(req.url, { method: "POST",
+            headers: { Authorization: req.headers.get("Authorization") ?? "",
+              "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "confirm_exact_link",
+              ebayItemId: itemId,
+              candidateSku: candidate.sku,
+              candidateProductId: candidate.productId,
+              candidateVariantId: candidate.variantId,
+              confirmation: "CONFIRM_EXACT_LISTING_LUNA" }),
+          }))
+          const result = await single.json() as { success?: boolean; error?: string;
+            ownerActionEventId?: number; stockguardAuthorityId?: string;
+            officialPreflight?: BatchPreflight }
+          if (!single.ok || !result.success || !result.ownerActionEventId ||
+            !result.stockguardAuthorityId) {
+            blockedRows.push({ itemId,
+              blocker: result.error ?? "LISTING_REGISTRY_BATCH_ITEM_UNPROVEN",
+              preflight: result.officialPreflight })
+            continue
+          }
+          // The individual response follows durable linkage readback. Record
+          // that success before any separate batch-audit write can fail.
+          committedItemIds.push(itemId)
+          const receiptWrite = await supabase
+            .from("seller_os_listing_identity_batch_receipts_v1")
+            .insert({ batch_id: batchWrite.data.batch_id,
+              case_id: target.target.case_id,
+              ebay_item_id: itemId,
+              owner_event_id: result.ownerActionEventId,
+              authority_id: result.stockguardAuthorityId })
+            .select("owner_event_id").single()
+          if (receiptWrite.error || !receiptWrite.data) {
+            auditWarnings.push({ itemId,
+              blocker: "LISTING_REGISTRY_BATCH_ITEM_AUDIT_WRITE_FAILED" })
+            continue
+          }
+          receipts.push({ itemId,
+            eventId: result.ownerActionEventId,
+            authorityId: result.stockguardAuthorityId,
+            preflight: result.officialPreflight })
+        } catch (error) {
+          if (committedItemIds.includes(itemId)) {
+            auditWarnings.push({ itemId,
+              blocker: "LISTING_REGISTRY_BATCH_ITEM_AUDIT_WRITE_FAILED" })
+          } else blockedRows.push({ itemId, blocker: safeError(error) })
         }
-        receipts.push({ itemId: target.target.ebay_item_id,
-          eventId: result.ownerActionEventId,
-          authorityId: result.stockguardAuthorityId })
       }
-      const batchStatus = failure ? "PARTIAL" : "COMPLETE"
-      const finalWrite = await supabase.from("seller_os_listing_identity_batches_v1")
-        .update({ status: batchStatus, completed_at: new Date().toISOString() })
-        .eq("batch_id", batchWrite.data.batch_id).eq("status", "PENDING")
-        .select("batch_id,status").single()
-      if (finalWrite.error || !finalWrite.data) {
-        throw new Error("LISTING_REGISTRY_BATCH_AUDIT_WRITE_FAILED")
-      }
-      return NextResponse.json({ success: !failure, error: failure,
-        batchId: batchWrite.data.batch_id, batchStatus, receipts,
-        requestedCount: itemIds.length, confirmedCount: receipts.length,
+      const batchStatus = blockedRows.length || auditWarnings.length
+        ? "PARTIAL" : "COMPLETE"
+      let auditFinalized = false
+      try {
+        const finalWrite = await supabase.from("seller_os_listing_identity_batches_v1")
+          .update({ status: batchStatus, completed_at: new Date().toISOString() })
+          .eq("batch_id", batchWrite.data.batch_id).eq("status", "PENDING")
+          .select("batch_id,status").single()
+        auditFinalized = !finalWrite.error && Boolean(finalWrite.data)
+      } catch { /* Individual durable outcomes still must be returned. */ }
+      return NextResponse.json({ success: true, error: null,
+        batchId: batchWrite.data.batch_id,
+        batchStatus: auditFinalized ? batchStatus : "PENDING",
+        auditStatus: auditFinalized && !auditWarnings.length ? "COMPLETE" :
+          "RECONCILIATION_REQUIRED",
+        auditWarnings: [...auditWarnings,
+          ...(!auditFinalized ? [{ blocker:
+            "LISTING_REGISTRY_BATCH_AUDIT_WRITE_FAILED" }] : [])],
+        receipts, committedItemIds,
+        requestedCount: itemIds.length, selectedCount: itemIds.length,
+        confirmedCount: committedItemIds.length,
+        alreadyLinkedCount: alreadyLinkedItemIds.length,
+        alreadyLinkedItemIds,
+        blockedCount: blockedRows.length, blockedRows,
         safety: { ebayWrites: 0, inventoryQuantityWrites: 0,
           priceWrites: 0, contentWrites: 0, publicationWrites: 0 } },
-      { status: failure ? 409 : 200, headers })
+      { headers })
     }
     let ownerActionEventId: number | null = null
+    let officialPreflight: ReturnType<typeof officialExactItemCertification> |
+      null = null
     let ownerConfirmation: { caseId: string; sweepId: string; directSku: boolean;
       candidate: { productId: string; variantId: string; sku: string } } | null = null
     if (["confirm_exact_link", "reject_candidate", "keep_manual_no_luna",
@@ -435,8 +600,7 @@ export async function POST(req: Request) {
           safety: { ebayWrites: 0, inventoryQuantityWrites: 0 } },
         { status: 409, headers })
       }
-      listings = live.listings.filter((listing) =>
-        listing.marketplaceCertification.status === "US_CERTIFIED")
+      listings = currentOperationalUsListingsV1(live.listings)
       officialObservedAt = live.observedAt
       const native = evidence.publications.filter((publication) =>
         publication.listing_id && publication.opportunity_id &&
@@ -543,15 +707,14 @@ export async function POST(req: Request) {
       let verifiedObservedAt: string
       if (ownerConfirmation?.directSku) {
         const observed = await readManualListingFromTradingApi(body.ebayItemId!)
-        if (observed.ownership !== "verified" ||
-          observed.itemId !== body.ebayItemId ||
-          observed.ebaySku !== ownerConfirmation.candidate.sku ||
-          observed.listingStatus?.toLowerCase() !== "active" ||
-          !["US", "0"].includes(observed.marketplaceSite ?? "") ||
-          !observed.title || observed.availableQuantity === null ||
-          observed.price === null || !observed.currency) {
-          return fail("LISTING_REGISTRY_OFFICIAL_EXACT_ITEM_UNPROVEN", 409)
-        }
+        officialPreflight = officialExactItemCertification(
+          observed, body.ebayItemId!)
+        const blocker = officialExactItemBlocker(observed, {
+          itemId: body.ebayItemId!,
+          customLabel: ownerConfirmation.candidate.sku,
+          requireCommercialFields: true,
+        })
+        if (blocker) return fail(blocker, 409, { officialPreflight })
         const admitted = await supabase.rpc(
           "confirm_seller_os_listing_owner_exact_sku_v1", {
             p_account_key: scope.accountKey,
@@ -581,7 +744,7 @@ export async function POST(req: Request) {
         if (!authority.stockguardEligible) {
           throw new Error("LISTING_REGISTRY_STOCKGUARD_LINK_READBACK_UNPROVEN")
         }
-        verifiedSku = observed.ebaySku
+        verifiedSku = observed.ebaySku!
         verifiedTitle = observed.title
         verifiedQuantity = observed.availableQuantity
         verifiedPrice = observed.price
@@ -590,6 +753,15 @@ export async function POST(req: Request) {
       } else if (decision && ownerConfirmation) {
         // A pending manual candidate may be bound to an older Item ID. Its
         // uniqueness guard cannot stand in for this exact durable decision.
+        const observed = await readManualListingFromTradingApi(body.ebayItemId!)
+        officialPreflight = officialExactItemCertification(
+          observed, body.ebayItemId!)
+        const blocker = officialExactItemBlocker(observed, {
+          itemId: body.ebayItemId!,
+          customLabel: previous.data.ebay_custom_label,
+          requireCommercialFields: false,
+        })
+        if (blocker) return fail(blocker, 409, { officialPreflight })
         const authority = await ensureStockguardAuthorityFromDecisionP0({
           supabase, accountKey: scope.accountKey,
           ebayItemId: body.ebayItemId!, sourceDecisionId: decision.decision_id,
@@ -601,12 +773,12 @@ export async function POST(req: Request) {
           authority.authority?.luna_sku !== ownerConfirmation.candidate.sku) {
           throw new Error("LISTING_REGISTRY_STOCKGUARD_LINK_READBACK_UNPROVEN")
         }
-        verifiedSku = previous.data.ebay_custom_label
-        verifiedTitle = previous.data.ebay_title
-        verifiedQuantity = null
-        verifiedPrice = null
-        verifiedCurrency = null
-        verifiedObservedAt = previous.data.ebay_observed_at
+        verifiedSku = observed.ebaySku!
+        verifiedTitle = observed.title
+        verifiedQuantity = observed.availableQuantity
+        verifiedPrice = observed.price
+        verifiedCurrency = observed.currency
+        verifiedObservedAt = observed.observedAt
       } else {
         const input = parseManualListingRegistrationInput({
           ebayItemId: body.ebayItemId, opportunityId: body.opportunityId,
@@ -649,7 +821,8 @@ export async function POST(req: Request) {
       if (observed.ownership !== "verified" ||
         observed.itemId !== body.ebayItemId ||
         observed.listingStatus?.toLowerCase() !== "active" ||
-        !["US", "0"].includes(observed.marketplaceSite ?? "")) {
+        operationalUsMarketplaceFromOfficialSiteV1(observed.marketplaceSite)
+          .siteCertificationStatus !== "PROVEN") {
         return fail("LISTING_REGISTRY_OFFICIAL_ITEM_NOT_VERIFIED", 409)
       }
       listings = [{ itemId: observed.itemId, sku: observed.ebaySku,
@@ -695,6 +868,7 @@ export async function POST(req: Request) {
       sweepId && readback.data.some((row) => row.last_reconciled_sweep_id !== sweepId)) {
       throw new Error("LISTING_REGISTRY_DURABLE_READBACK_FAILED")
     }
+    let postLinkStock: Awaited<ReturnType<typeof refreshStockAfterExactLinkV1>> | null = null
     if (ownerConfirmation) {
       const linkedCase = readback.data?.find((row) =>
         row.case_id === ownerConfirmation?.caseId)
@@ -710,7 +884,11 @@ export async function POST(req: Request) {
         caseId: ownerConfirmation.caseId, itemId: body.ebayItemId!,
         sweepId: ownerConfirmation.sweepId, actorUserId: auth.userId!,
         action: "CONFIRM_EXACT_LINK", candidate: ownerConfirmation.candidate,
+        officialSite: officialPreflight?.officialSite,
       })
+      postLinkStock = await refreshStockAfterExactLinkV1({ supabase,
+        accountKey: scope.accountKey, accountAlias: scope.accountAlias,
+        itemId: body.ebayItemId! })
     }
     if (newSweepId) {
       const completed = await supabase.from("seller_os_listing_registry_sweeps_v1")
@@ -725,6 +903,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, cases: readback.data,
       nativeAutoLinkBlockers,
       ownerActionEventId,
+      officialPreflight,
+      postLinkStock,
       stockguardAuthorityId: ownerConfirmation ?
         readback.data?.find((row) => row.case_id === ownerConfirmation.caseId)
           ?.stockguard_authority_id ?? null : null,

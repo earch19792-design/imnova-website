@@ -278,7 +278,7 @@ export async function readCanonicalLunaLinkageDecisions(
   const maximum = 500
   const { data, error } = await supabase
     .from("seller_os_luna_linkage_decisions")
-    .select("decision_id,decision_version,decision,decision_at,ebay_item_id,ebay_sku,linkage_id,components,evidence_digest,evidence_references")
+    .select("decision_id,decision_version,decision,decision_at,ebay_item_id,ebay_sku,luna_product_id,luna_variant_id,luna_sku,linkage_id,components,evidence_digest,evidence_references")
     .eq("account_key", accountKey)
     .eq("marketplace_id", "EBAY_US")
     .order("decision_version", { ascending: false })

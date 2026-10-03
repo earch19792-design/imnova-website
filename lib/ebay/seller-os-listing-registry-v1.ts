@@ -6,6 +6,30 @@ import type { ListingLinkAuthorityRowV1, ListingIdentityQuarantineRowV1 } from
 
 export const SELLER_OS_LISTING_REGISTRY_V1 = "SELLER_OS_LISTING_REGISTRY_V1" as const
 
+/** The same official Trading sites admitted by the operational US LIVE sweep. */
+export function operationalUsMarketplaceFromOfficialSiteV1(site: string | null) {
+  const officialSite = site?.trim().toUpperCase() || null
+  const us = officialSite === "US"
+  const motors = officialSite === "EBAYMOTORS"
+  return { officialSite,
+    operationalMarketplace: us || motors ? "EBAY_US" as const : null,
+    siteCertificationStatus: us || motors ? "PROVEN" as const :
+      "BLOCKED" as const,
+    vertical: motors ? "EBAY_MOTORS" as const : null }
+}
+
+/** Trading site eBayMotors is the US Motors vertical. It remains in the
+ * operational US listing cohort even when its available quantity is zero. */
+export function currentOperationalUsListingsV1(
+  listings: readonly EbayLiveListing[],
+): EbayLiveListing[] {
+  return listings.filter((listing) =>
+    listing.marketplaceCertification.status === "US_CERTIFIED" ||
+    (listing.marketplaceCertification.status === "NON_US_CERTIFIED" &&
+      operationalUsMarketplaceFromOfficialSiteV1(listing.marketplaceSite)
+        .vertical === "EBAY_MOTORS"))
+}
+
 export type ListingReconciliationStatusV1 = "LINKED_EXACT" | "LINKABLE_EXACT" |
   "AMBIGUOUS" | "MISSING_LUNA_IDENTITY" | "DUPLICATE_IDENTITY" |
   "NEEDS_OWNER_REVIEW"

@@ -23,6 +23,9 @@ export type ReadonlyLunaLinkageDecisionRowV1 = Readonly<{
   decision_at: string
   ebay_item_id: string
   ebay_sku: string | null
+  luna_product_id?: string | null
+  luna_variant_id?: string | null
+  luna_sku?: string | null
   linkage_id: string
   components: unknown
   evidence_digest: string

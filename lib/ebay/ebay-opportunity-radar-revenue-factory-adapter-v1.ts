@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import {beginCurrentPublicationPackageV1} from '../seller-os/current-publication-factory-server-v1'
+import { readCurrentLiveAuthorityV1 } from "./ebay-current-live-authority-v1"
 
 import { getSellerOsRadarPriceDistributionEconomicsV1,
   getSellerOsQuickPickMarketTestEconomicsV1,
@@ -204,7 +205,8 @@ type AlreadyLiveExactProductGuardV1 = Readonly<{
   status: "AVAILABLE" | "UNAVAILABLE"
   matches: ReadonlyMap<string, Readonly<{
     ebayItemIds: readonly string[]
-    linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1"
+    linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" |
+      "SELLER_OS_LISTING_PRODUCT_LINK_AUTHORITY_V1"
   }>>
   reasonCode: string | null
 }>
@@ -227,21 +229,75 @@ export async function readAlreadyLiveExactLunaIdentitiesV1(input: Readonly<{
   if (!exactIdentities.length) return Object.freeze({
     status: "AVAILABLE" as const,
     matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
-      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>(),
+      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" |
+        "SELLER_OS_LISTING_PRODUCT_LINK_AUTHORITY_V1" }>>(),
     reasonCode: null,
+  })
+  const live = await readCurrentLiveAuthorityV1({
+    supabase: input.supabase, accountKey: input.accountKey })
+  let currentLiveIds: readonly string[] | null = live.currentState ===
+    "CURRENT_FRESH" ? live.currentItemIds : null
+  if (!currentLiveIds) {
+    const sweepRead = await input.supabase.from(
+      "seller_os_listing_registry_sweeps_v1")
+      .select("sweep_id,official_observed_at,official_live_item_count,reconciled_item_count")
+      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+      .eq("status", "COMPLETE")
+      .order("completed_at", { ascending: false }).limit(1).maybeSingle()
+    const sweep = sweepRead.data
+    const observedAt = Date.parse(String(sweep?.official_observed_at ?? ""))
+    if (!sweepRead.error && sweep && Number.isFinite(observedAt) &&
+        observedAt <= Date.now() && Date.now() - observedAt <= 20 * 60_000 &&
+        sweep.official_live_item_count === sweep.reconciled_item_count &&
+        Number.isSafeInteger(sweep.official_live_item_count) &&
+        sweep.official_live_item_count >= 0) {
+      const cases = await input.supabase.from("seller_os_listing_cases_v1")
+        .select("ebay_item_id,listing_status,last_reconciled_sweep_id")
+        .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+        .eq("last_reconciled_sweep_id", sweep.sweep_id).limit(1001)
+      const rows = cases.data ?? []
+      if (!cases.error && rows.length === sweep.official_live_item_count &&
+          rows.every((row) => row.last_reconciled_sweep_id === sweep.sweep_id &&
+            ["ACTIVE", "LIVE_ACTIVE"].includes(row.listing_status) &&
+            /^\d{9,20}$/.test(String(row.ebay_item_id))) &&
+          new Set(rows.map((row) => row.ebay_item_id)).size === rows.length) {
+        currentLiveIds = rows.map((row) => String(row.ebay_item_id))
+      }
+    }
+  }
+  if (!currentLiveIds) return Object.freeze({
+    status: "UNAVAILABLE" as const,
+    matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
+      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" |
+        "SELLER_OS_LISTING_PRODUCT_LINK_AUTHORITY_V1" }>>(),
+    reasonCode: "ALREADY_LIVE_OFFICIAL_PORTFOLIO_UNAVAILABLE",
   })
   const variantIds = [...new Set(exactIdentities.map((identity) =>
     identity.lunaVariantId))]
-  const decisionRead = await input.supabase
-    .from("seller_os_luna_linkage_decisions")
-    .select("decision_id,ebay_item_id,luna_product_id,luna_variant_id,luna_sku,decision,decision_version,classification,contract_version")
-    .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
-    .in("luna_variant_id", variantIds)
-    .order("decision_version", { ascending: false }).limit(1_000)
-  if (decisionRead.error) return Object.freeze({
+  const [decisionRead, authorityRead, quarantineRead] = await Promise.all([
+    input.supabase.from("seller_os_luna_linkage_decisions")
+      .select("decision_id,ebay_item_id,luna_product_id,luna_variant_id,luna_sku,decision,decision_version,classification,contract_version")
+      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+      .in("luna_variant_id", variantIds)
+      .order("decision_version", { ascending: false }).limit(1_001),
+    input.supabase.from("seller_os_listing_product_link_authorities_v1")
+      .select("ebay_item_id,luna_product_id,luna_variant_id,luna_sku,lifecycle_state")
+      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+      .eq("lifecycle_state", "ACTIVE")
+      .in("luna_variant_id", variantIds).limit(1_001),
+    input.supabase.from("seller_os_listing_identity_quarantines_v1")
+      .select("ebay_item_id,quarantine_state,reason_code")
+      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+      .eq("quarantine_state", "ACTIVE").limit(1_001),
+  ])
+  if (decisionRead.error || authorityRead.error || quarantineRead.error ||
+      rows(decisionRead.data).length > 1_000 ||
+      rows(authorityRead.data).length > 1_000 ||
+      rows(quarantineRead.data).length > 1_000) return Object.freeze({
     status: "UNAVAILABLE" as const,
     matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
-      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>(),
+      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" |
+        "SELLER_OS_LISTING_PRODUCT_LINK_AUTHORITY_V1" }>>(),
     reasonCode: "ALREADY_LIVE_EXACT_PRODUCT_LINKAGE_READ_FAILED",
   })
   const latestByItem = new Map<string, JsonRecord>()
@@ -258,39 +314,35 @@ export async function readAlreadyLiveExactLunaIdentitiesV1(input: Readonly<{
     decision.classification === "EXACT_UNIQUE_MATCH" &&
     text(decision.luna_product_id, 80) &&
     text(decision.luna_variant_id, 80) && text(decision.luna_sku, 120))
-  if (!approved.length) return Object.freeze({
-    status: "AVAILABLE" as const,
-    matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
-      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>(),
-    reasonCode: null,
-  })
-  const itemIds = approved.map(([itemId]) => itemId)
-  const activeRead = await input.supabase.from("ebay_active_listings")
-    .select("ebay_item_id,listing_status")
-    .eq("account_key", input.accountKey).eq("listing_status", "active")
-    .in("ebay_item_id", itemIds).limit(1_000)
-  if (activeRead.error) return Object.freeze({
-    status: "UNAVAILABLE" as const,
-    matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
-      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>(),
-    reasonCode: "ALREADY_LIVE_EXACT_PRODUCT_CURRENT_LIVE_READ_FAILED",
-  })
-  const activeItems = new Set(rows(activeRead.data).flatMap((listing) => {
-    const itemId = text(listing.ebay_item_id, 30)
-    return itemId && /^\d{9,19}$/.test(itemId) &&
-      listing.listing_status === "active" ? [itemId] : []
-  }))
+  const activeItems = new Set(currentLiveIds)
+  const blockedItems = new Set(rows(quarantineRead.data).flatMap((row) =>
+    row.reason_code === "DUPLICATE_LIVE_EBAY_SKU" ? [] :
+      [String(row.ebay_item_id)]))
+  const authorities = rows(authorityRead.data).filter((row) =>
+    activeItems.has(String(row.ebay_item_id)) &&
+    !blockedItems.has(String(row.ebay_item_id)))
   const matches = new Map<string, Readonly<{ ebayItemIds: readonly string[]
-    linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>()
+    linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" |
+      "SELLER_OS_LISTING_PRODUCT_LINK_AUTHORITY_V1" }>>()
   for (const identity of exactIdentities) {
+    const activeAuthorityItems = authorities.flatMap((authority) =>
+      authority.luna_product_id === identity.lunaProductId &&
+      authority.luna_variant_id === identity.lunaVariantId &&
+      authority.luna_sku === identity.supplierSku
+        ? [String(authority.ebay_item_id)] : [])
     const linkedItems = approved.flatMap(([itemId, decision]) =>
       activeItems.has(itemId) &&
+      !blockedItems.has(itemId) &&
       decision.luna_product_id === identity.lunaProductId &&
       decision.luna_variant_id === identity.lunaVariantId &&
       decision.luna_sku === identity.supplierSku ? [itemId] : [])
-    if (linkedItems.length) matches.set(identity.identityKey, Object.freeze({
-      ebayItemIds: Object.freeze([...new Set(linkedItems)].sort()),
-      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1",
+    if (linkedItems.length || activeAuthorityItems.length)
+      matches.set(identity.identityKey, Object.freeze({
+      ebayItemIds: Object.freeze([...new Set([
+        ...activeAuthorityItems, ...linkedItems])].sort()),
+      linkageAuthority: activeAuthorityItems.length
+        ? "SELLER_OS_LISTING_PRODUCT_LINK_AUTHORITY_V1"
+        : "SELLER_OS_LUNA_LINKAGE_DECISION_V1",
     }))
   }
   return Object.freeze({ status: "AVAILABLE" as const, matches,

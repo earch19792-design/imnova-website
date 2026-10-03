@@ -27,6 +27,8 @@ import {
   resumeTeoPreResearchBatchV1,
 } from "./teo-pre-research-control-plane-v1"
 import { getSupabaseAdminClient } from "../supabase-admin"
+import { readSellerOsRevenueControlPlaneV1 } from
+  "./seller-os-revenue-control-plane-v1"
 
 export const SELLER_OS_CONTROL_TOOL_NAMES_V1 = Object.freeze([
   "seller_os_request_pre_research_batch",
@@ -35,6 +37,7 @@ export const SELLER_OS_CONTROL_TOOL_NAMES_V1 = Object.freeze([
   "seller_os_list_pre_research_batches",
   "seller_os_request_commercial_trace",
   "seller_os_get_commercial_trace",
+  "seller_os_get_revenue_control_plane",
 ] as const)
 
 const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
@@ -150,6 +153,24 @@ function createServer(principal: SellerOsControlPrincipalV1) {
     const result = await getTeoCommercialTraceV1({ ...context(), ...request })
     return toolResult(result,
       "Seller OS returned the bounded durable Commercial Trace readback.")
+  })
+  server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[6], {
+    title: "Get current LIVE revenue control plane",
+    description: "Read one bounded, source-backed EBAY_LIVE_ITEM portfolio snapshot with identity, stock, shipping, analytics, orders, research and economics. Never writes to a marketplace.",
+    inputSchema: z.object({}).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false,
+      idempotentHint: true, openWorldHint: false },
+    _meta: { securitySchemes },
+  }, async () => {
+    const account = getEbaySellerAccountScopeConfiguration()
+    if (!account.accountKey || !account.accountAlias) {
+      throw new Error("REVENUE_CONTROL_ACCOUNT_SCOPE_REQUIRED")
+    }
+    const result = await readSellerOsRevenueControlPlaneV1({
+      supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+      accountAlias: account.accountAlias })
+    return toolResult(result,
+      `Seller OS returned ${result.portfolioCount ?? "unavailable"} current LIVE portfolio rows.`)
   })
   return server
 }
