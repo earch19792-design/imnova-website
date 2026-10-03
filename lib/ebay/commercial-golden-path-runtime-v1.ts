@@ -18,6 +18,8 @@ import { buildGoldenOwnerProductTruthEvidenceV1, isGoldenOwnerProductTruthEviden
   type GoldenOwnerProductTruthObservationV1, type GoldenOwnerProductTruthSourceV1 } from "./commercial-golden-path-owner-product-truth-v1"
 import { buildGoldenVisualComparisonEvidenceV1, isGoldenVisualComparisonEvidenceV1,
   type GoldenVisualRelationV1, type GoldenVisualSourceObservationV1 } from "./commercial-golden-path-visual-comparison-v1"
+import { planGoldenPackFallbackV1,
+  SELLER_OS_UNIT_FIRST_PACK_POLICY_V1 } from "./commercial-golden-path-pack-policy-v1"
 import { readEbayFeeHandoffV1 } from "../seller-os/ebay-fee-runtime-v1"
 import { readEbayListingCategoryAuthorityV1 } from "./ebay-listing-category-authority-v1"
 import { getEbayTaxonomyListingIntelligence } from "./ebay-seller-keyword-demand-gateway"
@@ -121,12 +123,16 @@ async function ownerProductTruthEvidence(
   source: GoldenRecord | null,
 ) {
   if (!source) return { rows: [] as GoldenRecord[], complete: false }
+  // OWNER Product Truth describes the physical supplier offer. A constructed
+  // eBay pack reuses multiple units of that same base offer, so the evidence is
+  // always read at supplierQuantity=1 and then multiplied by the scenario.
+  const baseCandidate = { ...key, supplierQuantity: 1 }
   const read = await ctx.supabase.from("seller_os_golden_owner_product_truth_v1")
     .select("payload").eq("account_key", ctx.accountKey)
     .eq("owner_user_id", ctx.principal.ownerUserId)
     .eq("product_id", key.productId).eq("variant_id", key.variantId)
     .eq("supplier_sku", key.supplierSku)
-    .eq("supplier_quantity", key.supplierQuantity)
+    .eq("supplier_quantity", 1)
     .eq("source_fingerprint", String(source.source_fingerprint ?? ""))
     .order("created_at", { ascending: true }).limit(21)
   if (read.error || (read.data?.length ?? 0) > 20) {
@@ -134,7 +140,7 @@ async function ownerProductTruthEvidence(
   }
   const rows = (read.data ?? []).map(row => goldenRecord(row.payload))
     .filter(evidence => isGoldenOwnerProductTruthEvidenceV1({
-      evidence, candidate: key, accountKey: ctx.accountKey,
+      evidence, candidate: baseCandidate, accountKey: ctx.accountKey,
       ownerUserId: ctx.principal.ownerUserId,
       sourceFingerprint: String(source.source_fingerprint ?? ""),
       canonicalUrl: String(source.canonical_url ?? ""), now: ctx.now,
@@ -298,6 +304,9 @@ export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCan
   return receipt(ctx, "EVALUATION", evaluated)
 }
 export async function previewGoldenCategoryV1(ctx: GoldenContext, category: string, limit = 5, targetNetProfit = 4) {
+  if (!Number.isFinite(targetNetProfit) || targetNetProfit < 4 || targetNetProfit > 10_000) {
+    throw Error("TARGET_NET_PROFIT_OUTSIDE_AUTHORIZED_BOUND")
+  }
   // Read demand first. Supplier category is only a discovery filter; ranking uses classified SOLD evidence.
   const market = await marketEvidence(ctx), s = await snapshot(ctx)
   const isPersonalCare = category.trim().toLowerCase().replace(/[^a-z0-9]/g, "") === "personalcare"
@@ -308,24 +317,71 @@ export async function previewGoldenCategoryV1(ctx: GoldenContext, category: stri
     getEbayOfficialLiveListingSweepReadonly({ accountKey: ctx.accountKey, accountAlias: ctx.accountAlias }) ])
   if (read.error) throw Error("GOLDEN_PATH_CATEGORY_SOURCE_READ_FAILED")
   const sources = (read.data ?? []).slice(0, MAX_SOURCE_ROWS).map(goldenRecord).filter(source => goldenCategoryDiscoveryMatchesV1(category, source, ctx.now))
-  const candidates = sources.flatMap(source => {
+  const rankedSources = sources.map(source => {
     const key = { productId: String(source.product_id), variantId: String(source.variant_id), supplierSku: String(source.sku), supplierQuantity: 1 }
-    const score = (quantity: number) => market.rows.reduce((n, e) => {
-      const c = classifyGoldenComparable(goldenComparableIdentity(source, quantity, ctx.now), e)
-      return n + (["EXACT", "CLOSE"].includes(c.classification) && e.listingState === "SOLD" ? Math.min(1000, e.soldQuantity ?? 0) : 0)
+    const demandScore = market.rows.reduce((score, evidence) => {
+      const classification = classifyGoldenComparable(
+        goldenComparableIdentity(source, 1, ctx.now), evidence,
+      )
+      const countOnlyFamily = classification.classification === "FAMILY"
+        && classification.reasonCodes.some(reason => [
+          "OFFER_COUNT_MISMATCH",
+          "COMPARABLE_MULTIPACK_TARGET_OFFER_COUNT_UNPROVEN",
+        ].includes(reason))
+      return score + (evidence.listingState === "SOLD"
+        && (["EXACT", "CLOSE"].includes(classification.classification)
+          || countOnlyFamily)
+        ? Math.min(1_000, evidence.soldQuantity ?? 0) : 0)
     }, 0)
-    const rows = [{ key, source, demandScore: score(1) }]
-    // Offer multipliers are discovered only from explicit SOLD pack counts matching the product identity.
-    for (const q of [2, 3, 6, 12]) if (score(q) > 0) rows.push({ key: { ...key, supplierQuantity: q }, source, demandScore: score(q) })
-    return rows
-  }).sort((a, b) => b.demandScore - a.demandScore || a.key.productId.localeCompare(b.key.productId)).slice(0, Math.min(MAX_CANDIDATES, limit))
-  const evaluated = []
-  for (const c of candidates) {
-    if (Date.now() - +ctx.now > 120000) break
-    const r = await evaluateGoldenRuntimeV1(ctx, c.key, targetNetProfit, { source: c.source, market, sweep })
-    evaluated.push(projectGoldenCategoryCandidateV1(r))
+    return { key, source, demandScore }
+  }).sort((a, b) => b.demandScore - a.demandScore
+    || a.key.productId.localeCompare(b.key.productId))
+    .slice(0, Math.min(MAX_CANDIDATES, limit))
+  const evaluated: GoldenRecord[] = [], deferredCandidates: GoldenRecord[] = []
+  const deadline = Date.now() + 120_000
+  let evaluatedProducts = 0, packScenariosEvaluated = 0
+  for (const candidate of rankedSources) {
+    if (Date.now() > deadline || evaluated.length >= MAX_CANDIDATES) {
+      deferredCandidates.push({ candidate: candidate.key,
+        reasonCode: "CATEGORY_REQUEST_TIME_OR_EVALUATION_BOUND_REACHED" })
+      continue
+    }
+    const unit = await evaluateGoldenRuntimeV1(
+      ctx, candidate.key, targetNetProfit,
+      { source: candidate.source, market, sweep },
+    )
+    evaluatedProducts++
+    const plan = planGoldenPackFallbackV1(unit)
+    evaluated.push({ ...projectGoldenCategoryCandidateV1(unit), strategy: {
+      sequence: 1, type: "SINGLE_UNIT", demandScore: candidate.demandScore,
+      packFallback: plan,
+    } })
+    if (plan.status !== "PLANNED") continue
+    for (const scenario of plan.scenarios) {
+      const packKey = { ...candidate.key,
+        supplierQuantity: scenario.supplierQuantity }
+      if (Date.now() > deadline || evaluated.length >= MAX_CANDIDATES) {
+        deferredCandidates.push({ candidate: packKey,
+          reasonCode: "PACK_FALLBACK_TIME_OR_EVALUATION_BOUND_REACHED",
+          marketEvidenceIds: scenario.marketEvidenceIds })
+        continue
+      }
+      const pack = await evaluateGoldenRuntimeV1(
+        ctx, packKey, targetNetProfit,
+        { source: candidate.source, market, sweep },
+      )
+      packScenariosEvaluated++
+      evaluated.push({ ...projectGoldenCategoryCandidateV1(pack), strategy: {
+        sequence: 2, type: "MARKET_EVIDENCED_PACK_FALLBACK",
+        triggeredByUnitEvaluationReceiptId: unit.durableReceipt.receiptId,
+        demandScore: scenario.demandScore,
+        marketEvidenceIds: scenario.marketEvidenceIds,
+      } })
+      if (pack.decision === "GO"
+        && SELLER_OS_UNIT_FIRST_PACK_POLICY_V1.stopAfterFirstGo) break
+    }
   }
-  return receipt(ctx, "OPPORTUNITIES", { contractVersion: GOLDEN_PATH_V1, category, targetNetProfit, observedAt: ctx.now.toISOString(), status: evaluated.some(c => c.market.soldQuantity !== null && c.market.soldQuantity > 0) ? "AVAILABLE_WITH_GATES" : "UNPROVEN", resultCount: sources.length ? evaluated.length : null, candidates: evaluated, deferredCandidates: candidates.slice(evaluated.length).map(c => ({ candidate: c.key, reasonCode: "CATEGORY_REQUEST_TIME_BOUND_REACHED" })), bounded: { maximumSourceRows: MAX_SOURCE_ROWS, maximumMarketRows: MAX_MARKET_ROWS, maximumCandidates: MAX_CANDIDATES, candidateStartDeadlineMs: 120000, sourceTruncated: (read.data?.length ?? 0) > MAX_SOURCE_ROWS, marketTruncated: market.truncated, exhaustiveSearch: false }, packPolicy: "ONLY_COMMERCIALLY_EVIDENCED_OFFER_COUNTS", noSupportedPackReason: candidates.every(c => c.key.supplierQuantity === 1) ? "NO_EXACT_CLOSE_PACK_SOLD_IN_BOUNDED_EVIDENCE" : null, safety: { marketplaceWrites: 0, supplierPurchases: 0, draftIsLive: false } })
+  return receipt(ctx, "OPPORTUNITIES", { contractVersion: GOLDEN_PATH_V1, category, targetNetProfit, observedAt: ctx.now.toISOString(), status: evaluated.some(c => goldenRecord(c.market).soldQuantity !== null && Number(goldenRecord(c.market).soldQuantity) > 0) ? "AVAILABLE_WITH_GATES" : "UNPROVEN", resultCount: sources.length ? evaluated.length : null, productCount: sources.length ? evaluatedProducts : null, packScenarioCount: sources.length ? packScenariosEvaluated : null, candidates: evaluated, deferredCandidates, bounded: { maximumSourceRows: MAX_SOURCE_ROWS, maximumMarketRows: MAX_MARKET_ROWS, maximumCandidates: MAX_CANDIDATES, maximumPackScenariosPerProduct: SELLER_OS_UNIT_FIRST_PACK_POLICY_V1.maximumPackScenariosPerProduct, candidateStartDeadlineMs: 120000, sourceTruncated: (read.data?.length ?? 0) > MAX_SOURCE_ROWS, marketTruncated: market.truncated, exhaustiveSearch: false }, packPolicy: SELLER_OS_UNIT_FIRST_PACK_POLICY_V1, noSupportedPackReason: packScenariosEvaluated === 0 ? "NO_ELIGIBLE_MARKET_EVIDENCED_PACK_FALLBACK_EVALUATED" : null, safety: { marketplaceWrites: 0, supplierPurchases: 0, draftIsLive: false } })
 }
 export function projectGoldenCategoryCandidateV1(r: Awaited<ReturnType<typeof evaluateGoldenRuntimeV1>>) {
   // Full authorities remain immutable in the already read-back EVALUATION receipt.

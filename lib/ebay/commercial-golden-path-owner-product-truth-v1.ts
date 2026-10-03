@@ -6,13 +6,14 @@ export const GOLDEN_OWNER_PRODUCT_TRUTH_EVIDENCE_V1 =
 export type GoldenOwnerProductTruthFactClassV1 =
   | "VISIBLE_BRAND_MARKING"
   | "OBSERVED_MARKING"
+  | "SUPPLIER_BASE_INCLUDED_UNIT_COUNT"
 
 export type GoldenOwnerProductTruthSourceV1 = Readonly<{
   canonicalUrl: string
   sourceLocator: string
   sourceDigest: string
   capturedAt: string
-  sourceMediaType: "IMAGE"
+  sourceMediaType: "IMAGE" | "VIDEO"
 }>
 
 export type GoldenOwnerProductTruthObservationV1 = Readonly<{
@@ -40,7 +41,7 @@ export type GoldenOwnerProductTruthEvidenceV1 = Readonly<{
   canonicalUrl: string
   sourceLocator: string
   sourceDigest: string
-  sourceMediaType: "IMAGE"
+  sourceMediaType: "IMAGE" | "VIDEO"
   capturedAt: string
   factClass: GoldenOwnerProductTruthFactClassV1
   value: string
@@ -101,6 +102,19 @@ function normalizedMarking(value: unknown) {
   return marking.toLocaleUpperCase("en-US")
 }
 
+function normalizedObservationValue(
+  factClass: unknown,
+  value: unknown,
+) {
+  if (factClass === "SUPPLIER_BASE_INCLUDED_UNIT_COUNT") {
+    const normalized = text(value, 20)
+    return /^(?:[1-9]|[1-9][0-9]{1,2}|1000)$/.test(normalized)
+      ? normalized
+      : ""
+  }
+  return normalizedMarking(value)
+}
+
 function evidenceCore(value: JsonRecord) {
   const { evidenceId: _id, evidenceDigest: _digest, ...core } = value
   return core
@@ -133,7 +147,7 @@ export function buildGoldenOwnerProductTruthEvidenceV1(input: Readonly<{
     || !/^sha256:[0-9a-f]{64}$/.test(input.sourceFingerprint)
     || !expectedUrl || canonicalUrl !== expectedUrl || sourceLocator !== expectedUrl
     || !/^sha256:[0-9a-f]{64}$/.test(input.source.sourceDigest)
-    || input.source.sourceMediaType !== "IMAGE"
+    || !["IMAGE", "VIDEO"].includes(input.source.sourceMediaType)
     || !capturedAt || !Number.isFinite(Date.parse(capturedAt))
     || Date.parse(capturedAt) > input.now.getTime()
     || input.operatorAttested !== true
@@ -143,10 +157,13 @@ export function buildGoldenOwnerProductTruthEvidenceV1(input: Readonly<{
   return Object.freeze(input.observations.map((observation) => {
     const factClass = observation.factClass
     const value = text(observation.value, 160)
-    const normalizedValue = normalizedMarking(value)
+    const normalizedValue = normalizedObservationValue(factClass, value)
     const evidenceStatement = text(observation.evidenceStatement, 1_000)
     if (
-      !["VISIBLE_BRAND_MARKING", "OBSERVED_MARKING"].includes(factClass)
+      !["VISIBLE_BRAND_MARKING", "OBSERVED_MARKING",
+        "SUPPLIER_BASE_INCLUDED_UNIT_COUNT"].includes(factClass)
+      || factClass === "SUPPLIER_BASE_INCLUDED_UNIT_COUNT"
+        && input.candidate.supplierQuantity !== 1
       || !value || !normalizedValue || evidenceStatement.length < 12
     ) throw new Error("OWNER_PRODUCT_TRUTH_OBSERVATION_INVALID")
     const core = {
@@ -202,12 +219,13 @@ export function isGoldenOwnerProductTruthEvidenceV1(input: Readonly<{
     && canonicalGoldenLunaProductUrlV1(evidence.canonicalUrl) === expectedUrl
     && canonicalGoldenLunaProductUrlV1(evidence.sourceLocator) === expectedUrl
     && /^sha256:[0-9a-f]{64}$/.test(text(evidence.sourceDigest, 100))
-    && evidence.sourceMediaType === "IMAGE"
+    && ["IMAGE", "VIDEO"].includes(String(evidence.sourceMediaType))
     && Number.isFinite(Date.parse(text(evidence.capturedAt, 40)))
     && Date.parse(String(evidence.capturedAt)) <= input.now.getTime()
-    && ["VISIBLE_BRAND_MARKING", "OBSERVED_MARKING"].includes(String(evidence.factClass))
-    && Boolean(normalizedMarking(evidence.value))
-    && normalizedMarking(evidence.value) === evidence.normalizedValue
+    && ["VISIBLE_BRAND_MARKING", "OBSERVED_MARKING",
+      "SUPPLIER_BASE_INCLUDED_UNIT_COUNT"].includes(String(evidence.factClass))
+    && Boolean(normalizedObservationValue(evidence.factClass, evidence.value))
+    && normalizedObservationValue(evidence.factClass, evidence.value) === evidence.normalizedValue
     && text(evidence.evidenceStatement, 1_000).length >= 12
     && evidence.operatorAttested === true
     && evidence.manufacturerBrandPromoted === false
@@ -231,6 +249,35 @@ export function goldenOwnerObservedMarkingsV1(input: Readonly<{
 }>) {
   return Object.freeze([...new Set(input.evidence.filter((evidence) =>
     isGoldenOwnerProductTruthEvidenceV1({ ...input, evidence }))
+    .filter((evidence) => record(evidence).factClass !== "SUPPLIER_BASE_INCLUDED_UNIT_COUNT")
     .map((evidence) => normalizedMarking(record(evidence).normalizedValue))
     .filter(Boolean))])
+}
+
+export function goldenOwnerBaseIncludedUnitCountV1(input: Readonly<{
+  evidence: ReadonlyArray<unknown>
+  candidate: GoldenOwnerProductTruthCandidateV1
+  accountKey: string
+  ownerUserId: string
+  sourceFingerprint: string
+  canonicalUrl: string
+  now: Date
+}>) {
+  const accepted = input.evidence.filter((evidence) =>
+    isGoldenOwnerProductTruthEvidenceV1({ ...input, evidence }))
+    .filter((evidence) =>
+      record(evidence).factClass === "SUPPLIER_BASE_INCLUDED_UNIT_COUNT")
+  const values = [...new Set(accepted.map((evidence) =>
+    Number(record(evidence).normalizedValue))
+    .filter((value) => Number.isSafeInteger(value) && value >= 1 && value <= 1_000))]
+  const evidenceIds = accepted.map((evidence) => String(record(evidence).evidenceId))
+  if (values.length > 1) return Object.freeze({
+    status: "CONFLICT" as const, value: null, evidenceIds: Object.freeze(evidenceIds),
+  })
+  if (values.length === 1) return Object.freeze({
+    status: "PROVEN" as const, value: values[0], evidenceIds: Object.freeze(evidenceIds),
+  })
+  return Object.freeze({
+    status: "UNPROVEN" as const, value: null, evidenceIds: Object.freeze([] as string[]),
+  })
 }

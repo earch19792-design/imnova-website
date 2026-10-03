@@ -5,7 +5,8 @@ import { evaluateLunaTraceProductTruthGateV1 } from "../seller-os/luna-trace-pro
 import { classifyWinnerComparable, normalizeProductIdentity } from "./ebay-winner-evidence-v2.ts"
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2"
 import { validGoldenOwnerFeePolicyV1 } from "./commercial-golden-path-owner-fee-policy-v1"
-import { goldenOwnerObservedMarkingsV1 } from "./commercial-golden-path-owner-product-truth-v1"
+import { goldenOwnerBaseIncludedUnitCountV1,
+  goldenOwnerObservedMarkingsV1 } from "./commercial-golden-path-owner-product-truth-v1"
 import { goldenVisualComparisonForMarketEvidenceV1,
   type GoldenVisualOutcomeV1 } from "./commercial-golden-path-visual-comparison-v1"
 
@@ -57,9 +58,17 @@ export function verifiedGoldenFields(source: GoldenRecord | null, now: Date) {
   })
   return { gate, receipt, fields, proven, values: Object.fromEntries(proven.map(f => [String(f.FIELD), f.VALUE])) }
 }
-export function goldenComparableIdentity(source: GoldenRecord | null, quantity: number, now: Date): ProductIdentityInput {
+export function goldenComparableIdentity(
+  source: GoldenRecord | null,
+  quantity: number,
+  now: Date,
+  baseIncludedCountOverride?: number | null,
+): ProductIdentityInput {
   const truth = verifiedGoldenFields(source, now).values
-  const count = goldenNumber(truth.QUANTITY_OR_SET_COUNT)
+  const supplierCount = goldenNumber(truth.QUANTITY_OR_SET_COUNT)
+  const count = baseIncludedCountOverride === undefined
+    ? supplierCount
+    : baseIncludedCountOverride
   return { productName: typeof truth.TITLE === "string" ? truth.TITLE : null,
     manufacturerBrand: typeof truth.BRAND === "string" ? truth.BRAND : null,
     gtin: quantity === 1 && typeof truth.GTIN === "string" ? truth.GTIN : null,
@@ -172,13 +181,33 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   if (!Number.isFinite(input.targetNetProfit) || input.targetNetProfit < 4 || input.targetNetProfit > 10000) throw Error("TARGET_NET_PROFIT_OUTSIDE_AUTHORIZED_BOUND")
   const { candidate: key, source, now } = input
   const reasons: string[] = [], holds: string[] = [], rejects: string[] = []
-  const truth = verifiedGoldenFields(source, now), identity = goldenComparableIdentity(source, key.supplierQuantity, now)
-  const observedMarkings = goldenOwnerObservedMarkingsV1({
-    evidence: input.ownerProductTruthEvidence ?? [], candidate: key,
+  const truth = verifiedGoldenFields(source, now)
+  const baseCandidate = { ...key, supplierQuantity: 1 }
+  const ownerBaseCount = goldenOwnerBaseIncludedUnitCountV1({
+    evidence: input.ownerProductTruthEvidence ?? [], candidate: baseCandidate,
     accountKey: input.accountKey, ownerUserId: input.ownerUserId ?? "",
     sourceFingerprint: String(source?.source_fingerprint ?? ""),
     canonicalUrl: String(source?.canonical_url ?? ""), now,
   })
+  const rawSupplierBaseCount = goldenNumber(truth.values.QUANTITY_OR_SET_COUNT)
+  const supplierBaseCount = rawSupplierBaseCount !== null
+    && Number.isSafeInteger(rawSupplierBaseCount) && rawSupplierBaseCount > 0
+    ? rawSupplierBaseCount : null
+  const baseCountConflict = ownerBaseCount.status === "CONFLICT"
+    || supplierBaseCount !== null && ownerBaseCount.status === "PROVEN"
+      && supplierBaseCount !== ownerBaseCount.value
+  const baseIncludedCount = baseCountConflict ? null
+    : supplierBaseCount ?? ownerBaseCount.value
+  const identity = goldenComparableIdentity(
+    source, key.supplierQuantity, now, baseIncludedCount,
+  )
+  const observedMarkings = goldenOwnerObservedMarkingsV1({
+    evidence: input.ownerProductTruthEvidence ?? [], candidate: baseCandidate,
+    accountKey: input.accountKey, ownerUserId: input.ownerUserId ?? "",
+    sourceFingerprint: String(source?.source_fingerprint ?? ""),
+    canonicalUrl: String(source?.canonical_url ?? ""), now,
+  })
+  if (baseCountConflict) holds.push("SUPPLIER_BASE_INCLUDED_UNIT_COUNT_CONFLICT")
   if (identity.packCount === null) reasons.push("OFFER_COUNT_UNPROVEN")
   const exactBinding = source?.product_id === key.productId && source?.variant_id === key.variantId && source?.sku === key.supplierSku
   if (!exactBinding || !truth.gate.traceProductTruthSufficient || source?.preflight_status !== "PREFLIGHT_PASS") reasons.push("LUNA_IDENTITY_PRODUCT_TRUTH_UNPROVEN")
@@ -259,6 +288,9 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
     fulfillment: fulfillmentValid ? fulfillment : { ...fulfillment, status: "UNPROVEN", amountUsd: null, reasonCode: "BUYER_FULFILLMENT_SHIPPING_UNPROVEN" },
     economics: { status: ready ? provisionalFee ? "PROVISIONAL_OWNER_POLICY" : "PROVEN" : "UNPROVEN", targetNetProfit: input.targetNetProfit, recommendedPrice: marketPrice, buyerShipping: 0, pricingStrategy: "FREE_BUYER_SHIPPING_WITHIN_OBSERVED_LANDED_PRICE", feeAuthority: input.fee, ebayFees: fees, returnsReserve: returns, promotedFee: promoted, promotedState: input.policy.promotedState ?? "UNKNOWN", otherExplicitCosts: other, buyerFulfillmentShipping: fulfillmentCost, expectedNetProfit: net, expectedNetProfitBasis: provisionalFee ? "OWNER_PROVISIONAL_FEE_POLICY_PLUS_REAL_INPUTS" : "PRE_SALE_EVIDENCE_AND_EXPLICIT_OWNER_RESERVES", realizedNetProfit: null, realizedNetProfitStatus: "UNPROVEN", realizedNetProfitReasonCode: "REALIZED_ORDER_AND_EXPENSE_AUTHORITY_REQUIRED", realizedProfitUsedForDecision: false, profitFloor: { netProfitUsd: input.targetNetProfit, requiredPrice: null, status: "INTERVAL_FEE_BOUND_UNPROVEN", diagnosticAtFixedFee: floor }, marginPercent: net !== null ? cents(net / marketPrice! * 100) : null, roiPercent: net !== null && cost! + shippingCost! + fulfillmentCost! > 0 ? cents(net / (cost! + shippingCost! + fulfillmentCost!) * 100) : null },
     productTruth: { status: truth.gate.traceProductTruthSufficient ? "CORE_PROVEN" : "UNPROVEN", receiptId: truth.gate.receiptEvidenceDigest, verifiedSpecifics: truth.proven, missingFields: truth.fields.filter(f => f.VALUE == null).map(f => f.FIELD), supplierClaimsExcluded: true,
+      baseIncludedUnitCount: baseIncludedCount,
+      baseIncludedUnitCountStatus: baseCountConflict ? "CONFLICT" : supplierBaseCount !== null ? "PROVEN_SUPPLIER" : ownerBaseCount.status === "PROVEN" ? "PROVEN_OWNER_ATTESTED" : "UNPROVEN",
+      ownerBaseIncludedUnitCountEvidenceIds: ownerBaseCount.evidenceIds,
       ownerObservedMarkings: observedMarkings, ownerEvidence: input.ownerProductTruthEvidence ?? [], manufacturerBrand: truth.values.BRAND ?? null, manufacturerBrandStatus: truth.values.BRAND == null ? "UNPROVEN" : "PROVEN_SUPPLIER", ownerEvidencePromotedToManufacturerBrand: false, unknownFieldsPromoted: false },
     compliance: input.compliance, decision, reasonCodes: [...rejects, ...holds, ...reasons, ...(provisionalFee ? ["OWNER_PROVISIONAL_FEE_POLICY_USED_EXPECTED_ONLY"] : [])], safety: { marketplaceWrites: 0, publish: false, end: false, supplierPurchases: 0, draftIsLive: false } }
   return { ...result, evidenceDigest: goldenDigest(result) }
