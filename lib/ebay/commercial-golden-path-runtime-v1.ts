@@ -11,7 +11,6 @@ import { getEbayOfficialLiveListingSweepReadonly } from "./ebay-commercial-monit
 import { readManualListingFromTradingApi } from "./ebay-manual-listing-trading-readonly"
 import { resolveCommercialTraceOwnerPricePolicyV1 } from "./commercial-trace-owner-price-policy-v1"
 import { readCommercialTraceShippingReceiptV1 } from "./ebay-luna-chrome-shipping-capture-server-v1"
-import { attemptLunaAuthenticatedHttpShippingQuoteV1 } from "./ebay-luna-authoritative-shipping-server-v1"
 import { readProductionStockGuardV1 } from "./ebay-production-stock-read-service-v1"
 import { projectGoldenMonitoringV1 } from "./commercial-golden-path-monitoring-v1"
 import { readGoldenTrafficWindowsV1 } from "./commercial-golden-path-traffic-v1"
@@ -24,8 +23,6 @@ import { buildGoldenVisualComparisonEvidenceV1, isGoldenVisualComparisonEvidence
   type GoldenVisualRelationV1, type GoldenVisualSourceObservationV1 } from "./commercial-golden-path-visual-comparison-v1"
 import { planGoldenPackFallbackV1,
   SELLER_OS_UNIT_FIRST_PACK_POLICY_V1 } from "./commercial-golden-path-pack-policy-v1"
-import { resolveOwnerLunaFlatShippingV1 } from
-  "./commercial-golden-path-owner-shipping-policy-v1"
 import { classifyRapidStockingEvaluationV1,
   SELLER_OS_RAPID_STOCKING_POLICY_V1 } from
   "./commercial-rapid-stocking-policy-v1"
@@ -310,28 +307,17 @@ async function shippingAuthority(ctx: GoldenContext, key: GoldenCandidateKey, so
   if (!source) return unavailable("SHIPPING_CANONICAL_IDENTITY_REQUIRED")
   const truth = verifiedGoldenFields(source, ctx.now)
   if (!truth.gate.receiptEvidenceDigest) return unavailable("SHIPPING_PRODUCT_TRUTH_BINDING_REQUIRED")
-  const ownerFlatShipping = resolveOwnerLunaFlatShippingV1({
-    accountKey: ctx.accountKey, candidate: key, source, now: ctx.now,
-  })
-  if (ownerFlatShipping) return ownerFlatShipping.shipping
   if (key.supplierQuantity === 1) {
     const q = await readCommercialTraceShippingReceiptV1({ supabase: ctx.supabase, accountKey: ctx.accountKey, traceId: randomUUID(), lunaProductId: key.productId, lunaVariantId: key.variantId, supplierSku: key.supplierSku, sourceFingerprint: String(source.source_fingerprint), fieldTruthEvidenceDigest: truth.gate.receiptEvidenceDigest, allowCrossTraceReuse: true, now: ctx.now.getTime() })
     if (q) return { ...q, status: "PROVEN", receiptId: q.durableReceiptId, productId: key.productId, variantId: key.variantId, supplierSku: key.supplierSku, supplierQuantity: 1, currency: "USD", noPayment: true }
   }
-  const cached = await ctx.supabase.from("seller_os_golden_path_receipts_v1").select("receipt_id,payload").eq("account_key", ctx.accountKey).eq("kind", "SHIPPING").contains("payload", { productId: key.productId, variantId: key.variantId, supplierSku: key.supplierSku, supplierQuantity: key.supplierQuantity, sourceFingerprint: source.source_fingerprint }).order("created_at", { ascending: false }).limit(1).maybeSingle()
-  const prior = goldenRecord(cached.data?.payload)
-  if (!cached.error && prior.status === "PROVEN" && Date.parse(String(prior.freshUntil)) > ctx.now.getTime()) return { ...prior, status: "PROVEN", receiptId: cached.data!.receipt_id }
-  // The existing producer restores its temporary cart before returning and never purchases.
-  const q = await attemptLunaAuthenticatedHttpShippingQuoteV1({ candidateId: goldenDigest({ accountKey: ctx.accountKey, key }), canonicalProductUrl: String(source.canonical_url), lunaProductId: key.productId, lunaVariantId: key.variantId, supplierSku: key.supplierSku, quantity: key.supplierQuantity })
-  if (q.status !== "AVAILABLE") return unavailable(q.blocker)
-  if (Math.round(q.subtotalUsd * 100) !== Math.round(Number(source.price) * key.supplierQuantity * 100)) return unavailable("SHIPPING_QUOTED_SUBTOTAL_IDENTITY_CONFLICT")
-  const r = await receipt(ctx, "SHIPPING", { status: "PROVEN", productId: key.productId, variantId: key.variantId, supplierSku: key.supplierSku, supplierQuantity: key.supplierQuantity, sourceFingerprint: source.source_fingerprint, fieldTruthEvidenceDigest: truth.gate.receiptEvidenceDigest, amountUsd: q.shippingAmountUsd, currency: q.currency, source: q.acquisitionMethod, observedAt: q.observedAt, freshUntil: new Date(Date.parse(q.observedAt) + 6 * 3600000).toISOString(), sourceDigest: q.evidenceDigest, destinationProfileId: q.destinationProfileId, destinationProfileDigest: q.destinationProfileDigest, noPurchase: q.noPurchase, noPayment: q.noPayment, supplierCartRestored: true, marketplaceWrites: 0 })
-  return { ...r, receiptId: r.durableReceipt.receiptId }
+  return unavailable(key.supplierQuantity === 1
+    ? "LUNA_SHIPPING_CAPTURE_REQUIRED"
+    : "LUNA_SHIPPING_CAPTURE_REQUIRED_FOR_EXACT_QUANTITY")
 }
 async function candidateAuthorities(ctx: GoldenContext, key: GoldenCandidateKey,
   source: GoldenRecord | null, price: number | null,
-  autonomousIdentityAuthority?: GoldenAuthority,
-  shippingAuthority?: GoldenAuthority) {
+  autonomousIdentityAuthority?: GoldenAuthority) {
   const policy = source ? goldenRecord(resolveCommercialTraceOwnerPricePolicyV1({ marketplaceAccountKey: ctx.accountKey, lunaProductId: key.productId, lunaVariantId: key.variantId, supplierSku: key.supplierSku, sourceFingerprint: String(source.source_fingerprint), now: ctx.now })) : {}
   const normalizedPolicy: GoldenAuthority = { status: String(policy.status ?? "UNPROVEN"), accountKey: ctx.accountKey, receiptId: typeof policy.policyDigest === "string" ? policy.policyDigest : null, returnsReserveRate: goldenRecord(policy.returnsReserve).rateFraction ?? null, promotedState: goldenRecord(policy.promotedListings).state ?? "UNKNOWN", otherState: goldenRecord(policy.otherExplicitCosts).state ?? "UNKNOWN" }
   let category: GoldenAuthority = unavailable("EXACT_PLATFORM_CATEGORY_REQUIRED"), fee: GoldenAuthority = unavailable("EXACT_PRE_SALE_FEE_REQUIRED"), categoryId = ""
@@ -396,13 +382,10 @@ async function candidateAuthorities(ctx: GoldenContext, key: GoldenCandidateKey,
   const compliant = category.status === "PROVEN" && truth.gate.traceProductTruthSufficient && taxonomy?.status === "AVAILABLE" && taxonomy.categoryId === categoryId && taxonomy.categoryResolution === "KNOWN_CATEGORY" && taxonomy.taxonomyMarketplaceId === "EBAY_US" && missingAspects.length === 0 && !conditionalUnknown && identifiers?.safe === true
   const complianceBody = { productId: key.productId, variantId: key.variantId, supplierSku: key.supplierSku, supplierQuantity: key.supplierQuantity, sourceFingerprint: source?.source_fingerprint, observedAt: ctx.now.toISOString(), freshUntil: new Date(+ctx.now + 6 * 3600000).toISOString(), category: category.status === "PROVEN" ? { id: categoryId, name: taxonomy?.categoryName ?? null, receipt: category.receipt } : null, source: "EXACT_PRODUCT_TRUTH_PLUS_AUTONOMOUS_CORROBORATED_IDENTITY_PLUS_OFFICIAL_TAXONOMY_AND_IDENTIFIER_PREFLIGHT", autonomousIdentity: { status: autonomousIdentity.status, evidenceDigest: autonomousIdentity.evidenceDigest }, resolvedSpecifics, missingRequiredSpecifics: missingAspects, taxonomy, identifierPreflight: identifiers, blockers: blocks, publicationAuthorized: false }
   const compliance: GoldenAuthority = { ...complianceBody, status: compliant ? "PROVEN" : "UNPROVEN", receiptId: goldenDigest(complianceBody), reasonCode: compliant ? null : "EXACT_CATEGORY_REQUIRED_SPECIFICS_OR_IDENTIFIER_AUTHORITY_UNPROVEN" }
-  const ownerFlatShipping = resolveOwnerLunaFlatShippingV1({
-    accountKey: ctx.accountKey, candidate: key, source, now: ctx.now,
-  })
-  const fulfillment = ownerFlatShipping && shippingAuthority?.receiptId ===
-    ownerFlatShipping.shipping.receiptId
-    ? ownerFlatShipping.fulfillment
-    : unavailable("BUYER_FULFILLMENT_SHIPPING_UNPROVEN")
+  // Only a fresh, exact Luna Shipping Capture receipt can prove supplier
+  // shipping. Buyer delivery remains separate and must never be inferred from
+  // a flat amount or from a quote to a different destination.
+  const fulfillment = unavailable("BUYER_FULFILLMENT_SHIPPING_UNPROVEN")
   return { policy: normalizedPolicy, compliance, fee, fulfillment }
 }
 export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCandidateKey, targetNetProfit = 4, shared?: { sweep: OfficialSweep; market: Awaited<ReturnType<typeof marketEvidence>>; source: GoldenRecord }, ownerFeePolicy?: GoldenOwnerFeePolicyInput) {
@@ -432,7 +415,7 @@ export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCan
   })
   const initial = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, now: ctx.now, targetNetProfit, source, market: market.rows, marketComplete: market.complete && ownerTruth.complete && visualReadComplete, ownerProductTruthEvidence: ownerTruth.rows, autonomousIdentity, visualComparisonEvidence: visualEvidence.rows, duplicate, shipping, fee: missing, compliance: missing, policy: missing })
   const authority = await candidateAuthorities(ctx, key, source,
-    initial.market.realizedBuyerLandedPrice, autonomousIdentity, shipping)
+    initial.market.realizedBuyerLandedPrice, autonomousIdentity)
     .catch(() => ({ policy: missing,
       compliance: unavailable("COMPLIANCE_AUTHORITY_READ_FAILED"),
       fee: unavailable("FEE_AUTHORITY_READ_FAILED") }))
