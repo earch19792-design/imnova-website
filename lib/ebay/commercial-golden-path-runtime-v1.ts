@@ -50,15 +50,29 @@ export async function createGoldenContextV1(principal: SellerOsControlPrincipalV
   if (permission.error || !permission.data || permission.data.expires_at && Date.parse(permission.data.expires_at) <= Date.now()) throw Error("GOLDEN_PATH_OWNER_CAPABILITY_DENIED")
   return { supabase, accountKey: account.accountKey, accountAlias: account.accountAlias, principal, now: new Date(), invocationSource: "AUTHENTICATED_CONTROL_MCP" }
 }
-async function receipt<T extends GoldenRecord>(ctx: GoldenContext, kind: string, payload: T) {
+export class GoldenReceiptPersistenceErrorV1 extends Error {
+  readonly diagnostic: GoldenRecord
+  constructor(phase: "WRITE" | "READBACK", kind: string, error: { code?: string; message?: string } | null, body: GoldenRecord) {
+    super(`GOLDEN_PATH_DURABLE_RECEIPT_${phase}_FAILED`)
+    const constraint = error?.message?.match(/constraint "(seller_os_golden_path_receipts_v1_[a-z0-9_]+)"/)?.[1] ?? null
+    this.diagnostic = { operation: phase, table: "seller_os_golden_path_receipts_v1", kind,
+      databaseCode: /^[A-Z0-9]{5,10}$/.test(error?.code ?? "") ? error!.code : null, constraint,
+      payloadJsonBytes: Buffer.byteLength(JSON.stringify(body)),
+      boundaryReason: /^GOLDEN_PATH_[A-Z0-9_]+$/.test(error?.message ?? "") ? error!.message : null }
+    // Never log Postgres details/hints: they can contain the entire failing row.
+    console.error(this.message, this.diagnostic)
+  }
+}
+export async function writeGoldenReceiptV1<T extends GoldenRecord>(ctx: GoldenContext, kind: string, payload: T) {
   const body = { ...payload, executionAuthority: { source: ctx.invocationSource ?? "SERVICE_CERTIFICATION_DIAGNOSTIC", ownerUserId: ctx.principal.ownerUserId, clientId: ctx.principal.commandClientId } }
   const digest = goldenDigest(body), id = randomUUID()
   const written = await ctx.supabase.from("seller_os_golden_path_receipts_v1").upsert({ receipt_id: id, account_key: ctx.accountKey, owner_user_id: ctx.principal.ownerUserId, kind, evidence_digest: digest, payload: body }, { onConflict: "account_key,kind,evidence_digest", ignoreDuplicates: true })
-  if (written.error) throw Error("GOLDEN_PATH_DURABLE_RECEIPT_WRITE_FAILED")
+  if (written.error) throw new GoldenReceiptPersistenceErrorV1("WRITE", kind, written.error, body)
   const read = await ctx.supabase.from("seller_os_golden_path_receipts_v1").select("receipt_id,evidence_digest,payload,created_at").eq("account_key", ctx.accountKey).eq("owner_user_id", ctx.principal.ownerUserId).eq("kind", kind).eq("evidence_digest", digest).limit(1).maybeSingle()
-  if (read.error || !read.data || goldenDigest(read.data.payload) !== digest) throw Error("GOLDEN_PATH_DURABLE_RECEIPT_READBACK_FAILED")
+  if (read.error || !read.data || goldenDigest(read.data.payload) !== digest) throw new GoldenReceiptPersistenceErrorV1("READBACK", kind, read.error, body)
   return { ...body, durableReceipt: { receiptId: read.data.receipt_id, evidenceDigest: digest, createdAt: read.data.created_at, readback: "PASS", source: "SUPABASE_APPEND_ONLY_GOLDEN_PATH_LEDGER" } }
 }
+const receipt = writeGoldenReceiptV1
 async function loadReceipt(ctx: GoldenContext, id: string, kind: string) {
   const read = await ctx.supabase.from("seller_os_golden_path_receipts_v1").select("payload,evidence_digest,created_at").eq("receipt_id", id).eq("account_key", ctx.accountKey).eq("owner_user_id", ctx.principal.ownerUserId).eq("kind", kind).limit(1).maybeSingle()
   if (read.error || !read.data || goldenDigest(read.data.payload) !== read.data.evidence_digest) throw Error("GOLDEN_PATH_RECEIPT_NOT_FOUND_OR_CONFLICT")
@@ -246,10 +260,24 @@ export async function previewGoldenCategoryV1(ctx: GoldenContext, category: stri
   for (const c of candidates) {
     if (Date.now() - +ctx.now > 120000) break
     const r = await evaluateGoldenRuntimeV1(ctx, c.key, targetNetProfit, { source: c.source, market, sweep })
-    const m = r.market
-    evaluated.push({ ...r, market: { ...m, exactSold: m.exactSold.slice(0, 10), closeSold: m.closeSold.slice(0, 10), familyEvidence: m.familyEvidence.slice(0, 5), rejectedComparables: m.rejectedComparables.slice(0, 5), activeCompetition: m.activeCompetition.slice(0, 10), previewEvidenceCounts: { exact: m.exactSold.length, close: m.closeSold.length, family: m.familyEvidence.length, rejected: m.rejectedComparables.length, active: m.activeCompetition.length }, previewSamplesMayBeTruncated: true, fullEvidenceReceiptId: r.durableReceipt.receiptId } })
+    evaluated.push(projectGoldenCategoryCandidateV1(r))
   }
   return receipt(ctx, "OPPORTUNITIES", { contractVersion: GOLDEN_PATH_V1, category, targetNetProfit, observedAt: ctx.now.toISOString(), status: evaluated.some(c => c.market.soldQuantity !== null && c.market.soldQuantity > 0) ? "AVAILABLE_WITH_GATES" : "UNPROVEN", resultCount: sources.length ? evaluated.length : null, candidates: evaluated, deferredCandidates: candidates.slice(evaluated.length).map(c => ({ candidate: c.key, reasonCode: "CATEGORY_REQUEST_TIME_BOUND_REACHED" })), bounded: { maximumSourceRows: MAX_SOURCE_ROWS, maximumMarketRows: MAX_MARKET_ROWS, maximumCandidates: MAX_CANDIDATES, candidateStartDeadlineMs: 120000, sourceTruncated: (read.data?.length ?? 0) > MAX_SOURCE_ROWS, marketTruncated: market.truncated, exhaustiveSearch: false }, packPolicy: "ONLY_COMMERCIALLY_EVIDENCED_OFFER_COUNTS", noSupportedPackReason: candidates.every(c => c.key.supplierQuantity === 1) ? "NO_EXACT_CLOSE_PACK_SOLD_IN_BOUNDED_EVIDENCE" : null, safety: { marketplaceWrites: 0, supplierPurchases: 0, draftIsLive: false } })
+}
+export function projectGoldenCategoryCandidateV1(r: Awaited<ReturnType<typeof evaluateGoldenRuntimeV1>>) {
+  // Full authorities remain immutable in the already read-back EVALUATION receipt.
+  // A category summary must not embed the same large taxonomy twice per candidate.
+  const m = r.market, { taxonomy, category, ...compliance } = r.compliance
+  const { receipt: categoryReceipt, ...categorySummary } = goldenRecord(category)
+  const reference = (value: unknown, path: string) => ({ fullEvidenceReceiptId: r.durableReceipt.receiptId,
+    path, evidenceDigest: goldenDigest(value), storage: "IMMUTABLE_EVALUATION_RECEIPT" })
+  const taxonomySummary = goldenRecord(taxonomy)
+  return { ...r,
+    compliance: { ...compliance,
+      category: category == null ? category : { ...categorySummary, receipt: categoryReceipt == null ? categoryReceipt : reference(categoryReceipt, "compliance.category.receipt") },
+      taxonomy: taxonomy == null ? taxonomy : { status: taxonomySummary.status ?? null, categoryId: taxonomySummary.categoryId ?? null, ...reference(taxonomy, "compliance.taxonomy") },
+      fullEvidenceReceiptId: r.durableReceipt.receiptId },
+    market: { ...m, exactSold: m.exactSold.slice(0, 10), closeSold: m.closeSold.slice(0, 10), familyEvidence: m.familyEvidence.slice(0, 5), rejectedComparables: m.rejectedComparables.slice(0, 5), activeCompetition: m.activeCompetition.slice(0, 10), previewEvidenceCounts: { exact: m.exactSold.length, close: m.closeSold.length, family: m.familyEvidence.length, rejected: m.rejectedComparables.length, active: m.activeCompetition.length }, previewSamplesMayBeTruncated: true, fullEvidenceReceiptId: r.durableReceipt.receiptId } }
 }
 export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandidateKey, rows: Omit<GoldenMarketEvidence, "evidenceId" | "source" | "reviewed">[], liveComparison?: GoldenLiveComparisonInput) {
   const source = await candidateSource(ctx, key)

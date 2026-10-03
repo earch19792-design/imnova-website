@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { SellerOsControlPrincipalV1 } from "./teo-pre-research-control-oauth-v1"
-import { createGoldenContextV1, evaluateGoldenRuntimeV1, previewGoldenCategoryV1, importGoldenManualV1, prepareGoldenRuntimeV1, reconcileGoldenRuntimeV1, readGoldenMonitoringV1 } from "./commercial-golden-path-runtime-v1"
+import { createGoldenContextV1, evaluateGoldenRuntimeV1, previewGoldenCategoryV1, importGoldenManualV1, prepareGoldenRuntimeV1, reconcileGoldenRuntimeV1, readGoldenMonitoringV1, GoldenReceiptPersistenceErrorV1 } from "./commercial-golden-path-runtime-v1"
 import type { GoldenOwnerFeePolicyInput } from "./commercial-golden-path-owner-fee-policy-v1"
 import type { GoldenLiveComparisonInput } from "./commercial-golden-path-live-comparison-v1"
 
@@ -50,7 +50,7 @@ export function registerGoldenPathControlToolsV1(server: McpServer, principal: S
         return { structuredContent: { result }, content: [{ type: "text" as const, text: "Seller OS returned Commercial Golden Path evidence and its durable receipt. Publication remains OWNER manual." }] }
       } catch (error) {
         const code = error instanceof Error && /^[A-Z][A-Z0-9_]{3,120}$/.test(error.message) ? error.message : "GOLDEN_PATH_FAILED_CLOSED"
-        return { isError: true, structuredContent: { result: { contractVersion: "COMMERCIAL_GOLDEN_PATH_V1", status: "UNPROVEN", reasonCodes: [code], marketplaceWrites: 0 } }, content: [{ type: "text" as const, text: code }] }
+        return { isError: true, structuredContent: { result: { contractVersion: "COMMERCIAL_GOLDEN_PATH_V1", status: "UNPROVEN", reasonCodes: [code], ...(error instanceof GoldenReceiptPersistenceErrorV1 ? { receiptFailure: error.diagnostic } : {}), marketplaceWrites: 0 } }, content: [{ type: "text" as const, text: code }] }
       }
     })
   }
