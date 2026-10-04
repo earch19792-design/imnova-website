@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getEbayCommercialMonitorLiveReadonly,
   getEbayOfficialLiveListingSweepReadonly,
+  unavailableResult,
   type EbayCommercialMonitorLiveReadonlyResult } from
   "./ebay-commercial-monitor-live-readonly"
 import { currentLiveItemIdsV1, currentLiveScopeIdV1,
@@ -34,6 +35,12 @@ type OfficialListingSweepV1 = Awaited<ReturnType<
 export function adaptOfficialListingSweepForCurrentLiveV1(
   sweep: OfficialListingSweepV1,
 ): EbayCommercialMonitorLiveReadonlyResult {
+  const listingOnlyGap = "CURRENT_LIVE_LISTING_ONLY_SWEEP"
+  const unavailable = unavailableResult({
+    accountAlias: null,
+    limitationCode: listingOnlyGap,
+    bindingConfigured: true,
+  })
   const reported = Number.isSafeInteger(sweep.totalEntries)
     ? Number(sweep.totalEntries) : null
   const parsed = sweep.listings.length
@@ -51,11 +58,22 @@ export function adaptOfficialListingSweepForCurrentLiveV1(
     sweep.paginationComplete === true && reported !== null &&
     parsed === reported && sweep.gapCodes.length === 0
   return {
+    ...unavailable,
     account: {
+      ...unavailable.account,
       status: sweep.accountCertified ? "CERTIFIED" : "BLOCKED",
       bindingMatched: sweep.accountCertified,
+      observedAt: sweep.observedAt,
+      source: "EBAY_TRADING_GET_USER",
+      limitationCode: sweep.accountCertified ? null : sweep.errorCode,
+    },
+    oauth: {
+      ...unavailable.oauth,
+      status: sweep.oauthReached ? "PARTIAL" : "UNAVAILABLE",
+      tokenReceived: sweep.oauthReached,
     },
     discovery: {
+      ...unavailable.discovery,
       status: complete ? "AVAILABLE" : "UNAVAILABLE",
       coverage: complete ? "COMPLETE" : "UNPROVEN",
       observedAt: sweep.observedAt,
@@ -63,7 +81,18 @@ export function adaptOfficialListingSweepForCurrentLiveV1(
         sweep.errorCode ? [sweep.errorCode] : [],
       currentLiveListings: sweep.listings,
       listings: sweep.listings,
+      pagesRead: sweep.pagesRead,
+      totalPages: sweep.totalPages,
+      totalEntries: reported,
       sellerWideEnumeration: {
+        identities: sweep.listings.map((listing) => ({
+          itemId: listing.itemId,
+          sku: listing.sku,
+          variationKey: listing.variationKey,
+          identityAmbiguous: listing.identityAmbiguous,
+          representationEligible: false as const,
+          analyticsEligible: false as const,
+        })),
         itemSetComplete: complete,
         identitySetComplete: complete && sweep.listings.every((listing) =>
           listing.identityAmbiguous !== true),
@@ -79,9 +108,28 @@ export function adaptOfficialListingSweepForCurrentLiveV1(
         sellerWideItemsMarketplaceBudgetExhausted: budgetExhausted,
         sellerWideItemsRepresented: parsed,
       },
+      inventory: {
+        ...unavailable.discovery.inventory,
+        gapCodes: [listingOnlyGap],
+      },
+      inventoryRepresentation: {
+        ...unavailable.discovery.inventoryRepresentation,
+        identityUnresolvedCount: sweep.listings.filter((listing) =>
+          listing.identityAmbiguous === true).length,
+        sourceUnprovenCount: parsed,
+      },
+    },
+    analytics: {
+      ...unavailable.analytics,
+      analyticsRequestedItemCount: 0,
+      gapCodes: [listingOnlyGap, "NO_EVIDENCE_DOES_NOT_PROVE_ZERO"],
+    },
+    orders: {
+      ...unavailable.orders,
+      gapCodes: [listingOnlyGap, "NO_EVIDENCE_DOES_NOT_PROVE_ZERO"],
     },
     calls: sweep.calls,
-  } as unknown as EbayCommercialMonitorLiveReadonlyResult
+  }
 }
 
 function safeCode(value: unknown, fallback: string) {

@@ -159,6 +159,7 @@ export async function POST(req: Request) {
   const supabase = getSupabaseAdminClient()
   let runId = ""
   let leaseOwned = false
+  let executionStage = "CREATE_AUTOMATION_RUN"
   try {
     const run = await createSellerAutomationRun(supabase, {
       runKind: "risk_monitor",
@@ -172,6 +173,7 @@ export async function POST(req: Request) {
       },
     })
     runId = run.id
+    executionStage = "CLAIM_MONITOR_LEASE"
     const { data: claimData, error: claimError } = await supabase.rpc(
       "claim_ebay_targeted_luna_monitor_run",
       {
@@ -210,6 +212,7 @@ export async function POST(req: Request) {
     leaseOwned = true
 
     if (activation.productionSchedulerEnabled) {
+      executionStage = "AUDIT_LUNA_SESSION"
       const protectedSession = await auditSellerOsLunaProtectedSessionV1({
         vaultSchemaApplied: true,
       })
@@ -218,6 +221,7 @@ export async function POST(req: Request) {
         protectedSessionRequired: false as const,
         protectedSessionStatus: protectedSession.status,
       })
+      executionStage = "RECOVER_CURRENT_LIVE"
       const liveRecovery = await runCurrentLiveAuthorityRecoveryV1({
         supabase, accountKey, accountAlias: account.accountAlias,
         forceOfficialRead: true,
@@ -263,11 +267,13 @@ export async function POST(req: Request) {
       }
       const live = liveRecovery.live
       if (!live) throw new Error("CURRENT_LIVE_OFFICIAL_READ_REQUIRED")
+      executionStage = "PERSIST_ANALYTICS_LAST_KNOWN_GOOD"
       const analyticsLastKnownGood = await persistAnalyticsLastKnownGoodV1({
         supabase,
         accountKey,
         live,
       })
+      executionStage = "AUTO_INGEST_UNMANAGED_LIVE"
       const unmanagedLiveIntake = await autoIngestUnmanagedEbayLiveListingsV1(
         supabase,
         {
@@ -275,6 +281,7 @@ export async function POST(req: Request) {
           listings: live.discovery.currentLiveListings,
         },
       )
+      executionStage = "BUILD_CANONICAL_MONITOR"
       const canonicalMonitor = await getCommercialMonitorReadonly(
         supabase,
         { accountKey, accountAlias: account.accountAlias,
@@ -303,20 +310,24 @@ export async function POST(req: Request) {
           "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH")
         .map((listing) => listing.identity.itemId).sort()
       const targetItemIds = freshnessRenewal.targetItemIds
+      executionStage = "RECONCILE_STOCK_IDENTITY"
       const stockPolling = await reconcileSellerOsStockIdentityV1(supabase, {
         accountKey,
         targetItemIds,
         intervalSeconds: LUNA_PRODUCTION_POLL_INTERVAL_SECONDS,
       })
+      executionStage = "READ_POST_POLL_LIVE"
       const postPollLive = await getEbayCommercialMonitorLiveReadonly({
         accountKey,
         accountAlias: account.accountAlias,
       })
+      executionStage = "READ_POST_POLL_SOURCES"
       const postPollSources = await readCommercialMonitorReadonlySources(
         supabase,
         accountKey,
         { stockReadScope: stockPolling.readbackScope },
       )
+      executionStage = "BUILD_POST_POLL_MONITOR"
       const postPollMonitor = await getCommercialMonitorReadonly(
         supabase,
         { accountKey, accountAlias: account.accountAlias,
@@ -325,6 +336,7 @@ export async function POST(req: Request) {
         undefined,
         postPollSources,
       )
+      executionStage = "RUN_OOS_PROTECTION"
       const automaticOosProtection = await runStockguardOosQuantityProtectionV1({
         supabase, accountKey, accountAlias: account.accountAlias,
         allowedItemIds: targetItemIds,
@@ -383,6 +395,7 @@ export async function POST(req: Request) {
       )
       if (leaseFinishError) throw new Error("TARGETED_LUNA_MONITOR_FINISH_FAILED")
       leaseOwned = false
+      executionStage = "FINISH_AUTOMATION_RUN"
       await finishSellerAutomationRun(supabase, runId, {
         status: success ? "completed" : "partial",
         claimedTasks: stockPolling.targetCount,
@@ -611,6 +624,7 @@ export async function POST(req: Request) {
         error,
         metrics: {
           stage: "TARGETED_ACTIVE_LISTING_LUNA_MONITOR",
+          failureStage: executionStage,
           accountKey,
           heartbeatAvailable: false,
           safety: {
@@ -625,6 +639,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: false,
       error: code,
+      failureStage: executionStage,
       safety: {
         previewOnly: true,
         ebayApiWrites: 0,
