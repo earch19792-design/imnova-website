@@ -197,9 +197,24 @@ async function readQuickPickShippingPriorityCandidateV1(input: Readonly<{
     .limit(50)
     .abortSignal(AbortSignal.timeout(8_000))
   if (result.error) return null
-  return selectQuickPickShippingPriorityCandidateV1({
-    accountKey: input.accountKey, rows: records(result.data),
+  const queueRows = records(result.data)
+  const selectedCandidateId = selectQuickPickShippingPriorityCandidateV1({
+    accountKey: input.accountKey, rows: queueRows,
   })
+  if (!selectedCandidateId) return null
+  const familyIds = [...new Set(queueRows.flatMap((row) => {
+    if (selectQuickPickShippingPriorityCandidateV1({
+      accountKey: input.accountKey, rows: [row],
+    }) !== selectedCandidateId) return []
+    const familyId = text(record(record(row.assessment)
+      .radarFactoryCandidateV1).familyId, 120)
+    return familyId && /^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId)
+      ? [familyId] : []
+  }))]
+  return familyIds.length === 1 ? Object.freeze({
+    candidateId: selectedCandidateId,
+    familyId: familyIds[0],
+  }) : null
 }
 
 type LunaCanonicalBindObservedCandidateV1 = Readonly<{
@@ -1039,6 +1054,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
   candidateIds?: readonly string[]
+  familyIds?: readonly string[]
   sessionSecret: string
   purpose?: "CANONICAL_BIND_BOOTSTRAP"
   observeCanonicalBindDiscovery?: (diagnostic: ReturnType<
@@ -1046,11 +1062,17 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   ) => void
   now?: number
 }>) : Promise<readonly LunaChromeShippingJobV1[]> {
+  const exactFamilyIds = [...new Set(input.familyIds ?? [])]
+  if (exactFamilyIds.length > LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH ||
+      exactFamilyIds.some((familyId) =>
+        !/^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId))) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_FAMILY_SCOPE_INVALID")
+  }
   const frontierResult = await input.supabase.rpc(
     "get_seller_os_latest_profitability_frontiers_v1", {
       p_account_key: input.accountKey,
       p_marketplace_id: "EBAY_US",
-      p_family_ids: null,
+      p_family_ids: exactFamilyIds.length ? exactFamilyIds : null,
       p_limit: 100,
     })
   if (frontierResult.error) {
@@ -1699,12 +1721,14 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     batchSlotResult.data)
   const batchPriorityCandidateIds = batchSlot.priorityCandidateId
     ? Object.freeze([batchSlot.priorityCandidateId]) : undefined
-  const quickPickPriorityCandidateId = batchPriorityCandidateIds
+  const quickPickPriorityCandidate = batchPriorityCandidateIds
     ? null : await readQuickPickShippingPriorityCandidateV1({
       supabase: input.supabase, accountKey: input.accountKey,
     })
-  const quickPickPriorityCandidateIds = quickPickPriorityCandidateId
-    ? Object.freeze([quickPickPriorityCandidateId]) : undefined
+  const quickPickPriorityCandidateIds = quickPickPriorityCandidate
+    ? Object.freeze([quickPickPriorityCandidate.candidateId]) : undefined
+  const quickPickPriorityFamilyIds = quickPickPriorityCandidate
+    ? Object.freeze([quickPickPriorityCandidate.familyId]) : undefined
   if (!batchPriorityCandidateIds && !quickPickPriorityCandidateIds &&
       input.maximumJobs === 1) {
     const [traceAuthority] = await resolveCommercialTraceShippingAuthoritiesV1({
@@ -1737,6 +1761,8 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     eligible = await resolveLunaChromeShippingJobsV1({
       supabase: input.supabase, accountKey: input.accountKey,
       candidateIds: batchPriorityCandidateIds ?? quickPickPriorityCandidateIds,
+      familyIds: batchPriorityCandidateIds
+        ? undefined : quickPickPriorityFamilyIds,
       sessionSecret: input.sessionSecret, now: input.now,
     })
   } catch (error) {

@@ -1564,12 +1564,21 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
   if (productRead.error) {
     throw new Error("LUNA_QUICK_PICK_PRODUCT_CATALOG_READ_FAILED")
   }
+  const exactFamilyIds = [...new Set(queueRows.flatMap((row) => {
+    const familyId = text(record(record(row.assessment)
+      .radarFactoryCandidateV1).familyId, 120)
+    return familyId && /^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId)
+      ? [familyId] : []
+  }))]
   const frontierRead = variantIds.length && input.accountKey
     ? await input.supabase.rpc(
       "get_seller_os_latest_profitability_frontiers_v1", {
         p_account_key: input.accountKey,
         p_marketplace_id: "EBAY_US",
-        p_family_ids: null,
+        // The global frontier set already exceeds the historical read limit.
+        // Scope this projection to the exact durable families in the cards so
+        // a valid Shipping receipt cannot disappear because of pagination.
+        p_family_ids: exactFamilyIds.length ? exactFamilyIds : null,
         p_limit: 100,
       })
     : { data: [], error: null }
