@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getEbayCommercialMonitorLiveReadonly,
+  getEbayOfficialLiveListingSweepReadonly,
   type EbayCommercialMonitorLiveReadonlyResult } from
   "./ebay-commercial-monitor-live-readonly"
 import { currentLiveItemIdsV1, currentLiveScopeIdV1,
@@ -26,6 +27,62 @@ type TradingQuotaAuthorityV1 = Pick<
   SellerOsEbayTradingRateLimitStatusV1,
   "gateState" | "ebay518BucketIdentity" | "nextSafeTradingProbeAt"
 >
+
+type OfficialListingSweepV1 = Awaited<ReturnType<
+  typeof getEbayOfficialLiveListingSweepReadonly>>
+
+export function adaptOfficialListingSweepForCurrentLiveV1(
+  sweep: OfficialListingSweepV1,
+): EbayCommercialMonitorLiveReadonlyResult {
+  const reported = Number.isSafeInteger(sweep.totalEntries)
+    ? Number(sweep.totalEntries) : null
+  const parsed = sweep.listings.length
+  const certifiedUs = sweep.listings.filter((listing) =>
+    listing.marketplaceCertification.status === "US_CERTIFIED").length
+  const certifiedNonUs = sweep.listings.filter((listing) =>
+    listing.marketplaceCertification.status === "NON_US_CERTIFIED").length
+  const unresolved = sweep.listings.filter((listing) =>
+    listing.marketplaceCertification.status === "UNRESOLVED").length
+  const errors = sweep.listings.filter((listing) =>
+    listing.marketplaceCertification.status === "ERROR").length
+  const budgetExhausted = sweep.listings.filter((listing) =>
+    listing.marketplaceCertification.status === "BUDGET_EXHAUSTED").length
+  const complete = sweep.status === "CERTIFIED_COMPLETE" &&
+    sweep.paginationComplete === true && reported !== null &&
+    parsed === reported && sweep.gapCodes.length === 0
+  return {
+    account: {
+      status: sweep.accountCertified ? "CERTIFIED" : "BLOCKED",
+      bindingMatched: sweep.accountCertified,
+    },
+    discovery: {
+      status: complete ? "AVAILABLE" : "UNAVAILABLE",
+      coverage: complete ? "COMPLETE" : "UNPROVEN",
+      observedAt: sweep.observedAt,
+      gapCodes: sweep.gapCodes.length ? sweep.gapCodes :
+        sweep.errorCode ? [sweep.errorCode] : [],
+      currentLiveListings: sweep.listings,
+      listings: sweep.listings,
+      sellerWideEnumeration: {
+        itemSetComplete: complete,
+        identitySetComplete: complete && sweep.listings.every((listing) =>
+          listing.identityAmbiguous !== true),
+      },
+      marketplaceCertification: {
+        sellerWideItemsParsed: parsed,
+        sellerWideItemsReported: reported,
+        sellerWideItemsMarketplaceCertifiedUs: certifiedUs,
+        sellerWideItemsMarketplaceCertifiedNonUs: certifiedNonUs,
+        sellerWideItemsMarketplaceUnresolved: unresolved,
+        sellerWideItemsMarketplaceError: errors,
+        sellerWideItemsMarketplaceItemIdMismatch: 0,
+        sellerWideItemsMarketplaceBudgetExhausted: budgetExhausted,
+        sellerWideItemsRepresented: parsed,
+      },
+    },
+    calls: sweep.calls,
+  } as unknown as EbayCommercialMonitorLiveReadonlyResult
+}
 
 function safeCode(value: unknown, fallback: string) {
   return typeof value === "string" && SAFE_CODE.test(value)
@@ -181,15 +238,18 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
         })
       }
     }
-    const live = await (input.readOfficial ??
-      getEbayCommercialMonitorLiveReadonly)({ accountKey: input.accountKey,
-        accountAlias: input.accountAlias,
+    const officialInput = { accountKey: input.accountKey,
+      accountAlias: input.accountAlias ?? "" }
+    const live = input.readOfficial
+      ? await input.readOfficial({ ...officialInput,
         readLimits: {
           certifiedPortfolioMode: true,
           maximumCalls: 100,
           budgetMs: 48_000,
           isolateIndependentReads: true,
         } })
+      : adaptOfficialListingSweepForCurrentLiveV1(
+        await getEbayOfficialLiveListingSweepReadonly(officialInput))
     // The official read creates observedAt. Freshness must therefore use a
     // reference captured after that read, never the pre-read admission clock.
     const postReadNow = clock()
