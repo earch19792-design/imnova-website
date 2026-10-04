@@ -346,3 +346,74 @@ export async function persistListingCasesV1(supabase: SupabaseClient,
   }
   return data
 }
+
+/** Refreshes the durable listing registry from an already certified official
+ * LIVE read. The caller owns the official-read proof; this function performs
+ * no marketplace request and never creates a speculative Luna linkage. */
+export async function reconcileCertifiedCurrentLiveListingRegistryV1(
+  supabase: SupabaseClient,
+  input: Readonly<{
+    accountKey: string
+    listings: readonly EbayLiveListing[]
+    officialObservedAt: string
+  }>,
+) {
+  if (!Number.isFinite(Date.parse(input.officialObservedAt))) {
+    throw new Error("LISTING_REGISTRY_OFFICIAL_OBSERVED_AT_REQUIRED")
+  }
+  const listings = currentOperationalUsListingsV1(input.listings)
+  const [evidence, prior] = await Promise.all([
+    readListingRegistryEvidenceV1(supabase, input.accountKey),
+    supabase.from("seller_os_listing_cases_v1")
+      .select("ebay_item_id,origin,opportunity_id,luna_product_id,luna_variant_id,supplier_sku")
+      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+      .limit(1000),
+  ])
+  if (prior.error) throw new Error("LISTING_REGISTRY_READ_FAILED")
+  if ((prior.data?.length ?? 0) >= 1000) {
+    throw new Error("LISTING_REGISTRY_CASE_PAGINATION_REQUIRED")
+  }
+  const existingOrigins = Object.fromEntries((prior.data ?? []).map((row) =>
+    [row.ebay_item_id, row.origin])) as Record<string, ListingOriginV1>
+  const existingOpportunities = Object.fromEntries((prior.data ?? [])
+    .filter((row) => row.opportunity_id && row.luna_product_id &&
+      row.luna_variant_id && row.supplier_sku)
+    .map((row) => [row.ebay_item_id, { opportunityId: row.opportunity_id!,
+      productId: row.luna_product_id!, variantId: row.luna_variant_id!,
+      sku: row.supplier_sku! }]))
+  const projected = projectSellerOsListingCasesV1({
+    accountKey: input.accountKey, listings, ...evidence,
+    existingOrigins, existingOpportunities,
+  })
+  const sweepStart = await supabase.from("seller_os_listing_registry_sweeps_v1")
+    .insert({ account_key: input.accountKey, marketplace_id: "EBAY_US",
+      source_authority:
+        "EBAY_TRADING_GET_MY_EBAY_SELLING_PLUS_GET_ITEM_CERTIFICATION",
+      official_observed_at: input.officialObservedAt,
+      official_live_item_count: projected.length })
+    .select("sweep_id").single()
+  if (sweepStart.error || !sweepStart.data) {
+    throw new Error("LISTING_REGISTRY_SWEEP_WRITE_FAILED")
+  }
+  const sweepId = sweepStart.data.sweep_id as string
+  const saved = await persistListingCasesV1(supabase, projected, sweepId)
+  const ids = saved.map((row) => row.case_id as string)
+  const readback = ids.length
+    ? await supabase.from("seller_os_listing_cases_v1").select("case_id,last_reconciled_sweep_id")
+      .in("case_id", ids).eq("account_key", input.accountKey)
+    : { data: [], error: null }
+  if (readback.error || readback.data?.length !== projected.length ||
+      readback.data.some((row) => row.last_reconciled_sweep_id !== sweepId)) {
+    throw new Error("LISTING_REGISTRY_DURABLE_READBACK_FAILED")
+  }
+  const completed = await supabase.from("seller_os_listing_registry_sweeps_v1")
+    .update({ status: "COMPLETE", reconciled_item_count: projected.length,
+      completed_at: new Date().toISOString() })
+    .eq("sweep_id", sweepId).eq("account_key", input.accountKey)
+    .eq("status", "PENDING").select("sweep_id").single()
+  if (completed.error || !completed.data) {
+    throw new Error("LISTING_REGISTRY_SWEEP_WRITE_FAILED")
+  }
+  return Object.freeze({ status: "COMPLETE" as const, sweepId,
+    reconciliationCount: projected.length, marketplaceWrites: 0 as const })
+}

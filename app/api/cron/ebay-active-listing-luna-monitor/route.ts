@@ -42,6 +42,8 @@ import { runCurrentLiveAuthorityRecoveryV1 } from
   "@/lib/ebay/ebay-current-live-authority-recovery-v1"
 import { authorizeProductionPopulationV1, runProductionCurrentLivePopulationV1 } from
   "@/lib/ebay/ebay-production-current-live-population-v1"
+import { reconcileCertifiedCurrentLiveListingRegistryV1 } from
+  "@/lib/ebay/seller-os-listing-registry-v1"
 
 const STOCK_IDENTITY_RECONCILIATION_TARGETS_V1 = Object.freeze([
   "366582586826", "366592485792", "366597434810",
@@ -224,7 +226,7 @@ export async function POST(req: Request) {
       executionStage = "RECOVER_CURRENT_LIVE"
       const liveRecovery = await runCurrentLiveAuthorityRecoveryV1({
         supabase, accountKey, accountAlias: account.accountAlias,
-        forceOfficialRead: true,
+        forceOfficialRead: false,
       })
       if (liveRecovery.authority.currentState !== "CURRENT_FRESH") {
         const failureCode = liveRecovery.authority.sourceFailureCode ??
@@ -266,6 +268,38 @@ export async function POST(req: Request) {
             falseZeroPrevented: true } }, { status: 503 })
       }
       const live = liveRecovery.live
+      if (!live && liveRecovery.status === "CURRENT_FRESH_REUSED") {
+        const { error: leaseFinishError } = await supabase.rpc(
+          "finish_ebay_targeted_luna_monitor_run",
+          { p_account_key: accountKey, p_run_id: runId, p_success: true,
+            p_error_code: null },
+        )
+        if (leaseFinishError) throw new Error(
+          "TARGETED_LUNA_MONITOR_FINISH_FAILED")
+        leaseOwned = false
+        executionStage = "FINISH_AUTOMATION_RUN"
+        const currentLiveCount = liveRecovery.authority.currentListingCount
+        await finishSellerAutomationRun(supabase, runId, {
+          status: "completed", claimedTasks: 0, successfulTasks: 0,
+          failedTasks: 0,
+          metrics: { stage: "LUNA_PRODUCTION_STOCK_POLLING_V1",
+            accountKey, activation, publicStockSessionGate,
+            currentLiveCount,
+            currentLiveAuthority: liveRecovery.authority,
+            currentLiveRecoveryStatus: liveRecovery.status,
+            reason: "CURRENT_LIVE_FRESH_REUSED_NEXT_CYCLE_WILL_REFRESH",
+            marketplaceWrites: 0 },
+        })
+        return NextResponse.json({ success: true,
+          status: "fresh_current_live_reused",
+          currentLiveCount,
+          currentLiveAuthority: liveRecovery.authority,
+          nextOfficialRefreshAt:
+            liveRecovery.authority.lastCertifiedFreshUntil,
+          automationRunId: runId,
+          safety: { marketplaceWrites: 0, lunaWrites: 0,
+            falseFailurePrevented: true } })
+      }
       if (!live) throw new Error("CURRENT_LIVE_OFFICIAL_READ_REQUIRED")
       executionStage = "PERSIST_ANALYTICS_LAST_KNOWN_GOOD"
       const analyticsLastKnownGood = await persistAnalyticsLastKnownGoodV1({
@@ -281,6 +315,13 @@ export async function POST(req: Request) {
           listings: live.discovery.currentLiveListings,
         },
       )
+      executionStage = "RECONCILE_LISTING_REGISTRY"
+      const listingRegistry =
+        await reconcileCertifiedCurrentLiveListingRegistryV1(supabase, {
+          accountKey,
+          listings: live.discovery.currentLiveListings,
+          officialObservedAt: live.discovery.observedAt!,
+        })
       executionStage = "BUILD_CANONICAL_MONITOR"
       const canonicalMonitor = await getCommercialMonitorReadonly(
         supabase,
@@ -407,6 +448,7 @@ export async function POST(req: Request) {
           protectedSessionStatus: protectedSession.status,
           currentLiveCount: currentLive.length,
           unmanagedLiveIntake,
+          listingRegistry,
           certifiedLinkageCount: currentLive.filter((listing) =>
             listing.stock.supplierLinkageStatus === "CERTIFIED").length,
           pollEligibleCount: eligibleItemIds.length,
@@ -428,6 +470,7 @@ export async function POST(req: Request) {
         identityMismatchSkippedCount: identityMismatchSkippedItemIds.length,
         freshnessRenewal,
         analyticsLastKnownGood,
+        listingRegistry,
         refreshResults,
         stockPolling,
         automaticOosProtection,
