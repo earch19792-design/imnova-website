@@ -7,6 +7,8 @@ import { mergeSellerOsQuickPickPresentationV1 } from
   "@/lib/ebay/seller-os-quick-pick-presentation-v1"
 import { QUICK_PICK_OWNER_STAGE_CATALOG_V1 } from
   "@/lib/ebay/seller-os-quick-pick-owner-read-model-v1"
+import { publishSellerOsLunaShippingDurableWorkSignalV1 } from
+  "@/lib/seller-os/background-workload-optimization-v1"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 
 type StageState = "WAITING" | "RUNNING" | "PASS" | "BLOCKED" | "CONTINUES"
@@ -173,6 +175,17 @@ function record(value: unknown): Record<string, unknown> {
 
 const QUICK_PICK_READ_TIMEOUT_MS = 30_000
 
+function wakeLunaShippingForWaitingCardsV1(cards: readonly QuickPickCard[]) {
+  const queuedJobCount = cards.filter((card) => card.candidateId &&
+    card.stages.SHIPPING === "WAITING").length
+  if (!queuedJobCount) return false
+  return publishSellerOsLunaShippingDurableWorkSignalV1({
+    storage: window.localStorage,
+    signalId: crypto.randomUUID(),
+    queuedJobCount: Math.min(queuedJobCount, 100),
+  })
+}
+
 export default function LunaQuickPickPage() {
   const [input, setInput] = useState("")
   const [cards, setCards] = useState<QuickPickCard[]>([])
@@ -280,6 +293,7 @@ export default function LunaQuickPickPage() {
           ? globalQueue.cards as QuickPickCard[]
           : Array.isArray(payload.progress) ? payload.progress : []
         setCards(globalCards)
+        wakeLunaShippingForWaitingCardsV1(globalCards)
         setReceipt((record(selectedBatch).receipt ?? payload.receipt ?? null) as
           QuickPickReceipt | null)
         setReceiptIsCurrentSession(false)
@@ -358,6 +372,7 @@ export default function LunaQuickPickPage() {
           batchId: received.receipt.batchId, urls, selectedVariants }),
       })
       mergeCards(payload.result.cards)
+      wakeLunaShippingForWaitingCardsV1(payload.result.cards)
       setReceipt(payload.receipt ?? received.receipt)
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : ""
