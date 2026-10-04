@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto"
 
-import { calculateEbayUnitEconomics } from "./ebay-unit-economics"
+import {
+  calculateEbayMinimumOperatorPrice,
+  calculateEbayUnitEconomics,
+  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,
+} from "./ebay-unit-economics"
 import { MINIMUM_TRUTHFUL_LISTING_READINESS_V1 } from
   "./ebay-minimum-truthful-listing-readiness-v1"
 import { consumeListingPackageKeywordHandoffV1, type KeywordBindingV1 } from
@@ -301,20 +305,39 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     exactTitle, aspects: aspects.values, conditionLabel,
   })
   const frontier = record(input.frontier)
-  const targetPrice = positiveMoney(ownerEdits.targetPrice)
-    ?? positiveMoney(record(packageData.pricing).targetPrice)
-    ?? positiveMoney(marketTestReview.testPrice)
   const supplierCost = money(marketTestReview.supplierCost)
     ?? money(record(packageData.pricing).supplierCost)
   const shipping = money(marketTestReview.shipping)
     ?? money(frontier.shippingValue)
-  const ebayFees = money(marketTestReview.ebayFees)
-  const profit = money(marketTestReview.profit)
-  const margin = money(marketTestReview.margin)
-  const roi = money(marketTestReview.roi)
+  const persistedPolicyProfitFloor = money(
+    record(frontier.targetMarginPolicy).minimumNetProfit)
+  const staleEconomicPolicy = persistedPolicyProfitFloor !== null &&
+    persistedPolicyProfitFloor !==
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetProfit
+  const currentPolicyFloor = supplierCost !== null && shipping !== null
+    ? calculateEbayMinimumOperatorPrice({ supplierCost }, {
+      estimatedOutboundShipping: shipping,
+    }) : null
+  // Owner-authorized pricing always wins. Otherwise, a durable shipping
+  // receipt may safely be repriced when the central economics policy changes;
+  // this avoids forcing a second browser capture solely to replace an old
+  // profit floor.
+  const targetPrice = positiveMoney(ownerEdits.targetPrice)
+    ?? (staleEconomicPolicy
+      ? positiveMoney(currentPolicyFloor?.minimumOperatorPrice) : null)
+    ?? positiveMoney(record(packageData.pricing).targetPrice)
+    ?? positiveMoney(marketTestReview.testPrice)
   const canonicalEconomics = targetPrice !== null && supplierCost !== null &&
     shipping !== null ? calculateEbayUnitEconomics({ salePrice: targetPrice,
       supplierCost }, { estimatedOutboundShipping: shipping }) : null
+  const ebayFees = money(canonicalEconomics?.estimatedEbayFees)
+    ?? money(marketTestReview.ebayFees)
+  const profit = money(canonicalEconomics?.estimatedNetProfit)
+    ?? money(marketTestReview.profit)
+  const margin = money(canonicalEconomics?.estimatedNetMarginPercent)
+    ?? money(marketTestReview.margin)
+  const roi = money(canonicalEconomics?.estimatedRoiPercent)
+    ?? money(marketTestReview.roi)
   const breakEven = money(frontier.breakEvenSellingPrice)
     ?? money(canonicalEconomics?.contributionBreakEvenPrice)
   const minimumProfitablePrice = money(
