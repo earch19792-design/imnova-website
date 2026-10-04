@@ -52,6 +52,7 @@ export const LUNA_QUICK_PICK_FAST_LISTING_V1 =
 export const LUNA_QUICK_PICK_MAX_INPUTS = 20
 export const LUNA_QUICK_PICK_CONCURRENCY = 4
 export const LUNA_QUICK_PICK_DEMAND_DISCOVERY_CONCURRENCY = 2
+export const LUNA_QUICK_PICK_OPERATION_PERSIST_CONCURRENCY = 1
 export const QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1 =
   "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1" as const
 export const QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1 =
@@ -299,7 +300,7 @@ export function isRehydratableQuickPickOperationV1(input: Readonly<{
     Boolean(familyId) && !input.durableFamilyIds.has(familyId as string)
 }
 
-async function persistQuickPickOperationV1(input: Readonly<{
+export async function persistQuickPickOperationV1(input: Readonly<{
   supabase: SupabaseClient
   sourceUrl: string
   canonicalUrl: string
@@ -309,17 +310,32 @@ async function persistQuickPickOperationV1(input: Readonly<{
   lunaVariantId: string
   supplierSku: string
   batchId?: string | null
+  sleep?: (milliseconds: number) => Promise<void>
 }>) {
-  const existing = await input.supabase.from("ebay_luna_opportunity_queue")
-    .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment")
-    .eq("candidate_key", input.candidateKey)
-    .eq("supplier_product_id", input.lunaProductId)
-    .eq("supplier_variant_id", input.lunaVariantId)
-    .eq("supplier_sku", input.supplierSku).limit(2)
-  if (existing.error || rows(existing.data).length !== 1) {
+  const sleep = input.sleep ?? ((milliseconds: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
+  let row: JsonRecord | null = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const existing = await input.supabase.from("ebay_luna_opportunity_queue")
+      .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment")
+      .eq("candidate_key", input.candidateKey)
+      .eq("supplier_product_id", input.lunaProductId)
+      .eq("supplier_variant_id", input.lunaVariantId)
+      .eq("supplier_sku", input.supplierSku).limit(2)
+      .abortSignal(AbortSignal.timeout(8_000))
+    const matches = rows(existing.data)
+    if (!existing.error && matches.length === 1) {
+      row = matches[0]
+      break
+    }
+    if (!existing.error && matches.length > 1) {
+      throw new Error("LUNA_QUICK_PICK_OPERATION_IDENTITY_AMBIGUOUS")
+    }
+    if (attempt === 0) await sleep(250)
+  }
+  if (!row) {
     throw new Error("LUNA_QUICK_PICK_OPERATION_IDENTITY_READ_FAILED")
   }
-  const row = rows(existing.data)[0]
   const assessment = record(row.assessment)
   const previous = record(assessment.lunaQuickPickOperationV1)
   const now = new Date().toISOString()
@@ -1302,7 +1318,8 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     const candidateKey = text(outcome.candidateKey, 120)
     return candidate && candidateKey ? [{ entry, candidate, candidateKey }] : []
   })
-  await mapBounded(durableQuickPickOperations, LUNA_QUICK_PICK_CONCURRENCY,
+  await mapBounded(durableQuickPickOperations,
+    LUNA_QUICK_PICK_OPERATION_PERSIST_CONCURRENCY,
     async ({ entry, candidate, candidateKey }) => persistQuickPickOperationV1({
       supabase: input.supabase,
       sourceUrl: entry.sourceUrl,
