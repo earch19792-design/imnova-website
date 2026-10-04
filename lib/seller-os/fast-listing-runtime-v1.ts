@@ -333,7 +333,7 @@ export async function runFastListingActionV1(scope: FastScope, opportunityId: st
       if(!projection.canPrepareDraft || !projection.identityConfirmed) throw Error("FAST_LISTING_CONFIRMED_SHIPPING_IDENTITY_REQUIRED")
       const requested:FastRecord={}
       for(const offer of projection.matrix) requested[String(offer.quantity)]={quantity:offer.quantity,requestedAt:now.toISOString(),sourceFingerprint:loaded.source.source_fingerprint,truthDigest:truth.evidenceDigest}
-      patch={shippingRequested:requested}
+      patch={shippingRequested:requested,shippingCandidateIds:[1,2,3,4].map(quantity=>digest({contract:"FAST_LISTING_CAPTURE_OFFER_V1",accountKey:scope.accountKey,opportunityId,quantity}))}
     }
     return await write(scope,active,action,patch,token,operationKey)
   } catch(error) {

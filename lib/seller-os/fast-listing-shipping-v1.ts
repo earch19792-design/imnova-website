@@ -11,7 +11,8 @@ type Scope = { supabase: SupabaseClient; accountKey: string; sessionSecret: stri
  * quote calculator, checkout executor, scheduler or claim engine lives here. */
 export async function resolveFastListingShippingJobsV1(input: Scope): Promise<readonly LunaChromeShippingJobV1[]> {
   const contexts = await input.supabase.from("seller_os_fast_listing_contexts_v1").select("opportunity_id,owner_user_id,preferences")
-    .eq("account_key", input.accountKey).not("preferences->shippingRequested", "is", null).order("updated_at").limit(20)
+    .eq("account_key", input.accountKey).not("preferences->>shippingRequested", "is", null)
+    .gte("updated_at",new Date((input.now??Date.now())-6*3600000).toISOString()).order("updated_at").limit(20)
     .abortSignal(AbortSignal.timeout(8000)).retry(false)
   if (contexts.error) return [] // Other discovery lanes remain independent.
   const jobs: LunaChromeShippingJobV1[] = []
@@ -42,8 +43,10 @@ export async function resolveFastListingShippingJobsV1(input: Scope): Promise<re
 }
 
 export async function persistFastListingShippingCaptureV1(input: Scope & { capture: LunaShippingCapturePostV1 }) {
+  if(!/^sha256:[0-9a-f]{64}$/.test(input.capture.candidateId)) return null
   const contexts = await input.supabase.from("seller_os_fast_listing_contexts_v1").select("opportunity_id,owner_user_id")
-    .eq("account_key", input.accountKey).limit(100).abortSignal(AbortSignal.timeout(8000)).retry(false)
+    .eq("account_key", input.accountKey).contains("preferences",{shippingCandidateIds:[input.capture.candidateId]})
+    .limit(2).abortSignal(AbortSignal.timeout(8000)).retry(false)
   if (contexts.error) return null
   let context = null
   for (const c of contexts.data ?? []) if ([1, 2, 3, 4].some(quantity => digest({ contract: "FAST_LISTING_CAPTURE_OFFER_V1",
@@ -83,7 +86,10 @@ export async function persistFastListingShippingCaptureV1(input: Scope & { captu
     subtotalUsd: input.capture.subtotalUsd, totalUsd: input.capture.totalUsd, currency: "USD", receiptId: eventKey,
     observedAt: input.capture.observedAt, freshUntil: new Date(Date.parse(input.capture.observedAt) + 6 * 3600000).toISOString(),
     destinationProfileDigest: job.destination.profileDigest, noPurchase: true, noPayment: true, certified }
-  const patch = { shippingReceipts: { ...record(p.shippingReceipts), [String(job.identity.quantity)]: receipt } }
+  const remainingRequests={...record(p.shippingRequested)}
+  delete remainingRequests[String(job.identity.quantity)]
+  const patch = { shippingReceipts: { ...record(p.shippingReceipts), [String(job.identity.quantity)]: receipt },
+    shippingRequested:Object.keys(remainingRequests).length?remainingRequests:null }
   const projection = {...projectLoadedFastListingV1({ ...scope, now }, { ...loaded, context: { ...loaded.context, preferences: { ...p, ...patch } } }),learningEvidenceDigest:digest({eventKey,patch})}
   const written = await input.supabase.rpc("write_seller_os_fast_listing_v1", { p_account_key: input.accountKey, p_owner_user_id: context.owner_user_id,
     p_opportunity_id: context.opportunity_id, p_revision: loaded.context.revision, p_event_key: eventKey, p_event_type: "SHIPPING_CAPTURE",
