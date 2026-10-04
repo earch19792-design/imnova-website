@@ -33,4 +33,4 @@ unit can contain multiple pieces; offer count is supplier presentation count
 times supplier units. Publication remains a separate explicit owner action.
 
 Validation and the deployed five-product Pet Supplies pilot are recorded under
-`artifacts/fast-listing-v1` with source and deployment identifiers.
+`/home/earch/seller-os-evidence/fast-listing-v1` with source and deployment identifiers.

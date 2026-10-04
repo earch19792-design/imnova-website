@@ -187,6 +187,6 @@ export function projectFastListingV1(input: FastInput) {
 
 export function fastReferenceDifferencesV1(reference: FastRecord, truth: ReturnType<typeof fastProductTruthV1>) {
   return classifyReferenceFieldsV1(reference).map(f => ({ ...f, ownValue: truth.values[
-    ({ brand: "BRAND", model: "MODEL", upc: "GTIN", condition: "CONDITION", quantity: "QUANTITY_OR_SET_COUNT" } as Record<string, string>)[f.field.toLowerCase()]
+    ({ productname:"TITLE",title:"TITLE",manufacturerbrand:"BRAND",brand: "BRAND", model: "MODEL", upc: "GTIN", gtin:"GTIN", condition: "CONDITION", quantity: "QUANTITY_OR_SET_COUNT",packcount:"QUANTITY_OR_SET_COUNT" } as Record<string, string>)[f.field.toLowerCase()]
       ?? f.field.replace(/^ASPECT_VALUE:/, "").toUpperCase()] ?? null, importedValue: null }))
 }

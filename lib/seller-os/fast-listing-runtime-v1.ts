@@ -282,7 +282,10 @@ export async function runFastListingActionV1(scope: FastScope, opportunityId: st
       patch = { selectedEvidenceIds: [...new Set([...(Array.isArray(p.selectedEvidenceIds)?p.selectedEvidenceIds:[]),body.evidenceId])],
         comparableReview: { evidenceId: body.evidenceId, actorId: scope.ownerId, reviewedAt: now.toISOString(), query: record(p.researchPlan).query,
           itemId: String(evidence.sourceLocator).match(/\/itm\/(\d+)/)?.[1] ?? null, price: evidence.realizedSoldPrice,
-          shipping: evidence.buyerShipping, packCount: record(evidence.identity).packCount, soldAt: evidence.lastSoldDate }, finalReview: {} }
+          shipping: evidence.buyerShipping, packCount: record(evidence.identity).packCount, soldAt: evidence.lastSoldDate,
+          sourceDigest:evidence.sourceDigest,capturedAt:evidence.capturedAt,realizedPriceStatus:evidence.realizedPriceStatus,
+          matchDegree:projectLoadedFastListingV1(scope,loaded).comparables.find(c=>c.evidenceId===body.evidenceId)?.classification??"UNPROVEN",
+          quantitySold:evidence.soldQuantity,humanConfirmed:true,marketplaceWrites:0 }, finalReview: {} }
     }
     if (action === "SELECT") {
       const current=projectLoadedFastListingV1(scope,loaded), quantity=number(body.quantity)
