@@ -130,6 +130,60 @@ function candidateId(accountKey: string, productId: string,
   }).canonicalCandidateId
 }
 
+export function selectQuickPickShippingPriorityCandidateV1(input: Readonly<{
+  accountKey: string
+  rows: readonly unknown[]
+}>) {
+  const candidates = input.rows.flatMap((value) => {
+    const row = record(value)
+    const assessment = record(row.assessment)
+    const operation = record(assessment.lunaQuickPickOperationV1)
+    const shipping = record(
+      assessment.radarAutomaticLunaShippingContinuationV1)
+    const productId = text(row.supplier_product_id, 30)
+    const variantId = text(row.supplier_variant_id, 30)
+    const supplierSku = text(row.supplier_sku, 160)
+    const candidateKey = text(row.candidate_key, 80)
+    const updatedAt = Date.parse(String(row.updated_at ?? ""))
+    if (row.queue_status !== "review" ||
+        row.decision !== "WAITING_BROWSER_WORKER" ||
+        operation.contractVersion !==
+          "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1" ||
+        shipping.contractVersion !==
+          "RADAR_AUTOMATIC_LUNA_SHIPPING_CONTINUATION_V1" ||
+        shipping.shippingJobStatus !== "WAITING_BROWSER_WORKER" ||
+        !productId || !variantId || !supplierSku || !candidateKey ||
+        !Number.isFinite(updatedAt) ||
+        operation.candidateKey !== candidateKey ||
+        operation.lunaProductId !== productId ||
+        operation.lunaVariantId !== variantId ||
+        operation.supplierSku !== supplierSku ||
+        candidateId(input.accountKey, productId, variantId, supplierSku) !==
+          candidateKey) return []
+    return [{ candidateId: candidateKey, updatedAt }]
+  }).sort((left, right) => right.updatedAt - left.updatedAt ||
+    left.candidateId.localeCompare(right.candidateId))
+  return candidates[0]?.candidateId ?? null
+}
+
+async function readQuickPickShippingPriorityCandidateV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+}>) {
+  const result = await input.supabase.from("ebay_luna_opportunity_queue")
+    .select("candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,queue_status,decision,assessment,updated_at")
+    .eq("queue_status", "review")
+    .eq("decision", "WAITING_BROWSER_WORKER")
+    .order("updated_at", { ascending: false })
+    .order("candidate_key", { ascending: true })
+    .limit(50)
+    .abortSignal(AbortSignal.timeout(8_000))
+  if (result.error) return null
+  return selectQuickPickShippingPriorityCandidateV1({
+    accountKey: input.accountKey, rows: records(result.data),
+  })
+}
+
 type LunaCanonicalBindObservedCandidateV1 = Readonly<{
   candidateId: string
   lunaProductId: string
@@ -1627,7 +1681,14 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     batchSlotResult.data)
   const batchPriorityCandidateIds = batchSlot.priorityCandidateId
     ? Object.freeze([batchSlot.priorityCandidateId]) : undefined
-  if (!batchPriorityCandidateIds && input.maximumJobs === 1) {
+  const quickPickPriorityCandidateId = batchPriorityCandidateIds
+    ? null : await readQuickPickShippingPriorityCandidateV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+    })
+  const quickPickPriorityCandidateIds = quickPickPriorityCandidateId
+    ? Object.freeze([quickPickPriorityCandidateId]) : undefined
+  if (!batchPriorityCandidateIds && !quickPickPriorityCandidateIds &&
+      input.maximumJobs === 1) {
     const [traceAuthority] = await resolveCommercialTraceShippingAuthoritiesV1({
       supabase: input.supabase, accountKey: input.accountKey,
       sessionSecret: input.sessionSecret, now: input.now,
@@ -1657,7 +1718,7 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   try {
     eligible = await resolveLunaChromeShippingJobsV1({
       supabase: input.supabase, accountKey: input.accountKey,
-      candidateIds: batchPriorityCandidateIds,
+      candidateIds: batchPriorityCandidateIds ?? quickPickPriorityCandidateIds,
       sessionSecret: input.sessionSecret, now: input.now,
     })
   } catch (error) {
@@ -1666,10 +1727,12 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     // not strand a durable LIVE economic shipping job.
     standardDiscoveryError = error
   }
-  if (standardDiscoveryError && batchPriorityCandidateIds) {
+  if (standardDiscoveryError && (batchPriorityCandidateIds ||
+      quickPickPriorityCandidateIds)) {
     throw standardDiscoveryError
   }
-  if (input.maximumJobs === 1 && !batchPriorityCandidateIds) {
+  if (input.maximumJobs === 1 && !batchPriorityCandidateIds &&
+      !quickPickPriorityCandidateIds) {
     // Existing claims provide the class turn; no timer, counter or new worker.
     // LIVE economic claims carry freshness_generation; frontier claims do not.
     const history = eligible.length ? await input.supabase
@@ -1711,6 +1774,10 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
     ? Object.freeze({ jobs: Object.freeze([]), eligiblePendingJobCount: 0,
       claimedJobCount: 0, reusedEvidenceCount: 0,
       leaseConflictCount: 0, claimFailureCount: 0 })
+    : quickPickPriorityCandidateIds
+      ? Object.freeze({ jobs: Object.freeze([]), eligiblePendingJobCount: 0,
+        claimedJobCount: 0, reusedEvidenceCount: 0,
+        leaseConflictCount: 0, claimFailureCount: 0 })
     : await acquireEconomicLiveListingShippingJobsV1({
       supabase: input.supabase, accountKey: input.accountKey,
       runtimeInstanceId: input.runtimeInstanceId,
