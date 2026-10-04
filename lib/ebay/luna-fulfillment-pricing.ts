@@ -12,7 +12,7 @@ const PACK_SCENARIO_DEFAULT_ECONOMICS_CONFIG: EbayUnitEconomicsConfig = {
   estimatedOutboundShipping: 0,
   returnsReserveRate: .04,
   promotedListingsReserveRate: .05,
-  minimumNetProfit: 5,
+  minimumNetProfit: 4,
   minimumNetMarginPercent: 20,
   minimumRoiPercent: 30,
 }

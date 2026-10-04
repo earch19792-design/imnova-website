@@ -17,7 +17,7 @@ export const DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG: EbayUnitEconomicsConfig = {
   estimatedOutboundShipping: 6.99,
   returnsReserveRate: 0.04,
   promotedListingsReserveRate: 0.05,
-  minimumNetProfit: 5,
+  minimumNetProfit: 4,
   minimumNetMarginPercent: 20,
   minimumRoiPercent: 30,
 }
