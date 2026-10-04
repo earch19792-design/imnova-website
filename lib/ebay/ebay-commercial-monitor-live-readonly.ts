@@ -6097,8 +6097,8 @@ export async function getEbayOfficialLiveListingSweepReadonly(input: {
   }
   requestBudgets.set(calls, {
     deadlineAt: Date.now() + 48_000,
-    callsRemaining: 100,
-    maximumCalls: 100,
+    callsRemaining: 160,
+    maximumCalls: 160,
     callsStarted: 0,
     perCallTimeoutMs: REQUEST_TIMEOUT_MS,
   })
@@ -6173,7 +6173,7 @@ export async function getEbayOfficialLiveListingSweepReadonly(input: {
       listings: sellerWide.listings,
       totalEntries: sellerWide.totalEntries,
       fetchImpl, calls, clock,
-      maximumUniqueItems: 80,
+      maximumUniqueItems: 150,
       concurrency: 8,
       downstreamCallReserve: 2,
       downstreamTimeReserveMs: 2_000,
