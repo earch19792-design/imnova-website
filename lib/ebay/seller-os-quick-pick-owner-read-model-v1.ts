@@ -113,9 +113,14 @@ export function quickPickPublisherActionabilityV1(
   const actionPath = handoff.ownerPublicationDecisionReady === true
     && runtime.ownerActionPathAvailable === true
   const authorizedImagesPresent = Number(authorization.imageCount ?? 0) > 0
+  const publicationBlockers = Array.isArray(card.publicationBlockers)
+    ? card.publicationBlockers.flatMap((value) => text(value, 160)
+      ? [String(value)] : [])
+    : ["QUICK_PICK_PUBLICATION_GUARD_UNPROVEN"]
+  const publicationReady = publicationBlockers.length === 0
   const actionable = technicalReady && packageCurrent && actionPath
     && authorizedImagesPresent && !card.alreadyLive
-    && card.ownerTruePublicationBlockers.length === 0
+    && card.ownerTruePublicationBlockers.length === 0 && publicationReady
   return Object.freeze({
     authoritativeReady: actionable,
     visibleReady: actionable,
@@ -125,6 +130,8 @@ export function quickPickPublisherActionabilityV1(
     packageCurrent,
     actionPath,
     authorizedImagesPresent,
+    publicationReady,
+    publicationBlockers: Object.freeze(publicationBlockers),
     failureClass: actionable ? null
       : !technicalReady ? "NOT_TECHNICALLY_READY"
         : !packageCurrent ? "READY_WITH_STALE_OR_INCOMPLETE_PACKAGE"
@@ -132,7 +139,8 @@ export function quickPickPublisherActionabilityV1(
             : !actionPath ? "READY_WITHOUT_OWNER_ACTION_PATH"
               : card.alreadyLive ? "ALREADY_LIVE"
                 : card.ownerTruePublicationBlockers.length > 0
-                  ? "OWNER_FACT_REQUIRED" : "PUBLISHER_PREFLIGHT_UNPROVEN",
+                  ? "OWNER_FACT_REQUIRED" : publicationBlockers[0]
+                    ?? "PUBLISHER_PREFLIGHT_UNPROVEN",
   })
 }
 

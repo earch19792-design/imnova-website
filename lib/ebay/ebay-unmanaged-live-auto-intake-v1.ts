@@ -5,12 +5,14 @@ import type { EbayLiveListing } from
 import { registerManualEbayListing } from
   "@/lib/ebay/ebay-manual-listing-service"
 import { orderRelistHandoffCandidatesV1, reconcileRelistSupplierHandoffV1 } from "./ebay-relist-supplier-handoff-v1"
+import { ensureStockguardAuthorityFromDecisionP0 } from
+  "./stockguard-listing-link-authority-p0"
 
 type JsonRecord = Record<string, unknown>
 
 export const EBAY_UNMANAGED_LIVE_AUTO_INTAKE_CONTRACT_V1 =
   "SELLER_OS_AUTO_INGEST_UNMANAGED_LIVE_LISTINGS_V1" as const
-export const EBAY_UNMANAGED_LIVE_AUTO_INTAKE_MAXIMUM_PER_CYCLE = 2
+export const EBAY_UNMANAGED_LIVE_AUTO_INTAKE_MAXIMUM_PER_CYCLE = 50
 
 type OpportunityRow = {
   id: string
@@ -362,16 +364,28 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
   ))
   let attempted = 0
   const outcomes: Array<JsonRecord> = []
-  // Rotate the existing bounded cycle, so unresolved entries cannot permanently
-  // occupy both slots. This schedules no work and creates no timer.
+  // Exact deterministic identities always consume the bounded intake budget
+  // before speculative relist recovery. Otherwise an unresolved listing can
+  // repeatedly occupy the old two-item window and defer a proven exact match.
   const unresolved = orderRelistHandoffCandidatesV1(classifications.filter((row) =>
     row.classification !== "ALREADY_MANAGED" && !conflictingItemIds.has(row.itemId)), Date.now())
-  const cycleOrder = [...unresolved,
+  const cycleOrder = [
+    ...unresolved.filter((row) =>
+      row.classification === "EXACT_DETERMINISTIC_MATCH"),
+    ...unresolved.filter((row) =>
+      row.classification !== "EXACT_DETERMINISTIC_MATCH"),
     ...classifications.filter((row) => row.classification === "ALREADY_MANAGED" ||
-      conflictingItemIds.has(row.itemId))]
+      conflictingItemIds.has(row.itemId)),
+  ]
   for (const classification of cycleOrder) {
     if (classification.classification !== "ALREADY_MANAGED" &&
-        !conflictingItemIds.has(classification.itemId) && attempted < maximumAutoLinks) {
+        !conflictingItemIds.has(classification.itemId) &&
+        attempted >= maximumAutoLinks) {
+      outcomes.push({ ...classification, status: "DEFERRED_TO_NEXT_CYCLE" })
+      continue
+    }
+    if (classification.classification !== "ALREADY_MANAGED" &&
+        !conflictingItemIds.has(classification.itemId)) {
       // Reuse the same bounded intake slot. Relists inherit only database-
       // proven lineage; a legacy Product Truth projection cannot suppress it.
       const inherited = await reconcileRelistSupplierHandoffV1({
@@ -379,10 +393,36 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
       })
       if (inherited.status === "CERTIFIED") {
         attempted += 1
-        outcomes.push({ ...classification, status: "AUTO_LINKED",
-          mode: "DETERMINISTIC_RELIST", supplierLinkage: "CERTIFIED",
-          durableReadbackMatch: true, ownerActionRequired: false,
-          humanClicks: 0, marketplaceWrites: 0 })
+        const decisionId = typeof inherited.decisionId === "string"
+          ? inherited.decisionId : null
+        if (!decisionId) {
+          outcomes.push({ ...classification, status: "CONFLICT",
+            reasonCode: "UNMANAGED_LIVE_RELIST_DECISION_AUTHORITY_REQUIRED" })
+          continue
+        }
+        try {
+          const linkAuthority = await ensureStockguardAuthorityFromDecisionP0({
+            supabase, accountKey: input.accountKey,
+            ebayItemId: classification.itemId,
+            sourceDecisionId: decisionId,
+            actorUserId: null,
+            automatedDeterministic: true,
+          })
+          if (!linkAuthority.stockguardEligible || !linkAuthority.authority) {
+            outcomes.push({ ...classification, status: "CONFLICT",
+              reasonCode: "UNMANAGED_LIVE_RELIST_STOCKGUARD_AUTHORITY_REQUIRED" })
+            continue
+          }
+          outcomes.push({ ...classification, status: "AUTO_LINKED",
+            mode: "DETERMINISTIC_RELIST", supplierLinkage: "CERTIFIED",
+            stockGuard: "MONITORING_ENROLLED",
+            stockguardAuthorityId: linkAuthority.authority.authority_id,
+            durableReadbackMatch: true, ownerActionRequired: false,
+            humanClicks: 0, marketplaceWrites: 0 })
+        } catch {
+          outcomes.push({ ...classification, status: "CONFLICT",
+            reasonCode: "UNMANAGED_LIVE_RELIST_STOCKGUARD_AUTHORITY_REQUIRED" })
+        }
         continue
       }
       if (classification.classification !== "EXACT_DETERMINISTIC_MATCH") {
@@ -393,10 +433,6 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
     }
     if (classification.classification !== "EXACT_DETERMINISTIC_MATCH") {
       outcomes.push(classification)
-      continue
-    }
-    if (attempted >= maximumAutoLinks) {
-      outcomes.push({ ...classification, status: "DEFERRED_TO_NEXT_CYCLE" })
       continue
     }
     attempted += 1
@@ -413,9 +449,15 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
         safeDefaults: {},
       }, null, { automatedDeterministic: true })
       if (result.verification.status !== "verified" ||
-          result.manualLiveLinkage?.status !== "CERTIFIED") {
+          result.manualLiveLinkage?.status !== "CERTIFIED" ||
+          result.linkAuthority?.stockguardEligible !== true) {
         outcomes.push({ ...classification, status: "CONFLICT",
-          reasonCode: result.verification.reason })
+          reasonCode: result.verification.status !== "verified"
+            ? result.verification.reason
+            : result.manualLiveLinkage?.status !== "CERTIFIED"
+              ? "UNMANAGED_LIVE_CERTIFIED_LINKAGE_REQUIRED"
+              : result.linkAuthority?.limitationCode ??
+                "UNMANAGED_LIVE_STOCKGUARD_AUTHORITY_REQUIRED" })
         continue
       }
       outcomes.push({ ...classification, status: "AUTO_LINKED",

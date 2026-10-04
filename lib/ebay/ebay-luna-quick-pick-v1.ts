@@ -109,6 +109,7 @@ export type LunaQuickPickCardV1 = Readonly<{
   disposition: string
   exactBlocker: string | null
   exactBlockers: readonly string[]
+  publicationBlockers: readonly string[]
   variantSelectionRequired: boolean
   variants: readonly LunaQuickPickVariantV1[]
   alreadyLive: boolean
@@ -393,6 +394,7 @@ function batchCardSnapshotV1(value: LunaQuickPickCardV1) {
     title: value.title, state: value.state, lastStage: value.lastStage,
     disposition: value.disposition, exactBlocker: value.exactBlocker,
     exactBlockers: value.exactBlockers,
+    publicationBlockers: value.publicationBlockers,
     variantSelectionRequired: value.variantSelectionRequired,
     variants: value.variants, alreadyLive: value.alreadyLive,
     linkedLiveItemIds: value.linkedLiveItemIds, stages: value.stages,
@@ -620,6 +622,8 @@ export async function readLunaQuickPickBatchRehydrationV1(input: Readonly<{
     observedAt: string | null
   }>>()
   const rehydrateUrls: string[] = []
+  const authorityRetryUrls: string[] = []
+  const authorityRetryIdentityKeys = new Set<string>()
   const storedCards = rows(metrics.cards).map((stored) =>
     reconcileLunaQuickPickCardLivenessV1(card({
       ...stored,
@@ -628,13 +632,23 @@ export async function readLunaQuickPickBatchRehydrationV1(input: Readonly<{
     })))
   for (const stored of rows(metrics.cards)) {
     const reasonCode = stored.exactBlocker
-    if (reasonCode !== "ON_DEMAND_MARKETPLACE_INSIGHTS_NOT_CONFIGURED" &&
-        reasonCode !== "ON_DEMAND_MARKETPLACE_INSIGHTS_UNAVAILABLE") continue
     const lunaProductId = text(stored.lunaProductId, 80)
     const lunaVariantId = text(stored.lunaVariantId, 80)
     const supplierSku = text(stored.sourceSku, 120)
     const key = supplierIdentityKeyV1({ lunaProductId, lunaVariantId,
       supplierSku })
+    const sourceUrl = text(stored.sourceUrl, 2_000)
+    if (reasonCode === "ALREADY_LIVE_OFFICIAL_PORTFOLIO_UNAVAILABLE" ||
+        reasonCode === "ALREADY_LIVE_EXACT_PRODUCT_LINKAGE_READ_FAILED") {
+      if (!key || !sourceUrl) throw new Error(
+        "LUNA_QUICK_PICK_LIVE_AUTHORITY_RETRY_INPUT_UNPROVEN")
+      authorityRetryIdentityKeys.add(key)
+      authorityRetryUrls.push(sourceUrl)
+      rehydrateUrls.push(sourceUrl)
+      continue
+    }
+    if (reasonCode !== "ON_DEMAND_MARKETPLACE_INSIGHTS_NOT_CONFIGURED" &&
+        reasonCode !== "ON_DEMAND_MARKETPLACE_INSIGHTS_UNAVAILABLE") continue
     if (key) capabilityGaps.set(key, Object.freeze({
       lunaProductId: lunaProductId as string,
       lunaVariantId: lunaVariantId as string,
@@ -642,10 +656,11 @@ export async function readLunaQuickPickBatchRehydrationV1(input: Readonly<{
       reasonCode,
       observedAt: text(stored.updatedAt, 80) ??
         text(row.heartbeat_at, 80) ?? text(row.started_at, 80) }))
-    const sourceUrl = text(stored.sourceUrl, 2_000)
     if (key && sourceUrl) rehydrateUrls.push(sourceUrl)
   }
-  if (rehydrateUrls.length !== capabilityGaps.size) {
+  if (rehydrateUrls.length !== capabilityGaps.size +
+      authorityRetryIdentityKeys.size || authorityRetryUrls.length !==
+      authorityRetryIdentityKeys.size) {
     throw new Error("LUNA_QUICK_PICK_CAPABILITY_GAP_INPUTS_UNPROVEN")
   }
   return Object.freeze({
@@ -653,6 +668,8 @@ export async function readLunaQuickPickBatchRehydrationV1(input: Readonly<{
     originalBatchOperationCount: inputs.length,
     urls: Object.freeze(urls),
     rehydrateUrls: Object.freeze(rehydrateUrls),
+    authorityRetryUrls: Object.freeze(authorityRetryUrls),
+    authorityRetryIdentityKeys,
     storedCards: Object.freeze(storedCards),
     capabilityGaps,
     newOperationCount: 0 as const,
@@ -801,6 +818,9 @@ function card(input: Partial<LunaQuickPickCardV1> &
     exactBlocker: input.exactBlocker ?? null,
     exactBlockers: Object.freeze([...(input.exactBlockers ??
       (input.exactBlocker ? [input.exactBlocker] : []))]),
+    publicationBlockers: Object.freeze([
+      ...(input.publicationBlockers ?? []),
+    ]),
     variantSelectionRequired: input.variantSelectionRequired ?? false,
     variants: Object.freeze([...(input.variants ?? [])]),
     alreadyLive: input.alreadyLive ?? false,
@@ -880,6 +900,22 @@ function card(input: Partial<LunaQuickPickCardV1> &
     overnightEnrichmentLastRunAt:
       input.overnightEnrichmentLastRunAt ?? null,
     elapsedMs: input.elapsedMs ?? 0 })
+}
+
+export function quickPickLivePortfolioPolicyV1(input: Readonly<{
+  status: "AVAILABLE" | "UNAVAILABLE"
+  reasonCode: string | null
+}>) {
+  const duplicateCheckReady = input.status === "AVAILABLE"
+  const publicationBlocker = duplicateCheckReady ? null :
+    input.reasonCode ?? "LUNA_QUICK_PICK_ALREADY_LIVE_GUARD_READ_FAILED"
+  return Object.freeze({
+    duplicateCheckReady,
+    preparationAllowed: true as const,
+    publicationAllowed: duplicateCheckReady,
+    publicationBlockers: Object.freeze(publicationBlocker
+      ? [publicationBlocker] : []),
+  })
 }
 
 export function reconcileLunaQuickPickCardLivenessV1(
@@ -997,6 +1033,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       supplierSku: entry.selected!.supplierSku,
     })),
   })
+  const livePortfolioPolicy = quickPickLivePortfolioPolicyV1(liveGuard)
   const cards = new Map<string, LunaQuickPickCardV1>()
   for (const invalid of collected.invalid) {
     cards.set(invalid.sourceUrl, card({ sourceUrl: invalid.sourceUrl,
@@ -1030,20 +1067,8 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     }
     const key = identityKey(selectedVariant.lunaProductId,
       selectedVariant.lunaVariantId, selectedVariant.supplierSku)
-    if (liveGuard.status !== "AVAILABLE") {
-      cards.set(entry.sourceUrl, card({ sourceUrl: entry.sourceUrl,
-        canonicalUrl: entry.canonicalUrl, title: entry.title,
-        sourceSku: selectedVariant.supplierSku,
-        lunaProductId: selectedVariant.lunaProductId,
-        lunaVariantId: selectedVariant.lunaVariantId,
-        state: "BLOCKED", lastStage: "DUPLICATE",
-        disposition: "BLOCKED_FAIL_CLOSED",
-        exactBlocker: liveGuard.reasonCode,
-        variants: entry.variants,
-        stages: emptyStages({ IDENTITY: "PASS", DUPLICATE: "BLOCKED" }) }))
-      continue
-    }
-    const live = liveGuard.matches.get(key)
+    const live = liveGuard.status === "AVAILABLE"
+      ? liveGuard.matches.get(key) : undefined
     if (live) {
       cards.set(entry.sourceUrl, card({ sourceUrl: entry.sourceUrl,
         canonicalUrl: entry.canonicalUrl, title: entry.title,
@@ -1066,6 +1091,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         state: "BLOCKED", lastStage: "DUPLICATE",
         disposition: "EXCLUDED_DUPLICATE_INPUT",
         exactBlocker: "LUNA_QUICK_PICK_DUPLICATE_PRODUCT_IDENTITY",
+        publicationBlockers: livePortfolioPolicy.publicationBlockers,
         variants: entry.variants,
         stages: emptyStages({ IDENTITY: "PASS", DUPLICATE: "BLOCKED" }) }))
       continue
@@ -1080,6 +1106,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         state: "BLOCKED", lastStage: "STOCK",
         disposition: "BLOCKED_STOCK",
         exactBlocker: "LUNA_QUICK_PICK_CANONICAL_STOCK_NOT_READY",
+        publicationBlockers: livePortfolioPolicy.publicationBlockers,
         variants: entry.variants,
         stages: emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
           STOCK: "BLOCKED" }) }))
@@ -1188,6 +1215,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         familyDemandStatus: discovery?.status ?? "DEMAND_DISCOVERY_UNAVAILABLE",
         familyBindingCreatedOrReused:
           discovery?.familyBindingCreatedOrReused ?? false,
+        publicationBlockers: livePortfolioPolicy.publicationBlockers,
         stages: emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
           STOCK: entry.selected.available ? "PASS" : "BLOCKED",
           DEMAND: "BLOCKED" }) }))
@@ -1319,6 +1347,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       fullLunaBrandEvidenceReviewPending: true,
       marketTestReview: marketTestReady
         ? record(outcome.marketTestReview) : null,
+      publicationBlockers: livePortfolioPolicy.publicationBlockers,
       variants: entry.variants, stages: outcomeStages(outcome, candidate),
       dollarCheck: ready ? record(outcome.dollarCheck) : null }))
   }
@@ -1508,6 +1537,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       }>>(),
       reasonCode: null,
     })
+  const livePortfolioPolicy = quickPickLivePortfolioPolicyV1(liveGuard)
   const packages = new Map<string, JsonRecord>()
   for (const row of rows(packageRead.data)) {
     const opportunityId = String(row.opportunity_id)
@@ -1622,32 +1652,8 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const sourceUrl = text(operation.sourceUrl, 2_000) ?? (canonicalUrl
       ? sourceUrlWithVariant(canonicalUrl,
         String(row.supplier_variant_id)) : `quick-pick:${row.candidate_key}`)
-    if (liveGuard.status !== "AVAILABLE") {
-      const listingPackage = packages.get(String(row.id))
-      return card({
-        sourceUrl,
-        canonicalUrl,
-        candidateKey: String(row.candidate_key),
-        candidateId: String(row.candidate_key),
-        opportunityId: String(row.id),
-        listingPackageId: listingPackage ? String(listingPackage.id) : null,
-        sourceSku: text(row.supplier_sku, 120),
-        lunaProductId: text(row.supplier_product_id, 80),
-        lunaVariantId: text(row.supplier_variant_id, 80),
-        title: text(row.product_title, 350),
-        state: "BLOCKED",
-        lastStage: "DUPLICATE",
-        disposition: "BLOCKED_FAIL_CLOSED",
-        exactBlocker: liveGuard.reasonCode ??
-          "LUNA_QUICK_PICK_ALREADY_LIVE_GUARD_READ_FAILED",
-        alreadyLive: false,
-        linkedLiveItemIds: Object.freeze([]),
-        rehydrated: input.includeRecent === true,
-        updatedAt: text(row.updated_at, 80),
-        stages: emptyStages({ IDENTITY: "PASS", DUPLICATE: "BLOCKED" }),
-      })
-    }
-    const live = liveGuard.matches.get(identity)
+    const live = liveGuard.status === "AVAILABLE"
+      ? liveGuard.matches.get(identity) : undefined
     if (live) {
       const listingPackage = packages.get(String(row.id))
       return card({
@@ -1808,6 +1814,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       exactBlocker: reviewReady || waitingForWorker ? null : firstBlocker,
       exactBlockers: reviewReady
         ? Object.freeze([]) : Object.freeze(exactBlockers),
+      publicationBlockers: livePortfolioPolicy.publicationBlockers,
       variantSelectionRequired: false, variants: Object.freeze([]),
       alreadyLive: false, linkedLiveItemIds: Object.freeze([]),
       durableFamilyHit: false, onDemandDemandDiscoveryRequired: false,

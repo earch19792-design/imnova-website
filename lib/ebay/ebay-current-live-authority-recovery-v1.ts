@@ -8,16 +8,42 @@ import { getEbayCommercialMonitorLiveReadonly,
 import { currentLiveItemIdsV1, currentLiveScopeIdV1,
   officialCurrentLiveReadCertifiedV1, readCurrentLiveAuthorityV1 } from
   "./ebay-current-live-authority-v1"
+import { collectSellerOsEbayTradingRateLimitStatusV1,
+  type SellerOsEbayTradingRateLimitStatusV1 } from
+  "./ebay-trading-rate-limit-observability-v1"
 
 const CURRENT_MAXIMUM_AGE_MS = 20 * 60 * 1_000
 const RETRY_DELAY_MS = 15 * 60 * 1_000
+const RETRY_MAXIMUM_DELAY_MS = (23 * 60 + 55) * 60 * 1_000
+const TRADING_RESET_SAFETY_MS = 60 * 1_000
 const ITEM_ID = /^\d{9,20}$/
 const SAFE_CODE = /^[A-Z0-9_]{3,160}$/
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
+const TRADING_QUOTA_518 =
+  /^EBAY_MONITOR_(?:ACCOUNT_IDENTITY|SELLER_DISCOVERY|SELLER_LIST)_TRADING_ERROR_518$/
+
+type TradingQuotaAuthorityV1 = Pick<
+  SellerOsEbayTradingRateLimitStatusV1,
+  "gateState" | "ebay518BucketIdentity" | "nextSafeTradingProbeAt"
+>
 
 function safeCode(value: unknown, fallback: string) {
   return typeof value === "string" && SAFE_CODE.test(value)
     ? value : fallback
+}
+
+function isTradingQuota518(value: unknown): value is string {
+  return typeof value === "string" && TRADING_QUOTA_518.test(value)
+}
+
+function boundedQuotaRetryAt(now: Date, resetAt: string | null) {
+  const minimum = now.getTime() + RETRY_DELAY_MS
+  const maximum = now.getTime() + RETRY_MAXIMUM_DELAY_MS
+  const parsedReset = Date.parse(resetAt ?? "")
+  const preferred = Number.isFinite(parsedReset)
+    ? parsedReset + TRADING_RESET_SAFETY_MS
+    : minimum
+  return new Date(Math.min(maximum, Math.max(minimum, preferred))).toISOString()
 }
 
 function rowsForPersistence(live: EbayCommercialMonitorLiveReadonlyResult) {
@@ -62,6 +88,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
   clock?: () => Date
   forceOfficialRead?: boolean
   readOfficial?: typeof getEbayCommercialMonitorLiveReadonly
+  readTradingQuota?: () => Promise<TradingQuotaAuthorityV1>
 }>) {
   const clock = input.clock ?? (() => new Date())
   const preReadNow = input.now ?? clock()
@@ -73,9 +100,10 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     live: null, officialReadAttempted: false, databaseWrites: 0,
     marketplaceWrites: 0 as const,
   })
+  const priorTradingQuota518 = isTradingQuota518(stored.sourceFailureCode)
   if (stored.nextRetryAt &&
       Date.parse(stored.nextRetryAt) > preReadNow.getTime() &&
-      input.forceOfficialRead !== true) {
+      (input.forceOfficialRead !== true || priorTradingQuota518)) {
     return Object.freeze({ status: "WAITING_FOR_RETRY" as const,
       authority: stored, officialReadAttempted: false, databaseWrites: 0,
       live: null, marketplaceWrites: 0 as const })
@@ -103,7 +131,56 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     if (result.error) throw new Error(
       "CURRENT_LIVE_AUTHORITY_RECOVERY_FINISH_FAILED")
   }
+  const readTradingQuota = async (): Promise<TradingQuotaAuthorityV1 | null> => {
+    try {
+      return await (input.readTradingQuota ??
+        collectSellerOsEbayTradingRateLimitStatusV1)()
+    } catch {
+      return null
+    }
+  }
+  const recordFailure = async <TStatus extends string>(failure: Readonly<{
+    errorCode: string
+    nextRetryAt: string
+    now: Date
+    live: EbayCommercialMonitorLiveReadonlyResult | null
+    status: TStatus
+    officialReadAttempted: boolean
+  }>) => {
+    const failed = await input.supabase.rpc(
+      "record_ebay_current_live_authority_failure_v1", {
+        p_account_key: input.accountKey, p_run_id: runId,
+        p_error_code: failure.errorCode,
+        p_next_retry_at: failure.nextRetryAt,
+      })
+    if (failed.error) throw new Error(
+      "CURRENT_LIVE_AUTHORITY_FAILURE_RECEIPT_FAILED")
+    await finish(false, failure.errorCode)
+    const authority = await readCurrentLiveAuthorityV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      live: failure.live, now: failure.now })
+    return Object.freeze({ status: failure.status, authority,
+      live: failure.live, officialReadAttempted: failure.officialReadAttempted,
+      databaseWrites: 1, marketplaceWrites: 0 as const })
+  }
   try {
+    if (priorTradingQuota518) {
+      const quota = await readTradingQuota()
+      if (quota?.gateState !== "OPEN") {
+        return await recordFailure({
+          errorCode: stored.sourceFailureCode!,
+          nextRetryAt: boundedQuotaRetryAt(preReadNow,
+            quota?.gateState === "BLOCKED"
+              ? quota.nextSafeTradingProbeAt : null),
+          now: preReadNow,
+          live: null,
+          status: quota?.gateState === "BLOCKED"
+            ? "WAITING_FOR_TRADING_QUOTA_RESET" as const
+            : "CURRENT_UNAVAILABLE_TRADING_QUOTA_UNPROVEN" as const,
+          officialReadAttempted: false,
+        })
+      }
+    }
     const live = await (input.readOfficial ??
       getEbayCommercialMonitorLiveReadonly)({ accountKey: input.accountKey,
         accountAlias: input.accountAlias,
@@ -126,24 +203,20 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
         ? "CURRENT_LIVE_OFFICIAL_CLOCK_SKEW_FUTURE"
         : safeCode(live.discovery.gapCodes[0],
           "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE")
-      const nextRetryAt = new Date(
-        postReadNow.getTime() + RETRY_DELAY_MS).toISOString()
-      const failed = await input.supabase.rpc(
-        "record_ebay_current_live_authority_failure_v1", {
-          p_account_key: input.accountKey, p_run_id: runId,
-          p_error_code: errorCode, p_next_retry_at: nextRetryAt,
-        })
-      if (failed.error) throw new Error(
-        "CURRENT_LIVE_AUTHORITY_FAILURE_RECEIPT_FAILED")
-      await finish(false, errorCode)
-      const authority = await readCurrentLiveAuthorityV1({
-        supabase: input.supabase, accountKey: input.accountKey, live,
-        now: postReadNow })
-      return Object.freeze({ status: futureClockSkew
-        ? "CURRENT_UNAVAILABLE_CLOCK_SKEW" as const
-        : "CURRENT_UNAVAILABLE" as const,
-        authority, live, officialReadAttempted: true, databaseWrites: 1,
-        marketplaceWrites: 0 as const })
+      const quota = isTradingQuota518(errorCode)
+        ? await readTradingQuota() : null
+      return await recordFailure({
+        errorCode,
+        nextRetryAt: boundedQuotaRetryAt(postReadNow,
+          quota?.gateState === "BLOCKED"
+            ? quota.nextSafeTradingProbeAt : null),
+        now: postReadNow,
+        live,
+        status: futureClockSkew
+          ? "CURRENT_UNAVAILABLE_CLOCK_SKEW" as const
+          : "CURRENT_UNAVAILABLE" as const,
+        officialReadAttempted: true,
+      })
     }
     const rows = rowsForPersistence(live)
     const ids = currentLiveItemIdsV1(live)

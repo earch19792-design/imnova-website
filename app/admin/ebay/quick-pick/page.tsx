@@ -171,6 +171,8 @@ function record(value: unknown): Record<string, unknown> {
     ? value as Record<string, unknown> : {}
 }
 
+const QUICK_PICK_READ_TIMEOUT_MS = 30_000
+
 export default function LunaQuickPickPage() {
   const [input, setInput] = useState("")
   const [cards, setCards] = useState<QuickPickCard[]>([])
@@ -194,18 +196,30 @@ export default function LunaQuickPickPage() {
   const [batchIdempotencyKey, setBatchIdempotencyKey] = useState("")
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
-    const { data, error: sessionError } = await supabase.auth.getSession()
-    if (sessionError || !data.session) throw new Error("ADMIN_AUTH_REQUIRED")
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 20_000)
-    const signal = init?.signal
+    const isReadRequest = (init?.method ?? "GET").toUpperCase() === "GET"
+    const controller = isReadRequest ? new AbortController() : null
+    let timeout: number | null = null
+    const readTimeout = controller ? new Promise<never>((_resolve, reject) => {
+      timeout = window.setTimeout(() => {
+        controller.abort()
+        reject(new Error("SELLER_OS_READ_MODEL_TIMEOUT"))
+      }, QUICK_PICK_READ_TIMEOUT_MS)
+    }) : null
+    const signal = controller && init?.signal
       ? AbortSignal.any([init.signal, controller.signal])
-      : controller.signal
+      : controller?.signal ?? init?.signal
     try {
-      const response = await fetch(path, { ...init, signal,
+      const sessionResult = readTimeout
+        ? await Promise.race([supabase.auth.getSession(), readTimeout])
+        : await supabase.auth.getSession()
+      const { data, error: sessionError } = sessionResult
+      if (sessionError || !data.session) throw new Error("ADMIN_AUTH_REQUIRED")
+      const fetchRequest = fetch(path, { ...init, signal,
         cache: "no-store",
         headers: { ...(init?.headers ?? {}),
           Authorization: `Bearer ${data.session.access_token}` } })
+      const response = readTimeout
+        ? await Promise.race([fetchRequest, readTimeout]) : await fetchRequest
       const payload = await response.json().catch(() => null)
       if (!payload || typeof payload !== "object") throw new Error(
         `SELLER_OS_READ_MODEL_HTTP_${response.status}`)
@@ -213,11 +227,11 @@ export default function LunaQuickPickPage() {
         "LUNA_QUICK_PICK_REQUEST_FAILED")
       return payload
     } catch (requestError) {
-      if (controller.signal.aborted) throw new Error(
+      if (controller?.signal.aborted) throw new Error(
         "SELLER_OS_READ_MODEL_TIMEOUT")
       throw requestError
     } finally {
-      window.clearTimeout(timeout)
+      if (timeout !== null) window.clearTimeout(timeout)
     }
   }, [])
 
@@ -226,7 +240,8 @@ export default function LunaQuickPickPage() {
       return await request(path)
     } catch (initialError) {
       const code = initialError instanceof Error ? initialError.message : ""
-      if (!/(?:_READ_FAILED|_UNAVAILABLE|_TIMEOUT|HTTP_50[234])$/.test(code)) {
+      if (code === "SELLER_OS_READ_MODEL_TIMEOUT" ||
+          !/(?:_READ_FAILED|_UNAVAILABLE|HTTP_50[234])$/.test(code)) {
         throw initialError
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1_500))

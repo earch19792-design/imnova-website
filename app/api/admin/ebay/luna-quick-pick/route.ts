@@ -18,7 +18,8 @@ import { completeLunaQuickPickBatchReceiptV1,
   receiveLunaQuickPickBatchV1,
   type LunaQuickPickCardV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-v1"
-import { buildSellerOsOnDemandCapabilityGapFallbackV1 } from
+import { buildSellerOsOnDemandCapabilityGapFallbackV1,
+  discoverAndPersistSellerOsOnDemandFamilyDemandV1 } from
   "@/lib/ebay/ebay-demand-first-broad-net-orchestrator-v1"
 import { continueLunaQuickPickPostShippingRuntimeV1 } from
   "@/lib/ebay/ebay-quick-pick-post-shipping-continuation-v1"
@@ -452,13 +453,19 @@ export async function POST(req: Request) {
             entry.lunaProductId === candidate.supplier_product_id &&
             entry.lunaVariantId === candidate.supplier_variant_id &&
             entry.supplierSku === candidate.sku)
-          if (!gap) throw new Error(
+          if (gap) return buildSellerOsOnDemandCapabilityGapFallbackV1({
+            lunaCatalogRow, reasonCode: gap.reasonCode,
+            observedAt: gap.observedAt })
+          const authorityRetryKey = `${String(
+            candidate.supplier_product_id)}\n${String(
+            candidate.supplier_variant_id)}\n${String(candidate.sku)}`
+          if (rehydration.authorityRetryIdentityKeys.has(authorityRetryKey)) {
+            return discoverAndPersistSellerOsOnDemandFamilyDemandV1({
+              supabase, accountKey, lunaCatalogRow,
+            })
+          }
+          throw new Error(
             "LUNA_QUICK_PICK_DURABLE_DEMAND_EVIDENCE_REQUIRED")
-          return buildSellerOsOnDemandCapabilityGapFallbackV1({
-            lunaCatalogRow,
-            reasonCode: gap.reasonCode,
-            observedAt: gap.observedAt,
-          })
         },
       })
       const identity = (card: LunaQuickPickCardV1) => card.lunaProductId &&
