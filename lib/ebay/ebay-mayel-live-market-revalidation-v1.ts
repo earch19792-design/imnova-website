@@ -399,6 +399,7 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
   accountKey: string
   sourceContexts?: readonly string[]
   excludePreResearchBatchPlans?: boolean
+  prioritizeNewestUnclaimed?: boolean
 }) {
   const supportedSourceContexts = ["LIVE_LISTING_REVALIDATION",
     "QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"] as const
@@ -407,14 +408,20 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
     !supportedSourceContexts.includes(context as typeof supportedSourceContexts[number]))) {
     throw new Error("MAYEL_RESEARCH_ACQUISITION_SCOPE_INVALID")
   }
-  const plans = await input.supabase.from(
+  let plansQuery = input.supabase.from(
     "marketplace_product_research_query_plans")
-    .select("id,source_context,request_receipt_id,subject_item_id,status,created_at,worker_lease_owner,worker_lease_expires_at")
+    .select("id,source_context,request_receipt_id,subject_item_id,status,created_at,worker_lease_owner,worker_lease_expires_at,worker_claim_count,worker_next_retry_at")
     .eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US")
     .in("source_context", [...sourceContexts])
     .eq("status", "ACTIVE")
-    .order("created_at", { ascending: true }).limit(100)
+  if (input.prioritizeNewestUnclaimed) {
+    plansQuery = plansQuery.order("worker_claim_count", { ascending: true })
+      .order("created_at", { ascending: false })
+  } else {
+    plansQuery = plansQuery.order("created_at", { ascending: true })
+  }
+  const plans = await plansQuery.limit(100)
   if (plans.error) {
     throw new Error("MAYEL_RESEARCH_ACQUISITION_PLAN_READ_FAILED")
   }
@@ -476,8 +483,11 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
   const claimable = pending.filter((plan) => {
     if (["QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"].includes(
       plan.source_context)) {
-      return !plan.worker_lease_expires_at ||
+      const retryReady = !plan.worker_next_retry_at ||
+        Date.parse(String(plan.worker_next_retry_at)) <= now
+      const leaseReady = !plan.worker_lease_expires_at ||
         Date.parse(String(plan.worker_lease_expires_at)) <= now
+      return Number(plan.worker_claim_count ?? 0) < 5 && retryReady && leaseReady
     }
     const receipt = receiptById.get(String(plan.request_receipt_id))
     return !receipt?.lease_expires_at ||

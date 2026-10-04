@@ -470,8 +470,9 @@ export async function POST(request: Request) {
       if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
       const result = await readMayelAutonomousResearchAcquisitionV1({
         supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
-        sourceContexts: ["LUNA_PRE_RESEARCH"],
+        sourceContexts: ["QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"],
         excludePreResearchBatchPlans: true,
+        prioritizeNewestUnclaimed: true,
       })
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0,
