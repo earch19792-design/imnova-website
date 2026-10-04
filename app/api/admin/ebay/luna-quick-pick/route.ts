@@ -472,7 +472,8 @@ export async function POST(req: Request) {
           const authorityRetryKey = `${String(
             candidate.supplier_product_id)}\n${String(
             candidate.supplier_variant_id)}\n${String(candidate.sku)}`
-          if (rehydration.authorityRetryIdentityKeys.has(authorityRetryKey)) {
+          if (rehydration.authorityRetryIdentityKeys.has(authorityRetryKey) ||
+              rehydration.shippingRetryIdentityKeys.has(authorityRetryKey)) {
             return discoverAndPersistSellerOsOnDemandFamilyDemandV1({
               supabase, accountKey, lunaCatalogRow,
             })
