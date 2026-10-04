@@ -7,6 +7,8 @@ import { continueLunaQuickPickMinimumReadinessV1 } from
 import type { RadarMarketplaceTaxonomyReaderV1,
   RadarProductIdentifierPolicyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1"
+import { isCurrentCommercialCandidateStorageKeyV1 } from
+  "./ebay-current-commercial-candidate-identity-v1"
 
 export const QUICK_PICK_POST_SHIPPING_CONTINUATION_V1 =
   "QUICK_PICK_POST_SHIPPING_CONTINUATION_V1" as const
@@ -29,8 +31,7 @@ function rows(value: unknown) {
 }
 
 function candidateKey(value: unknown) {
-  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value)
-    ? value : null
+  return isCurrentCommercialCandidateStorageKeyV1(value) ? value : null
 }
 
 function batchId(value: unknown) {

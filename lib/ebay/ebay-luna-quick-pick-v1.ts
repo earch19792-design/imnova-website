@@ -242,6 +242,11 @@ function identityKey(productId: string, variantId: string, sku: string) {
   return `${productId}\n${variantId}\n${sku}`
 }
 
+function frontierIdentityKey(familyId: string, productId: string,
+  variantId: string, sku: string) {
+  return `${familyId}\n${identityKey(productId, variantId, sku)}`
+}
+
 function safeError(error: unknown) {
   const code = error instanceof Error ? error.message : ""
   return /^[A-Z][A-Z0-9_]{2,119}$/.test(code)
@@ -1612,12 +1617,24 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
   const catalog = new Map(rows(catalogRead.data).map((row) => [identityKey(
     String(row.supplier_product_id), String(row.supplier_variant_id),
     String(row.sku)), row]))
-  const frontiers = new Map<string, JsonRecord>()
+  const frontiersByFamilyIdentity = new Map<string, JsonRecord>()
+  const frontierCandidatesByIdentity = new Map<string, JsonRecord[]>()
   for (const outer of rows(record(frontierRead.data).frontiers)) {
     const frontier = record(outer.frontier)
-    const key = identityKey(String(frontier.lunaProductId),
+    const identity = identityKey(String(frontier.lunaProductId),
       String(frontier.lunaVariantId), String(frontier.lunaSku))
-    if (!frontiers.has(key)) frontiers.set(key, frontier)
+    const familyId = text(frontier.familyId, 120)
+    if (familyId) {
+      const exactKey = frontierIdentityKey(familyId,
+        String(frontier.lunaProductId), String(frontier.lunaVariantId),
+        String(frontier.lunaSku))
+      if (!frontiersByFamilyIdentity.has(exactKey)) {
+        frontiersByFamilyIdentity.set(exactKey, frontier)
+      }
+    }
+    const candidates = frontierCandidatesByIdentity.get(identity) ?? []
+    candidates.push(frontier)
+    frontierCandidatesByIdentity.set(identity, candidates)
   }
   return Object.freeze(queueRows.map((row) => {
     const assessment = record(row.assessment)
@@ -1742,7 +1759,20 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         stages: emptyStages({ IDENTITY: "PASS", DUPLICATE: "BLOCKED" }),
       })
     }
-    const frontier = frontiers.get(identity)
+    const expectedFamilyId = text(
+      record(assessment.radarFactoryCandidateV1).familyId, 120)
+    const exactFamilyFrontier = expectedFamilyId
+      ? frontiersByFamilyIdentity.get(frontierIdentityKey(expectedFamilyId,
+          String(row.supplier_product_id), String(row.supplier_variant_id),
+          String(row.supplier_sku)))
+      : undefined
+    const identityFrontiers = frontierCandidatesByIdentity.get(identity) ?? []
+    // The same Luna identity may have historical frontiers in more than one
+    // market family. Never let array/RPC ordering attach another family's
+    // shipping receipt to this Quick Pick. The identity-only fallback is safe
+    // only when the durable read has exactly one possible frontier.
+    const frontier = exactFamilyFrontier ??
+      (identityFrontiers.length === 1 ? identityFrontiers[0] : undefined)
     const listingPackage = packages.get(String(row.id))
     const listingReview = reviewReady && listingPackage
       ? buildQuickPickMarketTestListingReviewV1({

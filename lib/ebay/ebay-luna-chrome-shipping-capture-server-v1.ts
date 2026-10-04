@@ -145,6 +145,11 @@ export function selectQuickPickShippingPriorityCandidateV1(input: Readonly<{
     const supplierSku = text(row.supplier_sku, 160)
     const candidateKey = text(row.candidate_key, 80)
     const updatedAt = Date.parse(String(row.updated_at ?? ""))
+    const canonicalCandidateId = productId && variantId && supplierSku
+      ? candidateId(input.accountKey, productId, variantId, supplierSku)
+      : null
+    const reconciledShippingCandidateId = text(
+      shipping.canonicalCandidateId ?? shipping.candidateId, 80)
     if (row.queue_status !== "review" ||
         row.decision !== "WAITING_BROWSER_WORKER" ||
         operation.contractVersion !==
@@ -158,9 +163,10 @@ export function selectQuickPickShippingPriorityCandidateV1(input: Readonly<{
         operation.lunaProductId !== productId ||
         operation.lunaVariantId !== variantId ||
         operation.supplierSku !== supplierSku ||
-        candidateId(input.accountKey, productId, variantId, supplierSku) !==
-          candidateKey) return []
-    return [{ candidateId: candidateKey, updatedAt }]
+        !canonicalCandidateId ||
+        (candidateKey !== canonicalCandidateId &&
+          reconciledShippingCandidateId !== canonicalCandidateId)) return []
+    return [{ candidateId: canonicalCandidateId, updatedAt }]
   }).sort((left, right) => right.updatedAt - left.updatedAt ||
     left.candidateId.localeCompare(right.candidateId))
   return candidates[0]?.candidateId ?? null

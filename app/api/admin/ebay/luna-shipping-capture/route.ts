@@ -648,7 +648,12 @@ export async function POST(req: Request) {
             await continueLunaQuickPickPostShippingRuntimeV1({
               supabase: auth.supabase,
               accountKey: auth.accountKey,
-              candidateKeys: [continuationCandidateId],
+              // Economics resolves the exact durable queue row and returns its
+              // storage key. Keep both identities so legacy Quick Pick rows
+              // continue immediately after the canonical Shipping capture.
+              candidateKeys: [continuationCandidateId,
+                String(listingAiRecord(economicsContinuation)
+                  .candidateKey ?? "")],
               taxonomyReader: getEbayTaxonomyListingIntelligence,
               productIdentifierPolicyReader:
                 preflightEbayCategoryProductIdentifiers,

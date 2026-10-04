@@ -76,6 +76,32 @@ function mergeProgress(receiptCards: readonly LunaQuickPickCardV1[],
     receiptCards, durableCards)]
 }
 
+function continuationCandidateKeys(cards: readonly LunaQuickPickCardV1[]) {
+  return [...new Set(cards.flatMap((card) => card.alreadyLive ? [] : [
+    card.candidateId, card.candidateKey,
+  ].flatMap((value) => value ? [value] : [])))]
+}
+
+async function readPostContinuationCardsV1(input: Readonly<{
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  accountKey: string
+  previousCards: readonly LunaQuickPickCardV1[]
+}>) {
+  const durableCards = await readLunaQuickPickProgressV1({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    candidateKeys: continuationCandidateKeys(input.previousCards),
+    supplierIdentities: input.previousCards.flatMap((card) =>
+      card.lunaProductId && card.lunaVariantId && card.sourceSku
+        ? [{ lunaProductId: card.lunaProductId,
+            lunaVariantId: card.lunaVariantId,
+            supplierSku: card.sourceSku }]
+        : []),
+    includeRecent: false,
+  })
+  return mergeProgress(input.previousCards, durableCards)
+}
+
 function uuid(value: unknown) {
   return typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -429,17 +455,26 @@ export async function POST(req: Request) {
         const postShippingContinuation =
           await continueLunaQuickPickPostShippingRuntimeV1({
             supabase, accountKey,
-            candidateKeys: rehydration.storedCards.flatMap((card) =>
-              card.candidateKey && !card.alreadyLive
-                ? [card.candidateKey] : []),
+            candidateKeys: continuationCandidateKeys(
+              rehydration.storedCards),
             taxonomyReader: getEbayTaxonomyListingIntelligence,
             productIdentifierPolicyReader:
               preflightEbayCategoryProductIdentifiers,
           })
+        const cards = await readPostContinuationCardsV1({
+          supabase, accountKey,
+          previousCards: rehydration.storedCards,
+        })
+        const result = Object.freeze({
+          inputCount: rehydration.originalBatchOperationCount,
+          cards: Object.freeze(cards),
+        })
+        const receipt = await completeLunaQuickPickBatchReceiptV1({
+          supabase, batchId, result,
+        })
         return response({ success: true,
-          result: { inputCount: rehydration.originalBatchOperationCount,
-            cards: rehydration.storedCards },
-        receipt: { batchId, cards: rehydration.storedCards },
+          result,
+        receipt,
         postShippingContinuation,
         requiredSpecificsContinuation:
           postShippingContinuation.requiredSpecificsContinuation,
@@ -498,20 +533,23 @@ export async function POST(req: Request) {
       const result = Object.freeze({ ...partialResult,
         inputCount: rehydration.originalBatchOperationCount,
         cards: Object.freeze(cards) })
-      const receipt = await completeLunaQuickPickBatchReceiptV1({
-        supabase, batchId, result,
-      })
       const postShippingContinuation =
         await continueLunaQuickPickPostShippingRuntimeV1({
           supabase, accountKey,
-          candidateKeys: result.cards.flatMap((card) =>
-            card.candidateKey && !card.alreadyLive
-              ? [card.candidateKey] : []),
+          candidateKeys: continuationCandidateKeys(result.cards),
           taxonomyReader: getEbayTaxonomyListingIntelligence,
           productIdentifierPolicyReader:
             preflightEbayCategoryProductIdentifiers,
         })
-      return response({ success: true, result, receipt,
+      const refreshedCards = await readPostContinuationCardsV1({
+        supabase, accountKey, previousCards: result.cards,
+      })
+      const refreshedResult = Object.freeze({ ...result,
+        cards: Object.freeze(refreshedCards) })
+      const receipt = await completeLunaQuickPickBatchReceiptV1({
+        supabase, batchId, result: refreshedResult,
+      })
+      return response({ success: true, result: refreshedResult, receipt,
         currentLiveAuthority,
         postShippingContinuation,
         requiredSpecificsContinuation:
@@ -548,19 +586,23 @@ export async function POST(req: Request) {
         batchId, failureCode: safeError(error) }).catch(() => undefined)
       throw error
     }
-    const receipt = batchId
-      ? await completeLunaQuickPickBatchReceiptV1({ supabase, batchId,
-        result }) : null
     const postShippingContinuation =
       await continueLunaQuickPickPostShippingRuntimeV1({
         supabase, accountKey,
-        candidateKeys: result.cards.flatMap((card) =>
-          card.candidateKey && !card.alreadyLive ? [card.candidateKey] : []),
+        candidateKeys: continuationCandidateKeys(result.cards),
         taxonomyReader: getEbayTaxonomyListingIntelligence,
         productIdentifierPolicyReader:
           preflightEbayCategoryProductIdentifiers,
       })
-    return response({ success: true, result, receipt,
+    const refreshedCards = await readPostContinuationCardsV1({
+      supabase, accountKey, previousCards: result.cards,
+    })
+    const refreshedResult = Object.freeze({ ...result,
+      cards: Object.freeze(refreshedCards) })
+    const receipt = batchId
+      ? await completeLunaQuickPickBatchReceiptV1({ supabase, batchId,
+        result: refreshedResult }) : null
+    return response({ success: true, result: refreshedResult, receipt,
       currentLiveAuthority,
       postShippingContinuation,
       requiredSpecificsContinuation:

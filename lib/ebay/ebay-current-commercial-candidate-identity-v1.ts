@@ -7,6 +7,20 @@ export const CURRENT_COMMERCIAL_CANDIDATE_MARKETPLACE = "EBAY_US" as const
 export const CURRENT_COMMERCIAL_CANDIDATE_SUPPLIER_AUTHORITY =
   "LUNAPORTEX" as const
 
+/**
+ * Durable queue rows can retain the original Luna product/variant key after
+ * CURRENT identity reconciliation. Both forms identify an already-bound row;
+ * arbitrary strings remain outside the continuation boundary.
+ */
+export function isCurrentCommercialCandidateStorageKeyV1(
+  value: unknown,
+): value is string {
+  return typeof value === "string" && (
+    /^sha256:[0-9a-f]{64}$/.test(value) ||
+    /^luna-portex:\d{1,30}:\d{1,30}$/.test(value)
+  )
+}
+
 type CurrentCommercialCandidateIdentityInputV1 = Readonly<{
   accountKey: string
   productId: string

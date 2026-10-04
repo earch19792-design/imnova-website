@@ -28,6 +28,8 @@ import { buildOwnerLunaUnbrandedPolicyApplicationV1,
   "./ebay-owner-supplier-merchandise-policy-v1"
 import { buildLunaFullPageImageReviewV1 } from
   "./ebay-luna-full-page-required-facts-v1"
+import { isCurrentCommercialCandidateStorageKeyV1 } from
+  "./ebay-current-commercial-candidate-identity-v1"
 
 export const QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1 =
   "QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1" as const
@@ -584,7 +586,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   trigger?: "IMMEDIATE" | "OVERNIGHT_ENRICHMENT" | "DEPENDENCY_RECOVERY"
 }>) {
   const candidateKeys = [...new Set(input.candidateKeys.filter((value) =>
-    /^sha256:[0-9a-f]{64}$/.test(value)))].slice(0, MAXIMUM_QUICK_PICKS)
+    isCurrentCommercialCandidateStorageKeyV1(value)))]
+    .slice(0, MAXIMUM_QUICK_PICKS)
   if (!candidateKeys.length) return Object.freeze({ attempted: 0,
     claimed: 0, aiCallCount: 0, marketplaceWrites: 0 as const })
   const [ownerBrandPolicy, ownerConditionPolicy] = await Promise.all([

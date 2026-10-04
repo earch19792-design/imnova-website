@@ -5,6 +5,8 @@ import {
   MINIMUM_TRUTHFUL_LISTING_READINESS_V1,
   type MinimumTruthfulGateStateV1,
 } from "./ebay-minimum-truthful-listing-readiness-v1"
+import { isCurrentCommercialCandidateStorageKeyV1 } from
+  "./ebay-current-commercial-candidate-identity-v1"
 
 export const QUICK_PICK_MINIMUM_READINESS_CONTINUATION_V1 =
   "QUICK_PICK_MINIMUM_READINESS_CONTINUATION_V1" as const
@@ -142,7 +144,8 @@ export async function continueLunaQuickPickMinimumReadinessV1(input: Readonly<{
   retryConflicts?: boolean
 }>) {
   const candidateKeys = [...new Set(input.candidateKeys.filter((value) =>
-    /^sha256:[0-9a-f]{64}$/.test(value)))].slice(0, MAXIMUM_QUICK_PICKS)
+    isCurrentCommercialCandidateStorageKeyV1(value)))]
+    .slice(0, MAXIMUM_QUICK_PICKS)
   if (!candidateKeys.length) return Object.freeze({ attempted: 0, updated: 0,
     unchanged: 0, failed: 0, ownerLastMileProductsCount: 0,
     ownerLastMileFactCount: 0, results: Object.freeze([] as JsonRecord[]),
