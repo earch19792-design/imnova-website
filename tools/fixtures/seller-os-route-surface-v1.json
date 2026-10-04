@@ -55,6 +55,7 @@
     "app/api/admin/ebay/active-listings/sync/route.ts",
     "app/api/admin/ebay/assistant/mcp/route.ts",
     "app/api/admin/ebay/assistant/revenue-engine/route.ts",
+    "app/api/admin/ebay/autonomous-category-analysis/route.ts",
     "app/api/admin/ebay/command-center/route.ts",
     "app/api/admin/ebay/commercial-monitor/route.ts",
     "app/api/admin/ebay/commercial-orders-oauth/browser-start/route.ts",

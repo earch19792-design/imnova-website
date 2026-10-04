@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import Image from "next/image"
 import { ArrowRight, Check, ExternalLink, Package, Search, ShieldCheck, Zap } from "lucide-react"
-import { supabase } from "@/lib/supabase"
+import { sellerOsAuthenticatedFetchV1 } from "@/lib/seller-os/seller-os-authenticated-fetch-v1"
 import type { FastField } from "@/lib/seller-os/fast-listing-v1"
 import type { projectLoadedFastListingV1 } from "@/lib/seller-os/fast-listing-runtime-v1"
 
@@ -18,10 +18,8 @@ const shown = (v: unknown) => v === null || v === undefined || v === "" ? "Pendi
 const usd = (v: unknown) => typeof v === "number" ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v) : "Pendiente"
 const blockers:Record<string,string>={MINIMUM_PRODUCT_TRUTH_REQUIRED:"Completar identidad, costo y piezas incluidas por el proveedor.",CONFIRM_EXACT_PRODUCT_IDENTITY:"Confirmar los datos exactos del producto.",CURRENT_LUNA_STOCK_REQUIRED:"Confirmar disponibilidad actual en Luna.",CONFIRMED_LUNA_STOCK_QUANTITY_REQUIRED:"Confirmar stock suficiente para la presentación seleccionada.",SOLD_EVIDENCE_OR_CONTROLLED_TEST_REQUIRED:"Capturar ventas comparables o confirmar una prueba controlada.",CATEGORY_CONDITION_AND_SPECIFICS_REQUIRED:"Resolver categoría, condición e item specifics obligatorios.",CONFIRMED_DUPLICATE:"Existe una publicación duplicada confirmada.",EXACT_LUNA_SHIPPING_REQUIRED:"Capturar shipping exacto para esta presentación.",EXACT_ACCOUNT_CATEGORY_FEE_REQUIRED:"Obtener la tarifa aplicable de la cuenta y categoría.",COMPETITIVE_PRICE_REQUIRED:"Falta precio competitivo o precio de prueba confirmado.",OTHER_COSTS_OR_AD_POLICY_REQUIRED:"Confirmar costos adicionales y política de publicidad.",NET_PROFIT_BELOW_4:"Beneficio inferior al mínimo obligatorio de $4.",DUPLICATE_CHECK_REQUIRED:"Completar el control de duplicados.",COMPLIANCE_REQUIRED:"Resolver cumplimiento del producto.",AUTHORIZED_REPRESENTATIVE_IMAGES_REQUIRED:"Revisar imágenes autorizadas y representativas.",PACK_REPRESENTATIVE_IMAGES_REQUIRED:"Preparar imágenes que representen el pack exacto.",FINAL_HUMAN_REVIEW_REQUIRED:"Completar la revisión humana final.",PRESENTATION_REQUIRED:"Confirmar la presentación del proveedor."}
 async function api(params = "", body?: Record<string, unknown>) {
-  const session = await supabase.auth.getSession()
-  if (!session.data.session) throw Error("Inicia sesión en Seller OS para continuar.")
-  const r = await fetch(`/api/admin/ebay/fast-listing${params}`, { method: body ? "POST" : "GET", cache: "no-store",
-    headers: { Authorization: `Bearer ${session.data.session.access_token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+  const r = await sellerOsAuthenticatedFetchV1(`/api/admin/ebay/fast-listing${params}`, { method: body ? "POST" : "GET", cache: "no-store",
+    headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined })
   const p = await r.json(); if (!r.ok || !p.success) throw Error(p.error ?? "No se pudo cargar Fast Listing.")
   return p as { view?: View; catalog?: Catalog[] }

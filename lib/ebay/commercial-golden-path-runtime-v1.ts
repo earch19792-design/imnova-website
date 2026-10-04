@@ -228,7 +228,7 @@ export async function marketEvidence(ctx: GoldenContext, key?: GoldenCandidateKe
   const rows = [...(m.data ?? []).map(r => goldenRecord(r.payload) as unknown as GoldenMarketEvidence), ...(a.data ?? []).map(normalizeGoldenStoredMarketV1).filter((row): row is GoldenMarketEvidence => row !== null)]
   return { rows: rows.slice(0, MAX_MARKET_ROWS), complete: (m.data?.length ?? 0) <= MAX_MARKET_ROWS, truncated: rows.length > MAX_MARKET_ROWS, reasonCode: rows.length > MAX_MARKET_ROWS ? "BOUNDED_MARKET_SCAN_PARTIAL_NOT_EXHAUSTIVE" : null }
 }
-async function ownerProductTruthEvidence(
+export async function ownerProductTruthEvidence(
   ctx: GoldenContext,
   key: GoldenCandidateKey,
   source: GoldenRecord | null,
@@ -258,7 +258,7 @@ async function ownerProductTruthEvidence(
     }))
   return { rows, complete: rows.length === (read.data?.length ?? 0) }
 }
-async function visualComparisonEvidence(
+export async function visualComparisonEvidence(
   ctx: GoldenContext,
   key: GoldenCandidateKey,
   source: GoldenRecord | null,

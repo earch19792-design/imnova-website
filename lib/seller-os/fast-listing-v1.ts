@@ -3,6 +3,9 @@ import { goldenArray as rows, goldenRecord as record, goldenNumber as number,
 import { projectLunaFieldTruthV1 } from "./luna-field-truth-projection-v1"
 import { listingEconomicsV1, type Economics } from "./listing-treatment-engine-v1"
 import { classifyReferenceFieldsV1 } from "./sell-one-like-this-v1"
+import { goldenOwnerBaseIncludedUnitCountV1, goldenOwnerObservedMarkingsV1 } from "../ebay/commercial-golden-path-owner-product-truth-v1"
+import { goldenVisualComparisonForMarketEvidenceV1 } from "../ebay/commercial-golden-path-visual-comparison-v1"
+import { planGoldenPackFallbackV1 } from "../ebay/commercial-golden-path-pack-policy-v1"
 
 export const FAST_LISTING_V1 = "SELLER_OS_FAST_LISTING_V1"
 export type FastRecord = Record<string, unknown>
@@ -44,6 +47,16 @@ export function fastProductTruthV1(source: FastRecord, corrections: FastField[],
       FRESH_UNTIL: fact && typeof f.FRESH_UNTIL === "string" ? f.FRESH_UNTIL : freshness,
       STATUS: contradicted ? "CONTRADICTED" : value === null ? "MISSING" : stale ? "STALE" : "PROVEN" }
   })
+  const canonical = record(source.canonicalOwnerTruth)
+  const ownerCount = goldenOwnerBaseIncludedUnitCountV1({...canonicalOwnerBinding(source,now),evidence:rows(canonical.evidence)})
+  const countIndex = fields.findIndex(f=>f.FIELD==="QUANTITY_OR_SET_COUNT"), supplierCount=fields[countIndex]
+  if(ownerCount.status==="CONFLICT" || ownerCount.status==="PROVEN" && supplierCount.STATUS==="PROVEN" && number(supplierCount.VALUE)!==ownerCount.value)
+    fields[countIndex]={...supplierCount,VALUE:null,STATUS:"CONTRADICTED"}
+  else if(ownerCount.status==="PROVEN" && supplierCount.STATUS==="MISSING") {
+    const evidence=rows(canonical.evidence).find(e=>ownerCount.evidenceIds.includes(String(e.evidenceId)))
+    fields[countIndex]={FIELD:"QUANTITY_OR_SET_COUNT",VALUE:ownerCount.value,SOURCE:"USER",METHOD:"OWNER_ATTESTED_SUPPLIER_VISUAL_OBSERVATION",
+      OBSERVED_AT:typeof evidence?.capturedAt==="string"?evidence.capturedAt:null,EVIDENCE_ID:digest(ownerCount.evidenceIds),FRESH_UNTIL:null,STATUS:"PROVEN"}
+  }
   for (const c of corrections) {
     if (c.SOURCE !== "USER" || c.METHOD !== "OWNER_EXPLICIT_PRODUCT_FACT" || !c.EVIDENCE_ID ||
       date(c.OBSERVED_AT) > +now || !Number.isFinite(date(c.OBSERVED_AT))) continue
@@ -55,6 +68,36 @@ export function fastProductTruthV1(source: FastRecord, corrections: FastField[],
   const values = Object.fromEntries(fields.filter(f => f.STATUS === "PROVEN").map(f => [f.FIELD, f.VALUE]))
   return { fields, values, missing: fields.filter(f => f.STATUS !== "PROVEN").map(f => f.FIELD),
     evidenceDigest: digest(fields.map(f => ({ field: f.FIELD, value: f.VALUE, evidenceId: f.EVIDENCE_ID, status: f.STATUS }))) }
+}
+
+function canonicalOwnerBinding(source:FastRecord,now:Date) {
+  const canonical=record(source.canonicalOwnerTruth)
+  return {candidate:{productId:String(source.product_id),variantId:String(source.variant_id),supplierSku:String(source.sku),supplierQuantity:1},
+    accountKey:String(canonical.accountKey??""),ownerUserId:String(canonical.ownerId??""),sourceFingerprint:String(source.source_fingerprint),canonicalUrl:String(source.canonical_url),now}
+}
+export function fastClassifyComparableV1(source:FastRecord,target:Parameters<typeof classifyGoldenComparable>[0],evidence:GoldenMarketEvidence,quantity:number,now:Date) {
+  const canonical=record(source.canonicalOwnerTruth),binding=canonicalOwnerBinding(source,now)
+  return classifyGoldenComparable(target,evidence,{
+    observedMarkings:goldenOwnerObservedMarkingsV1({...binding,evidence:rows(canonical.evidence)}),
+    visualComparison:goldenVisualComparisonForMarketEvidenceV1({...binding,candidate:{...binding.candidate,supplierQuantity:quantity},
+      evidence:rows(canonical.visualEvidence),marketEvidence:evidence})})
+}
+const validFastSold = (e:GoldenMarketEvidence,now:Date) => e.listingState === "SOLD" && e.currency === "USD" &&
+  e.realizedPriceStatus === "PROVEN" && e.soldQuantity !== null && e.soldQuantity > 0 && Number.isSafeInteger(e.soldQuantity) &&
+  e.realizedSoldPrice !== null && e.realizedSoldPrice > 0 && e.buyerShipping !== null && e.buyerShipping >= 0 &&
+  date(e.lastSoldDate) <= date(e.capturedAt) && date(e.capturedAt) <= +now && +now - date(e.lastSoldDate) <= 90 * 86400000
+/** Reuse Seller OS's unit-first pack planner for Sold demand. Recorded OWNER
+ * reasons add only the explicitly requested 2/3/4 presentations. */
+export function fastSupportedQuantitiesV1(input:FastInput,truth=fastProductTruthV1(input.source,input.corrections,input.now)) {
+  const v=truth.values,count=number(v.QUANTITY_OR_SET_COUNT)
+  const target=(q:number)=>({productName:typeof v.TITLE==="string"?v.TITLE:null,manufacturerBrand:typeof v.BRAND==="string"?v.BRAND:null,
+    model:typeof v.MODEL==="string"?v.MODEL:null,gtin:q===1&&typeof v.GTIN==="string"?v.GTIN:null,color:typeof v.COLOR==="string"?v.COLOR:null,packCount:count===null?null:count*q})
+  const family=input.market.filter(e=>validFastSold(e,input.now)).map(e=>({...e,...fastClassifyComparableV1(input.source,target(1),e,1,input.now),fresh:true}))
+  const plan=planGoldenPackFallbackV1({candidate:{supplierQuantity:1},decision:"RESEARCH_MATRIX",reasonCodes:[],offer:{includedCount:count},
+    economics:{targetNetProfit:4,expectedNetProfit:null},market:{familyEvidence:family.filter(e=>e.classification==="FAMILY")}})
+  return [1,2,3,4].filter(q=>q===1 || input.packReasons.some(r=>r.quantity===q&&r.truthDigest===truth.evidenceDigest&&
+    ["HUMAN_CONFIRMATION","MULTIPLE_CONSUMPTION"].includes(String(r.reason))&&Boolean(r.actorId)&&Boolean(r.explanation)) ||
+    plan.scenarios.some(s=>s.supplierQuantity===q) && input.market.some(e=>validFastSold(e,input.now)&&fastClassifyComparableV1(input.source,target(q),e,q,input.now).priceEligible))
 }
 
 export function validateFastCorrectionV1(input: { field: string; value: unknown; actorId: string;
@@ -108,19 +151,14 @@ export function projectFastListingV1(input: FastInput) {
     manufacturerBrand: typeof v.BRAND === "string" ? v.BRAND : null, model: typeof v.MODEL === "string" ? v.MODEL : null,
     mpn: null, gtin: q === 1 && typeof v.GTIN === "string" ? v.GTIN : null,
     color: typeof v.COLOR === "string" ? v.COLOR : null, packCount: presentationKnown ? count! * q : null })
-  const classified = input.market.map(e => ({ ...e, ...classifyGoldenComparable(target(1), e),
+  const classified = input.market.map(e => ({ ...e, ...fastClassifyComparableV1(input.source,target(1),e,1,input.now),
     selected: input.selectedEvidenceIds.includes(e.evidenceId) }))
-  const validSold = (e: GoldenMarketEvidence) => e.listingState === "SOLD" && e.currency === "USD" &&
-    e.realizedPriceStatus === "PROVEN" && e.soldQuantity !== null && e.soldQuantity > 0 && Number.isSafeInteger(e.soldQuantity) &&
-    e.realizedSoldPrice !== null && e.realizedSoldPrice > 0 && e.buyerShipping !== null && e.buyerShipping >= 0 &&
-    date(e.lastSoldDate) <= date(e.capturedAt) && date(e.capturedAt) <= +input.now && +input.now - date(e.lastSoldDate) <= 90 * 86400000
-  const supportedPack = (q: number) => input.packReasons.some(r => r.quantity === q && r.truthDigest === truth.evidenceDigest &&
-    ((r.reason === "HUMAN_CONFIRMATION" || r.reason === "MULTIPLE_CONSUMPTION") && Boolean(r.actorId) && Boolean(r.explanation))) ||
-    input.market.some(e => validSold(e) && ["EXACT", "CLOSE"].includes(classifyGoldenComparable(target(q), e).classification))
-  const offers = input.offers.filter(o => o.quantity === 1 || [2, 3, 4].includes(o.quantity) && supportedPack(o.quantity))
+  const validSold = (e:GoldenMarketEvidence)=>validFastSold(e,input.now)
+  const supported=fastSupportedQuantitiesV1(input,truth)
+  const offers = input.offers.filter(o => supported.includes(o.quantity))
     .sort((a, b) => a.quantity - b.quantity)
   const matrix = offers.map(o => {
-    const comparable = input.market.filter(e => validSold(e) && ["EXACT", "CLOSE"].includes(classifyGoldenComparable(target(o.quantity), e).classification))
+    const comparable = input.market.filter(e => validSold(e) && fastClassifyComparableV1(input.source,target(o.quantity),e,o.quantity,input.now).priceEligible)
     const shipping = exactCapture(input, o) ? number(o.shipping.amountUsd) : null
     const fee = exactFee(input, o) ? number(o.fee.amountUsd) : null
     const totalCost = cost !== null ? money(cost * o.quantity) : null
@@ -139,7 +177,7 @@ export function projectFastListingV1(input: FastInput) {
       totalLunaCost: totalCost, shipping, ebayFee: fee, advertising: o.advertising, otherCosts: o.otherCosts,
       netProfit: net, marginPercent: margin, comparableCount: comparable.length,
       confirmedComparableCount: comparable.filter(e => input.selectedEvidenceIds.includes(e.evidenceId)).length,
-      evidenceClass: comparable.some(e => classifyGoldenComparable(target(o.quantity), e).classification === "EXACT") ? "EXACT_SOLD" : comparable.length ? "SIMILAR_SOLD" : controlled ? "CONTROLLED_TEST" : "UNPROVEN",
+      evidenceClass: comparable.some(e => fastClassifyComparableV1(input.source,target(o.quantity),e,o.quantity,input.now).classification === "EXACT") ? "EXACT_SOLD" : comparable.length ? "SIMILAR_SOLD" : controlled ? "CONTROLLED_TEST" : "UNPROVEN",
       recommended: net !== null && net >= 4 && blockers.length === 0,
       status: blockers.length ? net !== null && net < 4 ? "HOLD" : "PENDING" : "ECONOMICS_READY", blockers,
       warnings: margin !== null && margin < 15 ? ["MARGIN_BELOW_15_PERCENT"] : [],

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { goldenArray as rows, goldenRecord as record, goldenDigest as digest, goldenNumber as number,
-  goldenCompetitiveSoldPriceV1, classifyGoldenComparable, type GoldenMarketEvidence } from "../ebay/commercial-golden-path-domain-v1"
-import { marketEvidence, duplicateGate, type GoldenContext } from "../ebay/commercial-golden-path-runtime-v1"
+  goldenCompetitiveSoldPriceV1, type GoldenMarketEvidence } from "../ebay/commercial-golden-path-domain-v1"
+import { marketEvidence, duplicateGate, ownerProductTruthEvidence, visualComparisonEvidence, type GoldenContext } from "../ebay/commercial-golden-path-runtime-v1"
 import { readGoldenPresaleAuthorityV1 } from "../ebay/commercial-golden-path-presale-authority-v1"
 import { getEbayOfficialLiveListingSweepReadonly } from "../ebay/ebay-commercial-monitor-live-readonly"
 import { getEbaySellerAccountScopeConfiguration } from "../ebay/ebay-seller-account-scope"
@@ -18,7 +18,7 @@ import { readManualListingFromTradingApi } from "../ebay/ebay-manual-listing-tra
 import { ebayConditionContractFromVerifiedFact } from "../ebay/ebay-manual-listing-domain"
 import {readFastListingOutcomesV1} from "./fast-listing-learning-v1"
 import { FAST_LISTING_V1, fastProductTruthV1, projectFastListingV1, validateFastCorrectionV1,
-  fastReferenceDifferencesV1, type FastField, type FastInput, type FastRecord, type FastOfferInput } from "./fast-listing-v1"
+  fastReferenceDifferencesV1, fastClassifyComparableV1, fastSupportedQuantitiesV1, type FastField, type FastInput, type FastRecord, type FastOfferInput } from "./fast-listing-v1"
 
 export type FastScope = { supabase: SupabaseClient; accountKey: string; ownerId: string; now?: Date }
 const bounded = <T extends { abortSignal: (s: AbortSignal) => T; retry: (b: boolean) => T }>(q: T) => q.abortSignal(AbortSignal.timeout(10000)).retry(false)
@@ -71,7 +71,13 @@ export async function loadFastListingV1(scope: FastScope, opportunityId: string)
     bounded(scope.supabase.from("ebay_luna_opportunity_queue").select("*").eq("id", opportunityId).limit(1)).maybeSingle(),
     readFastSourceV1(scope, { opportunityId }) ])
   if (context.error || queue.error || !context.data || !queue.data) throw Error("FAST_LISTING_CANONICAL_CONTEXT_REQUIRED")
-  return { context: record(context.data), opportunity: record(queue.data), source }
+  const ctx = { supabase: scope.supabase, accountKey: scope.accountKey, principal: { ownerUserId: scope.ownerId }, now: scope.now ?? new Date() } as GoldenContext
+  const key = {productId:String(source.product_id),variantId:String(source.variant_id),supplierSku:String(source.sku),supplierQuantity:1}
+  const [owner, ...visual] = await Promise.all([ownerProductTruthEvidence(ctx,key,source),
+    ...[1,2,3,4].map(supplierQuantity=>visualComparisonEvidence(ctx,{...key,supplierQuantity},source))])
+  return { context: record(context.data), opportunity: record(queue.data), source: {...source,canonicalOwnerTruth:{
+    accountKey:scope.accountKey,ownerId:scope.ownerId,evidence:owner.complete?owner.rows:[],
+    visualEvidence:visual.flatMap(v=>v.complete?v.rows:[]) }} }
 }
 type Loaded = Awaited<ReturnType<typeof loadFastListingV1>>
 function baseInput(scope: FastScope, loaded: Loaded): FastInput {
@@ -146,14 +152,13 @@ async function evaluate(scope: FastScope, loaded: Loaded) {
     lunaVariantId: key.variantId, supplierSku: key.supplierSku, sourceFingerprint: String(input.source.source_fingerprint) }))
   const costReference = policy.status === "PROVEN" ? String(policy.policyDigest) : null
   let compliance: FastRecord = {}, category: FastRecord = {}
-  const eligible = [1, 2, 3, 4].filter(q => q === 1 || input.packReasons.some(r => r.quantity === q && r.truthDigest === truth.evidenceDigest && r.actorId) ||
-    market.rows.some(e => e.listingState === "SOLD" && e.realizedPriceStatus === "PROVEN" && ["EXACT", "CLOSE"].includes(classifyGoldenComparable(target(q), e).classification)))
+  const eligible = fastSupportedQuantitiesV1(input,truth)
   const offers: FastOfferInput[] = []
   for (const quantity of eligible) {
     const priced = market.rows.filter(e => e.listingState === "SOLD" && e.currency === "USD" && e.realizedPriceStatus === "PROVEN" && e.realizedSoldPrice !== null && e.realizedSoldPrice > 0 &&
       e.buyerShipping !== null && e.buyerShipping >= 0 && e.soldQuantity !== null && e.soldQuantity > 0 && Number.isSafeInteger(e.soldQuantity) &&
       Date.parse(String(e.lastSoldDate)) <= Date.parse(e.capturedAt) && Date.parse(e.capturedAt) <= +input.now && +input.now-Date.parse(String(e.lastSoldDate))<=90*86400000 &&
-      ["EXACT", "CLOSE"].includes(classifyGoldenComparable(target(quantity), e).classification))
+      fastClassifyComparableV1(input.source,target(quantity),e,quantity,input.now).priceEligible)
       .map(e => ({ ...e, buyerLandedPrice: Math.round((e.realizedSoldPrice! + e.buyerShipping!) * 100) / 100 }))
     const soldPrice = goldenCompetitiveSoldPriceV1(priced).price
     const controlledPrice = record(record(p.controlledPrices)[String(quantity)])

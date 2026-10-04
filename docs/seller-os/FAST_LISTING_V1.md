@@ -7,10 +7,10 @@ package. It does not publish, purchase, or authorize marketplace mutations.
 
 | Capability | Existing component |
 | --- | --- |
-| Luna identity and facts | `luna_catalog_snapshot_variants_v1`, `LUNA_FIELD_PRODUCT_TRUTH_V1`, `projectLunaFieldTruthV1` |
+| Luna identity and facts | `luna_catalog_snapshot_variants_v1`, `LUNA_FIELD_PRODUCT_TRUTH_V1`, `projectLunaFieldTruthV1`, canonical OWNER included-count evidence |
 | Canonical product case | `ebay_luna_opportunity_queue`; resolve exact product, variant and supplier SKU before intake |
-| Sold and identity matching | Product Research plan/task worker, capture extension, `classifyGoldenComparable` |
-| Unit and supported packs | Golden candidate identity and offer count; each presentation uses its own evidence |
+| Sold and identity matching | Product Research plan/task worker, capture extension, `classifyGoldenComparable`, governed visual comparison and observed marking authorities; visual support never proves EXACT or manufacturer brand |
+| Unit and supported packs | `planGoldenPackFallbackV1`, Golden offer counts; each presentation uses its own evidence. Fast Listing limits offers to 2/3/4 and additionally accepts durable explicit OWNER reasons |
 | Net economics | `listingEconomicsV1`; proven fee and shipping components, no default rates |
 | Category and account fees | `readGoldenPresaleAuthorityV1`, existing category resolver, official taxonomy and fee producer |
 | Shipping | Luna Shipping Capture job contract, session signatures, claim v2 and completion v1 |
