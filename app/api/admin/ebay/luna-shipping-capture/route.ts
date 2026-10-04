@@ -225,8 +225,11 @@ async function authorizeLunaShippingCaptureRequest(req: Request) {
 export async function POST(req: Request) {
   const auth = await authorizeLunaShippingCaptureRequest(req)
   if (!auth.ok) return auth.response
+  let attemptedAction = "UNREAD"
   try {
     const body = await listingAiJson(req)
+    attemptedAction = typeof body.action === "string"
+      ? body.action.slice(0, 80) : "INVALID"
     if (body.action === "create_qty1_job") {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
       const opportunityId = String(body.opportunityId ?? "").trim()
@@ -741,6 +744,13 @@ export async function POST(req: Request) {
     }
     throw new Error("LUNA_SHIPPING_EXTENSION_ACTION_INVALID")
   } catch (error) {
+    const message = error instanceof Error ? error.message : ""
+    console.warn("LUNA_SHIPPING_ROUTE_FAILURE_V1", JSON.stringify({
+      observedAt: new Date().toISOString(),
+      action: attemptedAction,
+      errorCode: /^[A-Z][A-Z0-9_]{2,119}$/.test(message)
+        ? message : "LUNA_SHIPPING_ROUTE_FAILURE",
+    }))
     return listingAiFailure(error)
   }
 }
