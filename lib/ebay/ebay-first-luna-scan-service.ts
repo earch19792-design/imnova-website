@@ -57,6 +57,8 @@ import { readAlreadyLiveExactLunaIdentitiesV1 } from
   "./ebay-opportunity-radar-revenue-factory-adapter-v1"
 import { buildSellerOsDashboardOpportunityAuthorityV1 } from
   "./seller-os-dashboard-opportunity-authority-v1"
+import { sellerOsOpportunityQueueReadFailureCodeV1 } from
+  "../seller-os/supabase-runtime-error-classification-v1"
 
 const SCAN_BATCH_SIZE = 2
 const QUEUE_LIMIT = 250
@@ -1072,9 +1074,12 @@ export async function getEbayFirstLunaQueueDashboard(
     queueQuery,
     supabase.from("ebay_luna_opportunity_queue_events").select("*,ebay_luna_opportunity_queue(product_title,supplier_sku)").order("created_at", { ascending: false }).limit(40),
     activeRisksQuery,
-  ])
+  ]).catch((error: unknown) => {
+    throw new Error(sellerOsOpportunityQueueReadFailureCodeV1(error))
+  })
   const firstError = runs.error ?? queue.error ?? events.error ?? activeRisks.error
-  if (firstError) throw new Error("EBAY_LUNA_QUEUE_DASHBOARD_READ_FAILED")
+  if (firstError) throw new Error(
+    sellerOsOpportunityQueueReadFailureCodeV1(firstError))
   const [{ data: quotaStates, error: quotaError }, { data: quotaEvents, error: quotaEventError }] = await Promise.all([
     supabase.from("ebay_api_quota_states")
       .select("api_family,operation,remaining,reset_at,reserved_budget,available_budget,status,owner_lane,last_refreshed_at")

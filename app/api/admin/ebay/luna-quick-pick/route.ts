@@ -6,6 +6,10 @@ import { NextResponse } from "next/server"
 
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
+import { readCurrentLiveAuthorityV1 } from
+  "@/lib/ebay/ebay-current-live-authority-v1"
+import { runCurrentLiveAuthorityRecoveryV1 } from
+  "@/lib/ebay/ebay-current-live-authority-recovery-v1"
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { completeLunaQuickPickBatchReceiptV1,
@@ -74,6 +78,29 @@ function uuid(value: unknown) {
   return typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(value) ? value : null
+}
+
+async function ensureCurrentLiveAuthorityForQuickPickV1(input: Readonly<{
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  accountKey: string
+  accountAlias: string | null
+}>) {
+  const current = await readCurrentLiveAuthorityV1({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+  })
+  if (current.currentState === "CURRENT_FRESH") return Object.freeze({
+    status: "CURRENT_FRESH_REUSED" as const,
+    marketplaceWrites: 0 as const,
+  })
+  const recovered = await runCurrentLiveAuthorityRecoveryV1({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    accountAlias: input.accountAlias,
+    forceOfficialRead: true,
+  })
+  return Object.freeze({ status: recovered.status,
+    marketplaceWrites: 0 as const })
 }
 
 export async function GET(req: Request) {
@@ -177,7 +204,8 @@ export async function POST(req: Request) {
   if (!auth.ok) return response({ success: false,
     error: auth.error ?? "LUNA_QUICK_PICK_ADMIN_REQUIRED" },
   auth.status || 403)
-  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  const account = getEbaySellerAccountScopeConfiguration()
+  const accountKey = account.accountKey
   if (!accountKey) return response({ success: false,
     error: "LUNA_QUICK_PICK_ACCOUNT_SCOPE_REQUIRED" }, 400)
   const length = Number(req.headers.get("content-length") ?? 0)
@@ -376,6 +404,10 @@ export async function POST(req: Request) {
       if (!batchId) return response({ success: false,
         error: "LUNA_QUICK_PICK_BATCH_ID_REQUIRED" }, 400)
       const supabase = getSupabaseAdminClient()
+      const currentLiveAuthority =
+        await ensureCurrentLiveAuthorityForQuickPickV1({
+          supabase, accountKey, accountAlias: account.accountAlias,
+        })
       const rehydration = await readLunaQuickPickBatchRehydrationV1({
         supabase, batchId,
       })
@@ -404,6 +436,7 @@ export async function POST(req: Request) {
         rehydratedInputCount: 0, alreadyRehydrated: true,
         newOperationCount: 0, duplicateOperationCount: 0,
         marketplaceWrites: 0 },
+        currentLiveAuthority,
         safety: { marketplaceWrites: 0, canPublish: false,
           customerProductionTouched: false } })
       }
@@ -458,6 +491,7 @@ export async function POST(req: Request) {
             preflightEbayCategoryProductIdentifiers,
         })
       return response({ success: true, result, receipt,
+        currentLiveAuthority,
         postShippingContinuation,
         requiredSpecificsContinuation:
           postShippingContinuation.requiredSpecificsContinuation,
@@ -474,6 +508,10 @@ export async function POST(req: Request) {
     if (body.action === "PROCESS" && !batchId) return response({ success: false,
       error: "LUNA_QUICK_PICK_BATCH_ID_REQUIRED" }, 400)
     const supabase = getSupabaseAdminClient()
+    const currentLiveAuthority =
+      await ensureCurrentLiveAuthorityForQuickPickV1({
+        supabase, accountKey, accountAlias: account.accountAlias,
+      })
     let result
     try {
       result = await processLunaQuickPickBatchV1({
@@ -502,6 +540,7 @@ export async function POST(req: Request) {
           preflightEbayCategoryProductIdentifiers,
       })
     return response({ success: true, result, receipt,
+      currentLiveAuthority,
       postShippingContinuation,
       requiredSpecificsContinuation:
         postShippingContinuation.requiredSpecificsContinuation,

@@ -48,7 +48,7 @@ jobs:
           trap 'rm -f "$response_file"' EXIT
           processed_total=0
           for attempt in $(seq 1 10); do
-            args=(--silent --show-error --max-time 55
+            args=(--silent --show-error --max-time 55 --request POST
               --output "$response_file"
               --write-out "%{http_code}"
               -H "Authorization: Bearer $CRON_SECRET")
@@ -87,7 +87,7 @@ jobs:
         run: |
           test -n "$PREVIEW_URL"
           test -n "$CRON_SECRET"
-          args=(--fail --silent --show-error --max-time 55
+          args=(--fail --silent --show-error --max-time 55 --request POST
             -H "Authorization: Bearer $CRON_SECRET")
           if [ -n "$VERCEL_BYPASS_SECRET" ]; then
             args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
@@ -111,7 +111,7 @@ jobs:
         run: |
           test -n "$PREVIEW_URL"
           test -n "$CRON_SECRET"
-          args=(--fail --silent --show-error --max-time 55
+          args=(--fail --silent --show-error --max-time 55 --request POST
             -H "Authorization: Bearer $CRON_SECRET")
           if [ -n "$VERCEL_BYPASS_SECRET" ]; then
             args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
@@ -133,7 +133,7 @@ jobs:
         run: |
           test -n "$PREVIEW_URL"
           test -n "$CRON_SECRET"
-          args=(--fail --silent --show-error --max-time 55
+          args=(--fail --silent --show-error --max-time 55 --request POST
             -H "Authorization: Bearer $CRON_SECRET")
           if [ -n "$VERCEL_BYPASS_SECRET" ]; then
             args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")

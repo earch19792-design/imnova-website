@@ -1,4 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import {
+  sellerOsBrowserWorkerHeartbeatFailureCodeV1,
+} from "./supabase-runtime-error-classification-v1"
 
 export const SELLER_OS_BROWSER_WORKER_LIVENESS_V1 =
   "INDEPENDENT_WORKER_LIVENESS" as const
@@ -109,9 +112,10 @@ export async function persistSellerOsBrowserWorkerHeartbeatV1(input: Readonly<{
       p_claim_authority_lease_seconds:
         SELLER_OS_BROWSER_WORKLOAD_LEASE_SECONDS,
     })
-  if (write.error || !write.data) {
-    throw new Error("SELLER_OS_BROWSER_WORKER_HEARTBEAT_PERSIST_FAILED")
-  }
+  if (write.error) throw new Error(
+    sellerOsBrowserWorkerHeartbeatFailureCodeV1(write.error))
+  if (!write.data) throw new Error(
+    "SELLER_OS_BROWSER_WORKER_HEARTBEAT_PERSIST_FAILED")
   const receipt = record(write.data)
   if (receipt.heartbeatSource !== SELLER_OS_BROWSER_WORKER_LIVENESS_V1 ||
       receipt.capabilityFresh !== true || receipt.marketplaceWrites !== 0 ||

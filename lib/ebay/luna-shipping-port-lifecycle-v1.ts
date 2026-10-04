@@ -30,7 +30,7 @@ export function createLunaCaptureProbeRecorderV1(input: {
   const now = input.now ?? Date.now
   let pending: LunaReadOnlyCaptureProbeV1 | null = null
   let recordedAt = 0
-  let inFlight = false
+  let inFlight: Promise<boolean> | null = null
   let nextAttemptAt = 0
   return {
     receive(probe: LunaReadOnlyCaptureProbeV1) {
@@ -41,19 +41,33 @@ export function createLunaCaptureProbeRecorderV1(input: {
       pending = probe
       return true
     },
-    async flush() {
-      if (!pending || inFlight || !input.canPersist() || now() < nextAttemptAt) return false
+    flush(): Promise<boolean> {
+      // Every caller observes the same durable write. In particular, the
+      // heartbeat must not move on to execution-state observation while the
+      // port handler is still persisting this capability receipt.
+      if (inFlight) return inFlight
+      if (!pending || !input.canPersist() || now() < nextAttemptAt) {
+        return Promise.resolve(false)
+      }
       const probe = pending
-      inFlight = true
-      try {
-        if (!await input.persist(probe)) throw new Error("PROBE_RECEIPT_NOT_ACCEPTED")
-        recordedAt = Date.parse(String(probe.observedAt))
-        if (pending === probe) pending = null
-        return true
-      } catch {
-        nextAttemptAt = now() + Math.max(900_000, input.retryDelayMs())
-        return false
-      } finally { inFlight = false }
+      const operation = (async () => {
+        try {
+          if (!await input.persist(probe)) {
+            throw new Error("PROBE_RECEIPT_NOT_ACCEPTED")
+          }
+          recordedAt = Date.parse(String(probe.observedAt))
+          if (pending === probe) pending = null
+          return true
+        } catch {
+          nextAttemptAt = now() + Math.max(900_000, input.retryDelayMs())
+          return false
+        }
+      })()
+      inFlight = operation
+      void operation.finally(() => {
+        if (inFlight === operation) inFlight = null
+      })
+      return operation
     },
   }
 }

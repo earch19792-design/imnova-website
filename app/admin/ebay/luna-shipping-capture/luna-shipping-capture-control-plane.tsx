@@ -633,6 +633,7 @@ export function LunaShippingCaptureControlPlane({
   const serverClaimLeaderRef = useRef(false)
   const serverLeaderLeaseExpiresAtRef = useRef<number | null>(null)
   const heartbeatV2FreshUntilRef = useRef<number | null>(null)
+  const captureCapabilityDurableUntilRef = useRef(0)
   const flushCaptureProbeRef = useRef<(() => Promise<boolean>) | null>(null)
   const refreshShippingExecutionObservationRef =
     useRef<(() => void) | null>(null)
@@ -709,8 +710,16 @@ export function LunaShippingCaptureControlPlane({
         const payload = await adminPost("capture_capability_state", {
           runtimeInstanceId, leaderSessionId: claimAuthoritySessionId, probe,
         })
+        const capabilityState = String(payload.capability?.state ?? "")
         if (payload.capability?.reasonCode ||
-            !["AVAILABLE", "UNAVAILABLE"].includes(payload.capability?.state)) return false
+            !["AVAILABLE", "UNAVAILABLE"].includes(capabilityState)) {
+          captureCapabilityDurableUntilRef.current = 0
+          return false
+        }
+        const observedAt = Date.parse(String(probe.observedAt ?? ""))
+        captureCapabilityDurableUntilRef.current =
+          capabilityState === "AVAILABLE" && Number.isFinite(observedAt)
+            ? observedAt + 300_000 : 0
         const next = Date.parse(payload.capability?.nextAttemptAt ?? "")
         if (Number.isFinite(next)) captureNextAttemptAt = Math.max(captureNextAttemptAt, next)
         if (active) setProbeRecordedAt(String(probe.observedAt))
@@ -1278,6 +1287,17 @@ export function LunaShippingCaptureControlPlane({
     refreshShippingExecutionObservationRef.current = () => {
       if (!active || !port || !extensionReady ||
           readyPortGeneration !== currentPortGeneration) return
+      if (!hasExactLiveTarget &&
+          captureCapabilityDurableUntilRef.current <= Date.now()) {
+        activeJobStatusReady = false
+        if (!captureProbeInFlight) {
+          captureProbeInFlight = true
+          port.postMessage({
+            type: "SELLER_OS_GET_LUNA_CAPTURE_CAPABILITY_V1",
+          })
+        }
+        return
+      }
       activeJobStatusReady = false
       port.postMessage({
         type: "SELLER_OS_GET_ACTIVE_LUNA_SHIPPING_JOB_STATUS",
@@ -1676,6 +1696,7 @@ export function LunaShippingCaptureControlPlane({
           }
           readyPortGeneration = sourceGeneration
           extensionReady = true
+          captureCapabilityDurableUntilRef.current = 0
           setConnected(true)
           captureProbeInFlight = true
           sourcePort.postMessage({ type: "SELLER_OS_GET_LUNA_CAPTURE_CAPABILITY_V1" })
@@ -1698,14 +1719,23 @@ export function LunaShippingCaptureControlPlane({
             lunaShippingAutoNavigationCapableV1(captureProbe)
           setCheckoutObservation(checkoutObservationV1(message.probe.checkoutObservation))
           setCaptureAvailable(automaticNavigationCapable)
-          void probeRecorder.flush()
-          if (automaticNavigationCapable && !busy) {
-            if (discoveryRetryTimer !== null) {
-              window.clearTimeout(discoveryRetryTimer)
-              discoveryRetryTimer = null
+          void probeRecorder.flush().then(() => {
+            if (!active) return
+            const durableCapabilityFresh =
+              captureCapabilityDurableUntilRef.current > Date.now()
+            if (automaticNavigationCapable && durableCapabilityFresh &&
+                serverClaimLeaderRef.current) {
+              refreshShippingExecutionObservationRef.current?.()
             }
-            scheduleProductionAcquisition(Math.max(0, captureNextAttemptAt - Date.now()))
-          }
+            if (automaticNavigationCapable && !busy) {
+              if (discoveryRetryTimer !== null) {
+                window.clearTimeout(discoveryRetryTimer)
+                discoveryRetryTimer = null
+              }
+              scheduleProductionAcquisition(Math.max(
+                0, captureNextAttemptAt - Date.now()))
+            }
+          })
           return
         }
         if (message?.type === "LUNA_SHIPPING_RUNTIME_TRACE_EVENT") {
@@ -1836,6 +1866,14 @@ export function LunaShippingCaptureControlPlane({
             return
           }
           recoveredActiveJob = candidate
+          if (!candidate &&
+              captureCapabilityDurableUntilRef.current <= Date.now()) {
+            activeJobStatusReady = false
+            setError("")
+            setStatus("CAPTURE_AUTHORITY_REFRESH_PENDING")
+            refreshShippingExecutionObservationRef.current?.()
+            return
+          }
           void adminPost("record_shipping_execution_observation", {
             runtimeInstanceId, leaderSessionId: claimAuthoritySessionId,
             observation,
@@ -1844,6 +1882,14 @@ export function LunaShippingCaptureControlPlane({
             durableWorkRecoveryRef.current?.()
           }).catch((error) => {
             activeJobStatusReady = false
+            if (!candidate && error instanceof Error && error.message ===
+                "SHIPPING_EXECUTION_OBSERVATION_AUTHORITY_UNPROVEN") {
+              captureCapabilityDurableUntilRef.current = 0
+              setError("")
+              setStatus("CAPTURE_AUTHORITY_REFRESH_PENDING")
+              refreshShippingExecutionObservationRef.current?.()
+              return
+            }
             fail(error, "SHIPPING_EXECUTION_OBSERVATION_DURABILITY_FAILED")
           })
           return
@@ -2608,6 +2654,7 @@ export function LunaShippingCaptureControlPlane({
         try { stalePort?.disconnect() } catch { /* stale port is invalid */ }
         canonicalBindingStatusRead = false
         canonicalDestinationBindingPresent = false
+        captureCapabilityDurableUntilRef.current = 0
         setCanonicalBindingStatusReady(false)
         activeJobStatusReady = false
         recoveredActiveJob = null
@@ -2752,7 +2799,7 @@ export function LunaShippingCaptureControlPlane({
         extensionVersion: EXPECTED_EXTENSION_VERSION,
         extensionIdentityMatch: true,
         workerState: workerRunningRef.current ? "WORKING" : "IDLE",
-      }).then((payload) => {
+      }).then(async (payload) => {
         serverClaimLeaderRef.current =
           payload.result?.claimAuthorityGranted === true
         setServerClaimLeader(serverClaimLeaderRef.current)
@@ -2769,8 +2816,13 @@ export function LunaShippingCaptureControlPlane({
         if (!serverClaimLeaderRef.current) {
           controller?.suppressDuplicatePoll()
         }
-        // Flush only an unrecorded read-only receipt, never emit a probe or claim.
-        if (serverClaimLeaderRef.current) void flushCaptureProbeRef.current?.()
+        // Serialize capability durability before asking the extension for its
+        // IDLE/ACTIVE state. Otherwise its synchronous status response can
+        // outrun the capability write and be rejected as unproven authority.
+        if (serverClaimLeaderRef.current) {
+          await flushCaptureProbeRef.current?.()
+        }
+        if (!active) return
         // The extension may answer before this tab owns the durable server lease.
         // Refresh after each authoritative heartbeat so takeover and long idle
         // periods cannot leave recovery gated by a stale/rejected observation.

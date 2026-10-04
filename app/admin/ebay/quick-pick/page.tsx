@@ -196,15 +196,29 @@ export default function LunaQuickPickPage() {
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("ADMIN_AUTH_REQUIRED")
-    const response = await fetch(path, { ...init, cache: "no-store",
-      headers: { ...(init?.headers ?? {}),
-        Authorization: `Bearer ${data.session.access_token}` } })
-    const payload = await response.json().catch(() => null)
-    if (!payload || typeof payload !== "object") throw new Error(
-      `SELLER_OS_READ_MODEL_HTTP_${response.status}`)
-    if (!response.ok || !payload.success) throw new Error(payload.error ||
-      "LUNA_QUICK_PICK_REQUEST_FAILED")
-    return payload
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 20_000)
+    const signal = init?.signal
+      ? AbortSignal.any([init.signal, controller.signal])
+      : controller.signal
+    try {
+      const response = await fetch(path, { ...init, signal,
+        cache: "no-store",
+        headers: { ...(init?.headers ?? {}),
+          Authorization: `Bearer ${data.session.access_token}` } })
+      const payload = await response.json().catch(() => null)
+      if (!payload || typeof payload !== "object") throw new Error(
+        `SELLER_OS_READ_MODEL_HTTP_${response.status}`)
+      if (!response.ok || !payload.success) throw new Error(payload.error ||
+        "LUNA_QUICK_PICK_REQUEST_FAILED")
+      return payload
+    } catch (requestError) {
+      if (controller.signal.aborted) throw new Error(
+        "SELLER_OS_READ_MODEL_TIMEOUT")
+      throw requestError
+    } finally {
+      window.clearTimeout(timeout)
+    }
   }, [])
 
   const readProjection = useCallback(async (path: string) => {
@@ -212,7 +226,7 @@ export default function LunaQuickPickPage() {
       return await request(path)
     } catch (initialError) {
       const code = initialError instanceof Error ? initialError.message : ""
-      if (!/(?:_READ_FAILED|_UNAVAILABLE|HTTP_50[234])$/.test(code)) {
+      if (!/(?:_READ_FAILED|_UNAVAILABLE|_TIMEOUT|HTTP_50[234])$/.test(code)) {
         throw initialError
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1_500))
@@ -229,15 +243,44 @@ export default function LunaQuickPickPage() {
     setRehydrating(true)
     setError("")
     setPublisherReadError("")
-    // Publisher is the canonical owner control plane. Load it first so the
-    // legacy Quick Pick projection cannot contend for the same bounded
-    // Supabase reads and strand exact batch membership behind a transient
-    // package-authority failure. Each read gets at most one fail-safe retry.
-    const publisherResult = await Promise.resolve(readProjection(
+    // Publisher remains canonical, but it must never hold the Quick Pick
+    // owner queue behind a slow independent projection.
+    const publisherResultPromise = Promise.resolve(readProjection(
       "/api/admin/ebay/publisher-cohort")).then(
       (value) => ({ status: "fulfilled" as const, value }),
       (reason) => ({ status: "rejected" as const, reason }),
     )
+    try {
+      const quickPickResult = await Promise.resolve(readProjection(
+        "/api/admin/ebay/luna-quick-pick")).then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason) => ({ status: "rejected" as const, reason }),
+      )
+      if (quickPickResult.status === "fulfilled") {
+        const payload = quickPickResult.value
+        const readModel = record(payload.readModel)
+        const selectedBatch = record(readModel.selectedBatch)
+        const globalQueue = record(readModel.globalQueue)
+        const globalCards = Array.isArray(globalQueue.cards)
+          ? globalQueue.cards as QuickPickCard[]
+          : Array.isArray(payload.progress) ? payload.progress : []
+        setCards(globalCards)
+        setReceipt((record(selectedBatch).receipt ?? payload.receipt ?? null) as
+          QuickPickReceipt | null)
+        setReceiptIsCurrentSession(false)
+        setCurrentBatchSummary(Object.keys(record(selectedBatch.summary)).length
+          ? record(selectedBatch.summary) as QuickPickSummary : null)
+        setGlobalQueueSummary(Object.keys(record(globalQueue.summary)).length
+          ? record(globalQueue.summary) as QuickPickSummary : null)
+        setLastReadAt(new Date().toISOString())
+      } else {
+        setError(quickPickResult.reason instanceof Error
+          ? quickPickResult.reason.message : "LUNA_QUICK_PICK_READ_FAILED")
+      }
+    } finally {
+      setRehydrating(false)
+    }
+    const publisherResult = await publisherResultPromise
     if (publisherResult.status === "fulfilled") {
       setPublisherCohort(publisherResult.value.cohort as PublisherCohort)
     } else {
@@ -245,33 +288,6 @@ export default function LunaQuickPickPage() {
       setPublisherReadError(publisherResult.reason instanceof Error
         ? publisherResult.reason.message : "PUBLISHER_COHORT_READ_FAILED")
     }
-    const quickPickResult = await Promise.resolve(readProjection(
-      "/api/admin/ebay/luna-quick-pick")).then(
-      (value) => ({ status: "fulfilled" as const, value }),
-      (reason) => ({ status: "rejected" as const, reason }),
-    )
-    if (quickPickResult.status === "fulfilled") {
-      const payload = quickPickResult.value
-      const readModel = record(payload.readModel)
-      const selectedBatch = record(readModel.selectedBatch)
-      const globalQueue = record(readModel.globalQueue)
-      const globalCards = Array.isArray(globalQueue.cards)
-        ? globalQueue.cards as QuickPickCard[]
-        : Array.isArray(payload.progress) ? payload.progress : []
-      setCards(globalCards)
-      setReceipt((record(selectedBatch).receipt ?? payload.receipt ?? null) as
-        QuickPickReceipt | null)
-      setReceiptIsCurrentSession(false)
-      setCurrentBatchSummary(Object.keys(record(selectedBatch.summary)).length
-        ? record(selectedBatch.summary) as QuickPickSummary : null)
-      setGlobalQueueSummary(Object.keys(record(globalQueue.summary)).length
-        ? record(globalQueue.summary) as QuickPickSummary : null)
-      setLastReadAt(new Date().toISOString())
-    } else {
-      setError(quickPickResult.reason instanceof Error
-        ? quickPickResult.reason.message : "LUNA_QUICK_PICK_READ_FAILED")
-    }
-    setRehydrating(false)
   }, [readProjection])
 
   const processLinks = useCallback(async (urls: string[],

@@ -133,7 +133,9 @@ function humanError(code: string) {
   const messages: Record<string, string> = {
     AUTH_REQUIRED: "La sesión Admin expiró. Inicia sesión nuevamente.",
     EBAY_READONLY_ENV_MISSING: "Faltan las credenciales eBay de Production.",
-    EBAY_LUNA_QUEUE_DASHBOARD_READ_FAILED: "La migración de la cola todavía no está aplicada en Supabase.",
+    EBAY_LUNA_QUEUE_SCHEMA_UNAVAILABLE: "La estructura de la cola no está disponible. Seller OS mantuvo el lote cerrado.",
+    EBAY_LUNA_QUEUE_TEMPORARILY_UNAVAILABLE: "Supabase está respondiendo con lentitud. Tu avance sigue guardado; vuelve a intentarlo en unos segundos.",
+    EBAY_LUNA_QUEUE_DASHBOARD_READ_FAILED: "No fue posible leer la cola en este momento. Tu avance sigue guardado; vuelve a intentarlo.",
     LUNA_CATALOG_COUNT_FAILED: "No fue posible contar las variantes actuales de Luna.",
     EBAY_LUNA_SCAN_FAILED: "El lote no pudo completarse. Puedes reintentarlo sin perder el progreso.",
   }

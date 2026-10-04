@@ -74,7 +74,8 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     marketplaceWrites: 0 as const,
   })
   if (stored.nextRetryAt &&
-      Date.parse(stored.nextRetryAt) > preReadNow.getTime()) {
+      Date.parse(stored.nextRetryAt) > preReadNow.getTime() &&
+      input.forceOfficialRead !== true) {
     return Object.freeze({ status: "WAITING_FOR_RETRY" as const,
       authority: stored, officialReadAttempted: false, databaseWrites: 0,
       live: null, marketplaceWrites: 0 as const })
@@ -105,7 +106,13 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
   try {
     const live = await (input.readOfficial ??
       getEbayCommercialMonitorLiveReadonly)({ accountKey: input.accountKey,
-        accountAlias: input.accountAlias })
+        accountAlias: input.accountAlias,
+        readLimits: {
+          certifiedPortfolioMode: true,
+          maximumCalls: 100,
+          budgetMs: 40_000,
+          isolateIndependentReads: true,
+        } })
     // The official read creates observedAt. Freshness must therefore use a
     // reference captured after that read, never the pre-read admission clock.
     const postReadNow = clock()
