@@ -3519,6 +3519,7 @@ async function certifySellerWideItemMarketplaces(input: {
   calls: EbayMonitorReadonlyCallEvidence[]
   clock: Clock
   maximumUniqueItems?: number
+  concurrency?: number
   downstreamCallReserve?: number
   downstreamTimeReserveMs?: number
 }) {
@@ -3557,15 +3558,16 @@ async function certifySellerWideItemMarketplaces(input: {
   }
   const maximumUniqueItems = input.maximumUniqueItems ??
     GET_ITEM_MARKETPLACE_MAX_UNIQUE_ITEMS
+  const concurrency = Math.max(1, Math.min(16,
+    Math.trunc(input.concurrency ?? GET_ITEM_MARKETPLACE_CONCURRENCY)))
   const scheduled = pending.slice(0, maximumUniqueItems)
   for (const entry of pending.slice(maximumUniqueItems)) {
     certifications.set(entry.itemId, exhaustedMarketplaceCertification())
   }
-  for (let offset = 0; offset < scheduled.length;
-      offset += GET_ITEM_MARKETPLACE_CONCURRENCY) {
+  for (let offset = 0; offset < scheduled.length; offset += concurrency) {
     const batch = scheduled.slice(
       offset,
-      offset + GET_ITEM_MARKETPLACE_CONCURRENCY,
+      offset + concurrency,
     )
     if (!marketplaceVerificationBudgetAvailable(input.calls, batch.length,
       input.downstreamCallReserve, input.downstreamTimeReserveMs)) {
@@ -6094,7 +6096,7 @@ export async function getEbayOfficialLiveListingSweepReadonly(input: {
       : "EBAY_MONITOR_ACCOUNT_SCOPE_CONFIGURATION_MISMATCH")
   }
   requestBudgets.set(calls, {
-    deadlineAt: Date.now() + 40_000,
+    deadlineAt: Date.now() + 48_000,
     callsRemaining: 100,
     maximumCalls: 100,
     callsStarted: 0,
@@ -6172,6 +6174,7 @@ export async function getEbayOfficialLiveListingSweepReadonly(input: {
       totalEntries: sellerWide.totalEntries,
       fetchImpl, calls, clock,
       maximumUniqueItems: 80,
+      concurrency: 8,
       downstreamCallReserve: 2,
       downstreamTimeReserveMs: 2_000,
     })
