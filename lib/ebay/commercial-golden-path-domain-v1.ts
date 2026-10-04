@@ -16,6 +16,15 @@ export const goldenDigest = (value: unknown): string => {
   return `sha256:${createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex")}`
 }
 const cents = (n: number) => Math.round(n * 100) / 100
+/** Shared price selector for category analysis and direct product intake.
+ * Callers supply classified, current Sold evidence; active asking prices never enter it. */
+export function goldenCompetitiveSoldPriceV1(priced: { evidenceId: string; buyerLandedPrice: number | null; soldQuantity: number | null }[]) {
+  const ordered = [...priced].sort((a, b) => a.buyerLandedPrice! - b.buyerLandedPrice! || a.evidenceId.localeCompare(b.evidenceId))
+  const soldUnits = priced.reduce((n, e) => n + e.soldQuantity!, 0)
+  let cumulative = 0, price: number | null = null
+  for (const e of ordered) { cumulative += e.soldQuantity!; if (cumulative >= soldUnits / 2) { price = e.buyerLandedPrice; break } }
+  return { price, soldUnits }
+}
 const date = (v: unknown) => Date.parse(String(v ?? ""))
 export function goldenFresh(v: GoldenRecord, now: Date, maximumMs: number) {
   const observed = date(v.observedAt), until = date(v.freshUntil)
@@ -101,10 +110,7 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   if (!input.marketComplete) reasons.push("MARKET_EVIDENCE_READ_INCOMPLETE")
   if (!priced.length) reasons.push("EXACT_CLOSE_REALIZED_SOLD_UNPROVEN")
   // Use the lower weighted median of realized buyer-landed prices. Never raise it to the profit floor.
-  const ordered = [...priced].sort((a, b) => a.buyerLandedPrice! - b.buyerLandedPrice! || a.evidenceId.localeCompare(b.evidenceId))
-  const soldUnits = priced.reduce((n, e) => n + e.soldQuantity!, 0)
-  let cumulative = 0, marketPrice: number | null = null
-  for (const e of ordered) { cumulative += e.soldQuantity!; if (cumulative >= soldUnits / 2) { marketPrice = e.buyerLandedPrice; break } }
+  const { price: marketPrice, soldUnits } = goldenCompetitiveSoldPriceV1(priced)
   if (key.supplierQuantity > 1 && !priced.length) reasons.push("PACK_COMMERCIAL_EVIDENCE_UNPROVEN")
   if (input.duplicate.status === "DUPLICATE") rejects.push("DUPLICATE_IMNOVA_LIVE")
   else if (input.duplicate.status !== "PASS") reasons.push("DUPLICATE_GATE_UNPROVEN")

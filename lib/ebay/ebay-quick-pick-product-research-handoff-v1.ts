@@ -143,7 +143,7 @@ function capabilityStateFromReceipt(receipt: unknown) {
   workerState: text(worker?.finalHealthState, 80) || "UNKNOWN" })
 }
 
-async function readProductResearchWorkerCapability(input: Readonly<{
+export async function readProductResearchWorkerCapability(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
 }>) {

@@ -10,6 +10,7 @@ export type SellerOsUserFacingRoute = Readonly<{
 
 export const SELLER_OS_USER_FACING_ROUTES: readonly SellerOsUserFacingRoute[] =
   Object.freeze([
+    { href: "/admin/ebay/fast-listing", label: "Fast Listing V1", classification: "OPERATOR_PRIMARY", dashboardReachable: true },
     { href: "/admin/ebay/quick-pick", label: "Quick Pick Luna", classification: "OPERATOR_PRIMARY", dashboardReachable: true },
     { href: "/admin/ebay/opportunity-queue/research", label: "Product Research", classification: "OPERATOR_PRIMARY", dashboardReachable: true },
     { href: "/admin/ebay/listing-workspace", label: "Listing Workspace", classification: "OPERATOR_PRIMARY", dashboardReachable: true },

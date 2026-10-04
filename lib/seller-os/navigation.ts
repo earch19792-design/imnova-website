@@ -53,6 +53,7 @@ export const SELLER_OS_NAVIGATION: readonly SellerOsNavigationItem[] = Object.fr
       child("radar", "Radar", "/admin/ebay/mobile-review"),
       child("luna-matches", "Matches Luna", "/admin/ebay/opportunity-queue"),
       child("preparation", "Preparación", "/admin/ebay/quick-pick"),
+      child("fast-listing", "Fast Listing V1", "/admin/ebay/fast-listing"),
     ]),
   item("listings", "Listings", "/admin/ebay/listings",
     "Registro canónico, importación y reconciliación de publicaciones eBay.",

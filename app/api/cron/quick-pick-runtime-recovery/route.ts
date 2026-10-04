@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
 import { NextResponse } from "next/server"
+import { recoverFastListingsV1 } from "@/lib/seller-os/fast-listing-runtime-v1"
 
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
@@ -724,6 +725,7 @@ export async function POST(req: Request) {
     // This bounded reconciliation runs through the already scheduled Quick Pick
     // runtime. It makes old and new eligible intake rows discoverable without
     // requiring an owner resubmission or creating another scheduler/worker.
+    const fastListingRecovery = await recoverFastListingsV1({ supabase, accountKey })
     const productResearchHandoff =
       await reconcileQuickPickProductResearchHandoffV1({
         supabase, accountKey,
@@ -779,7 +781,7 @@ export async function POST(req: Request) {
       marketplaceWrites: categoryAuthority.marketplaceWrites,
     })
     return NextResponse.json({ success,
-      recovery: { currentKeywordHandoff, productResearchHandoff, interruptedClaims,
+      recovery: { fastListingRecovery, currentKeywordHandoff, productResearchHandoff, interruptedClaims,
         categoryAuthority, publisherPackages },
       safety: { marketplaceWrites: 0, listingPublications: 0,
         manualFactInjection: 0, codexProductDecisions: 0,

@@ -16,10 +16,21 @@ import { produceEbayFeeAuthorityV1, feePackageRevisionV1 } from "../seller-os/eb
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 
 /** Candidate-bound pre-sale authority. Internal fee subject IDs never represent a listing package or an Item ID. */
-export async function readGoldenPresaleAuthorityV1(input: { supabase: SupabaseClient; accountKey: string; candidate: GoldenCandidateKey; source: GoldenRecord | null; price: number | null; selectedCategory?: GoldenAuthority }) {
+export async function readGoldenPresaleAuthorityV1(input: { supabase: SupabaseClient; accountKey: string; candidate: GoldenCandidateKey; source: GoldenRecord | null; price: number | null; selectedCategory?: GoldenAuthority;
+  confirmedOwnerFacts?: { values: GoldenRecord; evidenceDigest: string; exactIdentityConfirmed: true } }) {
   const now = new Date(), truth = verifiedGoldenFields(input.source, now)
+  // The product-first orchestrator passes its server-validated OWNER field
+  // receipt. It is separate from the historical supplier snapshot and cannot
+  // supply market, shipping or fee authority.
+  const owner = input.confirmedOwnerFacts
+  const ownerValidated = owner?.exactIdentityConfirmed === true && /^sha256:[0-9a-f]{64}$/.test(owner.evidenceDigest) &&
+    owner.values.LUNA_PRODUCT_ID === input.candidate.productId && owner.values.LUNA_VARIANT_ID === input.candidate.variantId &&
+    owner.values.SUPPLIER_SKU === input.candidate.supplierSku && typeof owner.values.TITLE === "string"
+  if (ownerValidated && owner) {
+    truth.values = owner.values
+  }
   const missing = (reasonCode: string): GoldenAuthority => ({ status: "UNPROVEN", receiptId: null, reasonCode })
-  if (!truth.gate.traceProductTruthSufficient || typeof truth.values.TITLE !== "string") return { category: missing("CATEGORY_EXACT_PRODUCT_TRUTH_REQUIRED"), fee: missing("FEE_EXACT_PRODUCT_TRUTH_REQUIRED") }
+  if ((!truth.gate.traceProductTruthSufficient && !ownerValidated) || typeof truth.values.TITLE !== "string") return { category: missing("CATEGORY_EXACT_PRODUCT_TRUTH_REQUIRED"), fee: missing("FEE_EXACT_PRODUCT_TRUTH_REQUIRED") }
   let category = input.selectedCategory
   if (category?.status !== "PROVEN") {
     // Family/category learning selects a platform leaf; it never supplies demand, price or supplier facts.

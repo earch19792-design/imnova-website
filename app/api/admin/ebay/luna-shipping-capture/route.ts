@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
 import { persistExistingShippingProbeDiagnosticV1 } from '@/lib/seller-os/shipping-probe-diagnostic-v1'
+import { persistFastListingShippingCaptureV1 } from "@/lib/seller-os/fast-listing-shipping-v1"
 import {
   enforceListingAiRouteRateLimit,
   listingAiFailure,
@@ -567,6 +568,11 @@ export async function POST(req: Request) {
         safety: { taxonomyExecutions: 0, economicsExecutions: 0,
           finalPriceCalculations: 0, marketplaceWrites: 0,
           inventoryWrites: 0, stockGuardWrites: 0 } })
+      const fastListingResult = await persistFastListingShippingCaptureV1({
+        supabase: auth.supabase, accountKey: auth.accountKey, capture, sessionSecret: sessionSecret(),
+      })
+      if (fastListingResult) return listingAiResponse({ success: true, result: fastListingResult,
+        safety: { marketplaceWrites: 0, lunaPurchases: 0, internalDraftOnly: true } })
       const commercialTraceResult =
         await persistCommercialTraceShippingCaptureV1({
           supabase: auth.supabase, accountKey: auth.accountKey,

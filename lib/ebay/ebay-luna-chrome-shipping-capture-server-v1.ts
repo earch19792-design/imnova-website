@@ -3,6 +3,7 @@ import "server-only"
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { deriveCurrentCommercialCandidateIdentityV1 } from
   "./ebay-current-commercial-candidate-identity-v1"
+import { resolveFastListingShippingJobsV1 } from "../seller-os/fast-listing-shipping-v1"
 import { certifyCurrentBatchShippingSlotReadbackV1 } from
   "./ebay-autonomous-stocking-shipping-slot-v1"
 
@@ -1669,6 +1670,10 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   if (standardDiscoveryError && batchPriorityCandidateIds) {
     throw standardDiscoveryError
   }
+  // Fast Listing is a normal discovery provider. Certified batch slots retain
+  // exclusive priority and their established claims and executor are reused.
+  const fastJobs = batchPriorityCandidateIds ? [] : await resolveFastListingShippingJobsV1(input)
+  eligible = [...eligible, ...fastJobs]
   if (input.maximumJobs === 1 && !batchPriorityCandidateIds) {
     // Existing claims provide the class turn; no timer, counter or new worker.
     // LIVE economic claims carry freshness_generation; frontier claims do not.
@@ -1724,7 +1729,7 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
   jobs.push(...economic.jobs)
   leaseConflictCount += economic.leaseConflictCount
   claimFailureCount += economic.claimFailureCount
-  if (standardDiscoveryError && economic.eligiblePendingJobCount === 0) {
+  if (standardDiscoveryError && economic.eligiblePendingJobCount === 0 && fastJobs.length === 0) {
     throw standardDiscoveryError
   }
   if (claimFailureCount > 0 && jobs.length === 0) {

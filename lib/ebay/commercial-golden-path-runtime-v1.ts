@@ -99,7 +99,7 @@ export function normalizeGoldenStoredMarketV1(row: GoldenRecord): GoldenMarketEv
     currency: String(row.realized_transaction_price_currency ?? row.currency ?? ""), lastSoldDate: typeof row.sold_at === "string" ? row.sold_at : null, capturedAt: String(row.captured_at ?? row.observed_at ?? ""),
     realizedPriceStatus: row.source_class === "MAIN_SEARCH_SOLD" ? "UNPROVEN" : row.realized_price_status === "PROVEN" ? "PROVEN" : row.realized_price_status === "UNAVAILABLE" ? "UNAVAILABLE" : "UNPROVEN" }
 }
-async function marketEvidence(ctx: GoldenContext, key?: GoldenCandidateKey) {
+export async function marketEvidence(ctx: GoldenContext, key?: GoldenCandidateKey) {
   const auto = ctx.supabase.from("marketplace_sold_evidence_observations").select("id,source_class,source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,realized_transaction_price_amount,realized_transaction_price_currency,visible_shipping_amount,shipping_status,sold_at,captured_at,observed_at,realized_price_status,evidence_reviewed,evidence_digest,item_id,currency")
     .eq("marketplace_account_key", ctx.accountKey).eq("marketplace", "EBAY_US").eq("evidence_scope", "MARKET_WIDE_SOLD_EVIDENCE").gte("sold_at", new Date(ctx.now.getTime() - 90 * 86400000).toISOString()).order("sold_at", { ascending: false }).limit(MAX_MARKET_ROWS + 1)
   let manual = ctx.supabase.from("seller_os_golden_manual_market_v1").select("payload").eq("account_key", ctx.accountKey)
@@ -112,7 +112,7 @@ async function marketEvidence(ctx: GoldenContext, key?: GoldenCandidateKey) {
   return { rows: rows.slice(0, MAX_MARKET_ROWS), complete: (m.data?.length ?? 0) <= MAX_MARKET_ROWS, truncated: rows.length > MAX_MARKET_ROWS, reasonCode: rows.length > MAX_MARKET_ROWS ? "BOUNDED_MARKET_SCAN_PARTIAL_NOT_EXHAUSTIVE" : null }
 }
 type OfficialSweep = Awaited<ReturnType<typeof getEbayOfficialLiveListingSweepReadonly>>
-async function duplicateGate(ctx: GoldenContext, key: GoldenCandidateKey, source: GoldenRecord | null, sweep: OfficialSweep): Promise<GoldenAuthority> {
+export async function duplicateGate(ctx: GoldenContext, key: GoldenCandidateKey, source: GoldenRecord | null, sweep: OfficialSweep): Promise<GoldenAuthority> {
   if (sweep.status !== "CERTIFIED_COMPLETE" || !sweep.paginationComplete || !sweep.accountCertified) return unavailable("OFFICIAL_LIVE_DUPLICATE_COHORT_UNPROVEN")
   const liveIds = new Set(sweep.listings.map(l => l.itemId))
   const matched = sweep.listings.filter(l => l.sku?.trim().toUpperCase() === key.supplierSku.toUpperCase()).map(l => l.itemId)

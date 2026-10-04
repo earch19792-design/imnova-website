@@ -12,6 +12,7 @@ function activeArea(pathname: string): SellerOsAreaId {
   if (pathname === "/admin/ebay/listings" ||
       pathname.startsWith("/admin/ebay/listings/")) return "listings"
   if (pathname.includes("/quick-pick") ||
+      pathname.includes("/fast-listing") ||
       pathname.includes("/product-journey") ||
       pathname.includes("/listing-workspace") ||
       pathname.includes("/publish")) return "opportunities"
