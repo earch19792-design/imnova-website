@@ -44,6 +44,8 @@ import {
   isSellerOsOwnerRole,
   sellerOsAccessRoleFromUser,
 } from "@/lib/seller-os-access-control"
+import { sellerOsAuthenticatedFetchV1 } from
+  "@/lib/seller-os/seller-os-authenticated-fetch-v1"
 
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
@@ -484,12 +486,10 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
 async function adminPost(action: string, body: Record<string, unknown>,
   idempotencyKey?: string) {
   const startedAt = performance.now()
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session?.access_token) throw new Error("LUNA_SHIPPING_ADMIN_SESSION_REQUIRED")
-  const response = await fetch("/api/admin/ebay/luna-shipping-capture", {
+  const response = await sellerOsAuthenticatedFetchV1(
+    "/api/admin/ebay/luna-shipping-capture", {
     method: "POST", cache: "no-store",
     headers: { "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}) },
     body: JSON.stringify({ action, ...body }),
   })

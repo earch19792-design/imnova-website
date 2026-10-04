@@ -2,9 +2,10 @@
 
 import { useState } from "react"
 
-import { supabase } from "@/lib/supabase"
 import { publishSellerOsLunaShippingDurableWorkSignalV1 } from
   "@/lib/seller-os/background-workload-optimization-v1"
+import { sellerOsAuthenticatedFetchV1 } from
+  "@/lib/seller-os/seller-os-authenticated-fetch-v1"
 
 type JsonRecord = Record<string, unknown>
 type CategoryCandidate = JsonRecord & {
@@ -66,14 +67,10 @@ export function AutonomousCategoryAnalysisV1() {
     setRunning(true)
     setError("")
     try {
-      const session = await supabase.auth.getSession()
-      const token = session.data.session?.access_token
-      if (session.error || !token) throw new Error("OWNER_ADMIN_SESSION_REQUIRED")
-      const response = await fetch(
+      const response = await sellerOsAuthenticatedFetchV1(
         "/api/admin/ebay/autonomous-category-analysis", {
           method: "POST", cache: "no-store",
-          headers: { Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "RUN_STOCKING_BATCH", category,
             scanLimit: 100, targetDrafts: 10, targetNetProfit }),
         })
