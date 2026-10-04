@@ -21,6 +21,17 @@ import {
 
 type JsonRecord = Record<string, unknown>
 
+type AutonomousAcquisitionSnapshot = Readonly<{
+  pendingPlanCount: number
+  claimablePlanCount: number
+  activeClaimCount: number
+}>
+
+function safeAcquisitionCount(value: unknown) {
+  const count = Number(value ?? 0)
+  return Number.isSafeInteger(count) && count >= 0 ? count : 0
+}
+
 function planIdFromLocation() {
   const value = new URLSearchParams(window.location.search)
     .get("mayelMarketRevalidation") ?? ""
@@ -86,6 +97,7 @@ async function authorizedPost(body: JsonRecord) {
 
 async function nextAuthorizedBatchPlanId(workerId: string,
   leaderSessionId: string) {
+  let acquisitionSnapshot: AutonomousAcquisitionSnapshot | null = null
   await authorizedPost({
     action: "PREPARE_AUTHORIZED_PRE_RESEARCH_BATCH_RUNNER",
     workerId, leaderSessionId,
@@ -111,14 +123,20 @@ async function nextAuthorizedBatchPlanId(workerId: string,
       const state = acquisition.result &&
         typeof acquisition.result === "object"
         ? acquisition.result as JsonRecord : {}
+      acquisitionSnapshot = Object.freeze({
+        pendingPlanCount: safeAcquisitionCount(state.pendingPlanCount),
+        claimablePlanCount: safeAcquisitionCount(state.claimablePlanCount),
+        activeClaimCount: safeAcquisitionCount(state.activeClaimCount),
+      })
       result = Number(state.claimablePlanCount ?? 0) > 0 &&
         Number(state.activeClaimCount ?? 0) === 0
         ? { planId: state.nextPlanId } : { planId: null }
     }
   }
-  return typeof result.planId === "string" &&
+  const planId = typeof result.planId === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(result.planId) ? result.planId : null
+  return Object.freeze({ planId, acquisitionSnapshot })
 }
 
 function extensionCommand<T extends JsonRecord>(command: JsonRecord,
@@ -371,10 +389,19 @@ export function MayelMarketRevalidationRunner() {
         }
       }
       if (gateOnly) {
-        const nextPlanId = claimAuthorityGranted
-          ? await nextAuthorizedBatchPlanId(workerId, leaderSessionId) : null
+        const selection = claimAuthorityGranted
+          ? await nextAuthorizedBatchPlanId(workerId, leaderSessionId)
+          : { planId: null, acquisitionSnapshot: null }
+        const nextPlanId = selection.planId
         if (!nextPlanId) {
-          setState("Worker Research V2 disponible · sin lote o keyword de paquete actual pendiente")
+          const queueState = selection.acquisitionSnapshot
+          const queueDetail = queueState
+            ? ` · cola ${queueState.pendingPlanCount}` +
+              ` · reclamables ${queueState.claimablePlanCount}` +
+              ` · activos ${queueState.activeClaimCount}`
+            : ""
+          setState("Worker Research V2 disponible · sin lote o keyword de paquete actual pendiente" +
+            queueDetail)
           const delayMs = controller.nextDelayMs()
           await new Promise<void>((resolve) => {
             const reload = window.setTimeout(() => {
@@ -406,7 +433,9 @@ export function MayelMarketRevalidationRunner() {
         if (completed > 0) {
           heartbeat = await persistHeartbeat("IDLE")
           if (batchControlMode) {
-            planId = await nextAuthorizedBatchPlanId(workerId, leaderSessionId)
+            const nextSelection = await nextAuthorizedBatchPlanId(
+              workerId, leaderSessionId)
+            planId = nextSelection.planId
             if (!planId) break
           }
         }
