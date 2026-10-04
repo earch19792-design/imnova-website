@@ -25,6 +25,7 @@ type AutonomousAcquisitionSnapshot = Readonly<{
   pendingPlanCount: number
   claimablePlanCount: number
   activeClaimCount: number
+  canaryState: string
 }>
 
 function safeAcquisitionCount(value: unknown) {
@@ -112,30 +113,34 @@ async function nextAuthorizedBatchPlanId(workerId: string,
     action: "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN",
   })
   let result = normalizePlanSelectionResult(next.result)
+  const canaryState = typeof (next.canaryGate as JsonRecord | undefined)?.state ===
+    "string" ? String((next.canaryGate as JsonRecord).state) : "UNKNOWN"
   // Certification mode is a bounded Pre-Research lane. Do not fall through
   // into unrelated keyword research while an allowlist is active.
   if (result.planId === null &&
-      (next.canaryGate as JsonRecord | undefined)?.state === "OFF") {
+      canaryState === "OFF") {
     const keyword = await authorizedPost({
       action: "GET_NEXT_CURRENT_PACKAGE_KEYWORD_PLAN",
     })
     result = normalizePlanSelectionResult(keyword.result)
-    if (result.planId === null) {
-      const acquisition = await authorizedPost({
-        action: "READ_AUTONOMOUS_RESEARCH_ACQUISITION",
-      })
-      const state = acquisition.result &&
-        typeof acquisition.result === "object"
-        ? acquisition.result as JsonRecord : {}
-      acquisitionSnapshot = Object.freeze({
-        pendingPlanCount: safeAcquisitionCount(state.pendingPlanCount),
-        claimablePlanCount: safeAcquisitionCount(state.claimablePlanCount),
-        activeClaimCount: safeAcquisitionCount(state.activeClaimCount),
-      })
-      result = Number(state.claimablePlanCount ?? 0) > 0 &&
-        Number(state.activeClaimCount ?? 0) === 0
-        ? { planId: state.nextPlanId } : { planId: null }
-    }
+  }
+  if (result.planId === null) {
+    const acquisition = await authorizedPost({
+      action: "READ_AUTONOMOUS_RESEARCH_ACQUISITION",
+    })
+    const state = acquisition.result &&
+      typeof acquisition.result === "object"
+      ? acquisition.result as JsonRecord : {}
+    acquisitionSnapshot = Object.freeze({
+      pendingPlanCount: safeAcquisitionCount(state.pendingPlanCount),
+      claimablePlanCount: safeAcquisitionCount(state.claimablePlanCount),
+      activeClaimCount: safeAcquisitionCount(state.activeClaimCount),
+      canaryState,
+    })
+    result = canaryState === "OFF" &&
+      Number(state.claimablePlanCount ?? 0) > 0 &&
+      Number(state.activeClaimCount ?? 0) === 0
+      ? { planId: state.nextPlanId } : { planId: null }
   }
   const planId = typeof result.planId === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -400,7 +405,8 @@ export function MayelMarketRevalidationRunner() {
         if (!nextPlanId) {
           const queueState = selection.acquisitionSnapshot
           const queueDetail = queueState
-            ? ` · cola ${queueState.pendingPlanCount}` +
+            ? ` · carril ${queueState.canaryState}` +
+              ` · cola ${queueState.pendingPlanCount}` +
               ` · reclamables ${queueState.claimablePlanCount}` +
               ` · activos ${queueState.activeClaimCount}`
             : ""
