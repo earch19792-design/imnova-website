@@ -214,6 +214,19 @@ export async function readQuickPickShippingPriorityCandidateV1(input: Readonly<{
   const familyIds = [...new Set(priorityCandidates.map((candidate) =>
     candidate.familyId))]
   if (!familyIds.length) return null
+  const claimResult = await input.supabase.from(
+    "seller_os_luna_shipping_job_claims")
+    .select("candidate_id,status,lease_expires_at,expired_recovery_count")
+    .eq("account_key", input.accountKey)
+    .in("candidate_id", priorityCandidates.map((candidate) =>
+      candidate.candidateId))
+    .limit(50)
+    .abortSignal(AbortSignal.timeout(8_000))
+  if (claimResult.error) return null
+  const blockedCandidateIds = new Set(records(claimResult.data)
+    .filter((claim) => quickPickShippingClaimBlocksSelectionV1(
+      claim, Date.now()))
+    .map((claim) => text(claim.candidate_id, 80)))
   // A just-completed Quick Pick can remain WAITING in the queue until its
   // continuation finishes. Reconcile that durable hint with the current
   // profitability frontier so the completed row cannot starve the next item.
@@ -241,9 +254,21 @@ export async function readQuickPickShippingPriorityCandidateV1(input: Readonly<{
         candidate.familyId === familyId) ? [currentCandidateId] : []
     }))
   const selected = priorityCandidates.find((candidate) =>
-    refreshRequiredCandidateIds.has(candidate.candidateId))
+    refreshRequiredCandidateIds.has(candidate.candidateId) &&
+    !blockedCandidateIds.has(candidate.candidateId))
   return selected ? Object.freeze({ candidateId: selected.candidateId,
     familyId: selected.familyId }) : null
+}
+
+export function quickPickShippingClaimBlocksSelectionV1(
+  value: unknown, now = Date.now(),
+) {
+  const claim = record(value)
+  if (claim.status !== "CLAIMED") return false
+  const leaseExpiresAt = Date.parse(String(claim.lease_expires_at ?? ""))
+  const recoveryCount = Number(claim.expired_recovery_count ?? 0)
+  return (Number.isFinite(leaseExpiresAt) && leaseExpiresAt > now) ||
+    (Number.isSafeInteger(recoveryCount) && recoveryCount >= 2)
 }
 
 type LunaCanonicalBindObservedCandidateV1 = Readonly<{
