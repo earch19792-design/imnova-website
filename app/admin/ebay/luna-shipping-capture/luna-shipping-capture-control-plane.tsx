@@ -2859,7 +2859,11 @@ export function LunaShippingCaptureControlPlane({
         // periods cannot leave recovery gated by a stale/rejected observation.
         if (serverClaimLeaderRef.current) {
           refreshShippingExecutionObservationRef.current?.()
-          durableWorkRecoveryRef.current?.()
+          if (payload.durableQuickPickWorkPending === true) {
+            forceDurableWorkRecoveryRef.current?.()
+          } else {
+            durableWorkRecoveryRef.current?.()
+          }
         }
         controller?.recordProbeSuccess(
           Number(payload.backgroundRequestLatencyMs ?? 0))

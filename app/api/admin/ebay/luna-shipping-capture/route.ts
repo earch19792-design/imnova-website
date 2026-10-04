@@ -34,6 +34,7 @@ import {
   persistLunaProductPageOosV1,
   persistLunaShippingRuntimeTraceV1,
   readLatestLunaShippingRuntimeTraceV1,
+  readQuickPickShippingPriorityCandidateV1,
   acquireLunaChromeShippingJobsV1,
   acquireOneLegacyEconomicShippingRecoveryV1,
   closeLegacyShippingIncidentOutOfScopeDispositionV2,
@@ -282,7 +283,16 @@ export async function POST(req: Request) {
         claimAuthoritySessionId: claimAuthoritySessionId(
           body.leaderSessionId),
       })
+      // The Quick Pick queue is the durable source of truth. Surface its
+      // pending state with the normal heartbeat so an existing worker can
+      // break an idle backoff without a manual button or a new subsystem.
+      const durableQuickPickWorkPending = result.claimAuthorityGranted &&
+        Boolean(await readQuickPickShippingPriorityCandidateV1({
+          supabase: auth.supabase,
+          accountKey: auth.accountKey,
+        }))
       return listingAiResponse({ success: true, result,
+        durableQuickPickWorkPending,
         safety: { businessOutputWrites: 0, lunaPurchases: 0,
           marketplaceWrites: 0 } })
     }
