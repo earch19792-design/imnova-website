@@ -26,6 +26,8 @@ import {
   createSellerOsBackgroundWorkloadControllerV1,
   holdSellerOsCrossTabBrowserLeaderV1,
   SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS,
+  SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1,
+  readSellerOsLunaShippingDurableWorkSignalV1,
   sellerOsBackgroundMetricsPublisherV1,
 } from "@/lib/seller-os/background-workload-optimization-v1"
 import {
@@ -728,6 +730,7 @@ export function LunaShippingCaptureControlPlane({
     } | null = null
     let reconnectCurrentPort: (() => void) | null = null
     let removePageLifecycleListeners: (() => void) | null = null
+    let removeDurableWorkSignalListener: (() => void) | null = null
     let traceEvents: LunaShippingRuntimeTraceEventV1[] = []
     let exactLiveCandidateId: string | null = null
     const exactDispatchPersistencePending = new Set<string>()
@@ -1361,6 +1364,30 @@ export function LunaShippingCaptureControlPlane({
         discoveryInFlight = false
       })
     }
+    const consumedWorkSignalKey =
+      `${SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1}:consumed`
+    const consumeDurableWorkSignal = (raw: string | null) => {
+      const signal = readSellerOsLunaShippingDurableWorkSignalV1(raw)
+      if (!signal || window.sessionStorage.getItem(consumedWorkSignalKey) ===
+          signal.signalId) return
+      window.sessionStorage.setItem(consumedWorkSignalKey, signal.signalId)
+      workloadController.confirmDurableWorkSignal()
+      if (discoveryRetryTimer !== null) {
+        window.clearTimeout(discoveryRetryTimer)
+        discoveryRetryTimer = null
+      }
+      attemptProductionAcquisition()
+    }
+    const handleDurableWorkSignal = (event: StorageEvent) => {
+      if (event.key === SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1) {
+        consumeDurableWorkSignal(event.newValue)
+      }
+    }
+    window.addEventListener("storage", handleDurableWorkSignal)
+    removeDurableWorkSignalListener = () =>
+      window.removeEventListener("storage", handleDurableWorkSignal)
+    consumeDurableWorkSignal(window.localStorage.getItem(
+      SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1))
     void holdSellerOsCrossTabBrowserLeaderV1({
       scope: "LUNA_SHIPPING", signal: leadershipAbort.signal,
       onLeaderState: (leaderState) => {
@@ -2588,6 +2615,7 @@ export function LunaShippingCaptureControlPlane({
       active = false
       reconnectGeneration += 1
       removePageLifecycleListeners?.()
+      removeDurableWorkSignalListener?.()
       if (portHandshakeTimer !== null) window.clearTimeout(portHandshakeTimer)
       if (dispatchReceiptTimer !== null) window.clearTimeout(dispatchReceiptTimer)
       if (traceFlushTimer !== null) window.clearTimeout(traceFlushTimer)

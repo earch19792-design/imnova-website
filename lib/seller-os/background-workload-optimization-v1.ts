@@ -2,6 +2,10 @@ export const SELLER_OS_BACKGROUND_WORKLOAD_OPTIMIZATION_V1 =
   "SELLER_OS_BACKGROUND_WORKLOAD_OPTIMIZATION_V1_PHASE_A" as const
 
 export const SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS = 60_000
+export const SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1 =
+  "seller-os-luna-shipping-durable-work-signal-v1" as const
+export const SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_V1 =
+  "SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_V1" as const
 export const SELLER_OS_BACKGROUND_CAPABILITY_TTL_MS = 300_000
 export const SELLER_OS_BACKGROUND_LEADER_LEASE_SECONDS = 150
 export const SELLER_OS_BACKGROUND_MAX_CATCHUP_MS = 15 * 60_000
@@ -54,6 +58,48 @@ type PersistedWorkloadStateV1 = {
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">
+
+export type SellerOsLunaShippingDurableWorkSignalV1 = Readonly<{
+  contractVersion: typeof SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_V1
+  signalId: string
+  queuedJobCount: number
+  observedAt: string
+}>
+
+export function publishSellerOsLunaShippingDurableWorkSignalV1(input:
+  Readonly<{ storage: Pick<Storage, "setItem">; signalId: string;
+    queuedJobCount: number; observedAt?: string }>) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(input.signalId) || !Number.isSafeInteger(input.queuedJobCount) ||
+      input.queuedJobCount < 1 || input.queuedJobCount > 100) return false
+  const signal: SellerOsLunaShippingDurableWorkSignalV1 = Object.freeze({
+    contractVersion: SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_V1,
+    signalId: input.signalId, queuedJobCount: input.queuedJobCount,
+    observedAt: input.observedAt ?? new Date().toISOString(),
+  })
+  input.storage.setItem(SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1,
+    JSON.stringify(signal))
+  return true
+}
+
+export function readSellerOsLunaShippingDurableWorkSignalV1(
+  raw: string | null, now = Date.now(),
+): SellerOsLunaShippingDurableWorkSignalV1 | null {
+  try {
+    const value = JSON.parse(raw ?? "null") as Partial<
+      SellerOsLunaShippingDurableWorkSignalV1> | null
+    const observedAt = Date.parse(String(value?.observedAt ?? ""))
+    if (!value || value.contractVersion !==
+        SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_V1 ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+          .test(String(value.signalId ?? "")) ||
+        !Number.isSafeInteger(value.queuedJobCount) ||
+        Number(value.queuedJobCount) < 1 || Number(value.queuedJobCount) > 100 ||
+        !Number.isFinite(observedAt) || observedAt > now + 60_000 ||
+        observedAt < now - 30 * 60_000) return null
+    return Object.freeze(value as SellerOsLunaShippingDurableWorkSignalV1)
+  } catch { return null }
+}
 
 function boundedInteger(value: unknown, maximum = 1_000_000) {
   return Number.isSafeInteger(value) && Number(value) >= 0

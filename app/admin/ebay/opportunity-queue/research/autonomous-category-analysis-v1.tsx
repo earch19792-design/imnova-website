@@ -3,6 +3,8 @@
 import { useState } from "react"
 
 import { supabase } from "@/lib/supabase"
+import { publishSellerOsLunaShippingDurableWorkSignalV1 } from
+  "@/lib/seller-os/background-workload-optimization-v1"
 
 type JsonRecord = Record<string, unknown>
 type CategoryCandidate = JsonRecord & {
@@ -79,6 +81,15 @@ export function AutonomousCategoryAnalysisV1() {
         success?: boolean; result?: CategoryResult; error?: string }
       if (!response.ok || !payload.success || !payload.result) {
         throw new Error(payload.error ?? "AUTONOMOUS_CATEGORY_ANALYSIS_FAILED")
+      }
+      const queuedShippingCount = Number(
+        payload.result.queuedShippingCount ?? 0)
+      if (Number.isSafeInteger(queuedShippingCount) &&
+          queuedShippingCount > 0) {
+        publishSellerOsLunaShippingDurableWorkSignalV1({
+          storage: window.localStorage, signalId: crypto.randomUUID(),
+          queuedJobCount: queuedShippingCount,
+        })
       }
       setResult(payload.result)
     } catch (caught) {
