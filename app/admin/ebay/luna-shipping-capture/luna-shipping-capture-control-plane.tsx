@@ -2511,7 +2511,16 @@ export function LunaShippingCaptureControlPlane({
             }
             busy = false
             setRunning(false)
-            attemptProductionAcquisition()
+            const postShipping = result.postShippingContinuation ?? {}
+            const durableBatchContinues =
+              postShipping.contractVersion ===
+                "QUICK_PICK_POST_SHIPPING_CONTINUATION_V1" &&
+              Number(postShipping.scopedCandidateCount) > 1
+            if (durableBatchContinues) {
+              forceDurableWorkRecoveryRef.current?.()
+            } else {
+              attemptProductionAcquisition()
+            }
           }).catch((certificationError) => {
             port?.postMessage({
               type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",
