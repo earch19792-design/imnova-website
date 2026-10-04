@@ -187,7 +187,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
         readLimits: {
           certifiedPortfolioMode: true,
           maximumCalls: 100,
-          budgetMs: 40_000,
+          budgetMs: 48_000,
           isolateIndependentReads: true,
         } })
     // The official read creates observedAt. Freshness must therefore use a

@@ -5697,6 +5697,8 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       calls,
       clock,
       maximumUniqueItems: portfolioMode ? 80 : undefined,
+      downstreamCallReserve: portfolioMode ? 2 : undefined,
+      downstreamTimeReserveMs: portfolioMode ? 2_000 : undefined,
     })
     const parsedSellerWideItemCount =
       marketplace.marketplaceCertification.sellerWideItemsParsed
