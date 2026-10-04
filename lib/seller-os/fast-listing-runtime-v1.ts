@@ -75,9 +75,9 @@ export async function loadFastListingV1(scope: FastScope, opportunityId: string)
   const key = {productId:String(source.product_id),variantId:String(source.variant_id),supplierSku:String(source.sku),supplierQuantity:1}
   const [owner, ...visual] = await Promise.all([ownerProductTruthEvidence(ctx,key,source),
     ...[1,2,3,4].map(supplierQuantity=>visualComparisonEvidence(ctx,{...key,supplierQuantity},source))])
-  return { context: record(context.data), opportunity: record(queue.data), source: {...source,canonicalOwnerTruth:{
+  return { context: record(context.data), opportunity: record(queue.data), source: record({...source,canonicalOwnerTruth:{
     accountKey:scope.accountKey,ownerId:scope.ownerId,evidence:owner.complete?owner.rows:[],
-    visualEvidence:visual.flatMap(v=>v.complete?v.rows:[]) }} }
+    visualEvidence:visual.flatMap(v=>v.complete?v.rows:[]) }}) }
 }
 type Loaded = Awaited<ReturnType<typeof loadFastListingV1>>
 function baseInput(scope: FastScope, loaded: Loaded): FastInput {
