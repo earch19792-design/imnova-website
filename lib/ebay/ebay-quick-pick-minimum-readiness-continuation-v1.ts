@@ -139,11 +139,12 @@ export async function continueLunaQuickPickMinimumReadinessV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
   candidateKeys: readonly string[]
+  retryConflicts?: boolean
 }>) {
   const candidateKeys = [...new Set(input.candidateKeys.filter((value) =>
     /^sha256:[0-9a-f]{64}$/.test(value)))].slice(0, MAXIMUM_QUICK_PICKS)
   if (!candidateKeys.length) return Object.freeze({ attempted: 0, updated: 0,
-    unchanged: 0, ownerLastMileProductsCount: 0,
+    unchanged: 0, failed: 0, ownerLastMileProductsCount: 0,
     ownerLastMileFactCount: 0, results: Object.freeze([] as JsonRecord[]),
     newOperationCount: 0 as const,
     duplicateOperationCount: 0 as const,
@@ -174,6 +175,7 @@ export async function continueLunaQuickPickMinimumReadinessV1(input: Readonly<{
     [text(row.opportunity_id, 80), row]))
   let updated = 0
   let unchanged = 0
+  let failed = 0
   let ownerLastMileProductsCount = 0
   let ownerLastMileFactCount = 0
   const results: JsonRecord[] = []
@@ -190,10 +192,10 @@ export async function continueLunaQuickPickMinimumReadinessV1(input: Readonly<{
         ? text(current.evaluatedAt, 80) : undefined,
     })
     const ownerActions = rows(projected.ownerLastMileActions)
-    if (ownerActions.length) ownerLastMileProductsCount += 1
-    ownerLastMileFactCount += ownerActions.length
     if (current.contractVersion === MINIMUM_TRUTHFUL_LISTING_READINESS_V1
         && current.evidenceDigest === projected.evidenceDigest) {
+      if (ownerActions.length) ownerLastMileProductsCount += 1
+      ownerLastMileFactCount += ownerActions.length
       unchanged += 1
       results.push(projected as unknown as JsonRecord)
       continue
@@ -225,12 +227,38 @@ export async function continueLunaQuickPickMinimumReadinessV1(input: Readonly<{
     if (write.error || !write.data
         || stored.evidenceDigest !== projected.evidenceDigest
         || stored.marketplaceWrites !== 0) {
-      throw new Error("QUICK_PICK_MINIMUM_READINESS_DURABLE_WRITE_FAILED")
+      if (input.retryConflicts !== false) {
+        const retried = await continueLunaQuickPickMinimumReadinessV1({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          candidateKeys: [text(opportunity.candidate_key, 300)],
+          retryConflicts: false,
+        })
+        updated += retried.updated
+        unchanged += retried.unchanged
+        failed += retried.failed
+        ownerLastMileProductsCount += retried.ownerLastMileProductsCount
+        ownerLastMileFactCount += retried.ownerLastMileFactCount
+        results.push(...retried.results)
+        continue
+      }
+      if (ownerActions.length) ownerLastMileProductsCount += 1
+      ownerLastMileFactCount += ownerActions.length
+      failed += 1
+      results.push({ ...projected,
+        continuationStatus: "RETRY_REQUIRED",
+        reasonCode: "QUICK_PICK_MINIMUM_READINESS_DURABLE_WRITE_FAILED",
+        durable: false,
+      } as unknown as JsonRecord)
+      continue
     }
+    if (ownerActions.length) ownerLastMileProductsCount += 1
+    ownerLastMileFactCount += ownerActions.length
     updated += 1
     results.push(marker as unknown as JsonRecord)
   }
   return Object.freeze({ attempted: candidateKeys.length, updated, unchanged,
+    failed,
     ownerLastMileProductsCount, ownerLastMileFactCount,
     results: Object.freeze(results),
     newOperationCount: 0 as const,
