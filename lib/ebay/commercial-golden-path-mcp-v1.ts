@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { SellerOsControlPrincipalV1 } from "./teo-pre-research-control-oauth-v1"
-import { createGoldenContextV1, evaluateGoldenRuntimeV1, previewGoldenCategoryV1, importGoldenManualV1, prepareGoldenRuntimeV1, reconcileGoldenRuntimeV1, readGoldenMonitoringV1, GoldenReceiptPersistenceErrorV1 } from "./commercial-golden-path-runtime-v1"
+import { createGoldenContextV1, evaluateGoldenRuntimeV1, previewGoldenCategoryV1, importGoldenManualV1, prepareGoldenRuntimeV1, reconcileGoldenRuntimeV1, readGoldenMonitoringV1, importGoldenOwnerProductTruthV1, importGoldenVisualComparisonV1, GoldenReceiptPersistenceErrorV1 } from "./commercial-golden-path-runtime-v1"
 import type { GoldenOwnerFeePolicyInput } from "./commercial-golden-path-owner-fee-policy-v1"
 import type { GoldenLiveComparisonInput } from "./commercial-golden-path-live-comparison-v1"
 
@@ -9,6 +9,8 @@ export const GOLDEN_PATH_MCP_TOOL_NAMES_V1 = [
   "seller_os_preview_category_opportunities_v1", "seller_os_evaluate_candidate_v1",
   "seller_os_import_manual_market_evidence_v1", "seller_os_prepare_intelligent_listing_package_v1",
   "seller_os_reconcile_and_enroll_listing_v1", "seller_os_get_golden_path_monitoring_v1",
+  "seller_os_import_owner_product_truth_evidence_v1",
+  "seller_os_import_visual_comparison_evidence_v1",
 ] as const
 export const goldenCandidateSchemaV1 = z.object({ productId: z.string().regex(/^\d{1,30}$/), variantId: z.string().regex(/^\d{1,30}$/), supplierSku: z.string().min(1).max(160).regex(/^[^\u0000-\u001f\u007f]+$/), supplierQuantity: z.number().int().min(1).max(20).default(1) }).strict()
 const identity = z.object({ productName: z.string().min(1).max(500), manufacturerBrand: z.string().max(160).nullable().optional(), gtin: z.string().max(30).nullable().optional(), mpn: z.string().max(160).nullable().optional(), model: z.string().max(160).nullable().optional(), packCount: z.number().int().min(1).max(1000).nullable(), unitCount: z.number().int().min(1).max(1000).nullable().optional(), size: z.string().max(160).nullable().optional(), color: z.string().max(160).nullable().optional(), scent: z.string().max(160).nullable().optional(), variant: z.string().max(160).nullable().optional(), condition: z.string().max(80).nullable().optional() }).strict()
@@ -16,6 +18,18 @@ export const goldenManualRowSchemaV1 = z.object({ marketplace: z.literal("EBAY_U
 const profit = z.number().min(4).max(10000).default(4)
 const ownerProvisionalFeePolicy = z.object({ variableRateFraction: z.number().min(0).max(1), fixedAmountUsd: z.number().min(0).max(10000), freshUntil: z.iso.datetime(), sourceLocator: z.string().min(8).max(1000), sourceDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/), approvalNote: z.string().min(8).max(2000), operatorAttested: z.literal(true) }).strict()
 const liveComparisonReview = z.object({ evaluationReceiptId: z.string().uuid(), comparisons: z.array(z.object({ itemId: z.string().regex(/^\d{9,20}$/), decision: z.literal("DIFFERENT_PRODUCT"), reason: z.string().min(8).max(1000), sourceLocator: z.string().min(8).max(1000), sourceDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/) }).strict()).min(1).max(500) }).strict()
+const ownerProductTruthSource = z.object({ canonicalUrl: z.string().url().max(2000), sourceLocator: z.string().url().max(2000), sourceDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/), capturedAt: z.iso.datetime(), sourceMediaType: z.enum(["IMAGE", "VIDEO"]) }).strict()
+const ownerProductTruthObservation = z.object({ factClass: z.enum(["VISIBLE_BRAND_MARKING", "OBSERVED_MARKING", "SUPPLIER_BASE_INCLUDED_UNIT_COUNT"]), value: z.string().min(1).max(160), evidenceStatement: z.string().min(12).max(1000) }).strict().superRefine((observation, context) => {
+  if (observation.factClass === "SUPPLIER_BASE_INCLUDED_UNIT_COUNT" && !/^(?:[1-9]|[1-9][0-9]{1,2}|1000)$/.test(observation.value)) context.addIssue({ code: "custom", message: "Base included unit count must be an integer from 1 through 1000", path: ["value"] })
+  if (observation.factClass !== "SUPPLIER_BASE_INCLUDED_UNIT_COUNT" && observation.value.trim().length < 2) context.addIssue({ code: "custom", message: "Observed marking must contain at least two characters", path: ["value"] })
+})
+const visualFactClass = z.enum(["VISIBLE_TEXT", "VISIBLE_LOGO", "VISIBLE_BRAND_MARKING", "OBSERVED_MARKING", "PRODUCT_SHAPE", "COLOR_PATTERN", "HANDLE_DESIGN", "VISIBLE_PACKAGING", "EXPLICIT_OFFER_QUANTITY"])
+const visualConfidence = z.enum(["HIGH", "MEDIUM", "LOW", "UNKNOWN"])
+const visualFact = z.object({ factClass: visualFactClass, value: z.string().min(1).max(500), confidence: visualConfidence, evidenceStatement: z.string().min(12).max(1000) }).strict()
+const visualSourceBase = { mediaReference: z.string().min(1).max(2000), sourceLocator: z.string().min(1).max(2000), sourceDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/), capturedAt: z.iso.datetime(), method: z.enum(["OWNER_REVIEWED", "MODEL_ASSISTED_OWNER_REVIEW"]), methodVersion: z.string().regex(/^[A-Z][A-Z0-9_.-]{2,119}$/), imageWidthPixels: z.number().int().min(1).max(20000), imageHeightPixels: z.number().int().min(1).max(20000), subjectRegionWidthPixels: z.number().int().min(1).max(20000), subjectRegionHeightPixels: z.number().int().min(1).max(20000), cropStatus: z.enum(["FULL_FRAME", "CROPPED", "UNKNOWN"]), facts: z.array(visualFact).min(1).max(20) }
+const supplierVisualObservation = z.object({ sourceRole: z.literal("SUPPLIER_IMAGE"), ...visualSourceBase }).strict()
+const marketplaceVisualObservation = z.object({ sourceRole: z.enum(["MARKETPLACE_SOLD_IMAGE", "MARKETPLACE_ACTIVE_IMAGE"]), ...visualSourceBase }).strict()
+const visualRelation = z.object({ factClass: visualFactClass, relation: z.enum(["MATCH", "CONFLICT", "UNPROVEN"]), confidence: visualConfidence, evidenceStatement: z.string().min(12).max(1000) }).strict()
 export function registerGoldenPathControlToolsV1(server: McpServer, principal: SellerOsControlPrincipalV1, oauthResource: string) {
   const schemas = [
     z.object({ category: z.string().min(1).max(100).default("Personal Care"), limit: z.number().int().min(1).max(20).default(5), targetNetProfit: profit }).strict(),
@@ -24,19 +38,23 @@ export function registerGoldenPathControlToolsV1(server: McpServer, principal: S
     z.object({ evaluationReceiptId: z.string().uuid() }).strict(),
     z.object({ packageReceiptId: z.string().uuid(), itemId: z.string().regex(/^\d{9,20}$/).optional(), dryRun: z.boolean().default(true) }).strict(),
     z.object({ itemId: z.string().regex(/^\d{9,20}$/) }).strict(),
+    z.object({ candidate: goldenCandidateSchemaV1, source: ownerProductTruthSource, observations: z.array(ownerProductTruthObservation).min(1).max(20), operatorAttested: z.literal(true) }).strict(),
+    z.object({ candidate: goldenCandidateSchemaV1, supplierObservation: supplierVisualObservation, comparisons: z.array(z.object({ marketEvidenceId: z.string().min(1).max(160), marketplaceObservation: marketplaceVisualObservation, relations: z.array(visualRelation).min(1).max(20) }).strict()).min(1).max(20), operatorAttested: z.literal(true) }).strict(),
   ]
   const descriptions = [
-    "Commercial Golden Path: demand-first bounded category opportunities, classified EXACT/CLOSE SOLD, separate FAMILY, canonical Luna, official LIVE Duplicate Gate, real shipping, economics and GO/HOLD/REJECT/UNPROVEN. Stores an internal audit receipt. A fresh supplier shipping quote may temporarily change its cart, with verified restoration and no purchase/payment. No marketplace writes.",
+    "Commercial Golden Path: bounded category opportunities under the Seller OS unit-first policy. Evaluates the single-unit offer against a minimum $4 target first; only when it does not reach GO, evaluates up to three pack scenarios whose exact counts are observed in reviewed eBay SOLD evidence. Uses canonical Luna, official LIVE Duplicate Gate, quantity-bound shipping, economics and GO/HOLD/REJECT/UNPROVEN. Stores internal audit receipts. A fresh supplier shipping quote may temporarily change its cart, with verified restoration and no purchase/payment. No marketplace writes.",
     "Deep dive one exact Luna product/variant/supplier SKU/offer quantity. Optional provisional eBay fee policy requires explicit OWNER-provided rate, fixed fee, provenance, expiry and attestation; never synthesize approval or rates. Official fees take priority. Expected profit stays separate from realized profit, and unknown buyer delivery cost keeps expected net NULL. Reuses durable authorities and fails closed on missing evidence. Stores an internal audit receipt. A fresh supplier shipping quote may temporarily change its cart, with verified restoration and no purchase/payment. No marketplace writes.",
     "Import operator-attested manual Terapeak SOLD or ACTIVE observations with explicit EBAY_US marketplace, observed listing title in identity.productName, realized price, buyer shipping, sold quantity, last sold date, match classification and source provenance. Optionally import an explicit OWNER-provided DIFFERENT_PRODUCT review for unresolved LIVE items from one authenticated evaluation receipt. Never synthesize approvals from titles or automatic comparable classifications. It is candidate/cohort scoped and never overrides a proven duplicate, repairs historical linkage, changes supplier Product Truth or creates SOLD evidence. Deduplicates durably.",
     "Reevaluate a candidate and prepare a draft-only listing package only when the current decision is GO. Stores the internal package and receipts; OWNER publishes manually. No eBay offer, publish or inventory write.",
     "After OWNER manual publication: authoritative SKU to Item ID discovery and GetItem LIVE readback. dryRun defaults true. With dryRun false, atomically link Registry, StockGuard monitoring and analytics internally. A draft or simulation is never enrollment. No marketplace write.",
     "Read managed listing monitoring for exact 24H/7D/30D windows. Unknown metrics stay null. Enrollment never proves data availability. No automatic END or marketplace writes.",
+    "Import bounded OWNER-attested visual observations from the exact canonical Luna product into a separate append-only Product Truth evidence ledger. Markings can support CLOSE identity only. An explicit base included-unit count can establish how many physical units Luna supplies in one base offer so constructed eBay pack math stays exact; it never rewrites Supplier Truth, becomes MANUFACTURER_BRAND or an identifier, or proves EXACT identity. Stores a durable deduplicated receipt with readback. No marketplace write or supplier purchase.",
+    "Import bounded OWNER-attested supplier-to-market visual comparisons against existing exact candidate evidence. Preserves source roles, content digests, locators, capture times, method/version, observed facts, confidence and image-region quality. The governed result is only SUPPORTS_CLOSE, CONTRADICTS or INCONCLUSIVE; visual similarity never proves EXACT or manufacturer brand, and offer differences remain explicit. Stores append-only evidence plus a durable deduplicated receipt with readback. No mass scan, marketplace write, publication or supplier purchase.",
   ]
   for (let i = 0; i < GOLDEN_PATH_MCP_TOOL_NAMES_V1.length; i++) {
     server.registerTool(GOLDEN_PATH_MCP_TOOL_NAMES_V1[i], { title: GOLDEN_PATH_MCP_TOOL_NAMES_V1[i], description: descriptions[i], inputSchema: schemas[i],
       // Internal durable receipts are writes. They are deliberately not disguised as read-only Tunnel tools.
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: i === 2 || i === 4 },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: i === 2 || i === 4 || i === 6 || i === 7 },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["openid", "profile"] }], marketplaceWriteCapability: "ABSENT", receiptWrites: "INTERNAL_ONLY", supplierCartAcquisition: [0, 1, 3].includes(i) ? "TEMPORARY_CART_WRITES_WITH_RESTORATION_READBACK_NO_PURCHASE" : "ABSENT" } }, async (args: unknown) => {
       try {
         const ctx = await createGoldenContextV1(principal, oauthResource)
@@ -46,7 +64,9 @@ export function registerGoldenPathControlToolsV1(server: McpServer, principal: S
         else if (i === 2) { const a = schemas[2].parse(args) as { candidate: z.infer<typeof goldenCandidateSchemaV1>; rows: z.infer<typeof goldenManualRowSchemaV1>[]; liveComparisonReview?: GoldenLiveComparisonInput }; result = await importGoldenManualV1(ctx, a.candidate, a.rows, a.liveComparisonReview) }
         else if (i === 3) { const a = schemas[3].parse(args) as { evaluationReceiptId: string }; result = await prepareGoldenRuntimeV1(ctx, a.evaluationReceiptId) }
         else if (i === 4) { const a = schemas[4].parse(args) as { packageReceiptId: string; itemId?: string; dryRun: boolean }; result = await reconcileGoldenRuntimeV1(ctx, a.packageReceiptId, a.itemId, a.dryRun) }
-        else { const a = schemas[5].parse(args) as { itemId: string }; result = await readGoldenMonitoringV1(ctx, a.itemId) }
+        else if (i === 5) { const a = schemas[5].parse(args) as { itemId: string }; result = await readGoldenMonitoringV1(ctx, a.itemId) }
+        else if (i === 6) { const a = schemas[6].parse(args) as { candidate: z.infer<typeof goldenCandidateSchemaV1>; source: z.infer<typeof ownerProductTruthSource>; observations: z.infer<typeof ownerProductTruthObservation>[] }; result = await importGoldenOwnerProductTruthV1(ctx, a.candidate, a.source, a.observations) }
+        else { const a = schemas[7].parse(args) as { candidate: z.infer<typeof goldenCandidateSchemaV1>; supplierObservation: z.infer<typeof supplierVisualObservation>; comparisons: { marketEvidenceId: string; marketplaceObservation: z.infer<typeof marketplaceVisualObservation>; relations: z.infer<typeof visualRelation>[] }[] }; result = await importGoldenVisualComparisonV1(ctx, a.candidate, a.supplierObservation, a.comparisons) }
         return { structuredContent: { result }, content: [{ type: "text" as const, text: "Seller OS returned Commercial Golden Path evidence and its durable receipt. Publication remains OWNER manual." }] }
       } catch (error) {
         const code = error instanceof Error && /^[A-Z][A-Z0-9_]{3,120}$/.test(error.message) ? error.message : "GOLDEN_PATH_FAILED_CLOSED"

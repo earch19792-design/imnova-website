@@ -464,6 +464,24 @@ export async function POST(request: Request) {
       { status: 409, headers: { "Cache-Control": "private, no-store" } })
     }
   }
+  if (action === "READ_NORMAL_LUNA_RESEARCH_ACQUISITION") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const result = await readMayelAutonomousResearchAcquisitionV1({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        sourceContexts: ["LUNA_PRE_RESEARCH"],
+        excludePreResearchBatchPlans: true,
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0,
+          certifiedBatchPlansExcluded: true } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
   if (action === "CLAIM_COMMERCIAL_TRACE_PRICING_ENRICHMENT") {
     try {
       const account = getEbaySellerAccountScopeConfiguration()

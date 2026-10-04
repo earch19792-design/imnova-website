@@ -62,6 +62,8 @@ import {
   verifySellerOsBrowserWorkloadLeaseV1,
 } from
   "@/lib/seller-os/browser-worker-capability-v1"
+import { certifySellerOsLunaShippingDurableWorkSignalV1 } from
+  "@/lib/seller-os/background-workload-optimization-v1"
 
 import { shippingRetryAfterAtV1 } from
   "@/lib/seller-os/economic-shipping-refresh-reclaim-loop-v1"
@@ -435,6 +437,12 @@ export async function POST(req: Request) {
             lunaPurchases: 0, marketplaceWrites: 0 } })
       }
       if (!requested.length) {
+        const durableWorkSignal =
+          certifySellerOsLunaShippingDurableWorkSignalV1(
+            body.durableWorkSignal)
+        if (body.durableWorkSignal && !durableWorkSignal) {
+          throw new Error("LUNA_SHIPPING_DURABLE_WORK_SIGNAL_INVALID")
+        }
         const workerInstance = runtimeInstanceId(body.runtimeInstanceId,
           auth.actorId)
         const authority = await verifySellerOsBrowserWorkloadLeaseV1({
@@ -454,20 +462,26 @@ export async function POST(req: Request) {
             cookieAccess: false, credentialAccess: false,
             lunaPurchases: 0, marketplaceWrites: 0 } })
         }
-        const gate = await auth.supabase.rpc("gate_seller_os_shipping_capture_v1", {
-          p_marketplace_account_key: auth.accountKey, p_worker_id: workerInstance,
-          p_leader_session_id: claimAuthoritySessionId(body.leaderSessionId),
-          p_action: "ACQUIRE",
-        })
-        if (gate.error) throw new Error("SHIPPING_CAPTURE_GATE_UNAVAILABLE")
-        const permit = listingAiRecord(gate.data)
-        if (permit.allowed !== true) {
-          return listingAiResponse({ success: true, jobs: [], acquisition: {
-            eligiblePendingJobCount: 0, claimedJobCount: 0,
-            suppressedDuplicatePoll: true, reasonCode: permit.reasonCode,
-            nextAttemptAt: permit.nextAttemptAt,
-          }, safety: { jobScans: 0, shippingClaims: 0, lunaRequests: 0,
-            marketplaceWrites: 0 } })
+        let permit: Record<string, unknown> = {}
+        if (!durableWorkSignal) {
+          const gate = await auth.supabase.rpc(
+            "gate_seller_os_shipping_capture_v1", {
+              p_marketplace_account_key: auth.accountKey,
+              p_worker_id: workerInstance,
+              p_leader_session_id:
+                claimAuthoritySessionId(body.leaderSessionId),
+              p_action: "ACQUIRE",
+            })
+          if (gate.error) throw new Error("SHIPPING_CAPTURE_GATE_UNAVAILABLE")
+          permit = listingAiRecord(gate.data)
+          if (permit.allowed !== true) {
+            return listingAiResponse({ success: true, jobs: [], acquisition: {
+              eligiblePendingJobCount: 0, claimedJobCount: 0,
+              suppressedDuplicatePoll: true, reasonCode: permit.reasonCode,
+              nextAttemptAt: permit.nextAttemptAt,
+            }, safety: { jobScans: 0, shippingClaims: 0, lunaRequests: 0,
+              marketplaceWrites: 0 } })
+          }
         }
         const qty1Job = await claimLunaShippingQty1OpportunityJobV1({
           supabase: auth.supabase, accountKey: auth.accountKey,
@@ -481,6 +495,7 @@ export async function POST(req: Request) {
             leaseConflictCount: 0, claimFailureCount: 0,
             nextAttemptAt: permit.nextAttemptAt },
           safety: { durableWriteScope: "LUNA_SHIPPING_QTY1_JOB_CLAIM",
+            durableWorkSignalWake: Boolean(durableWorkSignal),
             taxonomyExecutions: 0, economicsExecutions: 0,
             marketplaceWrites: 0, inventoryWrites: 0 } })
         const acquisition = await acquireLunaChromeShippingJobsV1({
@@ -505,6 +520,7 @@ export async function POST(req: Request) {
             nextAttemptAt: permit.nextAttemptAt },
           safety: { readOnly: false,
             durableWriteScope: "SELLER_OS_LUNA_SHIPPING_JOB_CLAIM_V1",
+            durableWorkSignalWake: Boolean(durableWorkSignal),
             cookieAccess: false, credentialAccess: false,
             lunaPurchases: 0, marketplaceWrites: 0 } })
       }

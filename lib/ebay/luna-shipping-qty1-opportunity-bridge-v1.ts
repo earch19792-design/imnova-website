@@ -35,6 +35,14 @@ const CLAIM_LIFETIME_MS = 9 * 60_000
 const MAX_ATTEMPTS = 2
 
 type Row = Record<string, any>
+type ReceiptBinding = Readonly<{
+  productId: string
+  variantId: string
+  supplierSku: string
+  sourceFingerprint: string
+  fieldTruthEvidenceDigest: string
+  destinationProfileDigest: string
+}>
 const row = (value: unknown): Row => value && typeof value === "object" &&
   !Array.isArray(value) ? value as Row : {}
 const rows = (value: unknown): Row[] => Array.isArray(value)
@@ -43,6 +51,18 @@ const digest = (value: string) => `sha256:${createHash("sha256")
   .update(value, "utf8").digest("hex")}`
 const nowIso = (now?: number) => new Date(now ?? Date.now()).toISOString()
 const destination = SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1
+
+export function lunaShippingQty1ReceiptMatchesBindingV1(
+  receipt: Row,
+  binding: ReceiptBinding,
+) {
+  return receipt.productId === binding.productId &&
+    receipt.variantId === binding.variantId &&
+    receipt.supplierSku === binding.supplierSku &&
+    receipt.sourceFingerprint === binding.sourceFingerprint &&
+    receipt.fieldTruthEvidenceDigest === binding.fieldTruthEvidenceDigest &&
+    receipt.destinationProfileDigest === binding.destinationProfileDigest
+}
 
 function validIdentity(value: Row) {
   return UUID.test(String(value.id ?? "")) &&
@@ -111,6 +131,15 @@ export async function ensureLunaShippingQty1OpportunityJobV1(input: Readonly<{
   const freshReceipt = await readLunaShippingQty1OpportunityReceiptV1({
     supabase: input.supabase, accountKey: input.accountKey,
     opportunityId: input.opportunityId, now: at,
+    binding: {
+      productId: exact.supplier_product_id,
+      variantId: exact.supplier_variant_id,
+      supplierSku: exact.supplier_sku,
+      sourceFingerprint: String(variant.source_fingerprint),
+      fieldTruthEvidenceDigest: String(row(variant.field_truth_v1)
+        .evidenceDigest),
+      destinationProfileDigest: destination.profileDigest,
+    },
   })
   if (freshReceipt) {
     const complete = await input.supabase.from(STORE).select("*")
@@ -331,10 +360,17 @@ export function certifyLunaShippingQty1ReceiptV1(job: Row, event: Row,
     status: "PROVEN" as const,
     jobId: job.job_id as string,
     receiptId: event.id as string,
+    opportunityId: job.opportunity_id as string,
+    productId: job.product_id as string,
+    variantId: job.variant_id as string,
+    supplierSku: job.sku as string,
+    sourceFingerprint: job.source_fingerprint as string,
+    fieldTruthEvidenceDigest: job.field_truth_evidence_digest as string,
     shippingAmountUsd: amount,
     currency: "USD" as const,
     quantity: 1 as const,
     destinationProfile: "LUNA_BOCA_RATON_US" as const,
+    destinationProfileDigest: payload.destinationProfileDigest as string,
     observedAt: payload.observedAt as string,
     freshUntil: new Date(observed +
       LIVE_LISTING_SHIPPING_MAXIMUM_AGE_SECONDS * 1000).toISOString(),
@@ -349,6 +385,7 @@ export async function readLunaShippingQty1OpportunityReceiptV1(input: Readonly<{
   accountKey: string
   opportunityId: string
   now?: number
+  binding?: ReceiptBinding
 }>) {
   const jobs = await input.supabase.from(STORE).select("*")
     .eq("account_key", input.accountKey)
@@ -369,7 +406,10 @@ export async function readLunaShippingQty1OpportunityReceiptV1(input: Readonly<{
         input.accountKey || row(run.data).marketplace !== "EBAY_US") continue
     const certified = certifyLunaShippingQty1ReceiptV1(job, row(event.data),
       String(row(event.data).created_at ?? ""), input.now ?? Date.now())
-    if (certified) return certified
+    if (certified && (!input.binding ||
+        lunaShippingQty1ReceiptMatchesBindingV1(certified, input.binding))) {
+      return certified
+    }
   }
   return null
 }

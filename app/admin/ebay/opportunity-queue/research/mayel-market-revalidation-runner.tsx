@@ -21,6 +21,26 @@ import {
 
 type JsonRecord = Record<string, unknown>
 
+type AutonomousAcquisitionSnapshot = Readonly<{
+  pendingPlanCount: number
+  claimablePlanCount: number
+  activeClaimCount: number
+  excludedBatchPlanCount: number
+  canaryState: string
+  acquisitionLane: "GLOBAL" | "NORMAL_LUNA" | "BLOCKED"
+}>
+
+function safeAcquisitionCount(value: unknown) {
+  const count = Number(value ?? 0)
+  return Number.isSafeInteger(count) && count >= 0 ? count : 0
+}
+
+function normalizePlanSelectionResult(value: unknown): JsonRecord {
+  const result = value && typeof value === "object"
+    ? value as JsonRecord : {}
+  return result.planId === undefined ? { ...result, planId: null } : result
+}
+
 function planIdFromLocation() {
   const value = new URLSearchParams(window.location.search)
     .get("mayelMarketRevalidation") ?? ""
@@ -86,6 +106,7 @@ async function authorizedPost(body: JsonRecord) {
 
 async function nextAuthorizedBatchPlanId(workerId: string,
   leaderSessionId: string) {
+  let acquisitionSnapshot: AutonomousAcquisitionSnapshot | null = null
   await authorizedPost({
     action: "PREPARE_AUTHORIZED_PRE_RESEARCH_BATCH_RUNNER",
     workerId, leaderSessionId,
@@ -93,21 +114,49 @@ async function nextAuthorizedBatchPlanId(workerId: string,
   const next = await authorizedPost({
     action: "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN",
   })
-  let result = next.result && typeof next.result === "object"
-    ? next.result as JsonRecord : {}
+  let result = normalizePlanSelectionResult(next.result)
+  const canaryState = typeof (next.canaryGate as JsonRecord | undefined)?.state ===
+    "string" ? String((next.canaryGate as JsonRecord).state) : "UNKNOWN"
   // Certification mode is a bounded Pre-Research lane. Do not fall through
   // into unrelated keyword research while an allowlist is active.
   if (result.planId === null &&
-      (next.canaryGate as JsonRecord | undefined)?.state === "OFF") {
+      canaryState === "OFF") {
     const keyword = await authorizedPost({
       action: "GET_NEXT_CURRENT_PACKAGE_KEYWORD_PLAN",
     })
-    result = keyword.result && typeof keyword.result === "object"
-      ? keyword.result as JsonRecord : {}
+    result = normalizePlanSelectionResult(keyword.result)
   }
-  return typeof result.planId === "string" &&
+  if (result.planId === null) {
+    const acquisitionLane = canaryState === "OFF" ? "GLOBAL"
+      : canaryState === "CANARY" ? "NORMAL_LUNA" : "BLOCKED"
+    const acquisition = await authorizedPost({
+      action: acquisitionLane === "NORMAL_LUNA"
+        ? "READ_NORMAL_LUNA_RESEARCH_ACQUISITION"
+        : "READ_AUTONOMOUS_RESEARCH_ACQUISITION",
+    })
+    const state = acquisition.result &&
+      typeof acquisition.result === "object"
+      ? acquisition.result as JsonRecord : {}
+    acquisitionSnapshot = Object.freeze({
+      pendingPlanCount: safeAcquisitionCount(state.pendingPlanCount),
+      claimablePlanCount: safeAcquisitionCount(state.claimablePlanCount),
+      activeClaimCount: safeAcquisitionCount(state.activeClaimCount),
+      excludedBatchPlanCount: safeAcquisitionCount(
+        state.excludedBatchPlanCount),
+      canaryState,
+      acquisitionLane,
+    })
+    const acquisitionAllowed = acquisitionLane === "GLOBAL" ||
+      acquisitionLane === "NORMAL_LUNA"
+    result = acquisitionAllowed &&
+      Number(state.claimablePlanCount ?? 0) > 0 &&
+      Number(state.activeClaimCount ?? 0) === 0
+      ? { planId: state.nextPlanId } : { planId: null }
+  }
+  const planId = typeof result.planId === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(result.planId) ? result.planId : null
+  return Object.freeze({ planId, acquisitionSnapshot })
 }
 
 function extensionCommand<T extends JsonRecord>(command: JsonRecord,
@@ -360,10 +409,21 @@ export function MayelMarketRevalidationRunner() {
         }
       }
       if (gateOnly) {
-        const nextPlanId = claimAuthorityGranted
-          ? await nextAuthorizedBatchPlanId(workerId, leaderSessionId) : null
+        const selection = claimAuthorityGranted
+          ? await nextAuthorizedBatchPlanId(workerId, leaderSessionId)
+          : { planId: null, acquisitionSnapshot: null }
+        const nextPlanId = selection.planId
         if (!nextPlanId) {
-          setState("Worker Research V2 disponible · sin lote o keyword de paquete actual pendiente")
+          const queueState = selection.acquisitionSnapshot
+          const queueDetail = queueState
+            ? ` · carril ${queueState.canaryState}/${queueState.acquisitionLane}` +
+              ` · cola ${queueState.pendingPlanCount}` +
+              ` · reclamables ${queueState.claimablePlanCount}` +
+              ` · activos ${queueState.activeClaimCount}` +
+              ` · lotes protegidos ${queueState.excludedBatchPlanCount}`
+            : ""
+          setState("Worker Research V2 disponible · sin lote o keyword de paquete actual pendiente" +
+            queueDetail)
           const delayMs = controller.nextDelayMs()
           await new Promise<void>((resolve) => {
             const reload = window.setTimeout(() => {
@@ -395,7 +455,8 @@ export function MayelMarketRevalidationRunner() {
         if (completed > 0) {
           heartbeat = await persistHeartbeat("IDLE")
           if (batchControlMode) {
-            planId = await nextAuthorizedBatchPlanId(workerId, leaderSessionId)
+            const nextSelection = await nextAuthorizedBatchPlanId(workerId, leaderSessionId)
+            planId = nextSelection.planId
             if (!planId) break
           }
         }

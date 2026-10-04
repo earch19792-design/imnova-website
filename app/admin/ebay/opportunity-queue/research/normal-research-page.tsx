@@ -8,6 +8,8 @@ import { Loop2Top20OpportunityPool } from "../../mobile-review/loop2-top20-oppor
 import { SmartStockingListingIntakeCard } from "./smart-stocking-listing-intake-card"
 import { MayelMarketRevalidationRunner } from
   "./mayel-market-revalidation-runner"
+import { AutonomousCategoryAnalysisV1 } from
+  "./autonomous-category-analysis-v1"
 import type { MarketOpportunityResearchV1 } from "@/lib/ebay/ebay-market-opportunity-research-v1"
 import type { CommercialIntelligenceUpgradeV1, ItemIdCanonicalFamilyBridgeV1 } from
   "@/lib/ebay/ebay-commercial-intelligence-upgrade-v1"
@@ -143,9 +145,11 @@ export default function MarketResearchPage() {
             </div>
           </div>
           <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-200">
-            <ShieldCheck className="h-3.5 w-3.5" /> 100% read-only
+            <ShieldCheck className="h-3.5 w-3.5" /> 0 escrituras eBay
           </span>
         </header>
+
+        <AutonomousCategoryAnalysisV1 />
 
         <SmartStockingListingIntakeCard />
 

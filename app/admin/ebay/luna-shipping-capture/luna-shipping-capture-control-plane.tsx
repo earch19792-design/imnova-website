@@ -26,7 +26,11 @@ import {
   createSellerOsBackgroundWorkloadControllerV1,
   holdSellerOsCrossTabBrowserLeaderV1,
   SELLER_OS_BACKGROUND_HEARTBEAT_INTERVAL_MS,
+  SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1,
+  publishSellerOsLunaShippingDurableWorkSignalV1,
+  readSellerOsLunaShippingDurableWorkSignalV1,
   sellerOsBackgroundMetricsPublisherV1,
+  type SellerOsLunaShippingDurableWorkSignalV1,
 } from "@/lib/seller-os/background-workload-optimization-v1"
 import {
   SELLER_OS_LEGACY_SHIPPING_RECOVERY_CLIENT_LOAD_BUDGET_V1,
@@ -42,6 +46,8 @@ import {
   isSellerOsOwnerRole,
   sellerOsAccessRoleFromUser,
 } from "@/lib/seller-os-access-control"
+import { sellerOsAuthenticatedFetchV1 } from
+  "@/lib/seller-os/seller-os-authenticated-fetch-v1"
 
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
@@ -482,12 +488,10 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
 async function adminPost(action: string, body: Record<string, unknown>,
   idempotencyKey?: string) {
   const startedAt = performance.now()
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session?.access_token) throw new Error("LUNA_SHIPPING_ADMIN_SESSION_REQUIRED")
-  const response = await fetch("/api/admin/ebay/luna-shipping-capture", {
+  const response = await sellerOsAuthenticatedFetchV1(
+    "/api/admin/ebay/luna-shipping-capture", {
     method: "POST", cache: "no-store",
     headers: { "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}) },
     body: JSON.stringify({ action, ...body }),
   })
@@ -615,6 +619,9 @@ export function LunaShippingCaptureControlPlane({
   const [heartbeatV2FreshUntil, setHeartbeatV2FreshUntil] =
     useState<number | null>(null)
   const [ownerAdminAuthenticated, setOwnerAdminAuthenticated] = useState(false)
+  const [durableRecoveryInFlight, setDurableRecoveryInFlight] = useState(false)
+  const [durableRecoveryStatus, setDurableRecoveryStatus] =
+    useState("LISTO")
   const triggerRef = useRef<(() => void) | null>(null)
   const liveTriggerRef = useRef<(() => void) | null>(null)
   const legacyRecoveryTriggerRef =
@@ -630,6 +637,8 @@ export function LunaShippingCaptureControlPlane({
   const refreshShippingExecutionObservationRef =
     useRef<(() => void) | null>(null)
   const heartbeatNowRef = useRef<(() => void) | null>(null)
+  const durableWorkRecoveryRef = useRef<(() => void) | null>(null)
+  const forceDurableWorkRecoveryRef = useRef<(() => void) | null>(null)
   const workerRunningRef = useRef(running)
   const workloadControllerRef = useRef<ReturnType<
     typeof createSellerOsBackgroundWorkloadControllerV1> | null>(null)
@@ -728,6 +737,11 @@ export function LunaShippingCaptureControlPlane({
     } | null = null
     let reconnectCurrentPort: (() => void) | null = null
     let removePageLifecycleListeners: (() => void) | null = null
+    let removeDurableWorkSignalListener: (() => void) | null = null
+    let durableWorkRecoveryTimer: number | null = null
+    let durableWorkRecoveryInFlight = false
+    let pendingDurableWorkSignal:
+      SellerOsLunaShippingDurableWorkSignalV1 | null = null
     let traceEvents: LunaShippingRuntimeTraceEventV1[] = []
     let exactLiveCandidateId: string | null = null
     const exactDispatchPersistencePending = new Set<string>()
@@ -1116,7 +1130,8 @@ export function LunaShippingCaptureControlPlane({
     }
 
     const loadJobs = async (candidateIds: readonly string[] | undefined,
-      nextMode: "CANARY" | "AUTO") => {
+      nextMode: "CANARY" | "AUTO",
+      durableWorkSignal?: SellerOsLunaShippingDurableWorkSignalV1) => {
       if (hasExactLiveTarget) {
         throw new Error("LUNA_EXACT_LIVE_TARGET_GLOBAL_QUEUE_FORBIDDEN")
       }
@@ -1125,7 +1140,8 @@ export function LunaShippingCaptureControlPlane({
       }
       const payload = await adminPost("resolve_jobs", { candidateIds,
         ...(nextMode === "AUTO" ? { runtimeInstanceId,
-          leaderSessionId: claimAuthoritySessionId } : {}) })
+          leaderSessionId: claimAuthoritySessionId,
+          ...(durableWorkSignal ? { durableWorkSignal } : {}) } : {}) })
       const durableNext = Date.parse(payload.acquisition?.nextAttemptAt ?? "")
       if (Number.isFinite(durableNext)) captureNextAttemptAt = Math.max(captureNextAttemptAt, durableNext)
       const resolved = Array.isArray(payload.jobs) ? payload.jobs : []
@@ -1361,6 +1377,98 @@ export function LunaShippingCaptureControlPlane({
         discoveryInFlight = false
       })
     }
+    const consumedWorkSignalKey =
+      `${SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1}:consumed-v2`
+    const scheduleDurableWorkRecovery = (delayMs = 2_000) => {
+      if (!active || durableWorkRecoveryTimer !== null ||
+          !pendingDurableWorkSignal) return
+      durableWorkRecoveryTimer = window.setTimeout(() => {
+        durableWorkRecoveryTimer = null
+        durableWorkRecoveryRef.current?.()
+      }, delayMs)
+    }
+    const attemptDurableWorkRecovery = () => {
+      const signal = pendingDurableWorkSignal
+      if (!signal || !active || hasExactLiveTarget ||
+          durableWorkRecoveryInFlight) return
+      if (busy || discoveryInFlight || !browserClaimLeaderRef.current ||
+          !serverClaimLeaderRef.current || !extensionReady ||
+          !canonicalBindingStatusRead ||
+          !canonicalDestinationBindingPresent || !activeJobStatusReady ||
+          !port) {
+        scheduleDurableWorkRecovery()
+        return
+      }
+      durableWorkRecoveryInFlight = true
+      discoveryInFlight = true
+      setDurableRecoveryInFlight(true)
+      setDurableRecoveryStatus("FORZANDO_RECLAMO_SEGURO")
+      workloadController.confirmDurableWorkSignal()
+      captureNextAttemptAt = 0
+      if (discoveryRetryTimer !== null) {
+        window.clearTimeout(discoveryRetryTimer)
+        discoveryRetryTimer = null
+      }
+      void loadJobs(undefined, "AUTO", signal).then((found) => {
+        if (!active) return
+        window.sessionStorage.setItem(consumedWorkSignalKey, signal.signalId)
+        if (pendingDurableWorkSignal?.signalId === signal.signalId) {
+          pendingDurableWorkSignal = null
+        }
+        setDurableRecoveryStatus(found
+          ? "TRABAJO_RECLAMADO" : "SIN_TRABAJO_ELEGIBLE")
+        if (!found) scheduleProductionAcquisition()
+      }).catch((recoveryError) => {
+        if (!active) return
+        setDurableRecoveryStatus(recoveryError instanceof Error
+          ? recoveryError.message : "DURABLE_WORK_RECOVERY_FAILED")
+        scheduleDurableWorkRecovery(DISCOVERY_RETRY_INTERVAL_MS)
+      }).finally(() => {
+        durableWorkRecoveryInFlight = false
+        discoveryInFlight = false
+        setDurableRecoveryInFlight(false)
+      })
+    }
+    durableWorkRecoveryRef.current = attemptDurableWorkRecovery
+    const queueDurableWorkSignal = (
+      signal: SellerOsLunaShippingDurableWorkSignalV1,
+    ) => {
+      if (window.sessionStorage.getItem(consumedWorkSignalKey) ===
+          signal.signalId) return
+      pendingDurableWorkSignal = signal
+      workloadController.confirmDurableWorkSignal()
+      if (discoveryRetryTimer !== null) {
+        window.clearTimeout(discoveryRetryTimer)
+        discoveryRetryTimer = null
+      }
+      attemptDurableWorkRecovery()
+    }
+    const consumeDurableWorkSignal = (raw: string | null) => {
+      const signal = readSellerOsLunaShippingDurableWorkSignalV1(raw)
+      if (signal) queueDurableWorkSignal(signal)
+    }
+    forceDurableWorkRecoveryRef.current = () => {
+      const signal = Object.freeze({
+        contractVersion: "SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_V1",
+        signalId: crypto.randomUUID(), queuedJobCount: 1,
+        observedAt: new Date().toISOString(),
+      }) satisfies SellerOsLunaShippingDurableWorkSignalV1
+      publishSellerOsLunaShippingDurableWorkSignalV1({
+        storage: window.localStorage, signalId: signal.signalId,
+        queuedJobCount: signal.queuedJobCount, observedAt: signal.observedAt,
+      })
+      queueDurableWorkSignal(signal)
+    }
+    const handleDurableWorkSignal = (event: StorageEvent) => {
+      if (event.key === SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1) {
+        consumeDurableWorkSignal(event.newValue)
+      }
+    }
+    window.addEventListener("storage", handleDurableWorkSignal)
+    removeDurableWorkSignalListener = () =>
+      window.removeEventListener("storage", handleDurableWorkSignal)
+    consumeDurableWorkSignal(window.localStorage.getItem(
+      SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1))
     void holdSellerOsCrossTabBrowserLeaderV1({
       scope: "LUNA_SHIPPING", signal: leadershipAbort.signal,
       onLeaderState: (leaderState) => {
@@ -1731,7 +1839,10 @@ export function LunaShippingCaptureControlPlane({
           void adminPost("record_shipping_execution_observation", {
             runtimeInstanceId, leaderSessionId: claimAuthoritySessionId,
             observation,
-          }).then(() => scheduleProductionAcquisition(0)).catch((error) => {
+          }).then(() => {
+            scheduleProductionAcquisition(0)
+            durableWorkRecoveryRef.current?.()
+          }).catch((error) => {
             activeJobStatusReady = false
             fail(error, "SHIPPING_EXECUTION_OBSERVATION_DURABILITY_FAILED")
           })
@@ -2588,15 +2699,21 @@ export function LunaShippingCaptureControlPlane({
       active = false
       reconnectGeneration += 1
       removePageLifecycleListeners?.()
+      removeDurableWorkSignalListener?.()
       if (portHandshakeTimer !== null) window.clearTimeout(portHandshakeTimer)
       if (dispatchReceiptTimer !== null) window.clearTimeout(dispatchReceiptTimer)
       if (traceFlushTimer !== null) window.clearTimeout(traceFlushTimer)
       if (discoveryRetryTimer !== null) {
         window.clearTimeout(discoveryRetryTimer)
       }
+      if (durableWorkRecoveryTimer !== null) {
+        window.clearTimeout(durableWorkRecoveryTimer)
+      }
       leadershipAbort.abort()
       flushCaptureProbeRef.current = null
       refreshShippingExecutionObservationRef.current = null
+      durableWorkRecoveryRef.current = null
+      forceDurableWorkRecoveryRef.current = null
       triggerRef.current = null
       liveTriggerRef.current = null
       legacyRecoveryTriggerRef.current = null
@@ -2659,6 +2776,7 @@ export function LunaShippingCaptureControlPlane({
         // periods cannot leave recovery gated by a stale/rejected observation.
         if (serverClaimLeaderRef.current) {
           refreshShippingExecutionObservationRef.current?.()
+          durableWorkRecoveryRef.current?.()
         }
         controller?.recordProbeSuccess(
           Number(payload.backgroundRequestLatencyMs ?? 0))
@@ -2761,8 +2879,19 @@ export function LunaShippingCaptureControlPlane({
           ? "Otra pestaña controla la conexión. Esta página espera su turno automáticamente."
           : "Estado actual: conexión de captura no disponible."}</p> : null}
         <p>El trabajo pendiente permanece guardado.</p>
+        <p>Autorrecuperación: {durableRecoveryInFlight
+          ? "reclamando trabajo" : durableRecoveryStatus}</p>
         {historicalCapture ? <p>Última captura certificada: PASS · {historicalCapture.timestamp.slice(0, 10)}</p> : null}
       </div>
+      {!liveTarget ? <button type="button"
+        disabled={!ownerAdminAuthenticated || !connected ||
+          !browserClaimLeader || !serverLeaderLeaseActive ||
+          !canonicalBindingStatusReady || !canonicalDestinationBound ||
+          running || durableRecoveryInFlight}
+        onClick={() => forceDurableWorkRecoveryRef.current?.()}
+        className="mt-4 w-full rounded-2xl border border-amber-200/40 px-5 py-3 font-black text-amber-100 disabled:cursor-not-allowed disabled:opacity-40">
+        Reintentar trabajo pendiente ahora
+      </button> : null}
       <details className="mt-5">
         <summary className="cursor-pointer text-sm font-bold">Ver detalles</summary>
       {!liveTarget ? <button type="button" disabled={!canStartFinalCanary}
