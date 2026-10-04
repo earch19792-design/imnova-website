@@ -37,6 +37,15 @@ type LunaVariantRow = {
   sku: string | null
 }
 
+type ManualLinkRow = {
+  ebay_item_id: string
+  verification_status: string
+  opportunity_id: string
+  candidate_key: string
+  supplier_sku: string | null
+  supplier_variant_id: string | null
+}
+
 export type EbayUnmanagedLiveIdentityCandidateV1 = Readonly<{
   opportunityId: string
   candidateKey: string
@@ -223,7 +232,8 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
   if (!listings.length) return Object.freeze({
     contractVersion: EBAY_UNMANAGED_LIVE_AUTO_INTAKE_CONTRACT_V1,
     currentLiveInspected: 0, unmanagedDetected: 0, autoLinked: 0,
-    ambiguous: 0, conflicts: 0, deferred: 0, outcomes: Object.freeze([]),
+    manualRegistrationsRepaired: 0, ambiguous: 0, conflicts: 0, deferred: 0,
+    outcomes: Object.freeze([]),
     humanClicks: 0, titleInferenceUsed: false, marketplaceWrites: 0,
   })
   const itemIds = listings.map((listing) => listing.itemId)
@@ -253,7 +263,7 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
         .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
         .in("ebay_item_id", itemIds).limit(itemIds.length * 2),
       supabase.from("ebay_manual_listing_links")
-        .select("ebay_item_id,verification_status,candidate_key")
+        .select("ebay_item_id,verification_status,opportunity_id,candidate_key,supplier_sku,supplier_variant_id")
         .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
         .in("ebay_item_id", itemIds).limit(itemIds.length * 2),
       packageIds.length
@@ -334,11 +344,7 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
     .map((authority) => String(authority.ebay_item_id)))
   const decidedItemIds = new Set(latestDecisions.map((decision) =>
     String(decision.ebay_item_id)))
-  const conflictingItemIds = new Set(
-    ((manualRead.data ?? []) as Array<JsonRecord>)
-      .map((link) => String(link.ebay_item_id))
-      .filter((itemId) => !managedItemIds.has(itemId)),
-  )
+  const conflictingItemIds = new Set<string>()
   for (const itemId of decidedItemIds) {
     if (!managedItemIds.has(itemId)) conflictingItemIds.add(itemId)
   }
@@ -351,6 +357,36 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
   for (const quarantine of (quarantineRead.data ?? []) as Array<JsonRecord>) {
     if (quarantine.quarantine_state === "ACTIVE") {
       conflictingItemIds.add(String(quarantine.ebay_item_id))
+    }
+  }
+  const manualLinks = (manualRead.data ?? []) as ManualLinkRow[]
+  const preliminaryClassifications = listings.map((listing) =>
+    classifyEbayUnmanagedLiveListingV1({
+      listing, managedItemIds, conflictingItemIds, opportunities, packages,
+      lunaVariants: (lunaRead.data ?? []) as LunaVariantRow[],
+    }))
+  const repairableManualItemIds = new Set(manualLinks.flatMap((link) => {
+    if (managedItemIds.has(link.ebay_item_id)) return []
+    const classification = preliminaryClassifications.find((row) =>
+      row.itemId === link.ebay_item_id)
+    const candidate = classification?.classification ===
+        "EXACT_DETERMINISTIC_MATCH"
+      ? classification.candidate : null
+    return candidate &&
+      link.opportunity_id === candidate.opportunityId &&
+      link.candidate_key === candidate.candidateKey &&
+      link.supplier_sku === candidate.supplierSku &&
+      link.supplier_variant_id === candidate.supplierVariantId
+      ? [link.ebay_item_id] : []
+  }))
+  // A pending or legacy verified manual registration is repairable only when
+  // the new official LIVE read independently proves the exact same canonical
+  // opportunity and Luna tuple. Any mismatch remains a conflict; tombstones,
+  // prior decisions and quarantines were already added above and stay closed.
+  for (const link of manualLinks) {
+    if (!managedItemIds.has(link.ebay_item_id) &&
+        !repairableManualItemIds.has(link.ebay_item_id)) {
+      conflictingItemIds.add(link.ebay_item_id)
     }
   }
   const classifications = listings.map((listing) =>
@@ -464,6 +500,8 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
         mode: result.manualLiveLinkage.mode,
         supplierLinkage: "CERTIFIED",
         stockGuard: result.stockGuardRefresh?.status ?? null,
+        manualRegistrationRepaired:
+          repairableManualItemIds.has(classification.itemId),
         humanClicks: 0, marketplaceWrites: 0 })
     } catch (error) {
       outcomes.push({ ...classification, status: "CONFLICT",
@@ -478,6 +516,8 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
     currentLiveInspected: listings.length,
     unmanagedDetected: unmanaged.length,
     autoLinked: outcomes.filter((row) => row.status === "AUTO_LINKED").length,
+    manualRegistrationsRepaired: outcomes.filter((row) =>
+      row.status === "AUTO_LINKED" && row.manualRegistrationRepaired === true).length,
     ambiguous: classifications.filter((row) =>
       row.classification === "AMBIGUOUS_MATCH").length,
     conflicts: outcomes.filter((row) =>
