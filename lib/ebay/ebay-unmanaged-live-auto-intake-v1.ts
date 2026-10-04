@@ -232,7 +232,8 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
   if (!listings.length) return Object.freeze({
     contractVersion: EBAY_UNMANAGED_LIVE_AUTO_INTAKE_CONTRACT_V1,
     currentLiveInspected: 0, unmanagedDetected: 0, autoLinked: 0,
-    manualRegistrationsRepaired: 0, ambiguous: 0, conflicts: 0, deferred: 0,
+    manualRegistrationsRepaired: 0, existingDecisionAuthoritiesRepaired: 0,
+    ambiguous: 0, conflicts: 0, deferred: 0,
     outcomes: Object.freeze([]),
     humanClicks: 0, titleInferenceUsed: false, marketplaceWrites: 0,
   })
@@ -249,7 +250,7 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
     skuOpportunityRead] =
     await Promise.all([
       supabase.from("seller_os_luna_linkage_decisions")
-        .select("ebay_item_id,decision,luna_product_id,luna_variant_id,luna_sku")
+        .select("decision_id,ebay_item_id,ebay_sku,decision,luna_product_id,luna_variant_id,luna_sku")
         .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
         .in("ebay_item_id", itemIds).order("decision_version", { ascending: false })
         .limit(itemIds.length * 4),
@@ -342,12 +343,7 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
   const managedItemIds = new Set([...latestAuthorityByItemId.values()]
     .filter((authority) => authority.lifecycle_state === "ACTIVE")
     .map((authority) => String(authority.ebay_item_id)))
-  const decidedItemIds = new Set(latestDecisions.map((decision) =>
-    String(decision.ebay_item_id)))
   const conflictingItemIds = new Set<string>()
-  for (const itemId of decidedItemIds) {
-    if (!managedItemIds.has(itemId)) conflictingItemIds.add(itemId)
-  }
   for (const authority of latestAuthorityByItemId.values()) {
     if (authority.lifecycle_state === "UNLINKED" ||
         authority.lifecycle_state === "INVALIDATED") {
@@ -365,6 +361,27 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
       listing, managedItemIds, conflictingItemIds, opportunities, packages,
       lunaVariants: (lunaRead.data ?? []) as LunaVariantRow[],
     }))
+  const repairableDecisionByItemId = new Map<string, string>()
+  for (const decision of latestDecisions) {
+    const itemId = text(decision.ebay_item_id)
+    if (!itemId || managedItemIds.has(itemId)) continue
+    const classification = preliminaryClassifications.find((row) =>
+      row.itemId === itemId)
+    const candidate = classification?.classification ===
+        "EXACT_DETERMINISTIC_MATCH"
+      ? classification.candidate : null
+    const decisionId = text(decision.decision_id)
+    if (candidate && decisionId &&
+        decision.decision === "APPROVE_EXACT_LINKAGE" &&
+        text(decision.ebay_sku) === classification?.customLabel &&
+        text(decision.luna_product_id) === candidate.supplierProductId &&
+        text(decision.luna_variant_id) === candidate.supplierVariantId &&
+        text(decision.luna_sku) === candidate.supplierSku) {
+      repairableDecisionByItemId.set(itemId, decisionId)
+    } else {
+      conflictingItemIds.add(itemId)
+    }
+  }
   const repairableManualItemIds = new Set(manualLinks.flatMap((link) => {
     if (managedItemIds.has(link.ebay_item_id)) return []
     const classification = preliminaryClassifications.find((row) =>
@@ -422,6 +439,36 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
     }
     if (classification.classification !== "ALREADY_MANAGED" &&
         !conflictingItemIds.has(classification.itemId)) {
+      const repairDecisionId = repairableDecisionByItemId.get(
+        classification.itemId)
+      if (repairDecisionId) {
+        attempted += 1
+        try {
+          const linkAuthority = await ensureStockguardAuthorityFromDecisionP0({
+            supabase, accountKey: input.accountKey,
+            ebayItemId: classification.itemId,
+            sourceDecisionId: repairDecisionId,
+            actorUserId: null,
+            automatedDeterministic: true,
+          })
+          if (!linkAuthority.stockguardEligible || !linkAuthority.authority) {
+            outcomes.push({ ...classification, status: "CONFLICT",
+              reasonCode: "UNMANAGED_LIVE_EXISTING_DECISION_STOCKGUARD_AUTHORITY_REQUIRED" })
+            continue
+          }
+          outcomes.push({ ...classification, status: "AUTO_LINKED",
+            mode: "EXISTING_EXACT_DECISION", supplierLinkage: "CERTIFIED",
+            stockGuard: "MONITORING_ENROLLED",
+            stockguardAuthorityId: linkAuthority.authority.authority_id,
+            existingDecisionAuthorityRepaired: true,
+            durableReadbackMatch: true, ownerActionRequired: false,
+            humanClicks: 0, marketplaceWrites: 0 })
+        } catch {
+          outcomes.push({ ...classification, status: "CONFLICT",
+            reasonCode: "UNMANAGED_LIVE_EXISTING_DECISION_STOCKGUARD_AUTHORITY_REQUIRED" })
+        }
+        continue
+      }
       // Reuse the same bounded intake slot. Relists inherit only database-
       // proven lineage; a legacy Product Truth projection cannot suppress it.
       const inherited = await reconcileRelistSupplierHandoffV1({
@@ -518,6 +565,9 @@ export async function autoIngestUnmanagedEbayLiveListingsV1(
     autoLinked: outcomes.filter((row) => row.status === "AUTO_LINKED").length,
     manualRegistrationsRepaired: outcomes.filter((row) =>
       row.status === "AUTO_LINKED" && row.manualRegistrationRepaired === true).length,
+    existingDecisionAuthoritiesRepaired: outcomes.filter((row) =>
+      row.status === "AUTO_LINKED" &&
+      row.existingDecisionAuthorityRepaired === true).length,
     ambiguous: classifications.filter((row) =>
       row.classification === "AMBIGUOUS_MATCH").length,
     conflicts: outcomes.filter((row) =>
