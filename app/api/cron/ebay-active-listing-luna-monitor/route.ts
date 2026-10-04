@@ -246,6 +246,17 @@ export async function POST(req: Request) {
         })
         return NextResponse.json({ success: false, status: "degraded",
           currentLiveAuthority: liveRecovery.authority,
+          recoveryDiagnostic: liveRecovery.live ? {
+            recoveryStatus: liveRecovery.status,
+            officialReadAttempted: liveRecovery.officialReadAttempted,
+            callCount: liveRecovery.live.calls.length,
+            discoveryStatus: liveRecovery.live.discovery.status,
+            discoveredListingRows:
+              liveRecovery.live.discovery.currentLiveListings.length,
+            gapCodes: liveRecovery.live.discovery.gapCodes,
+            marketplaceCertification:
+              liveRecovery.live.discovery.marketplaceCertification,
+          } : null,
           ownerActionRequired: false,
           safety: { marketplaceWrites: 0, lunaWrites: 0,
             falseZeroPrevented: true } }, { status: 503 })
