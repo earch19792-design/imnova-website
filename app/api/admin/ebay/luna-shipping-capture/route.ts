@@ -452,7 +452,17 @@ export async function POST(req: Request) {
         const durableWorkSignal =
           certifySellerOsLunaShippingDurableWorkSignalV1(
             body.durableWorkSignal)
-        if (body.durableWorkSignal && !durableWorkSignal) {
+        // A browser wake can outlive its 30-minute transport window while the
+        // durable Quick Pick row remains pending. Revalidate that stale hint
+        // against the server queue; only proven work may bypass idle backoff.
+        const serverCertifiedQuickPickWake = Boolean(
+          body.durableWorkSignal && !durableWorkSignal &&
+          await readQuickPickShippingPriorityCandidateV1({
+            supabase: auth.supabase,
+            accountKey: auth.accountKey,
+          }))
+        if (body.durableWorkSignal && !durableWorkSignal &&
+            !serverCertifiedQuickPickWake) {
           throw new Error("LUNA_SHIPPING_DURABLE_WORK_SIGNAL_INVALID")
         }
         const workerInstance = runtimeInstanceId(body.runtimeInstanceId,
@@ -475,7 +485,7 @@ export async function POST(req: Request) {
             lunaPurchases: 0, marketplaceWrites: 0 } })
         }
         let permit: Record<string, unknown> = {}
-        if (!durableWorkSignal) {
+        if (!durableWorkSignal && !serverCertifiedQuickPickWake) {
           const gate = await auth.supabase.rpc(
             "gate_seller_os_shipping_capture_v1", {
               p_marketplace_account_key: auth.accountKey,
@@ -507,7 +517,8 @@ export async function POST(req: Request) {
             leaseConflictCount: 0, claimFailureCount: 0,
             nextAttemptAt: permit.nextAttemptAt },
           safety: { durableWriteScope: "LUNA_SHIPPING_QTY1_JOB_CLAIM",
-            durableWorkSignalWake: Boolean(durableWorkSignal),
+            durableWorkSignalWake: Boolean(durableWorkSignal) ||
+              serverCertifiedQuickPickWake,
             taxonomyExecutions: 0, economicsExecutions: 0,
             marketplaceWrites: 0, inventoryWrites: 0 } })
         const acquisition = await acquireLunaChromeShippingJobsV1({
@@ -532,7 +543,8 @@ export async function POST(req: Request) {
             nextAttemptAt: permit.nextAttemptAt },
           safety: { readOnly: false,
             durableWriteScope: "SELLER_OS_LUNA_SHIPPING_JOB_CLAIM_V1",
-            durableWorkSignalWake: Boolean(durableWorkSignal),
+            durableWorkSignalWake: Boolean(durableWorkSignal) ||
+              serverCertifiedQuickPickWake,
             cookieAccess: false, credentialAccess: false,
             lunaPurchases: 0, marketplaceWrites: 0 } })
       }
