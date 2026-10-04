@@ -7,6 +7,8 @@ import { publishSellerOsLunaShippingDurableWorkSignalV1 } from
 import { sellerOsAuthenticatedFetchV1 } from
   "@/lib/seller-os/seller-os-authenticated-fetch-v1"
 
+const AUTONOMOUS_CATEGORY_ANALYSIS_UI_TIMEOUT_MS = 120_000
+
 type JsonRecord = Record<string, unknown>
 type CategoryCandidate = JsonRecord & {
   decision?: string
@@ -60,16 +62,22 @@ export function AutonomousCategoryAnalysisV1() {
   const [category, setCategory] = useState("Pet Supplies")
   const [targetNetProfit, setTargetNetProfit] = useState(4)
   const [running, setRunning] = useState(false)
+  const [timedOut, setTimedOut] = useState(false)
   const [error, setError] = useState("")
   const [result, setResult] = useState<CategoryResult | null>(null)
 
   async function run() {
     setRunning(true)
+    setTimedOut(false)
     setError("")
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(),
+      AUTONOMOUS_CATEGORY_ANALYSIS_UI_TIMEOUT_MS)
     try {
       const response = await sellerOsAuthenticatedFetchV1(
         "/api/admin/ebay/autonomous-category-analysis", {
           method: "POST", cache: "no-store",
+          signal: controller.signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "RUN_STOCKING_BATCH", category,
             scanLimit: 100, targetDrafts: 10, targetNetProfit }),
@@ -90,10 +98,14 @@ export function AutonomousCategoryAnalysisV1() {
       }
       setResult(payload.result)
     } catch (caught) {
-      setResult(null)
-      setError(caught instanceof Error ? caught.message
-        : "AUTONOMOUS_CATEGORY_ANALYSIS_FAILED")
+      const requestTimedOut = controller.signal.aborted
+      setTimedOut(requestTimedOut)
+      setError(requestTimedOut
+        ? "El intento tardó demasiado y la pantalla fue liberada. El trabajo durable no se pierde; usa Forzar reintento seguro cuando el servicio se recupere."
+        : caught instanceof Error ? caught.message
+          : "AUTONOMOUS_CATEGORY_ANALYSIS_FAILED")
     } finally {
+      window.clearTimeout(timeoutId)
       setRunning(false)
     }
   }
@@ -128,7 +140,8 @@ export function AutonomousCategoryAnalysisV1() {
       <button type="button" onClick={() => void run()}
         disabled={running || !category.trim() || targetNetProfit < 4}
         className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
-        {running ? "Preparando lote…" : "Buscar 10 borradores"}
+        {running ? "Preparando lote…" : timedOut
+          ? "Forzar reintento seguro" : "Buscar 10 borradores"}
       </button>
     </div>
 
