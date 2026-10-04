@@ -75,6 +75,12 @@ function actionable(value: unknown) {
   return candidate && candidate !== "NONE" ? candidate : null
 }
 
+function safeFailureCode(error: unknown) {
+  const candidate = error instanceof Error ? error.message : ""
+  return /^[A-Z][A-Z0-9_]{2,119}$/.test(candidate)
+    ? candidate : "LUNA_QUICK_PICK_MATERIALIZATION_FAILED"
+}
+
 function marker(value: unknown) {
   const candidate = record(value)
   return candidate.contractVersion ===
@@ -806,18 +812,34 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
 
   const before = new Map<string, Awaited<ReturnType<
     typeof materializeSellerOsDeterministicFactoryCandidateV1>>>()
+  const materializationFailures = new Map<string, string>()
   const pending: RequiredSpecificsBatchProductV1[] = []
   const initialMaterializations = await mapWithBoundedConcurrency(
-    claimed, MATERIALIZATION_CONCURRENCY, async (entry) => ({ entry,
-      materialized: await materializeSellerOsDeterministicFactoryCandidateV1({
-        supabase: input.supabase, accountKey: input.accountKey,
-        opportunityId: entry.candidate.rowId,
-        candidateKey: entry.candidate.candidateKey,
-        taxonomyReader: input.taxonomyReader,
-        productIdentifierPolicyReader: input.productIdentifierPolicyReader,
-      }),
-    }))
-  for (const { entry, materialized } of initialMaterializations) {
+    claimed, MATERIALIZATION_CONCURRENCY, async (entry) => {
+      try {
+        return { entry,
+          materialized:
+            await materializeSellerOsDeterministicFactoryCandidateV1({
+              supabase: input.supabase, accountKey: input.accountKey,
+              opportunityId: entry.candidate.rowId,
+              candidateKey: entry.candidate.candidateKey,
+              taxonomyReader: input.taxonomyReader,
+              productIdentifierPolicyReader:
+                input.productIdentifierPolicyReader,
+            }),
+          failureCode: null }
+      } catch (error) {
+        return { entry, materialized: null,
+          failureCode: safeFailureCode(error) }
+      }
+    })
+  for (const { entry, materialized, failureCode } of
+    initialMaterializations) {
+    if (!materialized) {
+      materializationFailures.set(entry.candidate.radarCandidateId,
+        failureCode ?? "LUNA_QUICK_PICK_MATERIALIZATION_FAILED")
+      continue
+    }
     before.set(entry.candidate.radarCandidateId, materialized)
     if (validBatchInput(materialized.requiredSpecificsBatchInput,
           entry.candidate)
@@ -829,7 +851,9 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     }
   }
 
-  const claimedByCandidate = new Map(claimed.map((entry) =>
+  const continuableClaimed = claimed.filter((entry) =>
+    !materializationFailures.has(entry.candidate.radarCandidateId))
+  const claimedByCandidate = new Map(continuableClaimed.map((entry) =>
     [entry.candidate.radarCandidateId, entry]))
   const baseAiResolver = input.aiResolver === undefined
     ? createOpenAiRequiredSpecificsBatchResolverV1() : input.aiResolver
@@ -850,7 +874,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   const resolvedBatches: Awaited<ReturnType<
     typeof resolveMarketplaceRequiredSpecificsBatchV1>>[] = []
   let resolverReasonCode: string | null = null
-  if (claimed.some((entry) => {
+  if (continuableClaimed.some((entry) => {
     const initial = before.get(entry.candidate.radarCandidateId)
     return (Array.isArray(initial?.unsupportedRequiredSpecifics)
       ? initial.unsupportedRequiredSpecifics.length : 0) > 0
@@ -936,16 +960,30 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     sourceConflictDetectedCount: 0,
   }
   const finalMaterializations = await mapWithBoundedConcurrency(
-    claimed, MATERIALIZATION_CONCURRENCY, async (entry) => ({ entry,
-      materialized: await materializeSellerOsDeterministicFactoryCandidateV1({
-        supabase: input.supabase, accountKey: input.accountKey,
-        opportunityId: entry.candidate.rowId,
-        candidateKey: entry.candidate.candidateKey,
-        taxonomyReader: input.taxonomyReader,
-        productIdentifierPolicyReader: input.productIdentifierPolicyReader,
-      }),
-    }))
-  for (const { entry, materialized } of finalMaterializations) {
+    continuableClaimed, MATERIALIZATION_CONCURRENCY, async (entry) => {
+      try {
+        return { entry,
+          materialized:
+            await materializeSellerOsDeterministicFactoryCandidateV1({
+              supabase: input.supabase, accountKey: input.accountKey,
+              opportunityId: entry.candidate.rowId,
+              candidateKey: entry.candidate.candidateKey,
+              taxonomyReader: input.taxonomyReader,
+              productIdentifierPolicyReader:
+                input.productIdentifierPolicyReader,
+            }),
+          failureCode: null }
+      } catch (error) {
+        return { entry, materialized: null,
+          failureCode: safeFailureCode(error) }
+      }
+    })
+  for (const { entry, materialized, failureCode } of finalMaterializations) {
+    if (!materialized) {
+      materializationFailures.set(entry.candidate.radarCandidateId,
+        failureCode ?? "LUNA_QUICK_PICK_MATERIALIZATION_FAILED")
+      continue
+    }
     after.set(entry.candidate.radarCandidateId, materialized)
     reevaluated += 1
   }
@@ -960,6 +998,34 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const assessment = record(row.assessment)
     const current = marker(assessment.quickPickRequiredSpecificsContinuationV1)
     if (!current) continue
+    const materializationFailure = materializationFailures.get(
+      entry.candidate.radarCandidateId)
+    if (materializationFailure) {
+      const completion = await input.supabase.from(
+        "ebay_luna_opportunity_queue")
+        .update({ assessment: { ...assessment,
+          quickPickRequiredSpecificsContinuationV1: {
+            ...current,
+            completedAt: new Date().toISOString(),
+            automaticResolutionExhausted: true,
+            finalDisposition: "BLOCKED_AUTONOMOUS",
+            exactBlocker: materializationFailure,
+            resolverStatus: "COMPLETED_WITH_SAFE_RESIDUAL",
+            resolverReasonCode: materializationFailure,
+            resolutionTrigger: input.trigger ?? "IMMEDIATE",
+            factInvented: false,
+            marketplaceWrites: 0,
+          } } })
+        .eq("id", row.id).eq("candidate_key", row.candidate_key)
+        .select("id,candidate_key,assessment").single()
+      const storedMarker = marker(record(record(completion.data).assessment)
+        .quickPickRequiredSpecificsContinuationV1)
+      if (completion.error || !completion.data || !storedMarker
+          || !storedMarker.completedAt) {
+        throw new Error("LUNA_QUICK_PICK_SPECIFICS_COMPLETION_WRITE_FAILED")
+      }
+      continue
+    }
     const initial = before.get(entry.candidate.radarCandidateId)
     const refreshed = after.get(entry.candidate.radarCandidateId)
     const resolution = record(
@@ -1099,6 +1165,9 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   return Object.freeze({ attempted: candidateKeys.length,
     claimed: claimed.length,
     productsEvaluated: autonomousResults.length,
+    materializationFailureCount: materializationFailures.size,
+    materializationFailureCodes: Object.freeze([...new Set(
+      materializationFailures.values())].sort()),
     requiredItemSpecificsCount: pending.reduce((sum, product) =>
       sum + product.unresolvedRequiredAspects.length, 0),
     deterministicResolvedCount:
