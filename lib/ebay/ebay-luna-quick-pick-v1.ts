@@ -96,6 +96,21 @@ export function classifyLunaQuickPickDemandDiscoveryV1(
   return "BLOCK_DEMAND_UNRESOLVED" as const
 }
 
+export function mergeQuickPickMarketTestRadarFamiliesV1(
+  radarPayload: unknown,
+  marketTestRadarFamilies: readonly JsonRecord[],
+) {
+  const activeRoot = record(radarPayload)
+  return Object.freeze({ ...activeRoot, status: "AVAILABLE" as const,
+    // Quick Pick is a directed exact-identity request. Keep those requested
+    // families inside the adapter's bounded family window before considering
+    // the broader durable Radar cohort.
+    families: Object.freeze([
+      ...marketTestRadarFamilies,
+      ...rows(activeRoot.families),
+    ]) })
+}
+
 export type LunaQuickPickVariantV1 = Readonly<{
   lunaProductId: string
   lunaVariantId: string
@@ -1179,9 +1194,10 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     activeRadarPayload = refreshedRadar.data
   }
   if (marketTestRadarFamilies.length) {
-    const activeRoot = record(activeRadarPayload)
-    activeRadarPayload = { ...activeRoot, status: "AVAILABLE",
-      families: [...rows(activeRoot.families), ...marketTestRadarFamilies] }
+    activeRadarPayload = mergeQuickPickMarketTestRadarFamiliesV1(
+      activeRadarPayload,
+      marketTestRadarFamilies,
+    )
   }
   if (discoveryResults.some(({ result }) =>
       classifyLunaQuickPickDemandDiscoveryV1(result).startsWith("CONTINUE_"))) {
