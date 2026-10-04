@@ -32,6 +32,12 @@ function safeAcquisitionCount(value: unknown) {
   return Number.isSafeInteger(count) && count >= 0 ? count : 0
 }
 
+function normalizePlanSelectionResult(value: unknown): JsonRecord {
+  const result = value && typeof value === "object"
+    ? value as JsonRecord : {}
+  return result.planId === undefined ? { ...result, planId: null } : result
+}
+
 function planIdFromLocation() {
   const value = new URLSearchParams(window.location.search)
     .get("mayelMarketRevalidation") ?? ""
@@ -105,8 +111,7 @@ async function nextAuthorizedBatchPlanId(workerId: string,
   const next = await authorizedPost({
     action: "GET_NEXT_AUTHORIZED_PRE_RESEARCH_BATCH_PLAN",
   })
-  let result = next.result && typeof next.result === "object"
-    ? next.result as JsonRecord : {}
+  let result = normalizePlanSelectionResult(next.result)
   // Certification mode is a bounded Pre-Research lane. Do not fall through
   // into unrelated keyword research while an allowlist is active.
   if (result.planId === null &&
@@ -114,8 +119,7 @@ async function nextAuthorizedBatchPlanId(workerId: string,
     const keyword = await authorizedPost({
       action: "GET_NEXT_CURRENT_PACKAGE_KEYWORD_PLAN",
     })
-    result = keyword.result && typeof keyword.result === "object"
-      ? keyword.result as JsonRecord : {}
+    result = normalizePlanSelectionResult(keyword.result)
     if (result.planId === null) {
       const acquisition = await authorizedPost({
         action: "READ_AUTONOMOUS_RESEARCH_ACQUISITION",
@@ -433,8 +437,7 @@ export function MayelMarketRevalidationRunner() {
         if (completed > 0) {
           heartbeat = await persistHeartbeat("IDLE")
           if (batchControlMode) {
-            const nextSelection = await nextAuthorizedBatchPlanId(
-              workerId, leaderSessionId)
+            const nextSelection = await nextAuthorizedBatchPlanId(workerId, leaderSessionId)
             planId = nextSelection.planId
             if (!planId) break
           }
