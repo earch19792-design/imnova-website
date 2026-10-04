@@ -5,8 +5,10 @@ import {
   MINIMUM_TRUTHFUL_LISTING_READINESS_V1,
   type MinimumTruthfulGateStateV1,
 } from "./ebay-minimum-truthful-listing-readiness-v1"
-import { isCurrentCommercialCandidateStorageKeyV1 } from
-  "./ebay-current-commercial-candidate-identity-v1"
+import {
+  deriveCurrentCommercialCandidateIdentityV1,
+  isCurrentCommercialCandidateStorageKeyV1,
+} from "./ebay-current-commercial-candidate-identity-v1"
 
 export const QUICK_PICK_MINIMUM_READINESS_CONTINUATION_V1 =
   "QUICK_PICK_MINIMUM_READINESS_CONTINUATION_V1" as const
@@ -78,10 +80,23 @@ export function projectQuickPickMinimumTruthfulReadinessV1(input: Readonly<{
   const packageExact = input.listingPackage.opportunity_id === opportunity.id
     && input.listingPackage.candidate_key === opportunity.candidate_key
     && /^[0-9a-f-]{36}$/i.test(text(input.listingPackage.id, 80))
+  let derivedCandidateId = ""
+  try {
+    derivedCandidateId = deriveCurrentCommercialCandidateIdentityV1({
+      accountKey: text(input.listingPackage.account_key, 200),
+      productId: text(opportunity.supplier_product_id, 80),
+      variantId: text(opportunity.supplier_variant_id, 80),
+      supplierSku: text(opportunity.supplier_sku, 200),
+    }).canonicalCandidateId
+  } catch {
+    derivedCandidateId = ""
+  }
+  const candidateId = text(candidate.candidateId, 300)
   const candidateExact = candidate.contractVersion ===
       "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1"
     && candidate.authority === "SELLER_OS_DETERMINISTIC_FACTORY"
-    && candidate.candidateId === opportunity.candidate_key
+    && (candidateId === opportunity.candidate_key
+      || (Boolean(derivedCandidateId) && candidateId === derivedCandidateId))
   const exactTruth = /^sha256:[0-9a-f]{64}$/.test(
     text(productTruth.evidenceDigest, 80))
     && text(productTruth.lunaProductId, 80) ===
