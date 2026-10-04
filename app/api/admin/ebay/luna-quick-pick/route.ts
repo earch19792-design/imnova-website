@@ -13,7 +13,8 @@ import { runCurrentLiveAuthorityRecoveryV1 } from
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { completeLunaQuickPickBatchReceiptV1,
-  processLunaQuickPickBatchV1, readLunaQuickPickBatchReceiptsV1,
+  authorizeLunaQuickPickPostActionV1, processLunaQuickPickBatchV1,
+  readLunaQuickPickBatchReceiptsV1,
   readLunaQuickPickBatchRehydrationV1, readLunaQuickPickProgressV1,
   receiveLunaQuickPickBatchV1,
   type LunaQuickPickCardV1 } from
@@ -214,10 +215,18 @@ export async function POST(req: Request) {
     error: "LUNA_QUICK_PICK_INPUT_TOO_LARGE" }, 413)
   try {
     const body = record(await req.json())
+    const actionAuthorization = authorizeLunaQuickPickPostActionV1({
+      authenticationMode: auth.authenticationMode,
+      action: body.action,
+    })
+    if (!actionAuthorization.allowed) return response({ success: false,
+      error: actionAuthorization.error,
+      safety: { marketplaceWrites: actionAuthorization.marketplaceWrites,
+        canPublish: actionAuthorization.canPublish } }, 403)
+    const ownerUserId = auth.authenticationMode === "admin_user" &&
+      auth.accessRole === SELLER_OS_ACCESS_ROLES.owner ? auth.userId : null
     if (body.action === "OWNER_FACT_CAPTURE") {
-      if (auth.authenticationMode !== "admin_user"
-          || auth.accessRole !== SELLER_OS_ACCESS_ROLES.owner
-          || !auth.userId) return response({ success: false,
+      if (!ownerUserId) return response({ success: false,
         error: "QUICK_PICK_OWNER_FACT_OWNER_AUTH_REQUIRED" }, 403)
       const candidateKey = typeof body.candidateKey === "string"
         ? body.candidateKey : ""
@@ -229,7 +238,7 @@ export async function POST(req: Request) {
         ? body.exactValue : ""
       const ownerFact = await persistQuickPickOwnerExplicitFactV1({
         supabase: getSupabaseAdminClient(), accountKey,
-        actorUserId: auth.userId, candidateKey, listingPackageId,
+        actorUserId: ownerUserId, candidateKey, listingPackageId,
         specificName, exactValue,
       })
       const progress = await readLunaQuickPickProgressV1({
@@ -242,6 +251,8 @@ export async function POST(req: Request) {
           customerProductionTouched: false } })
     }
     if (body.action === "RESOLVE_REQUIRED_UPC") {
+      if (!ownerUserId) return response({ success: false,
+        error: "QUICK_PICK_REQUIRED_UPC_OWNER_AUTH_REQUIRED" }, 403)
       const candidateKey = typeof body.candidateKey === "string" &&
         /^sha256:[0-9a-f]{64}$/.test(body.candidateKey)
         ? body.candidateKey : null
@@ -252,7 +263,7 @@ export async function POST(req: Request) {
       }, 400)
       const resolution = await persistQuickPickRequiredUpcResolutionV1({
         supabase: getSupabaseAdminClient(), accountKey,
-        actorUserId: auth.userId, candidateKey, listingPackageId,
+        actorUserId: ownerUserId, candidateKey, listingPackageId,
       })
       if (!resolution.categoryId) throw new Error(
         "QUICK_PICK_REQUIRED_UPC_CATEGORY_REQUIRED")
@@ -331,18 +342,20 @@ export async function POST(req: Request) {
           listingMutations: 0, canPublish: false,
           customerProductionTouched: false } })
     }
-    if (!auth.userId) return response({ success: false,
-      error: "LUNA_QUICK_PICK_ADMIN_REQUIRED" }, 403)
     if (body.action === "OWNER_REVIEW") {
+      if (!ownerUserId) return response({ success: false,
+        error: "QUICK_PICK_OWNER_REVIEW_OWNER_AUTH_REQUIRED" }, 403)
       const ownerReview = await persistQuickPickOwnerReviewV1({
         supabase: getSupabaseAdminClient(), accountKey,
-        actorUserId: auth.userId, body,
+        actorUserId: ownerUserId, body,
       })
       return response({ success: true, ownerReview,
         safety: { marketplaceWrites: 0, listingPublications: 0,
           canPublish: false, customerProductionTouched: false } })
     }
     if (body.action === "PUBLISH_HANDOFF") {
+      if (!ownerUserId) return response({ success: false,
+        error: "QUICK_PICK_PUBLISH_HANDOFF_OWNER_AUTH_REQUIRED" }, 403)
       const candidateKey = typeof body.candidateKey === "string" &&
         /^sha256:[0-9a-f]{64}$/.test(body.candidateKey)
         ? body.candidateKey : null
@@ -353,25 +366,25 @@ export async function POST(req: Request) {
       }, 400)
       const supabase = getSupabaseAdminClient()
       let canonical = await resolveQuickPickCanonicalPublishHandoffV1({
-        supabase, accountKey, actorUserId: auth.userId, candidateKey,
+        supabase, accountKey, actorUserId: ownerUserId, candidateKey,
         listingPackageId,
       })
       let visualPublicationGate =
         await loadFinalListingReviewPublicationGate({
-          supabase, listingPackageId, actorId: auth.userId,
+          supabase, listingPackageId, actorId: ownerUserId,
         })
       let automaticImageAuthorityReused = false
       if (!visualPublicationGate.allowed) {
         await ensureAutomaticLunaSupplierImagesV1({ supabase, accountKey,
-          actor: auth.userId, packageRow: canonical.listingPackage })
+          actor: ownerUserId, packageRow: canonical.listingPackage })
         automaticImageAuthorityReused = true
         canonical = await resolveQuickPickCanonicalPublishHandoffV1({
-          supabase, accountKey, actorUserId: auth.userId, candidateKey,
+          supabase, accountKey, actorUserId: ownerUserId, candidateKey,
           listingPackageId,
         })
         visualPublicationGate =
           await loadFinalListingReviewPublicationGate({
-            supabase, listingPackageId, actorId: auth.userId,
+            supabase, listingPackageId, actorId: ownerUserId,
           })
       }
       if (!visualPublicationGate.allowed) return response({

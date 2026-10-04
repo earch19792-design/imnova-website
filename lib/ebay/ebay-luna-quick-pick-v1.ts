@@ -56,9 +56,27 @@ export const QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1 =
   "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1" as const
 export const QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1 =
   "QUICK_PICK_BATCH_RECEIPT_AND_LIVE_PROGRESS_V1" as const
+export const LUNA_QUICK_PICK_SERVICE_ROLE_ACTIONS_V1 = Object.freeze([
+  "RECEIVE", "PROCESS", "REHYDRATE", "CONTINUE_FULL_LUNA_EVIDENCE",
+] as const)
 
 type JsonRecord = Record<string, unknown>
 type RadarBatch = ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1>
+
+export function authorizeLunaQuickPickPostActionV1(input: Readonly<{
+  authenticationMode: "service_role" | "admin_user" | null
+  action: unknown
+}>) {
+  const action = typeof input.action === "string" ? input.action : null
+  const allowed = input.authenticationMode === "admin_user" ||
+    (input.authenticationMode === "service_role" && Boolean(action &&
+      LUNA_QUICK_PICK_SERVICE_ROLE_ACTIONS_V1.includes(action as
+        typeof LUNA_QUICK_PICK_SERVICE_ROLE_ACTIONS_V1[number])))
+  return Object.freeze({ allowed,
+    error: allowed ? null : "LUNA_QUICK_PICK_SERVICE_ROLE_ACTION_FORBIDDEN",
+    marketplaceWrites: 0 as const,
+    canPublish: false as const })
+}
 
 export function classifyLunaQuickPickDemandDiscoveryV1(
   result: SellerOsOnDemandFamilyDemandDiscoveryResultV1,
