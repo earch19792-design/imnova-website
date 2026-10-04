@@ -11,6 +11,8 @@ import { getEbayOfficialLiveListingSweepReadonly } from "./ebay-commercial-monit
 import { readManualListingFromTradingApi } from "./ebay-manual-listing-trading-readonly"
 import { resolveCommercialTraceOwnerPricePolicyV1 } from "./commercial-trace-owner-price-policy-v1"
 import { readCommercialTraceShippingReceiptV1 } from "./ebay-luna-chrome-shipping-capture-server-v1"
+import { SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1 } from
+  "./ebay-luna-authoritative-shipping-server-v1"
 import { readProductionStockGuardV1 } from "./ebay-production-stock-read-service-v1"
 import { projectGoldenMonitoringV1 } from "./commercial-golden-path-monitoring-v1"
 import { readGoldenTrafficWindowsV1 } from "./commercial-golden-path-traffic-v1"
@@ -325,6 +327,12 @@ async function shippingAuthority(ctx: GoldenContext, key: GoldenCandidateKey, so
         supabase: ctx.supabase, accountKey: ctx.accountKey,
         opportunityId: String(opportunities.data[0].id),
         now: ctx.now.getTime(),
+        binding: { productId: key.productId, variantId: key.variantId,
+          supplierSku: key.supplierSku,
+          sourceFingerprint: String(source.source_fingerprint),
+          fieldTruthEvidenceDigest: truth.gate.receiptEvidenceDigest,
+          destinationProfileDigest:
+            SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1.profileDigest },
       })
       if (captured && captured.productId === key.productId &&
           captured.variantId === key.variantId &&
