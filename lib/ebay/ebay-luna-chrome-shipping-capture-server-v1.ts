@@ -180,6 +180,18 @@ async function readQuickPickShippingPriorityCandidateV1(input: Readonly<{
     .select("candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,queue_status,decision,assessment,updated_at")
     .eq("queue_status", "review")
     .eq("decision", "WAITING_BROWSER_WORKER")
+    // Filter the durable Quick Pick class before applying the bounded read.
+    // Otherwise a large unrelated WAITING cohort can occupy all 50 rows and
+    // starve newer Quick Pick work even though the in-memory selector is exact.
+    .contains("assessment", {
+      lunaQuickPickOperationV1: {
+        contractVersion: "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1",
+      },
+      radarAutomaticLunaShippingContinuationV1: {
+        contractVersion: "RADAR_AUTOMATIC_LUNA_SHIPPING_CONTINUATION_V1",
+        shippingJobStatus: "WAITING_BROWSER_WORKER",
+      },
+    })
     .order("updated_at", { ascending: false })
     .order("candidate_key", { ascending: true })
     .limit(50)
