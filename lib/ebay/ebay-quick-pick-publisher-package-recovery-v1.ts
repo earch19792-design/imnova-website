@@ -42,30 +42,31 @@ export function projectQuickPickPublisherPackageRecoveryV1(
   const actionability = quickPickPublisherActionabilityV1(card)
   const review = record(card.listingReview)
   const authorization = record(review.authorizationBinding)
+  const authorizedImagesPresent = Number(authorization.imageCount ?? 0) > 0
   const eligible = actionability.technicalReady
     && review.finalListingPackageReady === true
-    && Number(authorization.imageCount ?? 0) > 0
     && !card.alreadyLive
     && card.ownerTruePublicationBlockers.length === 0
     && Boolean(uuid(card.listingPackageId))
     && Boolean(uuid(card.opportunityId))
     && Boolean(candidateKey(card.candidateKey))
   return Object.freeze({ eligible,
-    requiresMaterialization: eligible && !actionability.packageCurrent,
+    requiresMaterialization: eligible &&
+      (!actionability.packageCurrent || !authorizedImagesPresent),
     candidateKey: eligible ? card.candidateKey : null,
     opportunityId: eligible ? card.opportunityId : null,
     listingPackageId: eligible ? card.listingPackageId : null,
     packageDigest: eligible && typeof review.packageDigest === "string"
       ? review.packageDigest : null,
-    reasonCode: eligible && !actionability.packageCurrent
+    reasonCode: eligible && !authorizedImagesPresent
+      ? "AUTHORIZED_IMAGES_PREPARATION_REQUIRED"
+      : eligible && !actionability.packageCurrent
       ? "DOWNSTREAM_COMMERCIAL_PACKAGE_NOT_CURRENT"
       : eligible ? "PREAUTH_PACKAGE_FREEZE_VERIFICATION_REQUIRED"
       : actionability.packageCurrent ? "PACKAGE_ALREADY_CURRENT"
         : review.finalListingPackageReady !== true
           ? "PROJECTED_COMMERCIAL_PACKAGE_NOT_READY"
-          : Number(authorization.imageCount ?? 0) < 1
-            ? "AUTHORIZED_IMAGES_NOT_READY"
-            : "PACKAGE_RECOVERY_NOT_ELIGIBLE",
+          : "PACKAGE_RECOVERY_NOT_ELIGIBLE",
   })
 }
 
