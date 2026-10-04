@@ -25,7 +25,9 @@ type AutonomousAcquisitionSnapshot = Readonly<{
   pendingPlanCount: number
   claimablePlanCount: number
   activeClaimCount: number
+  excludedBatchPlanCount: number
   canaryState: string
+  acquisitionLane: "GLOBAL" | "NORMAL_LUNA" | "BLOCKED"
 }>
 
 function safeAcquisitionCount(value: unknown) {
@@ -125,8 +127,12 @@ async function nextAuthorizedBatchPlanId(workerId: string,
     result = normalizePlanSelectionResult(keyword.result)
   }
   if (result.planId === null) {
+    const acquisitionLane = canaryState === "OFF" ? "GLOBAL"
+      : canaryState === "CANARY" ? "NORMAL_LUNA" : "BLOCKED"
     const acquisition = await authorizedPost({
-      action: "READ_AUTONOMOUS_RESEARCH_ACQUISITION",
+      action: acquisitionLane === "NORMAL_LUNA"
+        ? "READ_NORMAL_LUNA_RESEARCH_ACQUISITION"
+        : "READ_AUTONOMOUS_RESEARCH_ACQUISITION",
     })
     const state = acquisition.result &&
       typeof acquisition.result === "object"
@@ -135,9 +141,14 @@ async function nextAuthorizedBatchPlanId(workerId: string,
       pendingPlanCount: safeAcquisitionCount(state.pendingPlanCount),
       claimablePlanCount: safeAcquisitionCount(state.claimablePlanCount),
       activeClaimCount: safeAcquisitionCount(state.activeClaimCount),
+      excludedBatchPlanCount: safeAcquisitionCount(
+        state.excludedBatchPlanCount),
       canaryState,
+      acquisitionLane,
     })
-    result = canaryState === "OFF" &&
+    const acquisitionAllowed = acquisitionLane === "GLOBAL" ||
+      acquisitionLane === "NORMAL_LUNA"
+    result = acquisitionAllowed &&
       Number(state.claimablePlanCount ?? 0) > 0 &&
       Number(state.activeClaimCount ?? 0) === 0
       ? { planId: state.nextPlanId } : { planId: null }
@@ -405,10 +416,11 @@ export function MayelMarketRevalidationRunner() {
         if (!nextPlanId) {
           const queueState = selection.acquisitionSnapshot
           const queueDetail = queueState
-            ? ` · carril ${queueState.canaryState}` +
+            ? ` · carril ${queueState.canaryState}/${queueState.acquisitionLane}` +
               ` · cola ${queueState.pendingPlanCount}` +
               ` · reclamables ${queueState.claimablePlanCount}` +
-              ` · activos ${queueState.activeClaimCount}`
+              ` · activos ${queueState.activeClaimCount}` +
+              ` · lotes protegidos ${queueState.excludedBatchPlanCount}`
             : ""
           setState("Worker Research V2 disponible · sin lote o keyword de paquete actual pendiente" +
             queueDetail)

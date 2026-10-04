@@ -397,14 +397,22 @@ export async function readMayelLiveMarketRevalidationPlanV1(input: {
 export async function readMayelAutonomousResearchAcquisitionV1(input: {
   supabase: SupabaseClient
   accountKey: string
+  sourceContexts?: readonly string[]
+  excludePreResearchBatchPlans?: boolean
 }) {
+  const supportedSourceContexts = ["LIVE_LISTING_REVALIDATION",
+    "QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"] as const
+  const sourceContexts = input.sourceContexts ?? supportedSourceContexts
+  if (!sourceContexts.length || sourceContexts.some((context) =>
+    !supportedSourceContexts.includes(context as typeof supportedSourceContexts[number]))) {
+    throw new Error("MAYEL_RESEARCH_ACQUISITION_SCOPE_INVALID")
+  }
   const plans = await input.supabase.from(
     "marketplace_product_research_query_plans")
     .select("id,source_context,request_receipt_id,subject_item_id,status,created_at,worker_lease_owner,worker_lease_expires_at")
     .eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US")
-    .in("source_context", ["LIVE_LISTING_REVALIDATION",
-      "QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"])
+    .in("source_context", [...sourceContexts])
     .eq("status", "ACTIVE")
     .order("created_at", { ascending: true }).limit(100)
   if (plans.error) {
@@ -414,13 +422,14 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
   if (!planIds.length) return Object.freeze({
     pendingPlanCount: 0, claimablePlanCount: 0,
     activeClaimCount: 0, nextPlanId: null,
+    excludedBatchPlanCount: 0,
     sourceContexts: Object.freeze([] as string[]),
     authenticatedBrowserRequired: true as const,
     marketplaceWrites: 0 as const,
   })
   const receiptIds = (plans.data ?? []).flatMap((plan) =>
     plan.request_receipt_id ? [String(plan.request_receipt_id)] : [])
-  const [tasks, receipts] = await Promise.all([
+  const [tasks, receipts, batchMemberships] = await Promise.all([
     input.supabase.from("marketplace_product_research_query_tasks")
       .select("plan_id,status,capture_batch_id")
       .eq("marketplace_account_key", input.accountKey)
@@ -431,11 +440,18 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
       .select("id,status,lease_owner,lease_expires_at")
       .eq("marketplace_account_key", input.accountKey)
       .in("id", receiptIds) : Promise.resolve({ data: [], error: null }),
+    input.excludePreResearchBatchPlans
+      ? input.supabase.from("seller_os_pre_research_batch_members_v1")
+        .select("plan_id").in("plan_id", planIds)
+      : Promise.resolve({ data: [], error: null }),
   ])
-  if (tasks.error || receipts.error) {
+  if (tasks.error || receipts.error || batchMemberships.error) {
     throw new Error("MAYEL_RESEARCH_ACQUISITION_STATE_READ_FAILED")
   }
+  const excludedPlanIds = new Set((batchMemberships.data ?? []).map((member) =>
+    String(member.plan_id)))
   const resumablePlanIds = new Set((plans.data ?? []).filter((plan) =>
+    !excludedPlanIds.has(String(plan.id)) &&
     (tasks.data ?? []).some((task) =>
       String(task.plan_id) === String(plan.id) && task.status === "PENDING"))
     .map((plan) => String(plan.id)))
@@ -471,6 +487,7 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
     claimablePlanCount: activeClaimCount ? 0 : claimable.length,
     activeClaimCount,
     nextPlanId: activeClaimCount ? null : claimable[0]?.id ?? null,
+    excludedBatchPlanCount: excludedPlanIds.size,
     sourceContexts: Object.freeze([...new Set(pending.map((plan) =>
       String(plan.source_context)))]),
     authenticatedBrowserRequired: true as const,
