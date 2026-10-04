@@ -173,11 +173,19 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
   const claimed = Array.isArray(claim.data) ? claim.data[0] : claim.data
   if (claim.error || !claimed) throw new Error(
     "CURRENT_LIVE_AUTHORITY_RECOVERY_CLAIM_FAILED")
-  if (claimed.claimed !== true) return Object.freeze({
-    status: "SINGLE_FLIGHT_ALREADY_RUNNING" as const, authority: stored,
+  if (claimed.claimed !== true) {
+    const activeLease = Date.parse(String(
+      claimed.active_run_lease_expires_at ?? ""))
+    const activeRun = typeof claimed.active_run_id === "string" &&
+      claimed.active_run_id.length > 0 && Number.isFinite(activeLease) &&
+      activeLease > preReadNow.getTime()
+    return Object.freeze({
+    status: activeRun ? "SINGLE_FLIGHT_ALREADY_RUNNING" as const
+      : "WAITING_FOR_RETRY" as const, authority: stored,
     live: null, officialReadAttempted: false, databaseWrites: 0,
     marketplaceWrites: 0 as const,
   })
+  }
 
   const finish = async (success: boolean, errorCode: string | null) => {
     const result = await input.supabase.rpc(
