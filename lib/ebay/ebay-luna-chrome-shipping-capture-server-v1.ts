@@ -1840,6 +1840,16 @@ export async function acquireLunaChromeShippingJobsV1(input: Readonly<{
       continue
     }
     const result = record(claim.data)
+    console.info("LUNA_SHIPPING_EXACT_CLAIM_RECEIPT_V1", JSON.stringify({
+      observedAt: new Date().toISOString(),
+      candidateId: job.identity.candidateId,
+      claimStatus: text(result.claimStatus, 80) || "UNKNOWN",
+      claimed: result.claimed === true,
+      quickPickPriority: quickPickPriorityCandidateIds?.includes(
+        job.identity.candidateId) === true,
+      batchPriority: batchPriorityCandidateIds?.includes(
+        job.identity.candidateId) === true,
+    }))
     if (result?.claimed === true) jobs.push(job)
     else leaseConflictCount += 1
   }
