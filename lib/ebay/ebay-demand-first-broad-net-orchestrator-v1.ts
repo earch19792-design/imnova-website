@@ -1501,7 +1501,7 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
   const categorized = input.activeEvidence.filter((entry) =>
     entry.categoryId && /^\d{1,20}$/.test(entry.categoryId))
   const categories = new Set(categorized.map((entry) => entry.categoryId as string))
-  if (!input.productType) return null
+  const supplierProductType = input.productType
   // Active Browse candidates can span multiple marketplace categories even
   // when Marketplace Insights is unavailable. That ambiguity belongs to the
   // downstream category gate; it is not negative demand evidence and must not
@@ -1529,7 +1529,7 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
   if (!familyName) return null
   const familyIdentity = normalizeSellerOsMarketFamilyIdentityV1({
     productFunction: familyName,
-    buyerUseCase: input.productType,
+    buyerUseCase: supplierProductType ?? "unproven supplier product type",
     category: categoryId ? `ebay-us-category:${categoryId}` :
       "ebay-us-category:unproven",
     structuredDefinition: { ...(categoryId ? { "category id": categoryId } : {
@@ -1539,14 +1539,17 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
       "supplier sku": supplierSku as string,
     }),
       "product family": familyName,
-      "supplier product type": input.productType },
+      ...(supplierProductType
+        ? { "supplier product type": supplierProductType }
+        : { "supplier product type status": "UNPROVEN" }) },
   })
   const familyDefinition: SellerOsMarketFamilyDefinitionV1 = {
     identity: familyIdentity, familyName,
     familyQuerySet: unique([input.report.searchQuery, input.productTitle,
-      input.productType]).slice(0, 16),
+      ...(supplierProductType ? [supplierProductType] : [])]).slice(0, 16),
     keyProductAttributes: ["category id", "product family",
-      "supplier product type"],
+      supplierProductType
+        ? "supplier product type" : "supplier product type status"],
     keyBuyerIntentTerms: [], demandKeywordDna: null,
     adapterContract: SELLER_OS_DEMAND_FIRST_BROAD_NET_ORCHESTRATOR_VERSION,
     adapterVersion: "1",
@@ -1575,7 +1578,9 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
       "supplier sku": supplierSku as string,
     }),
       "product family": familyName,
-      "supplier product type": input.productType },
+      ...(supplierProductType
+        ? { "supplier product type": supplierProductType }
+        : { "supplier product type status": "UNPROVEN" }) },
     opportunityTypes: ["QUICK_PICK_MARKET_TEST"], evidenceObservedAt,
     sourceUpdatedAt: evidenceObservedAt, maximumAgeSeconds: MAXIMUM_AGE_SECONDS,
     sourceAdapter: "SELLER_OS_EBAY_MARKET_RESEARCH_GATEWAY_V1",
@@ -1583,7 +1588,9 @@ function buildOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
     limitations: ["DEMAND_EVIDENCE_ABSENT_NOT_NEGATIVE",
       "EXACT_PRODUCT_DEMAND_NOT_CLAIMED", "MARKET_PRICE_SUPPORT_UNPROVEN",
       ...(!categoryId ? ["MARKETPLACE_CATEGORY_UNPROVEN"] : []),
-      ...(categoryAmbiguous ? ["MARKETPLACE_CATEGORY_AMBIGUOUS"] : [])],
+      ...(categoryAmbiguous ? ["MARKETPLACE_CATEGORY_AMBIGUOUS"] : []),
+      ...(!supplierProductType
+        ? ["SUPPLIER_PRODUCT_TYPE_UNPROVEN"] : [])],
   })
   const radarFamily = Object.freeze({ familyId: observation.familyId,
     familyName, opportunityCaseId: observation.opportunityCaseId,
@@ -1609,7 +1616,7 @@ export function buildSellerOsOnDemandCapabilityGapFallbackV1(input: Readonly<{
   const observedAt = instant(input.observedAt) ?? instant(row.captured_at)
   const productTitle = text(row.title, 350)
   const productType = text(row.product_type, 160)
-  if (!observedAt || !productTitle || !productType) {
+  if (!observedAt || !productTitle) {
     return onDemandDiscoveryResultV1({
       status: "DEMAND_DISCOVERY_UNAVAILABLE",
       reasonCode: "ON_DEMAND_EXACT_LUNA_IDENTITY_REQUIRED",
