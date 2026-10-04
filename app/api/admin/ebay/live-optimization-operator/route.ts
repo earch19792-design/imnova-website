@@ -474,6 +474,17 @@ export async function POST(request: Request) {
         excludePreResearchBatchPlans: true,
         prioritizeNewestUnclaimed: true,
       })
+      if (result.pendingPlanCount > 0 || result.activeClaimCount > 0) {
+        console.info("PRODUCT_RESEARCH_ACQUISITION_RECEIPT_V1", {
+          observedAt: new Date().toISOString(), lane: "NORMAL_LUNA_AND_QUICK_PICK",
+          pendingPlanCount: result.pendingPlanCount,
+          claimablePlanCount: result.claimablePlanCount,
+          activeClaimCount: result.activeClaimCount,
+          excludedBatchPlanCount: result.excludedBatchPlanCount,
+          nextPlanId: result.nextPlanId,
+          sourceContexts: result.sourceContexts,
+        })
+      }
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0,
           certifiedBatchPlansExcluded: true } },
@@ -586,6 +597,11 @@ export async function POST(request: Request) {
         workerId: body?.workerId, workerCapability: body?.workerCapability,
         planId: body?.planId,
       })
+      console.info("PRODUCT_RESEARCH_CLAIM_RECEIPT_V1", {
+        observedAt: new Date().toISOString(), claimed: result.claimed,
+        planId: result.planId,
+        sourceContext: result.claimed ? result.sourceContext : null,
+      })
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
@@ -691,6 +707,11 @@ export async function POST(request: Request) {
         workerId: body?.workerId, planId: body?.planId,
         errorCode: body?.errorCode,
       })
+      console.warn("PRODUCT_RESEARCH_RELEASE_RECEIPT_V1", {
+        observedAt: new Date().toISOString(), released: result.released,
+        planId: result.planId,
+        errorCode: safeCode(new Error(String(body?.errorCode ?? ""))),
+      })
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
@@ -767,6 +788,16 @@ export async function POST(request: Request) {
         extensionMarketplaceWrites: body?.extensionMarketplaceWrites,
         workerId: body?.workerId,
         workerMetrics: body?.workerMetrics,
+      })
+      console.info("PRODUCT_RESEARCH_COMPLETION_RECEIPT_V1", {
+        observedAt: new Date().toISOString(),
+        planId: "planId" in result ? result.planId : uuid(body?.planId),
+        sourceContext: "sourceContext" in result ? result.sourceContext :
+          "LIVE_LISTING_REVALIDATION",
+        productResearchExecuted: "productResearchExecuted" in result
+          ? result.productResearchExecuted : true,
+        marketplaceWrites: "marketplaceWrites" in result
+          ? result.marketplaceWrites : 0,
       })
       return NextResponse.json({ success: true, result,
         safety: { marketplaceWrites: 0, priceWrites: 0,
