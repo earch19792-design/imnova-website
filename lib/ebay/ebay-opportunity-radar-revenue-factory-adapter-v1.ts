@@ -1728,6 +1728,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
     requiredSpecificsAiResolver?: RequiredSpecificsAiBatchV1 | null
     requiredSpecificsAiStages?: readonly ("TEXT" | "VISION")[]
+    allowPreparationWhenLivePortfolioUnavailable?: boolean
   }>,
 ) {
   const startedAt = Date.now()
@@ -1745,9 +1746,12 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     supabase: input.supabase, accountKey: input.accountKey,
     candidates: durableCandidates,
   })
+  const preparationAllowedWithoutLivePortfolio =
+    input.allowPreparationWhenLivePortfolioUnavailable === true
   const newListingDurableCandidates = alreadyLiveGuard.status === "AVAILABLE"
     ? durableCandidates.filter((candidate) =>
-      !alreadyLiveGuard.matches.has(candidate.candidateId)) : []
+      !alreadyLiveGuard.matches.has(candidate.candidateId))
+    : preparationAllowedWithoutLivePortfolio ? durableCandidates : []
   const eligibleCandidateIds = new Set(newListingDurableCandidates
     .filter((candidate) => candidate.readyForEconomics)
     .map((candidate) => candidate.candidateId))
@@ -1942,7 +1946,8 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         deterministicRejected: true, listingReady: false })
       continue
     }
-    if (alreadyLiveGuard.status === "UNAVAILABLE"
+    if (!preparationAllowedWithoutLivePortfolio &&
+        alreadyLiveGuard.status === "UNAVAILABLE"
         && durableCandidates.includes(candidate)) {
       outcomes.push({ candidateId: candidate.candidateId,
         familyId: candidate.familyId, familyName: candidate.familyName,

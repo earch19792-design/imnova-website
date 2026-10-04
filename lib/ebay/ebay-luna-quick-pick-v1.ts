@@ -1287,6 +1287,9 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         // continuation owns the one bounded residual AI batch so a fresh
         // Quick Pick cannot spend once in PROCESS and again during polling.
         requiredSpecificsAiStages: [],
+        // Current LIVE remains a publication blocker, but a temporary source
+        // outage must not prevent non-publishing shipping/economics preparation.
+        allowPreparationWhenLivePortfolioUnavailable: true,
       }) : null
   const durableQuickPickOperations = resolved.flatMap((entry) => {
     if (!entry.selected) return []
