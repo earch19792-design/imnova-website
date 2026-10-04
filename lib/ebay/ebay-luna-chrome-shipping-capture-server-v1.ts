@@ -172,7 +172,7 @@ export function selectQuickPickShippingPriorityCandidateV1(input: Readonly<{
   return candidates[0]?.candidateId ?? null
 }
 
-async function readQuickPickShippingPriorityCandidateV1(input: Readonly<{
+export async function readQuickPickShippingPriorityCandidateV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
 }>) {
@@ -198,23 +198,52 @@ async function readQuickPickShippingPriorityCandidateV1(input: Readonly<{
     .abortSignal(AbortSignal.timeout(8_000))
   if (result.error) return null
   const queueRows = records(result.data)
-  const selectedCandidateId = selectQuickPickShippingPriorityCandidateV1({
-    accountKey: input.accountKey, rows: queueRows,
-  })
-  if (!selectedCandidateId) return null
-  const familyIds = [...new Set(queueRows.flatMap((row) => {
-    if (selectQuickPickShippingPriorityCandidateV1({
+  const priorityCandidates = queueRows.flatMap((row) => {
+    const candidateId = selectQuickPickShippingPriorityCandidateV1({
       accountKey: input.accountKey, rows: [row],
-    }) !== selectedCandidateId) return []
+    })
     const familyId = text(record(record(row.assessment)
       .radarFactoryCandidateV1).familyId, 120)
-    return familyId && /^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId)
-      ? [familyId] : []
-  }))]
-  return familyIds.length === 1 ? Object.freeze({
-    candidateId: selectedCandidateId,
-    familyId: familyIds[0],
-  }) : null
+    const updatedAt = Date.parse(String(row.updated_at ?? ""))
+    return candidateId && familyId &&
+        /^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId) &&
+        Number.isFinite(updatedAt)
+      ? [{ candidateId, familyId, updatedAt }] : []
+  }).sort((left, right) => right.updatedAt - left.updatedAt ||
+    left.candidateId.localeCompare(right.candidateId))
+  const familyIds = [...new Set(priorityCandidates.map((candidate) =>
+    candidate.familyId))]
+  if (!familyIds.length) return null
+  // A just-completed Quick Pick can remain WAITING in the queue until its
+  // continuation finishes. Reconcile that durable hint with the current
+  // profitability frontier so the completed row cannot starve the next item.
+  const frontierResult = await input.supabase.rpc(
+    "get_seller_os_latest_profitability_frontiers_v1", {
+      p_account_key: input.accountKey,
+      p_marketplace_id: "EBAY_US",
+      p_family_ids: familyIds,
+      p_limit: 100,
+    })
+  if (frontierResult.error) return null
+  const refreshRequiredCandidateIds = new Set(records(
+    record(frontierResult.data).frontiers).flatMap((outer) => {
+      const frontier = record(outer.frontier)
+      const familyId = text(frontier.familyId, 120)
+      const productId = text(frontier.lunaProductId, 30)
+      const variantId = text(frontier.lunaVariantId, 30)
+      const supplierSku = text(frontier.lunaSku, 160)
+      if (!familyId || !productId || !variantId || !supplierSku ||
+          !frontierShippingRefreshRequiredV1(frontier, Date.now())) return []
+      const currentCandidateId = candidateId(input.accountKey, productId,
+        variantId, supplierSku)
+      return priorityCandidates.some((candidate) =>
+        candidate.candidateId === currentCandidateId &&
+        candidate.familyId === familyId) ? [currentCandidateId] : []
+    }))
+  const selected = priorityCandidates.find((candidate) =>
+    refreshRequiredCandidateIds.has(candidate.candidateId))
+  return selected ? Object.freeze({ candidateId: selected.candidateId,
+    familyId: selected.familyId }) : null
 }
 
 type LunaCanonicalBindObservedCandidateV1 = Readonly<{

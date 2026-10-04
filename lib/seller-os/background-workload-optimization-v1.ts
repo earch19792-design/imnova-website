@@ -66,6 +66,23 @@ export type SellerOsLunaShippingDurableWorkSignalV1 = Readonly<{
   observedAt: string
 }>
 
+export function sellerOsLunaDurableRecoveryDispositionV1(input: Readonly<{
+  found: boolean
+  eligiblePendingJobCount: unknown
+  leaseConflictCount: unknown
+}>) {
+  const pending = boundedInteger(input.eligiblePendingJobCount, 100)
+  const conflicts = boundedInteger(input.leaseConflictCount, 100)
+  const retryConflict = !input.found && pending > 0 && conflicts > 0
+  return Object.freeze({
+    consumeSignal: input.found || !retryConflict,
+    retry: retryConflict,
+    status: input.found ? "TRABAJO_RECLAMADO" as const
+      : retryConflict ? "CONFLICTO_TRANSITORIO_REINTENTANDO" as const
+        : "SIN_TRABAJO_ELEGIBLE" as const,
+  })
+}
+
 export function publishSellerOsLunaShippingDurableWorkSignalV1(input:
   Readonly<{ storage: Pick<Storage, "setItem">; signalId: string;
     queuedJobCount: number; observedAt?: string }>) {

@@ -29,6 +29,7 @@ import {
   SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_KEY_V1,
   publishSellerOsLunaShippingDurableWorkSignalV1,
   readSellerOsLunaShippingDurableWorkSignalV1,
+  sellerOsLunaDurableRecoveryDispositionV1,
   sellerOsBackgroundMetricsPublisherV1,
   type SellerOsLunaShippingDurableWorkSignalV1,
 } from "@/lib/seller-os/background-workload-optimization-v1"
@@ -1156,6 +1157,8 @@ export function LunaShippingCaptureControlPlane({
       const resolved = Array.isArray(payload.jobs) ? payload.jobs : []
       const pendingCount = Number(
         payload.acquisition?.eligiblePendingJobCount ?? resolved.length)
+      const leaseConflictCount = Number(
+        payload.acquisition?.leaseConflictCount ?? 0)
       if (nextMode === "AUTO") {
         setEligiblePendingJobCount(Number.isSafeInteger(pendingCount) &&
           pendingCount >= 0 ? pendingCount : null)
@@ -1177,7 +1180,8 @@ export function LunaShippingCaptureControlPlane({
         setStatus(nextMode === "AUTO" && pendingCount > 0
           ? "WORK_PENDING_LEASED_BY_RUNTIME"
           : nextMode === "AUTO" ? "WORKER_IDLE_NO_ELIGIBLE_JOB" : "PASS")
-        return false
+        return Object.freeze({ found: false, pendingCount,
+          leaseConflictCount })
       }
       jobs = resolved
       if (nextMode === "AUTO") {
@@ -1189,7 +1193,8 @@ export function LunaShippingCaptureControlPlane({
       busy = true
       setRunning(true)
       sendCurrent()
-      return true
+      return Object.freeze({ found: true, pendingCount,
+        leaseConflictCount })
     }
 
     const beginLegacyRecovery = async (requestedJobId: string) => {
@@ -1373,8 +1378,8 @@ export function LunaShippingCaptureControlPlane({
       }
       discoveryInFlight = true
       setStatus("INITIAL_AUTO_CLAIM_STARTED")
-      void loadJobs(undefined, "AUTO").then((found) => {
-        if (!found) scheduleProductionAcquisition()
+      void loadJobs(undefined, "AUTO").then((outcome) => {
+        if (!outcome.found) scheduleProductionAcquisition()
       }).catch((discoveryError) => {
         if (!active) return
         busy = false
@@ -1429,15 +1434,23 @@ export function LunaShippingCaptureControlPlane({
         window.clearTimeout(discoveryRetryTimer)
         discoveryRetryTimer = null
       }
-      void loadJobs(undefined, "AUTO", signal).then((found) => {
+      void loadJobs(undefined, "AUTO", signal).then((outcome) => {
         if (!active) return
-        window.sessionStorage.setItem(consumedWorkSignalKey, signal.signalId)
-        if (pendingDurableWorkSignal?.signalId === signal.signalId) {
-          pendingDurableWorkSignal = null
+        const disposition = sellerOsLunaDurableRecoveryDispositionV1({
+          found: outcome.found,
+          eligiblePendingJobCount: outcome.pendingCount,
+          leaseConflictCount: outcome.leaseConflictCount,
+        })
+        if (disposition.consumeSignal) {
+          window.sessionStorage.setItem(consumedWorkSignalKey, signal.signalId)
+          if (pendingDurableWorkSignal?.signalId === signal.signalId) {
+            pendingDurableWorkSignal = null
+          }
         }
-        setDurableRecoveryStatus(found
-          ? "TRABAJO_RECLAMADO" : "SIN_TRABAJO_ELEGIBLE")
-        if (!found) scheduleProductionAcquisition()
+        setDurableRecoveryStatus(disposition.status)
+        if (disposition.retry) {
+          scheduleDurableWorkRecovery(DISCOVERY_RETRY_INTERVAL_MS)
+        } else if (!outcome.found) scheduleProductionAcquisition()
       }).catch((recoveryError) => {
         if (!active) return
         setDurableRecoveryStatus(recoveryError instanceof Error
