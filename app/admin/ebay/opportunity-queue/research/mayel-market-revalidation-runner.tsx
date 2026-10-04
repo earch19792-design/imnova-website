@@ -104,6 +104,17 @@ async function nextAuthorizedBatchPlanId(workerId: string,
     })
     result = keyword.result && typeof keyword.result === "object"
       ? keyword.result as JsonRecord : {}
+    if (result.planId === null) {
+      const acquisition = await authorizedPost({
+        action: "READ_AUTONOMOUS_RESEARCH_ACQUISITION",
+      })
+      const state = acquisition.result &&
+        typeof acquisition.result === "object"
+        ? acquisition.result as JsonRecord : {}
+      result = Number(state.claimablePlanCount ?? 0) > 0 &&
+        Number(state.activeClaimCount ?? 0) === 0
+        ? { planId: state.nextPlanId } : { planId: null }
+    }
   }
   return typeof result.planId === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
