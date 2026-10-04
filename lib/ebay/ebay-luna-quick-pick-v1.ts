@@ -673,6 +673,7 @@ export async function readLunaQuickPickBatchRehydrationV1(input: Readonly<{
   const rehydrateUrls: string[] = []
   const authorityRetryUrls: string[] = []
   const authorityRetryIdentityKeys = new Set<string>()
+  let shippingRetryCount = 0
   const storedCards = rows(metrics.cards).map((stored) =>
     reconcileLunaQuickPickCardLivenessV1(card({
       ...stored,
@@ -696,6 +697,13 @@ export async function readLunaQuickPickBatchRehydrationV1(input: Readonly<{
       rehydrateUrls.push(sourceUrl)
       continue
     }
+    if (reasonCode === "ACTUAL_LUNA_SHIPPING") {
+      if (!sourceUrl) throw new Error(
+        "LUNA_QUICK_PICK_SHIPPING_RETRY_INPUT_UNPROVEN")
+      shippingRetryCount += 1
+      rehydrateUrls.push(sourceUrl)
+      continue
+    }
     if (reasonCode !== "ON_DEMAND_MARKETPLACE_INSIGHTS_NOT_CONFIGURED" &&
         reasonCode !== "ON_DEMAND_MARKETPLACE_INSIGHTS_UNAVAILABLE") continue
     if (key) capabilityGaps.set(key, Object.freeze({
@@ -708,7 +716,8 @@ export async function readLunaQuickPickBatchRehydrationV1(input: Readonly<{
     if (key && sourceUrl) rehydrateUrls.push(sourceUrl)
   }
   if (rehydrateUrls.length !== capabilityGaps.size +
-      authorityRetryIdentityKeys.size || authorityRetryUrls.length !==
+      authorityRetryIdentityKeys.size + shippingRetryCount ||
+      authorityRetryUrls.length !==
       authorityRetryIdentityKeys.size) {
     throw new Error("LUNA_QUICK_PICK_CAPABILITY_GAP_INPUTS_UNPROVEN")
   }
