@@ -86,19 +86,26 @@ export function readSellerOsLunaShippingDurableWorkSignalV1(
   raw: string | null, now = Date.now(),
 ): SellerOsLunaShippingDurableWorkSignalV1 | null {
   try {
-    const value = JSON.parse(raw ?? "null") as Partial<
-      SellerOsLunaShippingDurableWorkSignalV1> | null
-    const observedAt = Date.parse(String(value?.observedAt ?? ""))
-    if (!value || value.contractVersion !==
-        SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_V1 ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-          .test(String(value.signalId ?? "")) ||
-        !Number.isSafeInteger(value.queuedJobCount) ||
-        Number(value.queuedJobCount) < 1 || Number(value.queuedJobCount) > 100 ||
-        !Number.isFinite(observedAt) || observedAt > now + 60_000 ||
-        observedAt < now - 30 * 60_000) return null
-    return Object.freeze(value as SellerOsLunaShippingDurableWorkSignalV1)
+    return certifySellerOsLunaShippingDurableWorkSignalV1(
+      JSON.parse(raw ?? "null"), now)
   } catch { return null }
+}
+
+export function certifySellerOsLunaShippingDurableWorkSignalV1(
+  input: unknown, now = Date.now(),
+): SellerOsLunaShippingDurableWorkSignalV1 | null {
+  const value = input && typeof input === "object"
+    ? input as Partial<SellerOsLunaShippingDurableWorkSignalV1> : null
+  const observedAt = Date.parse(String(value?.observedAt ?? ""))
+  if (!value || value.contractVersion !==
+      SELLER_OS_LUNA_SHIPPING_DURABLE_WORK_SIGNAL_V1 ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(String(value.signalId ?? "")) ||
+      !Number.isSafeInteger(value.queuedJobCount) ||
+      Number(value.queuedJobCount) < 1 || Number(value.queuedJobCount) > 100 ||
+      !Number.isFinite(observedAt) || observedAt > now + 60_000 ||
+      observedAt < now - 30 * 60_000) return null
+  return Object.freeze(value as SellerOsLunaShippingDurableWorkSignalV1)
 }
 
 function boundedInteger(value: unknown, maximum = 1_000_000) {
