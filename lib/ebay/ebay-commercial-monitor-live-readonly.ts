@@ -4627,6 +4627,7 @@ async function ordersRead(input: {
         if (disposition.unsafeDiscardedLines > 0) {
           gapCodes.push("FULFILLMENT_LINES_DISCARDED_AFTER_SANITIZATION")
         }
+        gapCodes.push(...Object.keys(disposition.unsafeDiscardReasonCounts))
         policyExcludedOrders += disposition.policyExcludedOrders
         pagesRead += 1
         const nextUrl = text(payload.next, 2_000)

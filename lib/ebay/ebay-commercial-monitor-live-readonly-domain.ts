@@ -1619,6 +1619,11 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
   let policyExcludedOrders = 0
   let unsafeDiscardedOrders = 0
   let unsafeDiscardedLines = 0
+  const unsafeDiscardReasonCounts: Record<string, number> = {}
+  const noteUnsafeDiscardReason = (reason: string) => {
+    unsafeDiscardReasonCounts[reason] =
+      (unsafeDiscardReasonCounts[reason] ?? 0) + 1
+  }
   for (const value of jsonArray(jsonRecord(payload).orders)) {
     const order = jsonRecord(value)
     const ebayOrderId = jsonText(order.orderId, 100)
@@ -1635,6 +1640,7 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
     if (!ebayOrderId || !creationDate || !lastModifiedDate ||
         !orderPaymentStatus || !orderFulfillmentStatus) {
       unsafeDiscardedOrders += 1
+      noteUnsafeDiscardReason("FULFILLMENT_ORDER_REQUIRED_FIELD_INVALID")
       continue
     }
     if (orderPaymentStatus !== "PAID" ||
@@ -1646,6 +1652,7 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
       orderFulfillmentStatus,
     )) {
       unsafeDiscardedOrders += 1
+      noteUnsafeDiscardReason("FULFILLMENT_ORDER_STATUS_UNSUPPORTED")
       continue
     }
     const total = jsonRecord(jsonRecord(order.pricingSummary).total)
@@ -1659,9 +1666,25 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
         40,
       ).toUpperCase()
       const quantity = jsonNumber(line.quantity)
-      if (!lineItemId || !/^\d{9,20}$/.test(listingId) ||
-          listingMarketplaceId !== "EBAY_US" || quantity === null ||
-          !Number.isSafeInteger(quantity) || quantity < 1) {
+      let unsafe = false
+      if (!lineItemId) {
+        noteUnsafeDiscardReason("FULFILLMENT_LINE_ITEM_ID_INVALID")
+        unsafe = true
+      }
+      if (!/^\d{9,20}$/.test(listingId)) {
+        noteUnsafeDiscardReason("FULFILLMENT_LINE_LEGACY_ITEM_ID_INVALID")
+        unsafe = true
+      }
+      if (listingMarketplaceId !== "EBAY_US") {
+        noteUnsafeDiscardReason("FULFILLMENT_LINE_MARKETPLACE_UNSUPPORTED")
+        unsafe = true
+      }
+      if (quantity === null || !Number.isSafeInteger(quantity) ||
+          quantity < 1) {
+        noteUnsafeDiscardReason("FULFILLMENT_LINE_QUANTITY_INVALID")
+        unsafe = true
+      }
+      if (unsafe || quantity === null) {
         return []
       }
       const cost = jsonRecord(line.lineItemCost)
@@ -1682,6 +1705,9 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
     // identity with the original whole-order total.
     if (!rawLineItems.length || lineItems.length !== rawLineItems.length) {
       unsafeDiscardedOrders += 1
+      if (!rawLineItems.length) {
+        noteUnsafeDiscardReason("FULFILLMENT_ORDER_LINE_ITEMS_MISSING")
+      }
       unsafeDiscardedLines += Math.max(
         1,
         rawLineItems.length - lineItems.length,
@@ -1706,6 +1732,9 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
     policyExcludedOrders,
     unsafeDiscardedOrders,
     unsafeDiscardedLines,
+    unsafeDiscardReasonCounts: Object.freeze({
+      ...unsafeDiscardReasonCounts,
+    }),
   })
 }
 
