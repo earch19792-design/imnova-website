@@ -73,6 +73,59 @@ function currentLiveRecoveryDiagnostics(value: unknown) {
   }
 }
 
+async function orderAlertFallbackAuthorization(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  accountKey: string,
+) {
+  const [configuration, authorization] = await Promise.all([
+    supabase
+      .from("ebay_monitoring_scheduler_config")
+      .select("enabled,environment,deployment_scope,supabase_project_ref,marketplace_account_key")
+      .eq("singleton", true)
+      .maybeSingle(),
+    supabase
+      .from("commercial_monitor_scheduler_authorizations")
+      .select("dry_run_id")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", "EBAY_US")
+      .is("revoked_at", null)
+      .order("authorized_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+  if (configuration.error || authorization.error) {
+    throw new Error("COMMERCIAL_ORDER_ALERT_FALLBACK_AUTHORIZATION_READ_FAILED")
+  }
+  const config = configuration.data
+  const dryRunId = authorization.data?.dry_run_id
+  if (!config?.enabled || config.environment !== "STAGING" ||
+      config.deployment_scope !== "PREVIEW" ||
+      config.supabase_project_ref !== "vsfthqydfrdzulldbfbe" ||
+      config.marketplace_account_key !== accountKey || !dryRunId) {
+    return Object.freeze({ authorized: false, reason:
+      "COMMERCIAL_ORDER_ALERT_FALLBACK_DURABLE_AUTHORIZATION_REQUIRED" })
+  }
+  const dryRun = await supabase
+    .from("commercial_monitor_runs")
+    .select("trigger_source,status,dry_run_satisfactory,errors")
+    .eq("id", dryRunId)
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", "EBAY_US")
+    .maybeSingle()
+  if (dryRun.error) {
+    throw new Error("COMMERCIAL_ORDER_ALERT_FALLBACK_DRY_RUN_READ_FAILED")
+  }
+  const row = dryRun.data
+  const authorized = row?.trigger_source === "dry_run" &&
+    row.status === "completed" && row.dry_run_satisfactory === true &&
+    Array.isArray(row.errors) && row.errors.length === 0
+  return Object.freeze({
+    authorized,
+    reason: authorized ? "DURABLE_DRY_RUN_AUTHORIZATION_CONFIRMED" :
+      "COMMERCIAL_ORDER_ALERT_FALLBACK_DRY_RUN_NOT_SATISFIED",
+  })
+}
+
 export async function POST(req: Request) {
   if (!commercialPreviewCronAuthorized(req)) return NextResponse.json(
     { success: false, error: "CRON_UNAUTHORIZED" },
@@ -334,11 +387,14 @@ export async function POST(req: Request) {
       },
     })
   }
+  let accountKey: string | null = null
+  let supabase: ReturnType<typeof getSupabaseAdminClient> | null = null
+  let dueLanes: Awaited<ReturnType<typeof getDueCommercialMonitorLanes>> = []
   let currentLiveAuthorityRecovery: unknown = null
   try {
-    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) throw new Error("COMMERCIAL_MONITOR_ACCOUNT_SCOPE_REQUIRED")
-    const supabase = getSupabaseAdminClient()
+    supabase = getSupabaseAdminClient()
     try {
       currentLiveAuthorityRecovery = await runCurrentLiveAuthorityRecoveryV1({
         supabase, accountKey,
@@ -351,18 +407,88 @@ export async function POST(req: Request) {
         marketplaceWrites: 0,
       }
     }
-    const lanes = await getDueCommercialMonitorLanes(supabase, accountKey)
+    dueLanes = await getDueCommercialMonitorLanes(supabase, accountKey)
     const run = await runEbayCommercialMonitor(supabase, {
       triggerSource: "schedule",
-      lanes,
+      lanes: dueLanes,
       workerId: `commercial-schedule:${randomUUID()}`,
       dispatchWhatsApp: false,
       dryRunWhatsApp: true,
     })
-    return NextResponse.json({ success: true, schedule, lanes,
+    return NextResponse.json({ success: true, schedule, lanes: dueLanes,
       currentLiveAuthorityRecovery, run })
   } catch (error) {
     const code = safeCode(error)
+    const recovery = record(currentLiveAuthorityRecovery)
+    const authority = record(recovery.authority)
+    if (code === "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED" &&
+        accountKey && supabase && authority.currentState === "CURRENT_FRESH") {
+      try {
+        const authorization = await orderAlertFallbackAuthorization(
+          supabase,
+          accountKey,
+        )
+        if (authorization.authorized && dueLanes.includes("orders")) {
+          const run = await runEbayCommercialMonitor(supabase, {
+            triggerSource: "recovery",
+            lanes: ["orders", "rules", "whatsapp"],
+            workerId: `commercial-order-alert-recovery:${randomUUID()}`,
+            dispatchWhatsApp: false,
+            dryRunWhatsApp: true,
+          })
+          return NextResponse.json({
+            success: true,
+            status: "order_alert_fallback_completed",
+            schedule,
+            lanes: ["orders", "rules", "whatsapp"],
+            authorization,
+            currentLiveAuthorityRecovery:
+              currentLiveRecoveryDiagnostics(currentLiveAuthorityRecovery),
+            run,
+            safety: {
+              legacyExactListingGateBypassedForOrdersOnly: true,
+              historicalSalesNotificationBlockedByCutover: true,
+              supplierStateRequiredForSaleDetection: false,
+              dispatcherDeliveryUsed: false,
+              ebayWriteUsed: false,
+              secretsReturned: false,
+              buyerPiiIncluded: false,
+            },
+          })
+        }
+        if (authorization.authorized && !dueLanes.includes("orders")) {
+          return NextResponse.json({
+            success: true,
+            status: "order_alert_fallback_not_due",
+            schedule,
+            lanes: dueLanes,
+            authorization,
+            currentLiveAuthorityRecovery:
+              currentLiveRecoveryDiagnostics(currentLiveAuthorityRecovery),
+            safety: {
+              externalReadersStarted: false,
+              ebayWriteUsed: false,
+              secretsReturned: false,
+              buyerPiiIncluded: false,
+            },
+          })
+        }
+      } catch (fallbackError) {
+        return NextResponse.json({
+          success: false,
+          error: safeCode(fallbackError),
+          schedule,
+          currentLiveAuthorityRecovery:
+            currentLiveRecoveryDiagnostics(currentLiveAuthorityRecovery),
+          safety: {
+            externalReadersStarted: false,
+            ebayWriteUsed: false,
+            secretsReturned: false,
+            buyerPiiIncluded: false,
+          },
+        }, { status: 502 })
+      }
+    }
     return NextResponse.json(
       {
         success: false,
