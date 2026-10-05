@@ -10,12 +10,9 @@ const START_PATH = "/api/admin/ebay/commercial-orders-oauth/start"
 const BROWSER_START_PATH =
   "/admin/ebay/monitor/commercial-orders-oauth-start"
 const CALLBACK_PATH = "/api/admin/ebay/monitor/seller-oauth-reauth"
-const READONLY_SCOPES = [
+const POST_SALE_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
-] as const
-const LEGACY_SCOPES = [
-  ...READONLY_SCOPES,
   "https://api.ebay.com/oauth/api_scope/commerce.message",
 ] as const
 
@@ -74,9 +71,7 @@ function validAuthorizationUrl(value: string) {
     const url = new URL(value)
     const scopes = url.searchParams.get("scope")?.split(/\s+/).filter(Boolean)
       ?? []
-    const expectedScopes = scopes.length === READONLY_SCOPES.length
-      ? READONLY_SCOPES
-      : LEGACY_SCOPES
+    const expectedScopes = POST_SALE_SCOPES
     return url.origin === "https://auth.ebay.com" &&
       url.pathname === "/oauth2/authorize" &&
       !url.username && !url.password && !url.hash &&
@@ -96,12 +91,9 @@ function validAuthorizationUrl(value: string) {
 
 function validActivation(payload: ActivationPayload) {
   const expectedScopes = payload.ceremony?.scopeProfile ===
-      "COMMERCIAL_ORDERS_READONLY"
-    ? READONLY_SCOPES
-    : payload.ceremony?.scopeProfile ===
-        "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE"
-      ? LEGACY_SCOPES
-      : null
+      "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE"
+    ? POST_SALE_SCOPES
+    : null
   return payload.success === true &&
     typeof payload.authorizationUrl === "string" &&
     validAuthorizationUrl(payload.authorizationUrl) &&
@@ -140,7 +132,7 @@ export default function CommercialOrdersOAuthStartPage() {
         .searchParams.get("ticket") ?? ""
       window.history.replaceState(null, "", window.location.pathname)
       if (!/^[A-Za-z0-9._-]{80,2048}$/.test(startTicket)) {
-        setStatus("Listo para preparar la autorización oficial read-only.")
+        setStatus("Listo para autorizar pedidos y agradecimientos posventa.")
         setOperatorStartAvailable(true)
         return
       }
@@ -169,7 +161,7 @@ export default function CommercialOrdersOAuthStartPage() {
     })()
   }, [])
 
-  async function beginReadonlyAuthorization() {
+  async function beginPostSaleAuthorization() {
     if (operatorStartBusy) return
     setOperatorStartBusy(true)
     setStatus("Preparando state firmado y handoff de un solo uso…")
@@ -207,11 +199,12 @@ export default function CommercialOrdersOAuthStartPage() {
       }
       if (!response.ok || payload.success !== true ||
           !validStartUrl(payload.startUrl) ||
-          payload.ceremony?.scopeProfile !== "COMMERCIAL_ORDERS_READONLY" ||
+          payload.ceremony?.scopeProfile !==
+            "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE" ||
           JSON.stringify(payload.ceremony.requestedScopes) !==
-            JSON.stringify(READONLY_SCOPES)) {
+            JSON.stringify(POST_SALE_SCOPES)) {
         throw new Error(
-          payload.error ?? "COMMERCIAL_ORDERS_READONLY_START_REJECTED",
+          payload.error ?? "COMMERCIAL_ORDERS_POST_SALE_START_REJECTED",
         )
       }
       setStatus("Continuando a la ceremonia firmada…")
@@ -219,7 +212,7 @@ export default function CommercialOrdersOAuthStartPage() {
     } catch (cause) {
       setStatus(cause instanceof Error
         ? cause.message
-        : "COMMERCIAL_ORDERS_READONLY_START_REJECTED")
+        : "COMMERCIAL_ORDERS_POST_SALE_START_REJECTED")
       setOperatorStartBusy(false)
     }
   }
@@ -237,18 +230,19 @@ export default function CommercialOrdersOAuthStartPage() {
         {operatorStartAvailable ? (
           <>
             <p className="mt-4 text-sm leading-6 text-slate-300">
-              Se solicitarán únicamente base y Fulfillment readonly. No se
-              reemplaza EBAY_SELLER_REFRESH_TOKEN ni se concede ningún scope de
-              escritura.
+              Se solicitarán base, lectura de pedidos y el permiso oficial de
+              eBay para enviar únicamente el agradecimiento posventa aprobado.
+              No se reemplaza la autorización general del vendedor ni se
+              habilitan cambios de listings.
             </p>
             <ul className="mt-4 space-y-2 text-xs text-slate-400">
-              {READONLY_SCOPES.map((scope) => <li key={scope}>{scope}</li>)}
+              {POST_SALE_SCOPES.map((scope) => <li key={scope}>{scope}</li>)}
             </ul>
             <button
               className="mt-6 rounded-2xl border border-cyan-300/60 px-5 py-3 text-sm font-black text-cyan-100 disabled:opacity-40"
               type="button"
               disabled={operatorStartBusy}
-              onClick={beginReadonlyAuthorization}
+              onClick={beginPostSaleAuthorization}
             >
               {operatorStartBusy ? "Preparando…" : "Continuar a eBay"}
             </button>

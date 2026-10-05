@@ -13,7 +13,6 @@ import {
   buildEbayCommercialOrdersDiagnosticConsentUrl,
   createEbayCommercialOAuthState,
   EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES,
-  EBAY_COMMERCIAL_ORDERS_READONLY_SCOPES,
   encryptEbayCommercialRefreshToken,
   getEbayCommercialOrdersCallbackConfiguration,
   hashEbayCommercialOAuthState,
@@ -258,12 +257,9 @@ export function getEbayCommercialOrdersAuthorizationConfiguration(
     environment,
     requestHost,
   })
-  const scopeProfile: EbayCommercialOrdersScopeProfile = dedicatedPreprod
-    ? "COMMERCIAL_ORDERS_READONLY"
-    : "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE"
-  const scopes = dedicatedPreprod
-    ? [...EBAY_COMMERCIAL_ORDERS_READONLY_SCOPES]
-    : [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES]
+  const scopeProfile: EbayCommercialOrdersScopeProfile =
+    "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE"
+  const scopes = [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES]
   const dedicatedHost = normalizedHost(
     environment.VERCEL_PROJECT_PRODUCTION_URL ?? "",
   )
@@ -850,7 +846,7 @@ export async function completeEbayCommercialOrdersAuthorization(
     if (!accessToken) throw authorizationError("MALFORMED_REQUEST")
 
     await verifyEbayCommercialOfficialAccount(accessToken, fetchImpl)
-    if (credentials.scopeProfile === "COMMERCIAL_ORDERS_READONLY") {
+    if (credentials.dedicatedPreprod) {
       const consumedAt = new Date().toISOString()
       const { error: consumedError } = await supabase
         .from("ebay_commercial_oauth_handoffs")
@@ -875,7 +871,7 @@ export async function completeEbayCommercialOrdersAuthorization(
         refreshToken,
         identityMatch: true as const,
         fulfillmentScopeConfirmed: true as const,
-        commerceMessageScopeConfirmed: false as const,
+        commerceMessageScopeConfirmed: true as const,
         tokenPersisted: false as const,
         secretsReturned: false as const,
       }
