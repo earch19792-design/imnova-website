@@ -630,14 +630,21 @@ export async function persistOwnEbayPerformanceSnapshots(
     }
   }
 
-  const { data: linksData, error: linksError } = await supabase
+  const verifiedLinksQuery = supabase
     .from("ebay_manual_listing_links")
     .select("id,account_key,marketplace_id,ebay_item_id,opportunity_id,candidate_key,verification_status,verification_method,verified_at,last_verification_at,safe_defaults,predicted_opportunity_score,predicted_engine_version,predicted_category_id,prediction_source")
     .eq("account_key", accountKey)
     .eq("marketplace_id", "EBAY_US")
     .eq("verification_status", "verified")
-    .gte("last_verification_at", verificationFreshnessCutoff)
     .in("ebay_item_id", reportListingIds)
+  const { data: linksData, error: linksError } = await (
+    teoOwnerManualCollection
+      ? verifiedLinksQuery
+      : verifiedLinksQuery.gte(
+          "last_verification_at",
+          verificationFreshnessCutoff,
+        )
+  )
   if (linksError) throw new Error("EBAY_CATEGORY_LEARNING_LINK_READ_FAILED")
 
   const links = (linksData ?? []) as Array<Record<string, unknown>>
@@ -1035,16 +1042,26 @@ export async function collectOwnEbayPerformanceForLearning(
   const verificationFreshnessCutoff = new Date(
     now.getTime() - OWN_LISTING_VERIFICATION_MAX_AGE_MS,
   ).toISOString()
-  const { data, error, count } = await supabase
+  const verifiedLinksQuery = supabase
     .from("ebay_manual_listing_links")
     .select("ebay_item_id", { count: "exact" })
     .eq("account_key", accountKey)
     .eq("marketplace_id", "EBAY_US")
     .eq("verification_status", "verified")
-    .gte("last_verification_at", verificationFreshnessCutoff)
     .lte("verified_at", reportWindow.verifiedOnOrBefore)
     .order("verified_at", { ascending: false })
     .limit(maximumListings)
+  // The Sell Analytics report is scoped to the connected seller account, so
+  // TEO can safely retain already verified links while daily readback repairs
+  // refresh the stronger 36-hour proof used by category-learning Preview.
+  const { data, error, count } = await (
+    teoOwnerManualCollection
+      ? verifiedLinksQuery
+      : verifiedLinksQuery.gte(
+          "last_verification_at",
+          verificationFreshnessCutoff,
+        )
+  )
   if (error) throw new Error("EBAY_CATEGORY_LEARNING_LINK_READ_FAILED")
   const listingIds = [...new Set((data ?? [])
     .map((row) => String(row.ebay_item_id ?? ""))
