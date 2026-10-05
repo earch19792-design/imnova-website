@@ -3577,7 +3577,9 @@ export function getCommercialMonitorScheduleConfiguration() {
   return {
     enabled: pilot.enabled,
     pilot,
-    previewOnly: true,
+    previewOnly: pilot.previewOnly,
+    dedicatedPreprodOnly: pilot.dedicatedPreprodOnly,
+    boundaryClassification: pilot.boundaryClassification,
     currentEnvironment: process.env.VERCEL_ENV ?? "development",
     orderIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_ORDERS_INTERVAL_MINUTES, 5, 5, 1_440),
     messageIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_MESSAGES_INTERVAL_MINUTES, 10, 5, 1_440),

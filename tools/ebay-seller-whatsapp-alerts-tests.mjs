@@ -13,7 +13,7 @@ async function importTypeScript(path) {
   const typescript = await source(path)
   const withEmbeddedDependencies = path === "lib/ebay/ebay-seller-whatsapp-gateway.ts"
     ? `${await source("lib/ebay/environment-boundaries.ts")}\n${typescript.replace(
-      'import { getEbayProRuntimeBoundary } from "./environment-boundaries"\n',
+      /import \{ getEbayProRuntimeBoundary \} from "\.\/environment-boundaries"\r?\n/,
       "",
     )}`
     : typescript

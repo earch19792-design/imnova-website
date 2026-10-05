@@ -6,6 +6,8 @@ import { SELLER_OS_DASHBOARD_SALE_ALERT_VERSION, sellerOsDashboardSaleAlertIdent
 import { createUnavailableSellerOsSaleAlertsReadV1 } from "./ebay-sale-alerts-read-v1.ts"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { buildSellerOsCorrelationEnvelopeV1, buildSellerOsWorkflowStepExecutionV1 } from "./ebay-seller-os-workflow-foundation-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { getSellerOsOperationalRuntimeBoundary } from "./environment-boundaries.ts"
 
 export const SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_VERSION =
   "SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_V1" as const
@@ -36,7 +38,7 @@ export type SellerOsWhatsappProviderReadinessV1 = Readonly<{
   realDeliveryPermitted: boolean
   configuredRecipientOnly: true
   approvedTemplateOnly: true
-  environmentBoundary: "PREVIEW_ONLY"
+  environmentBoundary: "PREVIEW_ONLY" | "DEDICATED_PREPROD_ONLY"
   limitationCodes: readonly string[]
 }>
 
@@ -437,6 +439,7 @@ export function createUnavailableSellerOsWhatsappSaleAlertStatusV1(
   limitationCode = "WHATSAPP_SALE_ALERT_STATUS_UNAVAILABLE",
 ) {
   const observedAt = new Date().toISOString()
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary()
   return buildSellerOsWhatsappSaleAlertStatusV1({
     saleAlerts: createUnavailableSellerOsSaleAlertsReadV1(limitationCode),
     provider: Object.freeze({
@@ -448,7 +451,9 @@ export function createUnavailableSellerOsWhatsappSaleAlertStatusV1(
       realDeliveryPermitted: false,
       configuredRecipientOnly: true as const,
       approvedTemplateOnly: true as const,
-      environmentBoundary: "PREVIEW_ONLY" as const,
+      environmentBoundary: runtimeBoundary.dedicatedPreprodAllowed
+        ? "DEDICATED_PREPROD_ONLY" as const
+        : "PREVIEW_ONLY" as const,
       limitationCodes: Object.freeze([limitationCode]),
     }),
     audit: Object.freeze({

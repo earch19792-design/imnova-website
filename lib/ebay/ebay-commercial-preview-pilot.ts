@@ -1,9 +1,19 @@
 import { timingSafeEqual } from "node:crypto"
 
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { getSellerOsOperationalRuntimeBoundary } from "./environment-boundaries.ts"
+
 const SCHEDULE_TICK_TOLERANCE_MS = 30_000
 
 type PilotEnvironment = {
   vercelEnvironment?: string | null
+  vercelTargetEnvironment?: string | null
+  vercelSystem?: string | null
+  vercelProjectId?: string | null
+  vercelProjectProductionUrl?: string | null
+  nodeEnvironment?: string | null
+  ebayProRuntime?: string | null
+  supabaseUrl?: string | null
   previewMonitorEnabled?: string | null
   monitorEnabled?: string | null
   startedAt?: string | null
@@ -21,7 +31,18 @@ export function commercialPreviewPilotConfiguration(
   now = new Date(),
 ) {
   const currentEnvironment = environment.vercelEnvironment?.trim() || "development"
-  const previewOnly = currentEnvironment === "preview"
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary({
+    vercelEnv: environment.vercelEnvironment,
+    vercelTargetEnv: environment.vercelTargetEnvironment,
+    vercelSystem: environment.vercelSystem,
+    vercelProjectId: environment.vercelProjectId,
+    vercelProjectProductionUrl: environment.vercelProjectProductionUrl,
+    nodeEnv: environment.nodeEnvironment,
+    ebayProRuntime: environment.ebayProRuntime,
+    supabaseUrl: environment.supabaseUrl,
+  })
+  const previewOnly = runtimeBoundary.historicalPreviewAllowed
+  const runtimeAuthorized = runtimeBoundary.authorized
   const previewFlagEnabled = environment.previewMonitorEnabled?.trim() === "true"
   const runtimeFlagEnabled = environment.monitorEnabled?.trim() === "true"
   const startedAtMs = parsedTime(environment.startedAt)
@@ -34,15 +55,22 @@ export function commercialPreviewPilotConfiguration(
     (!environment.expiresAt || expiresAtMs !== null)
 
   let status: "production_blocked" | "disabled" | "misconfigured" | "active"
-  if (!previewOnly) status = "production_blocked"
-  else if (!previewFlagEnabled || !runtimeFlagEnabled) status = "disabled"
+  if (!runtimeAuthorized) status = "production_blocked"
+  else if (!runtimeFlagEnabled || (previewOnly && !previewFlagEnabled)) {
+    status = "disabled"
+  }
   else if (!legacyDatesValid) status = "misconfigured"
   else status = "active"
 
   return {
     enabled: status === "active",
     status,
-    previewOnly: true,
+    previewOnly,
+    dedicatedPreprodOnly: runtimeBoundary.dedicatedPreprodAllowed,
+    runtimeAuthorized,
+    boundaryClassification: runtimeBoundary.boundaryClassification,
+    failedDedicatedPreprodSignal:
+      runtimeBoundary.failedDedicatedPreprodSignal,
     currentEnvironment,
     startedAt: startedAtMs === null ? null : new Date(startedAtMs).toISOString(),
     expiresAt: expiresAtMs === null ? null : new Date(expiresAtMs).toISOString(),
@@ -58,6 +86,13 @@ export function commercialPreviewPilotConfiguration(
 export function currentCommercialPreviewPilotConfiguration(now = new Date()) {
   return commercialPreviewPilotConfiguration({
     vercelEnvironment: process.env.VERCEL_ENV,
+    vercelTargetEnvironment: process.env.VERCEL_TARGET_ENV,
+    vercelSystem: process.env.VERCEL,
+    vercelProjectId: process.env.VERCEL_PROJECT_ID,
+    vercelProjectProductionUrl: process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    nodeEnvironment: process.env.NODE_ENV,
+    ebayProRuntime: process.env.EBAY_PRO_RUNTIME,
+    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
     previewMonitorEnabled: process.env.EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED,
     monitorEnabled: process.env.EBAY_COMMERCIAL_MONITOR_ENABLED,
     startedAt: process.env.EBAY_COMMERCIAL_PILOT_STARTED_AT,

@@ -410,7 +410,7 @@ export function getEbayProRuntimeBoundary(input: EbayProBoundaryInput = {}) {
   }
 }
 
-export function getSellerOsStockGuardRuntimeBoundary(
+export function getSellerOsOperationalRuntimeBoundary(
   input: EbayProBoundaryInput = {},
 ) {
   const runtime = runtimeState(input)
@@ -428,6 +428,12 @@ export function getSellerOsStockGuardRuntimeBoundary(
     authorized: historicalPreviewAllowed || dedicatedPreprodAllowed,
     failedDedicatedPreprodSignal: runtime.dedicatedPreprod.failedSignal,
   }
+}
+
+export function getSellerOsStockGuardRuntimeBoundary(
+  input: EbayProBoundaryInput = {},
+) {
+  return getSellerOsOperationalRuntimeBoundary(input)
 }
 
 export function isEbayProAllowed(input: EbayProBoundaryInput = {}) {

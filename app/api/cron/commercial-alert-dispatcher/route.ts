@@ -18,6 +18,10 @@ import { dispatchSellerOsBuyerThankYouV1 } from
   "@/lib/ebay/ebay-buyer-thank-you-dispatcher-v1"
 import { collectSellerOsBuyerThankYouStatusV1 } from
   "@/lib/ebay/ebay-seller-os-assistant-runtime"
+import { preflightEbayBuyerMessagingCapabilityV1 } from
+  "@/lib/ebay/ebay-post-purchase-buyer-message-v1"
+import { getSellerOsOperationalRuntimeBoundary } from
+  "@/lib/ebay/environment-boundaries"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { sellerOsPostOnlyGetResponseV1 } from
   "@/lib/seller-os/post-only-runtime-route-v1"
@@ -116,26 +120,53 @@ export async function POST(req: Request) {
     { status: 401 },
   )
   const schedule = getCommercialMonitorScheduleConfiguration()
-  if (process.env.VERCEL_ENV !== "preview" || !schedule.enabled) {
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary()
+  if (!runtimeBoundary.authorized) {
     return NextResponse.json({
       success: true,
       status: "disabled",
       schedule,
-      safety: { previewOnly: true, productionUnchanged: true },
+      safety: {
+        previewOnly: runtimeBoundary.historicalPreviewAllowed,
+        dedicatedPreprodOnly: runtimeBoundary.dedicatedPreprodAllowed,
+        productionUnchanged: true,
+      },
     })
   }
-  if (new URL(req.url).searchParams.get("mode") === "whatsapp-preflight") {
+  const mode = new URL(req.url).searchParams.get("mode")
+  if (mode === "whatsapp-preflight" || mode === "post-sale-preflight") {
     const preflight = await preflightSellerWhatsAppGateway({ force: true })
+    const buyerMessaging = mode === "post-sale-preflight"
+      ? await preflightEbayBuyerMessagingCapabilityV1()
+      : null
+    const buyerMessagingPreflightPassed = buyerMessaging === null || (
+      buyerMessaging.commerceMessageScopeConfirmed &&
+      buyerMessaging.accountBindingStatus === "MATCHED" &&
+      ["READY", "NOT_ACTIVATED"].includes(buyerMessaging.status)
+    )
     return NextResponse.json({
-      success: preflight.success,
-      mode: "whatsapp-preflight",
+      success: preflight.success && buyerMessagingPreflightPassed,
+      mode,
       configuration: getSellerWhatsAppGatewayConfiguration(),
-      preflight,
+      whatsapp: preflight,
+      buyerMessaging,
       safety: {
         alertClaimed: false,
         realMessageSent: false,
         providerWriteUsed: false,
         secretsReturned: false,
+        productionUnchanged: true,
+      },
+    })
+  }
+  if (!schedule.enabled) {
+    return NextResponse.json({
+      success: true,
+      status: "disabled",
+      schedule,
+      safety: {
+        previewOnly: runtimeBoundary.historicalPreviewAllowed,
+        dedicatedPreprodOnly: runtimeBoundary.dedicatedPreprodAllowed,
         productionUnchanged: true,
       },
     })

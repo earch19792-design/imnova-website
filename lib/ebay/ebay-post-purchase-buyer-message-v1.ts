@@ -13,6 +13,8 @@ import {
 import { SELLER_OS_DASHBOARD_SALE_ALERT_VERSION, type SellerOsSaleAlertsReadV1 } from "./ebay-sale-alerts-read-v1.ts"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { buildSellerOsCorrelationEnvelopeV1, buildSellerOsWorkflowStepExecutionV1 } from "./ebay-seller-os-workflow-foundation-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { getSellerOsOperationalRuntimeBoundary } from "./environment-boundaries.ts"
 
 export const POST_PURCHASE_BUYER_MESSAGE_VERSION =
   "POST_PURCHASE_BUYER_MESSAGE_V1" as const
@@ -182,18 +184,30 @@ export function classifySellerOsBuyerThankYouDetectionV1(
 export function getPostPurchaseBuyerMessageCapabilityV1(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  const preview = environment.VERCEL_ENV === "preview"
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary({
+    vercelEnv: environment.VERCEL_ENV,
+    vercelTargetEnv: environment.VERCEL_TARGET_ENV,
+    vercelSystem: environment.VERCEL,
+    vercelProjectId: environment.VERCEL_PROJECT_ID,
+    vercelProjectProductionUrl: environment.VERCEL_PROJECT_PRODUCTION_URL,
+    nodeEnv: environment.NODE_ENV,
+    ebayProRuntime: environment.EBAY_PRO_RUNTIME,
+    supabaseUrl: environment.NEXT_PUBLIC_SUPABASE_URL,
+  })
   const explicitlyEnabled = environment
     .EBAY_POST_PURCHASE_THANK_YOU_ENABLED === "true"
   return Object.freeze({
     contractVersion: POST_PURCHASE_BUYER_MESSAGE_VERSION,
-    status: !preview
+    status: !runtimeBoundary.authorized
       ? "BLOCKED_NON_PREVIEW" as const
       : explicitlyEnabled
         ? "PREFLIGHT_REQUIRED" as const
         : "NOT_ACTIVATED" as const,
     requiredScope: EBAY_COMMERCE_MESSAGE_SCOPE,
-    previewOnly: true as const,
+    previewOnly: runtimeBoundary.historicalPreviewAllowed,
+    dedicatedPreprodOnly: runtimeBoundary.dedicatedPreprodAllowed,
+    runtimeAuthorized: runtimeBoundary.authorized,
+    boundaryClassification: runtimeBoundary.boundaryClassification,
     explicitlyEnabled,
     exactlyOneApprovedTemplate: true as const,
     templateVersion: POST_PURCHASE_THANK_YOU_TEMPLATE_VERSION,

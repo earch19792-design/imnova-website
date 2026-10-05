@@ -38,6 +38,8 @@ import { createSellerOsLunaStockObservationPrebuildStatusV1 } from
   "./ebay-luna-stock-observation-v1.ts"
 import { getSellerWhatsAppGatewayConfiguration,
   preflightSellerWhatsAppGateway } from "./ebay-seller-whatsapp-gateway"
+import { getSellerOsOperationalRuntimeBoundary } from
+  "./environment-boundaries"
 import { getSupabaseAdminClient } from "../supabase-admin"
 import { readCommercialMonitorReadonlySources } from "./commercial-monitor-readonly-repository"
 import { createBudgetedReadonlyFetchV1, settleReadWithinBudgetV1,
@@ -196,6 +198,7 @@ export async function collectSellerOsWhatsappSaleAlertStatusV1(input: {
           "CANONICAL_SELLER_ACCOUNT_BINDING_UNAVAILABLE",
         ]),
       }
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary()
   return buildSellerOsWhatsappSaleAlertStatusV1({
     saleAlerts,
     audit,
@@ -208,7 +211,9 @@ export async function collectSellerOsWhatsappSaleAlertStatusV1(input: {
       realDeliveryPermitted: configuration.realDeliveryPermitted,
       configuredRecipientOnly: true as const,
       approvedTemplateOnly: true as const,
-      environmentBoundary: "PREVIEW_ONLY" as const,
+      environmentBoundary: runtimeBoundary.dedicatedPreprodAllowed
+        ? "DEDICATED_PREPROD_ONLY" as const
+        : "PREVIEW_ONLY" as const,
       limitationCodes: Object.freeze([
         ...preflightLimitations,
         ...(!configuration.enabled ? ["SELLER_WHATSAPP_DISABLED"] : []),

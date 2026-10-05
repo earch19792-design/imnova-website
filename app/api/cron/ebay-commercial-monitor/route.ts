@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto"
 import { NextResponse } from "next/server"
 import { sellerOsPostOnlyGetResponseV1 } from
   "@/lib/seller-os/post-only-runtime-route-v1"
+import { getSellerOsOperationalRuntimeBoundary } from
+  "@/lib/ebay/environment-boundaries"
 
 import {
   getCommercialMonitorScheduleConfiguration,
@@ -297,13 +299,15 @@ export async function POST(req: Request) {
     }
   }
   const schedule = getCommercialMonitorScheduleConfiguration()
-  if (process.env.VERCEL_ENV !== "preview" || !schedule.enabled) {
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary()
+  if (!runtimeBoundary.authorized || !schedule.enabled) {
     return NextResponse.json({
       success: true,
       status: "disabled",
       schedule,
       safety: {
-        previewOnly: true,
+        previewOnly: runtimeBoundary.historicalPreviewAllowed,
+        dedicatedPreprodOnly: runtimeBoundary.dedicatedPreprodAllowed,
         productionUnchanged: true,
         ebayWriteUsed: false,
       },
