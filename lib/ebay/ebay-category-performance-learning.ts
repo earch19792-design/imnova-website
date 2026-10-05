@@ -640,10 +640,7 @@ export async function persistOwnEbayPerformanceSnapshots(
   const { data: linksData, error: linksError } = await (
     teoOwnerManualCollection
       ? verifiedLinksQuery
-      : verifiedLinksQuery.gte(
-          "last_verification_at",
-          verificationFreshnessCutoff,
-        )
+      : verifiedLinksQuery.gte("last_verification_at", verificationFreshnessCutoff)
   )
   if (linksError) throw new Error("EBAY_CATEGORY_LEARNING_LINK_READ_FAILED")
 
@@ -705,6 +702,7 @@ export async function persistOwnEbayPerformanceSnapshots(
       report_date_from: reportDateFrom,
       report_date_to: reportDateTo,
       window_days: windowDays,
+      link_verified_at: verifiedAt,
       listing_age_days: elapsedDays(verifiedAt, observedAt),
       total_impressions: totalImpressions,
       search_impressions: metricCount(row, "LISTING_IMPRESSION_SEARCH_RESULTS_PAGE"),
@@ -1057,10 +1055,7 @@ export async function collectOwnEbayPerformanceForLearning(
   const { data, error, count } = await (
     teoOwnerManualCollection
       ? verifiedLinksQuery
-      : verifiedLinksQuery.gte(
-          "last_verification_at",
-          verificationFreshnessCutoff,
-        )
+      : verifiedLinksQuery.gte("last_verification_at", verificationFreshnessCutoff)
   )
   if (error) throw new Error("EBAY_CATEGORY_LEARNING_LINK_READ_FAILED")
   const listingIds = [...new Set((data ?? [])
