@@ -92,6 +92,7 @@ type PersistPerformanceInput = {
   listingIds?: string[]
   observedAt?: string | Date
   environment?: NodeJS.ProcessEnv
+  collectionMode?: "CATEGORY_LEARNING_PREVIEW" | "TEO_OWNER_MANUAL"
 }
 
 function finiteNumber(value: unknown) {
@@ -552,7 +553,9 @@ export async function persistOwnEbayPerformanceSnapshots(
   const activation = getEbayCategoryLearningActivationConfiguration(
     input.environment ?? process.env,
   )
-  if (!activation.active) {
+  const teoOwnerManualCollection =
+    input.collectionMode === "TEO_OWNER_MANUAL"
+  if (!activation.active && !teoOwnerManualCollection) {
     return {
       status: "PREVIEW_LEARNING_DISABLED" as const,
       snapshotCount: 0,
@@ -728,6 +731,22 @@ export async function persistOwnEbayPerformanceSnapshots(
     .from("ebay_listing_performance_snapshots")
     .upsert(snapshots, { onConflict: "snapshot_fingerprint" })
   if (snapshotError) throw new Error("EBAY_CATEGORY_LEARNING_SNAPSHOT_WRITE_FAILED")
+
+  // TEO needs official performance memory in the operating environment, but it
+  // must never activate the separate category-ranking learning experiment.
+  if (teoOwnerManualCollection) {
+    return {
+      status: "TEO_SNAPSHOTS_STORED" as const,
+      snapshotCount: snapshots.length,
+      verifiedLinkedListingCount: links.length,
+      skippedUnlinkedListingCount: reportListingIds.length - linksByItem.size,
+      preVerificationWindowLinkCount,
+      categoryLearning: [] as EbayCategoryLearningEvaluation[],
+      minimums: EBAY_CATEGORY_LEARNING_POLICY,
+      collectionMode: "TEO_OWNER_MANUAL" as const,
+      rankingAdjustmentApplied: false as const,
+    }
+  }
 
   const cohorts = [...new Set(snapshots.flatMap((snapshot) =>
     snapshot.category_id
@@ -983,12 +1002,15 @@ export async function collectOwnEbayPerformanceForLearning(
     now?: string | Date
     maximumListings?: number
     environment?: NodeJS.ProcessEnv
+    collectionMode?: "CATEGORY_LEARNING_PREVIEW" | "TEO_OWNER_MANUAL"
   } = {},
 ) {
   const activation = getEbayCategoryLearningActivationConfiguration(
     options.environment ?? process.env,
   )
-  if (!activation.active) {
+  const teoOwnerManualCollection =
+    options.collectionMode === "TEO_OWNER_MANUAL"
+  if (!activation.active && !teoOwnerManualCollection) {
     return {
       status: "PREVIEW_LEARNING_DISABLED" as const,
       requestedListingCount: 0,
@@ -1076,6 +1098,7 @@ export async function collectOwnEbayPerformanceForLearning(
       listingIds,
       observedAt: now,
       environment: options.environment ?? process.env,
+      collectionMode: options.collectionMode,
     },
   )
   return {
@@ -1086,5 +1109,6 @@ export async function collectOwnEbayPerformanceForLearning(
       (count ?? listingIds.length) > listingIds.length,
     reportWindow,
     activation,
+    collectionMode: options.collectionMode ?? "CATEGORY_LEARNING_PREVIEW",
   }
 }
