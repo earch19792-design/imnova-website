@@ -1022,7 +1022,13 @@ async function insertEvent(supabase: SupabaseClient, accountKey: string, event: 
     if (readError || !existing?.id) throw new Error("COMMERCIAL_EVENT_RECOVERY_READ_FAILED")
     return { id: existing.id as string, created: false }
   }
-  if (error || !data?.id) throw new Error("COMMERCIAL_EVENT_CREATE_FAILED")
+  if (error || !data?.id) {
+    const databaseCode = typeof error?.code === "string" &&
+      /^[A-Z0-9_]{3,32}$/.test(error.code)
+      ? error.code
+      : "UNKNOWN"
+    throw new Error(`COMMERCIAL_EVENT_CREATE_FAILED_${databaseCode}`)
+  }
   return { id: data.id as string, created: true }
 }
 
