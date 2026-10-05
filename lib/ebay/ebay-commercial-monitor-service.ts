@@ -1027,7 +1027,10 @@ async function insertEvent(supabase: SupabaseClient, accountKey: string, event: 
       /^[A-Z0-9_]{3,32}$/.test(error.code)
       ? error.code
       : "UNKNOWN"
-    throw new Error(`COMMERCIAL_EVENT_CREATE_FAILED_${databaseCode}`)
+    const databaseReason = typeof error?.message === "string"
+      ? error.message.match(/\b[A-Z][A-Z0-9_]{3,160}\b/)?.[0] ?? databaseCode
+      : databaseCode
+    throw new Error(`COMMERCIAL_EVENT_CREATE_FAILED_${databaseReason}`)
   }
   return { id: data.id as string, created: true }
 }
