@@ -36,7 +36,11 @@ function walk(directory) {
 }
 
 function sha256(path) {
-  return createHash("sha256").update(readFileSync(path)).digest("hex")
+  // Git stores the certified SQL artifacts with LF, while Windows may
+  // materialize the same blobs with CRLF. Hash the canonical text so the
+  // immutability guard detects content changes instead of checkout policy.
+  const canonical = readFileSync(path, "utf8").replace(/\r\n/g, "\n")
+  return createHash("sha256").update(canonical, "utf8").digest("hex")
 }
 
 for (const [path, expected] of immutableMigrations) {
