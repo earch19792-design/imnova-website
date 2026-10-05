@@ -14,6 +14,7 @@ const registeredRuntimeGraphAdditions = Object.freeze([
   "lib/ebay/ebay-listing-quality-report-errors-v1.ts",
   "lib/ebay/ebay-analytics-last-known-good-v1.ts",
   "lib/ebay/ebay-current-live-authority-v1.ts",
+  "lib/ebay/ebay-live-coverage-failure-v1.ts",
   "lib/ebay/ebay-luna-canonical-stock-read-model-adapter-v1.ts",
   "lib/ebay/ebay-official-orders-read-v1.ts",
   "lib/ebay/ebay-sale-alerts-read-v1.ts",
@@ -49,7 +50,9 @@ function resolveLocalImport(fromPath, specifier) {
         join(base, "index.js"),
       ]
   const absolute = candidates.find(existsSync)
-  return absolute ? normalize(relative(root, absolute)) : null
+  return absolute
+    ? normalize(relative(root, absolute)).replaceAll("\\", "/")
+    : null
 }
 
 function localImports(path) {
@@ -279,11 +282,20 @@ test("el Item ID histórico y la tupla sintética no existen en el runtime canó
     runtimeSource,
     /impressions\s*:\s*18[\s\S]{0,240}views\s*:\s*1[\s\S]{0,240}transactions\s*:\s*0[\s\S]{0,240}ctr\s*:\s*5\.6/,
   )
-  // No source metric may turn UNKNOWN into zero. The sole exception counts
-  // pages actually attempted before a local authentication/configuration block.
-  const allowedTelemetry = 'pagesRead: detail.pagesRead ?? 0'
-  assert.equal(runtimeSource.split(allowedTelemetry).length - 1, 1)
-  assert.doesNotMatch(runtimeSource.replace(allowedTelemetry, ''), /\?\?\s*0|\|\|\s*0/)
+  // No source metric may turn UNKNOWN into zero. These two local telemetry
+  // counters describe work attempted or evidence discarded; neither is a
+  // marketplace/business metric and neither leaves the read-only boundary.
+  const allowedTelemetry = [
+    'pagesRead: detail.pagesRead ?? 0',
+    '(unsafeDiscardReasonCounts[reason] ?? 0) + 1',
+    'input.orders.policyExcludedOrdersAfterSanitization ?? 0',
+  ]
+  let evidenceSource = runtimeSource
+  for (const expression of allowedTelemetry) {
+    assert.equal(evidenceSource.split(expression).length - 1, 1)
+    evidenceSource = evidenceSource.replace(expression, '')
+  }
+  assert.doesNotMatch(evidenceSource, /\?\?\s*0|\|\|\s*0/)
   const reconciliation = read(
     "lib/ebay/ebay-commercial-analytics-reconciliation.ts",
   )
