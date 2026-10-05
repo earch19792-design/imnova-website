@@ -11,5 +11,15 @@
         }
       ]
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/ebay-commercial-monitor-schedule",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/commercial-alert-dispatcher-schedule",
+      "schedule": "* * * * *"
+    }
+  ]
 }
