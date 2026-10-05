@@ -154,6 +154,24 @@ export async function POST(req: Request) {
       },
     })
   }
+  if (mode === "buyer-thank-you-status") {
+    const status = await collectSellerOsBuyerThankYouStatusV1()
+    return NextResponse.json({
+      success: status.sourceStatus !== "UNAVAILABLE",
+      mode,
+      status,
+      safety: {
+        readOnly: true,
+        alertClaimed: false,
+        realMessageSent: false,
+        providerWriteUsed: false,
+        buyerMessageSends: 0,
+        whatsappAttempted: false,
+        secretsReturned: false,
+        buyerPiiIncluded: false,
+      },
+    })
+  }
   if (mode === "buyer-thank-you-canary") {
     const confirmed = req.headers.get(
       "x-imnova-buyer-thank-you-canary-confirmation",
