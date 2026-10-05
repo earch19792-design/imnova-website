@@ -66,8 +66,8 @@ function ledgerEvidence(input: Readonly<{
     messageGrain: "ONE_BUYER_THANK_YOU_PER_EBAY_ORDER",
     sideEffectClass: "BUYER_MESSAGE_SEND",
     marketplaceWrite: true,
-    buyerPiiIncluded: false,
-    buyerIdentityIncluded: false,
+    piiIncluded: false,
+    partyIdentityIncluded: false,
     rawProviderPayloadIncluded: false,
     credentialsIncluded: false,
   }
