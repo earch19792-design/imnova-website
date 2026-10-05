@@ -2,7 +2,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
-import { randomUUID, timingSafeEqual } from "node:crypto"
+import { randomUUID } from "node:crypto"
 
 import { NextResponse } from "next/server"
 
@@ -17,25 +17,17 @@ import {
   preflightSellerWhatsAppGateway,
 } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { commercialPreviewCronAuthorized } from
+  "@/lib/ebay/ebay-commercial-preview-pilot"
+import { getSellerOsOperationalRuntimeBoundary } from
+  "@/lib/ebay/environment-boundaries"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
 
-function safeEqual(left: string, right: string) {
-  const a = Buffer.from(left)
-  const b = Buffer.from(right)
-  return a.length === b.length && timingSafeEqual(a, b)
-}
-
-function hasCronAuthorization(req: Request) {
-  const secret = process.env.CRON_SECRET?.trim() ?? ""
-  const authorization = req.headers.get("authorization") ?? ""
-  return Boolean(secret && safeEqual(authorization, `Bearer ${secret}`))
-}
-
 async function authorize(req: Request) {
-  if (hasCronAuthorization(req)) {
+  if (commercialPreviewCronAuthorized(req)) {
     return { ok: true as const, mode: "cron" as const, status: 200, error: null }
   }
   const validation = await validateAdminApiRequest(req)
@@ -75,8 +67,9 @@ async function deliverControlledPreviewTest(
   authorizationMode: "admin" | "cron",
   confirmation: unknown,
 ) {
-  if (process.env.VERCEL_ENV !== "preview") {
-    throw new Error("SELLER_WHATSAPP_TEST_PREVIEW_ONLY")
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary()
+  if (!runtimeBoundary.authorized) {
+    throw new Error("SELLER_WHATSAPP_TEST_ENVIRONMENT_BLOCKED")
   }
   if (confirmation !== SELLER_WHATSAPP_TEST_CONFIRMATION) {
     throw new Error("SELLER_WHATSAPP_TEST_CONFIRMATION_REQUIRED")
@@ -144,7 +137,10 @@ async function deliverControlledPreviewTest(
       configuredRecipientOnly: true,
       approvedTemplateOnly: true,
       outboxAuditUsed: true,
-      previewOnly: true,
+      authorizedSellerOsRuntimeOnly: true,
+      previewDelivery: runtimeBoundary.historicalPreviewAllowed,
+      dedicatedPreprodDelivery: runtimeBoundary.dedicatedPreprodAllowed,
+      productionCoreDeliveryBlocked: true,
       ebayWriteUsed: false,
       secretsReturned: false,
     },

@@ -9,6 +9,8 @@ import {
   getSellerWhatsAppGatewayConfiguration,
   sendSellerWhatsAppApprovedTemplate,
 } from "../ebay/ebay-seller-whatsapp-gateway"
+import { getSellerOsOperationalRuntimeBoundary } from
+  "../ebay/environment-boundaries"
 import {
   renderCommercialWhatsAppDigest,
   renderCommercialWhatsAppMessage,
@@ -169,8 +171,9 @@ export async function dispatchCommercialAlertOutbox(
   },
 ) {
   const configuration = getSellerWhatsAppGatewayConfiguration()
-  const previewEnvironment = process.env.VERCEL_ENV === "preview"
-  const realDeliveryAllowed = previewEnvironment && configuration.deliveryAttemptAllowed
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary()
+  const realDeliveryAllowed = runtimeBoundary.authorized &&
+    configuration.deliveryAttemptAllowed
   if (input.dryRun !== false || !realDeliveryAllowed) {
     return {
       mode: "preview" as const,
@@ -187,9 +190,11 @@ export async function dispatchCommercialAlertOutbox(
         input.limit,
       ),
       safety: {
-        previewOnlyDelivery: true,
+        authorizedSellerOsRuntimeOnly: true,
+        previewDelivery: runtimeBoundary.historicalPreviewAllowed,
+        dedicatedPreprodDelivery: runtimeBoundary.dedicatedPreprodAllowed,
         configuredRecipientOnly: true,
-        productionDeliveryBlocked: true,
+        productionCoreDeliveryBlocked: true,
       },
     }
   }
@@ -316,7 +321,7 @@ export async function dispatchCommercialAlertOutbox(
   }
   return {
     mode: "delivery" as const,
-    environment: "preview",
+    environment: runtimeBoundary.boundaryClassification,
     configuration,
     claimed: rows.length,
     metaAccepted,
@@ -327,9 +332,11 @@ export async function dispatchCommercialAlertOutbox(
     indeterminateClaimsQuarantined,
     whatsappMessagesAttempted: immediateRows.length + (digestRows.length ? 1 : 0),
     safety: {
-      previewOnlyDelivery: true,
+      authorizedSellerOsRuntimeOnly: true,
+      previewDelivery: runtimeBoundary.historicalPreviewAllowed,
+      dedicatedPreprodDelivery: runtimeBoundary.dedicatedPreprodAllowed,
       configuredRecipientOnly: true,
-      productionDeliveryBlocked: true,
+      productionCoreDeliveryBlocked: true,
     },
   }
 }
