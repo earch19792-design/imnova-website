@@ -1681,7 +1681,9 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
       }
       if (listingMarketplaceId !== "EBAY_US") {
         noteUnsafeDiscardReason(listingMarketplaceId
-          ? "FULFILLMENT_LINE_LISTING_MARKETPLACE_UNSUPPORTED"
+          ? listingMarketplaceId === "EBAY_MOTORS_US"
+            ? "FULFILLMENT_LINE_LISTING_MARKETPLACE_EBAY_MOTORS_US_OBSERVED"
+            : "FULFILLMENT_LINE_LISTING_MARKETPLACE_UNSUPPORTED"
           : "FULFILLMENT_LINE_LISTING_MARKETPLACE_MISSING")
         noteUnsafeDiscardReason(purchaseMarketplaceId === "EBAY_US"
           ? "FULFILLMENT_LINE_PURCHASE_MARKETPLACE_US_OBSERVED"
