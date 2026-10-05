@@ -19,6 +19,11 @@ function authorized(req: Request) {
   return Boolean(secret && req.headers.get("authorization") === `Bearer ${secret}`)
 }
 
+function safeReasonCode(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : ""
+  return /^[A-Z][A-Z0-9_]{2,119}$/.test(message) ? message : fallback
+}
+
 export async function POST(req: Request) {
   const supabase = getSupabaseAdminClient()
   if (!authorized(req) && !await sellerOsPostRuntimeAuthorizedV1({
@@ -34,20 +39,36 @@ export async function POST(req: Request) {
         limit: 2,
         timeBudgetMs: 15_000,
       })
-    const performanceMemory = await collectOwnEbayPerformanceForLearning(
-      supabase,
-      {
+    const performanceMemory =
+      await collectOwnEbayPerformanceForLearning(supabase, {
         maximumListings: 200,
         collectionMode: "TEO_OWNER_MANUAL",
-      },
-    )
-    const experimentFollowUp = await refreshTeoOwnerListingExperimentsV1(
-      supabase,
-      { maximumExperiments: 5 },
-    )
+      }).catch((error) => ({
+        status: "TEO_PERFORMANCE_MEMORY_FAILED" as const,
+        reasonCode: safeReasonCode(error,
+          "TEO_PERFORMANCE_MEMORY_UNAVAILABLE"),
+        rankingAdjustmentApplied: false as const,
+      }))
+    const experimentFollowUp =
+      await refreshTeoOwnerListingExperimentsV1(supabase, {
+        maximumExperiments: 5,
+      }).catch((error) => ({
+        processed: 0,
+        results: [],
+        status: "TEO_EXPERIMENT_FOLLOW_UP_FAILED" as const,
+        reasonCode: safeReasonCode(error,
+          "TEO_EXPERIMENT_FOLLOW_UP_UNAVAILABLE"),
+        ebayWriteUsed: false as const,
+      }))
+    const partial = performanceMemory.status ===
+      "TEO_PERFORMANCE_MEMORY_FAILED" ||
+      "status" in experimentFollowUp && experimentFollowUp.status ===
+        "TEO_EXPERIMENT_FOLLOW_UP_FAILED"
     return NextResponse.json({
       success: true,
-      status: "TEO_DAILY_REVIEW_COMPLETED",
+      status: partial
+        ? "TEO_DAILY_REVIEW_PARTIAL"
+        : "TEO_DAILY_REVIEW_COMPLETED",
       manualListingReverification,
       performanceMemory,
       experimentFollowUp,
