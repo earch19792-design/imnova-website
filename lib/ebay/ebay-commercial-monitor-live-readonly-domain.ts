@@ -1665,6 +1665,10 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
         line.listingMarketplaceId,
         40,
       ).toUpperCase()
+      const purchaseMarketplaceId = jsonText(
+        line.purchaseMarketplaceId,
+        40,
+      ).toUpperCase()
       const quantity = jsonNumber(line.quantity)
       let unsafe = false
       if (!lineItemId) {
@@ -1676,7 +1680,14 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
         unsafe = true
       }
       if (listingMarketplaceId !== "EBAY_US") {
-        noteUnsafeDiscardReason("FULFILLMENT_LINE_MARKETPLACE_UNSUPPORTED")
+        noteUnsafeDiscardReason(listingMarketplaceId
+          ? "FULFILLMENT_LINE_LISTING_MARKETPLACE_UNSUPPORTED"
+          : "FULFILLMENT_LINE_LISTING_MARKETPLACE_MISSING")
+        noteUnsafeDiscardReason(purchaseMarketplaceId === "EBAY_US"
+          ? "FULFILLMENT_LINE_PURCHASE_MARKETPLACE_US_OBSERVED"
+          : purchaseMarketplaceId
+            ? "FULFILLMENT_LINE_PURCHASE_MARKETPLACE_UNSUPPORTED"
+            : "FULFILLMENT_LINE_PURCHASE_MARKETPLACE_MISSING")
         unsafe = true
       }
       if (quantity === null || !Number.isSafeInteger(quantity) ||
