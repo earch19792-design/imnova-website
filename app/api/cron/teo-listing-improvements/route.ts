@@ -60,7 +60,8 @@ export async function POST(req: Request) {
           "TEO_EXPERIMENT_FOLLOW_UP_UNAVAILABLE"),
         ebayWriteUsed: false as const,
       }))
-    const partial = performanceMemory.status ===
+    const partial = manualListingReverification.failed > 0 ||
+      performanceMemory.status ===
       "TEO_PERFORMANCE_MEMORY_FAILED" ||
       "status" in experimentFollowUp && experimentFollowUp.status ===
         "TEO_EXPERIMENT_FOLLOW_UP_FAILED"
