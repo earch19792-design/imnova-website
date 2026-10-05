@@ -9,7 +9,8 @@ import { reverifyManualEbayListingsReadonly } from
   "@/lib/ebay/ebay-manual-listing-service"
 import { refreshTeoOwnerListingExperimentsV1 } from
   "@/lib/ebay/teo-owner-listing-experiment-service-v1"
-import { sellerOsPostOnlyGetResponseV1 } from
+import { sellerOsPostOnlyGetResponseV1,
+  sellerOsPostRuntimeAuthorizedV1 } from
   "@/lib/seller-os/post-only-runtime-route-v1"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
@@ -19,12 +20,15 @@ function authorized(req: Request) {
 }
 
 export async function POST(req: Request) {
-  if (!authorized(req)) {
+  const supabase = getSupabaseAdminClient()
+  if (!authorized(req) && !await sellerOsPostRuntimeAuthorizedV1({
+    request: req,
+    supabase,
+  })) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" },
       { status: 401 })
   }
   try {
-    const supabase = getSupabaseAdminClient()
     const manualListingReverification =
       await reverifyManualEbayListingsReadonly(supabase, {
         limit: 2,
