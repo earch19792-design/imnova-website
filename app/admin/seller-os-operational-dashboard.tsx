@@ -81,6 +81,12 @@ type AlreadyLiveOpportunity = Readonly<{ opportunityId: string;
   candidateKey: string | null; title: string | null; sourceSku: string | null;
   ebayItemIds: readonly string[]; liveWorkspaceUrl: string | null }>
 
+type CommercialMemoryItem = Readonly<{ opportunityId: string;
+  candidateKey: string | null; title: string | null; supplierSku: string | null;
+  lifecycleStage: string; decision: string; nextBestEvidence: string;
+  evidenceFreshness: string; blockers: readonly string[];
+  updatedAt: string | null }>
+
 type DashboardSnapshot = Readonly<{
   readyForOwnerReviewCount: number
   readyForOwnerReviewCandidateKeys: readonly string[]
@@ -91,6 +97,9 @@ type DashboardSnapshot = Readonly<{
   reviewQueueCount: number
   reviewQueueClassification: QueueClassification
   alreadyLiveOpportunities: readonly AlreadyLiveOpportunity[]
+  commercialMemoryCount: number
+  commercialMemoryRecords: readonly CommercialMemoryItem[]
+  commercialMemoryAvailable: boolean
   liveAttention: number
   liveAttentionAvailable: boolean
   stockGuard: CompactStatus
@@ -149,6 +158,9 @@ const emptySnapshot: DashboardSnapshot = {
   reviewQueueClassification: { READY: 0, RADAR_SIGNAL: 0, LEGACY: 0,
     ALREADY_LIVE: 0, UNPROVEN: 0 },
   alreadyLiveOpportunities: [],
+  commercialMemoryCount: 0,
+  commercialMemoryRecords: [],
+  commercialMemoryAvailable: false,
   liveAttention: 0,
   liveAttentionAvailable: false,
   stockGuard: "WAITING",
@@ -253,6 +265,31 @@ function parseAlreadyLiveOpportunities(value: unknown) {
       title: nullableText(item.title, 500),
       sourceSku: nullableText(item.sourceSku, 160), ebayItemIds,
       liveWorkspaceUrl: nullableText(item.liveWorkspaceUrl, 1_000) }]
+  })
+}
+
+function parseCommercialMemory(value: unknown) {
+  return (Array.isArray(value) ? value : []).flatMap((entry) => {
+    const item = record(entry)
+    const opportunityId = nullableText(item.opportunityId, 120)
+    const lifecycleStage = nullableText(item.lifecycleStage, 80)
+    const nextBestEvidence = nullableText(item.nextBestEvidence, 120)
+    if (!opportunityId || !lifecycleStage || !nextBestEvidence) return []
+    return [{ opportunityId,
+      candidateKey: nullableText(item.candidateKey, 300),
+      title: nullableText(item.title, 500),
+      supplierSku: nullableText(item.supplierSku, 160),
+      lifecycleStage,
+      decision: nullableText(item.decision, 80) ?? "UNPROVEN",
+      nextBestEvidence,
+      evidenceFreshness: nullableText(item.evidenceFreshness, 40) ??
+        "UNPROVEN",
+      blockers: (Array.isArray(item.blockers) ? item.blockers : [])
+        .flatMap((value) => {
+          const blocker = nullableText(value, 200)
+          return blocker ? [blocker] : []
+        }).slice(0, 20),
+      updatedAt: nullableText(item.updatedAt, 48) }]
   })
 }
 
@@ -1049,6 +1086,8 @@ export function SellerOsOperationalDashboard() {
     const radarAuthority = record(opportunityAuthority.radar)
     const reviewQueueAudit = record(opportunityAuthority.reviewQueueAudit)
     const alreadyLiveAuthority = record(opportunityAuthority.alreadyLive)
+    const commercialMemoryAuthority = record(
+      opportunityAuthority.commercialMemory)
     const runs = Array.isArray(radar.runs) ? radar.runs : []
     const latestRadarRun = record(runs[0])
     for (const item of Array.isArray(radar.activeListingRisks)
@@ -1074,6 +1113,8 @@ export function SellerOsOperationalDashboard() {
           ? readyAuthority.records.map(record) : []
         const readyAvailable = readyAuthority.status === "AVAILABLE"
         const radarAvailable = radarAuthority.status === "AVAILABLE"
+        const commercialMemoryAvailable =
+          commercialMemoryAuthority.status === "AVAILABLE"
         next = { ...next,
           readyForOwnerReviewCount: readyAvailable
             ? safeCount(readyAuthority.count) : previous.readyForOwnerReviewCount,
@@ -1097,6 +1138,14 @@ export function SellerOsOperationalDashboard() {
           alreadyLiveOpportunities: readyAvailable
             ? parseAlreadyLiveOpportunities(alreadyLiveAuthority.records)
             : previous.alreadyLiveOpportunities,
+          commercialMemoryCount: commercialMemoryAvailable
+            ? safeCount(commercialMemoryAuthority.count)
+            : previous.commercialMemoryCount,
+          commercialMemoryRecords: commercialMemoryAvailable
+            ? parseCommercialMemory(commercialMemoryAuthority.records)
+            : previous.commercialMemoryRecords,
+          commercialMemoryAvailable: commercialMemoryAvailable ||
+            previous.commercialMemoryAvailable,
         }
       }
       if (commercialAuthoritative) {
@@ -1314,6 +1363,39 @@ export function SellerOsOperationalDashboard() {
               </span>}
             </li>)}
           </ul>
+        </details>
+        <details className="mt-2 rounded-2xl border border-cyan-100/15 bg-cyan-100/[0.04] p-3"
+          data-teo-daily-commercial-memory>
+          <summary className="min-h-11 cursor-pointer list-none py-2 text-sm font-black text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+            TEO Daily · próxima evidencia · {snapshot.commercialMemoryAvailable
+              ? snapshot.commercialMemoryCount : "—"}
+          </summary>
+          <p className="mt-1 text-xs leading-5 text-white/50">
+            Una sola acción prioritaria por candidato. Evidencia no disponible
+            se muestra como no comprobada, nunca como cero.
+          </p>
+          <ul className="mt-2 space-y-2">
+            {snapshot.commercialMemoryRecords.slice(0, 10).map((item) => <li
+              key={item.opportunityId}
+              className="rounded-xl bg-black/20 p-2.5 text-xs leading-5 text-white/65">
+              <strong className="text-white/85">{item.title ??
+                item.supplierSku ?? "Candidato Luna"}</strong>
+              <span className="block">{item.lifecycleStage.replaceAll("_", " ")}
+                {" · "}{item.decision.replaceAll("_", " ")}
+                {" · evidencia "}{item.evidenceFreshness.toLowerCase()}</span>
+              <span className="block font-bold text-cyan-100/80">
+                Siguiente: {item.nextBestEvidence.replaceAll("_", " ")}
+              </span>
+              {item.blockers.length > 0 && <span
+                className="block text-white/40">Bloqueo: {item.blockers[0]
+                  .replaceAll("_", " ")}</span>}
+            </li>)}
+          </ul>
+          {snapshot.commercialMemoryAvailable &&
+              snapshot.commercialMemoryCount === 0 && <p
+              className="mt-2 rounded-xl border border-white/10 p-3 text-xs text-white/45">
+              Aún no hay evaluaciones Golden Path guardadas en la memoria comercial.
+            </p>}
         </details>
         <details className="mt-2 text-xs text-white/45"
           data-dashboard-review-queue-audit>

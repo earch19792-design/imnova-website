@@ -27,6 +27,17 @@ export type SellerOsDashboardQueueAuthorityRowV1 = Readonly<{
   dashboard_minimum_readiness_current?: unknown
   dashboard_minimum_listing_ready?: unknown
   dashboard_minimum_market_test_ready?: unknown
+  market_opportunity_case_id?: unknown
+  market_family_id?: unknown
+  commercial_lifecycle_stage?: unknown
+  commercial_decision?: unknown
+  commercial_next_best_evidence?: unknown
+  commercial_evidence_freshness?: unknown
+  commercial_blockers?: unknown
+  commercial_evaluation_receipt_id?: unknown
+  commercial_memory_digest?: unknown
+  commercial_observed_at?: unknown
+  commercial_updated_at?: unknown
 }>
 
 type LiveMatch = Readonly<{ ebayItemIds: readonly string[] }>
@@ -190,6 +201,44 @@ function projectQueueRow(row: SellerOsDashboardQueueAuthorityRowV1,
   })
 }
 
+function projectCommercialMemory(
+  row: SellerOsDashboardQueueAuthorityRowV1,
+) {
+  const opportunityId = text(row.id, 100)
+  const lifecycleStage = text(row.commercial_lifecycle_stage, 80)
+  const nextBestEvidence = text(row.commercial_next_best_evidence, 100)
+  const memoryDigest = text(row.commercial_memory_digest, 80)
+  const evaluationReceiptId = text(row.commercial_evaluation_receipt_id, 100)
+  if (!opportunityId || !lifecycleStage || !nextBestEvidence ||
+      !memoryDigest || !evaluationReceiptId) return null
+  return Object.freeze({
+    opportunityId,
+    candidateKey: text(row.candidate_key, 300),
+    title: text(row.product_title, 500),
+    supplierSku: text(row.supplier_sku, 160),
+    productId: text(row.supplier_product_id, 100),
+    variantId: text(row.supplier_variant_id, 100),
+    lifecycleStage,
+    decision: text(row.commercial_decision, 80) ?? "UNPROVEN",
+    nextBestEvidence,
+    evidenceFreshness: text(row.commercial_evidence_freshness, 40) ??
+      "UNPROVEN",
+    blockers: Object.freeze(Array.isArray(row.commercial_blockers)
+      ? row.commercial_blockers.flatMap((value) => {
+        const blocker = text(value, 200)
+        return blocker ? [blocker] : []
+      }).slice(0, 20) : []),
+    opportunityCaseId: text(row.market_opportunity_case_id, 160),
+    marketFamilyId: text(row.market_family_id, 160),
+    evaluationReceiptId,
+    memoryDigest,
+    observedAt: text(row.commercial_observed_at, 48),
+    updatedAt: text(row.commercial_updated_at, 48),
+    evidenceUnavailableShownAsZero: false as const,
+    marketplaceWriteAllowed: false as const,
+  })
+}
+
 function projectRadarSignal(value: SellerOsDashboardRadarSignalInputV1) {
   const familyId = text(value.familyId, 140)
   const familyName = text(value.familyName, 240)
@@ -250,6 +299,11 @@ export function buildSellerOsDashboardOpportunityAuthorityV1(input: Readonly<{
   const readyForOwnerReview = input.liveReadStatus === "AVAILABLE"
     ? readyQueueRows.filter((row) => row.classification === "READY") : []
   const alreadyLive = projected.filter((row) => row.alreadyLiveExactProduct)
+  const commercialMemory = input.queueRows.flatMap((row) => {
+    const value = projectCommercialMemory(row)
+    return value ? [value] : []
+  }).sort((left, right) => String(right.updatedAt ?? "")
+    .localeCompare(String(left.updatedAt ?? "")))
   const handoffByFamily = new Map(input.queueRows.flatMap((row) => {
     const handoff = radarHandoff(row)
     return handoff ? [[handoff.familyId, handoff] as const] : []
@@ -288,6 +342,11 @@ export function buildSellerOsDashboardOpportunityAuthorityV1(input: Readonly<{
       records: Object.freeze(readyQueueRows) }),
     alreadyLive: Object.freeze({ count: alreadyLive.length,
       records: Object.freeze(alreadyLive) }),
+    commercialMemory: Object.freeze({ status: "AVAILABLE" as const,
+      count: commercialMemory.length,
+      records: Object.freeze(commercialMemory),
+      nextBestEvidenceIsSinglePriority: true as const,
+      unavailableEvidenceShownAsZero: false as const }),
     safety: Object.freeze({ readOnly: true as const,
       marketplaceWrites: 0 as const, listingPublications: 0 as const,
       customerProductionTouched: false as const }),

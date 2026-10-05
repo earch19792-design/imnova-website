@@ -67,8 +67,8 @@ export async function readSellerOsProductJourneyV1(input: Readonly<{
   const variantId = text(queue.supplier_variant_id, 80)
   const supplierSku = text(queue.supplier_sku, 160)
   const assessment = record(queue.assessment)
-  const familyId = text(record(assessment.radarFactoryCandidateV1).familyId,
-    160)
+  const familyId = text(queue.market_family_id, 160) ??
+    text(record(assessment.radarFactoryCandidateV1).familyId, 160)
 
   const [packageRead, researchObservationRead, radarRead, frontierRead,
     shippingClaimRead, queueEventsRead] = await Promise.all([
@@ -289,6 +289,30 @@ export async function readSellerOsProductJourneyV1(input: Readonly<{
     queueEvents: rows(queueEventsRead.data),
   })
   return Object.freeze({ ...journey,
+    commercialMemory: queue.commercial_memory
+      ? Object.freeze({
+        contractVersion: "SELLER_OS_COMMERCIAL_OPPORTUNITY_MEMORY_V1",
+        lifecycleStage: text(queue.commercial_lifecycle_stage, 80),
+        decision: text(queue.commercial_decision, 80) ?? "UNPROVEN",
+        nextBestEvidence: text(queue.commercial_next_best_evidence, 120),
+        evidenceFreshness: text(queue.commercial_evidence_freshness, 40) ??
+          "UNPROVEN",
+        blockers: Object.freeze(Array.isArray(queue.commercial_blockers)
+          ? queue.commercial_blockers.flatMap((value) => {
+            const blocker = text(value, 200)
+            return blocker ? [blocker] : []
+          }).slice(0, 100) : []),
+        opportunityCaseId: text(queue.market_opportunity_case_id, 160),
+        marketFamilyId: text(queue.market_family_id, 160),
+        evaluationReceiptId: text(
+          queue.commercial_evaluation_receipt_id, 100),
+        memoryDigest: text(queue.commercial_memory_digest, 80),
+        observedAt: text(queue.commercial_observed_at, 48),
+        updatedAt: text(queue.commercial_updated_at, 48),
+        canonicalMemory: record(queue.commercial_memory),
+        unavailableEvidenceShownAsZero: false,
+        readOnly: true,
+      }) : null,
     economicEvidenceRefresh: activeItemId ? Object.freeze({
       contractVersion: "SELLER_OS_ECONOMIC_EVIDENCE_REFRESH_V1",
       itemId: activeItemId,
@@ -305,6 +329,8 @@ export async function readSellerOsProductJourneyV1(input: Readonly<{
     evidenceInventory: Object.freeze({
     reusedExistingAuthorities: Object.freeze([
       "ebay_luna_opportunity_queue.assessment",
+      "ebay_luna_opportunity_queue.commercial_memory",
+      "seller_os_golden_path_receipts_v1",
       "marketplace_product_research_*",
       "get_seller_os_family_market_radar_v1",
       "get_seller_os_latest_profitability_frontiers_v1",

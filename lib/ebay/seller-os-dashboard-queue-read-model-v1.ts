@@ -24,6 +24,12 @@ const QUEUE_READ_MODEL_PROJECTION = [
   "dashboard_quick_pick_operation_id",
   "dashboard_minimum_readiness_current", "dashboard_minimum_listing_ready",
   "dashboard_minimum_market_test_ready",
+  "market_opportunity_case_id", "market_family_id",
+  "commercial_lifecycle_stage", "commercial_decision",
+  "commercial_next_best_evidence", "commercial_evidence_freshness",
+  "commercial_blockers", "commercial_evaluation_receipt_id",
+  "commercial_memory_digest", "commercial_observed_at",
+  "commercial_updated_at",
 ].join(",")
 
 function record(value: unknown): Record<string, unknown> {
@@ -102,9 +108,10 @@ async function loadSellerOsDashboardQueueReadModelV1(
       queueDatabaseReadCount: 1 as const,
       broadQueuePayloadRead: false as const,
       separateQueueCountQueries: 0 as const,
-      selectedQueueFieldCount: 17 as const,
+      selectedQueueFieldCount: 28 as const,
       assessmentJsonRead: false as const,
-      generatedAuthorityProjectionCount: 8 as const,
+      commercialMemoryJsonRead: false as const,
+      generatedAuthorityProjectionCount: 9 as const,
       boundedRowLimit: QUEUE_ROW_LIMIT,
       totalQueueRows: queueRead.count ?? rows.length,
       truncated: (queueRead.count ?? rows.length) > rows.length,

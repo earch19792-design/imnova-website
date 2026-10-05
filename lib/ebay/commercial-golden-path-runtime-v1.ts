@@ -38,8 +38,12 @@ import { getEbayTaxonomyListingIntelligence } from "./ebay-seller-keyword-demand
 import { preflightEbayCategoryProductIdentifiers } from "./ebay-draft-only-gateway"
 import { getSupabaseAdminClient } from "../supabase-admin"
 import type { SellerOsControlPrincipalV1 } from "./teo-pre-research-control-oauth-v1"
+import { persistSellerOsCommercialOpportunityMemoryV1,
+  projectGoldenEvaluationReceiptV1 } from
+  "./seller-os-commercial-opportunity-memory-v1"
 
 const MAX_CANDIDATES = 20, MAX_SOURCE_ROWS = 100, MAX_MARKET_ROWS = 200
+export const GOLDEN_RECEIPT_SAFE_JSON_BOUNDARY_BYTES_V1 = 1_800_000
 const unavailable = (reasonCode: string): GoldenAuthority => ({ status: "UNPROVEN", receiptId: null, reasonCode })
 const columns = "snapshot_id,product_id,variant_id,sku,canonical_url,title,price,availability,images,product_type,source_fingerprint,observed_at,preflight_status,field_truth_v1"
 export type GoldenContext = { supabase: SupabaseClient; accountKey: string; accountAlias: string; principal: SellerOsControlPrincipalV1; now: Date; invocationSource?: "AUTHENTICATED_CONTROL_MCP" | "OWNER_ADMIN_UI" | "SERVICE_CERTIFICATION_DIAGNOSTIC" }
@@ -70,7 +74,7 @@ export async function createGoldenContextV1(principal: SellerOsControlPrincipalV
 }
 export class GoldenReceiptPersistenceErrorV1 extends Error {
   readonly diagnostic: GoldenRecord
-  constructor(phase: "WRITE" | "READBACK", kind: string, error: { code?: string; message?: string } | null, body: GoldenRecord) {
+  constructor(phase: "BOUNDARY" | "WRITE" | "READBACK", kind: string, error: { code?: string; message?: string } | null, body: GoldenRecord) {
     super(`GOLDEN_PATH_DURABLE_RECEIPT_${phase}_FAILED`)
     const constraint = error?.message?.match(/constraint "(seller_os_golden_path_receipts_v1_[a-z0-9_]+)"/)?.[1] ?? null
     this.diagnostic = { operation: phase, table: "seller_os_golden_path_receipts_v1", kind,
@@ -83,6 +87,11 @@ export class GoldenReceiptPersistenceErrorV1 extends Error {
 }
 export async function writeGoldenReceiptV1<T extends GoldenRecord>(ctx: GoldenContext, kind: string, payload: T) {
   const body = { ...payload, executionAuthority: { source: ctx.invocationSource ?? "SERVICE_CERTIFICATION_DIAGNOSTIC", ownerUserId: ctx.principal.ownerUserId, clientId: ctx.principal.commandClientId } }
+  if (Buffer.byteLength(JSON.stringify(body)) >
+      GOLDEN_RECEIPT_SAFE_JSON_BOUNDARY_BYTES_V1) {
+    throw new GoldenReceiptPersistenceErrorV1("BOUNDARY", kind,
+      { message: "GOLDEN_PATH_RECEIPT_PAYLOAD_BOUND_EXCEEDED" }, body)
+  }
   const digest = goldenDigest(body), id = randomUUID()
   const written = await ctx.supabase.from("seller_os_golden_path_receipts_v1").upsert({ receipt_id: id, account_key: ctx.accountKey, owner_user_id: ctx.principal.ownerUserId, kind, evidence_digest: digest, payload: body }, { onConflict: "account_key,kind,evidence_digest", ignoreDuplicates: true })
   if (written.error) throw new GoldenReceiptPersistenceErrorV1("WRITE", kind, written.error, body)
@@ -91,10 +100,14 @@ export async function writeGoldenReceiptV1<T extends GoldenRecord>(ctx: GoldenCo
   return { ...body, durableReceipt: { receiptId: read.data.receipt_id, evidenceDigest: digest, createdAt: read.data.created_at, readback: "PASS", source: "SUPABASE_APPEND_ONLY_GOLDEN_PATH_LEDGER" } }
 }
 const receipt = writeGoldenReceiptV1
-async function loadReceipt(ctx: GoldenContext, id: string, kind: string) {
+async function loadReceipt(ctx: GoldenContext, id: string, kind: string):
+Promise<GoldenRecord> {
   const read = await ctx.supabase.from("seller_os_golden_path_receipts_v1").select("payload,evidence_digest,created_at").eq("receipt_id", id).eq("account_key", ctx.accountKey).eq("owner_user_id", ctx.principal.ownerUserId).eq("kind", kind).limit(1).maybeSingle()
   if (read.error || !read.data || goldenDigest(read.data.payload) !== read.data.evidence_digest) throw Error("GOLDEN_PATH_RECEIPT_NOT_FOUND_OR_CONFLICT")
-  return goldenRecord(read.data.payload)
+  return { ...goldenRecord(read.data.payload), durableReceipt: {
+    receiptId: id, evidenceDigest: read.data.evidence_digest,
+    createdAt: read.data.created_at, readback: "PASS",
+    source: "SUPABASE_APPEND_ONLY_GOLDEN_PATH_LEDGER" } } as GoldenRecord
 }
 async function snapshot(ctx: GoldenContext) {
   const read = await ctx.supabase.from("luna_catalog_snapshots_v1").select("snapshot_id,snapshot_completed_at").eq("snapshot_status", "COMPLETE").order("snapshot_completed_at", { ascending: false }).limit(1).maybeSingle()
@@ -474,7 +487,11 @@ export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCan
     }
   }
   const evaluated = evaluateGoldenCandidateV1({ candidate: key, accountKey: ctx.accountKey, ownerUserId: ctx.principal.ownerUserId, now: new Date(), targetNetProfit, source, market: market.rows, marketComplete: market.complete && ownerTruth.complete && visualReadComplete, ownerProductTruthEvidence: ownerTruth.rows, autonomousIdentity, visualComparisonEvidence: visualEvidence.rows, duplicate, shipping, ...authority })
-  return receipt(ctx, "EVALUATION", evaluated)
+  const durableEvaluation = await receipt(ctx, "EVALUATION",
+    projectGoldenEvaluationReceiptV1(evaluated))
+  const commercialMemory = await persistSellerOsCommercialOpportunityMemoryV1(
+    ctx, durableEvaluation)
+  return Object.freeze({ ...durableEvaluation, commercialMemory })
 }
 export async function previewGoldenCategoryV1(ctx: GoldenContext, category: string, limit = 5, targetNetProfit = 4) {
   if (!Number.isFinite(targetNetProfit) || targetNetProfit < 4 || targetNetProfit > 10_000) {
@@ -571,7 +588,7 @@ async function persistFreshGoldenDraftV1(
     ReturnType<typeof evaluateGoldenCandidateV1>)
   const candidate = goldenRecord(evaluation.candidate) as unknown as
     GoldenCandidateKey
-  return receipt(ctx, "DRAFT", { ...draft, candidate,
+  const durableDraft = await receipt(ctx, "DRAFT", { ...draft, candidate,
     evaluationReceiptId: evaluation.durableReceipt.receiptId,
     sourceFingerprint: goldenRecord(evaluation.sourceIdentity)
       .sourceFingerprint,
@@ -579,6 +596,13 @@ async function persistFreshGoldenDraftV1(
     minimumExpectedNetProfitUsd:
       SELLER_OS_RAPID_STOCKING_POLICY_V1.minimumExpectedNetProfitUsd,
   })
+  const commercialMemory = await persistSellerOsCommercialOpportunityMemoryV1(
+    ctx, { ...evaluation, commercialMemory: {
+      lifecycleStage: "LISTING_READY",
+      lifecycleArtifactReceiptId: durableDraft.durableReceipt.receiptId,
+      lifecycleArtifactKind: "DRAFT",
+    } })
+  return Object.freeze({ ...durableDraft, commercialMemory })
 }
 
 export async function runGoldenStockingBatchV1(
@@ -842,19 +866,20 @@ export async function runGoldenStockingBatchV1(
   })
 }
 export function projectGoldenCategoryCandidateV1(r: Awaited<ReturnType<typeof evaluateGoldenRuntimeV1>>) {
-  // Full authorities remain immutable in the already read-back EVALUATION receipt.
-  // A category summary must not embed the same large taxonomy twice per candidate.
+  // The already read-back EVALUATION receipt retains the decision projection
+  // and full-authority digests. A category summary must not duplicate even
+  // that bounded evidence for every candidate.
   const m = r.market, { taxonomy, category, ...compliance } = r.compliance
   const { receipt: categoryReceipt, ...categorySummary } = goldenRecord(category)
-  const reference = (value: unknown, path: string) => ({ fullEvidenceReceiptId: r.durableReceipt.receiptId,
-    path, evidenceDigest: goldenDigest(value), storage: "IMMUTABLE_EVALUATION_RECEIPT" })
+  const reference = (value: unknown, path: string) => ({ evaluationEvidenceReceiptId: r.durableReceipt.receiptId,
+    path, evidenceDigest: goldenDigest(value), storage: "IMMUTABLE_DECISION_COMPLETE_EVALUATION_RECEIPT" })
   const taxonomySummary = goldenRecord(taxonomy)
   return { ...r,
     compliance: { ...compliance,
       category: category == null ? category : { ...categorySummary, receipt: categoryReceipt == null ? categoryReceipt : reference(categoryReceipt, "compliance.category.receipt") },
       taxonomy: taxonomy == null ? taxonomy : { status: taxonomySummary.status ?? null, categoryId: taxonomySummary.categoryId ?? null, ...reference(taxonomy, "compliance.taxonomy") },
-      fullEvidenceReceiptId: r.durableReceipt.receiptId },
-    market: { ...m, exactSold: m.exactSold.slice(0, 10), closeSold: m.closeSold.slice(0, 10), familyEvidence: m.familyEvidence.slice(0, 5), rejectedComparables: m.rejectedComparables.slice(0, 5), activeCompetition: m.activeCompetition.slice(0, 10), previewEvidenceCounts: { exact: m.exactSold.length, close: m.closeSold.length, family: m.familyEvidence.length, rejected: m.rejectedComparables.length, active: m.activeCompetition.length }, previewSamplesMayBeTruncated: true, fullEvidenceReceiptId: r.durableReceipt.receiptId } }
+      evaluationEvidenceReceiptId: r.durableReceipt.receiptId },
+    market: { ...m, exactSold: m.exactSold.slice(0, 10), closeSold: m.closeSold.slice(0, 10), familyEvidence: m.familyEvidence.slice(0, 5), rejectedComparables: m.rejectedComparables.slice(0, 5), activeCompetition: m.activeCompetition.slice(0, 10), previewEvidenceCounts: { exact: m.exactSold.length, close: m.closeSold.length, family: m.familyEvidence.length, rejected: m.rejectedComparables.length, active: m.activeCompetition.length }, previewSamplesMayBeTruncated: true, evaluationEvidenceReceiptId: r.durableReceipt.receiptId } }
 }
 export async function importGoldenManualV1(ctx: GoldenContext, key: GoldenCandidateKey, rows: Omit<GoldenMarketEvidence, "evidenceId" | "source" | "reviewed">[], liveComparison?: GoldenLiveComparisonInput) {
   const source = await candidateSource(ctx, key)
@@ -1086,19 +1111,61 @@ export async function reconcileGoldenRuntimeV1(ctx: GoldenContext, packageReceip
   if (written.error || !written.data) throw Error("GOLDEN_PATH_ATOMIC_ENROLLMENT_FAILED")
   const read = await ctx.supabase.from("seller_os_golden_managed_listings_v1").select("*").eq("account_key", ctx.accountKey).eq("ebay_item_id", official.itemId).limit(1).maybeSingle()
   if (read.error || !read.data || read.data.authority_id !== authorityId || read.data.stockguard_enrolled !== true || read.data.analytics_enrolled !== true || read.data.marketplace_actions_enabled !== false) throw Error("GOLDEN_PATH_ENROLLMENT_READBACK_FAILED")
-  return { ...payload, enrollment: read.data, durableReceipt: { receiptId: read.data.reconciliation_receipt_id, readback: "PASS" }, monitoringStatus: "UNPROVEN_UNTIL_OBSERVATIONS" }
+  const evaluationReceiptId = String(pkg.evaluationReceiptId ?? "")
+  if (!/^[0-9a-f-]{36}$/i.test(evaluationReceiptId)) {
+    throw Error("GOLDEN_PATH_EVALUATION_RECEIPT_LINK_REQUIRED")
+  }
+  const evaluation = await loadReceipt(ctx, evaluationReceiptId, "EVALUATION")
+  const commercialMemory = await persistSellerOsCommercialOpportunityMemoryV1(
+    ctx, { ...evaluation, commercialMemory: {
+      lifecycleStage: "PUBLISHED",
+      lifecycleArtifactReceiptId: read.data.reconciliation_receipt_id,
+      lifecycleArtifactKind: "RECONCILIATION",
+    } })
+  return { ...payload, enrollment: read.data, durableReceipt: { receiptId: read.data.reconciliation_receipt_id, readback: "PASS" }, monitoringStatus: "UNPROVEN_UNTIL_OBSERVATIONS", commercialMemory }
 }
 export async function readGoldenMonitoringV1(ctx: GoldenContext, itemId: string) {
   const managed = await ctx.supabase.from("seller_os_golden_managed_listings_v1").select("*").eq("account_key", ctx.accountKey).eq("ebay_item_id", itemId).limit(1).maybeSingle()
   if (managed.error || !managed.data) throw Error("GOLDEN_PATH_MANAGED_LISTING_REQUIRED")
   // Exact account + Item ID + source windows. Enrollment is distinct from data availability.
-  const [snapshots, stockRead, officialTraffic] = await Promise.all([
+  const [snapshots, stockRead, officialTraffic, experimentRead] = await Promise.all([
     ctx.supabase.from("listing_commercial_snapshots").select("*").eq("marketplace_account_key", ctx.accountKey).eq("marketplace", "EBAY_US").eq("listing_id", itemId).order("observed_at", { ascending: false }).limit(90),
     readProductionStockGuardV1({ supabase: ctx.supabase, accountKey: ctx.accountKey, accountAlias: ctx.accountAlias, itemId, now: ctx.now, includeKnownListingStockEvidence: true }).catch(() => null),
     readGoldenTrafficWindowsV1({ accountKey: ctx.accountKey, itemId, now: ctx.now }).catch(() => ({ snapshots: [] as GoldenRecord[], limitations: ["ANALYTICS_SOURCE_READ_FAILED"] })),
+    ctx.supabase.from("ebay_listing_experiments_v1")
+      .select("experiment_id,lifecycle_status,updated_at")
+      .eq("account_key", ctx.accountKey).eq("marketplace", "EBAY_US")
+      .eq("ebay_item_id", itemId).order("updated_at", { ascending: false })
+      .limit(1).maybeSingle(),
   ])
   const stock = goldenRecord(stockRead?.listings.find(r => r.itemId === itemId))
   const trafficSnapshots = [...officialTraffic.snapshots, ...(snapshots.data ?? []).map(goldenRecord)]
   const projection = projectGoldenMonitoringV1({ accountKey: ctx.accountKey, itemId, now: new Date(), snapshots: trafficSnapshots, readAvailable: !snapshots.error || officialTraffic.snapshots.length > 0, stock })
-  return receipt(ctx, "MONITORING", { contractVersion: GOLDEN_PATH_V1, itemId, enrollment: managed.data, ...projection, stockReadback: stock, trafficSnapshots: officialTraffic.snapshots, analyticsLimitations: officialTraffic.limitations, availableSnapshotCount: snapshots.error && !officialTraffic.snapshots.length ? null : trafficSnapshots.length })
+  const durableMonitoring = await receipt(ctx, "MONITORING", { contractVersion: GOLDEN_PATH_V1, itemId, enrollment: managed.data, ...projection, stockReadback: stock, trafficSnapshots: officialTraffic.snapshots, analyticsLimitations: officialTraffic.limitations, availableSnapshotCount: snapshots.error && !officialTraffic.snapshots.length ? null : trafficSnapshots.length })
+  const hasObservedResult = Object.values(goldenRecord(projection.windows))
+    .some((window) => goldenRecord(window).status ===
+      "AVAILABLE_TRAFFIC_PARTIAL_ECONOMICS")
+  if (!hasObservedResult) return durableMonitoring
+  const pkg = await loadReceipt(ctx, String(managed.data.package_receipt_id),
+    "DRAFT")
+  const evaluationReceiptId = String(pkg.evaluationReceiptId ?? "")
+  if (!/^[0-9a-f-]{36}$/i.test(evaluationReceiptId)) {
+    throw Error("GOLDEN_PATH_EVALUATION_RECEIPT_LINK_REQUIRED")
+  }
+  const evaluation = await loadReceipt(ctx, evaluationReceiptId, "EVALUATION")
+  const experimentRegistry = experimentRead.error
+    ? { status: "UNAVAILABLE" }
+    : experimentRead.data
+      ? { status: "AVAILABLE", experimentId: experimentRead.data.experiment_id,
+        lifecycleStatus: experimentRead.data.lifecycle_status,
+        updatedAt: experimentRead.data.updated_at }
+      : { status: "NO_EXPERIMENT" }
+  const commercialMemory = await persistSellerOsCommercialOpportunityMemoryV1(
+    ctx, { ...evaluation, commercialMemory: {
+      lifecycleStage: "RESULT",
+      lifecycleArtifactReceiptId: durableMonitoring.durableReceipt.receiptId,
+      lifecycleArtifactKind: "MONITORING",
+      experimentRegistry,
+    } })
+  return Object.freeze({ ...durableMonitoring, commercialMemory })
 }

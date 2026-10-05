@@ -1,7 +1,8 @@
 import { execFile, spawn } from "node:child_process"
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink,
   rename, rm, symlink, writeFile } from "node:fs/promises"
-import { dirname, resolve } from "node:path"
+import { tmpdir } from "node:os"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import {
@@ -20,6 +21,8 @@ const MAX_FAILURE_SUMMARIES = 20
 const MAX_BUILD_WORKSPACE_FILES = 10_000
 const MAX_BUILD_WORKSPACE_FILE_BYTES = 64 * 1024 * 1024
 const MAX_BUILD_WORKSPACE_TOTAL_BYTES = 512 * 1024 * 1024
+const GIT_EXECUTABLE = process.platform === "win32" ? "git.exe" : "/usr/bin/git"
+const GIT_NULL_HOOKS_PATH = process.platform === "win32" ? "NUL" : "/dev/null"
 const VALIDATION_CHECKS = Object.freeze([
   "tests", "typecheck", "lint", "build", "sellerOsAudit",
 ])
@@ -76,7 +79,7 @@ function run(executable, args, options = {}) {
 
 function listFixedGitVisiblePaths() {
   return new Promise((resolvePaths, reject) => {
-    execFile("/usr/bin/git", ["--no-optional-locks", "ls-files", "--cached", "--others",
+    execFile(GIT_EXECUTABLE, ["--no-optional-locks", "ls-files", "--cached", "--others",
       "--exclude-standard", "-z"], { cwd: REPOSITORY_DIRECTORY, encoding: "utf8",
       timeout: 10_000, maxBuffer: MAX_OUTPUT_BYTES, windowsHide: true, shell: false },
     (error, stdout) => {
@@ -97,7 +100,7 @@ function listFixedGitVisiblePaths() {
 }
 
 async function createFixedBuildWorkspace() {
-  const directory = await mkdtemp("/tmp/seller-os-validation-build-")
+  const directory = await mkdtemp(join(tmpdir(), "seller-os-validation-build-"))
   try {
     let copiedBytes = 0
     for (const path of await listFixedGitVisiblePaths()) {
@@ -124,7 +127,7 @@ async function createFixedBuildWorkspace() {
       }
     }
     await symlink(resolve(REPOSITORY_DIRECTORY, "node_modules"),
-      resolve(directory, "node_modules"), "dir")
+      resolve(directory, "node_modules"), process.platform === "win32" ? "junction" : "dir")
     return directory
   } catch (error) {
     await rm(directory, { recursive: true, force: true })
@@ -178,7 +181,7 @@ async function executeFixedCheck(name) {
       durationMs: null, completedAt: now(), scope: "FULL_SELLER_OS_SUITE",
       passed: null, failed: null, skipped: null, failureSummaries: Object.freeze([]),
       failuresTruncated: false })
-    const temporaryDirectory = await mkdtemp("/tmp/seller-os-validation-tap-")
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), "seller-os-validation-tap-"))
     const reportPath = resolve(temporaryDirectory, "tap.txt")
     try {
       const result = await run(process.execPath, ["--import", "./tools/seller-os-test-module-resolution-v1.mjs", "--test", "--test-concurrency=4", "--test-reporter=tap",
@@ -232,8 +235,8 @@ async function publishFixedArtifact(evidence) {
 }
 
 async function readRecorderSubject() {
-  const git = (args) => new Promise((yes, no) => execFile('/usr/bin/git',
-    ['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',...args],
+  const git = (args) => new Promise((yes, no) => execFile(GIT_EXECUTABLE,
+    ['--no-optional-locks','-c','core.fsmonitor=false','-c',`core.hooksPath=${GIT_NULL_HOOKS_PATH}`,...args],
     {cwd:REPOSITORY_DIRECTORY,encoding:'buffer',timeout:10000,maxBuffer:32*1024*1024},
     (error, output) => error ? no(error) : yes(output)))
   return collectSellerOsWorkspaceFingerprintV1({ adapter: {
@@ -244,7 +247,9 @@ async function readRecorderSubject() {
     readUntrackedPaths:()=>git(['ls-files','--others','--exclude-standard','-z']),
     readUntrackedEntry:async(path)=>{
       const full=resolve(REPOSITORY_DIRECTORY,path)
-      if(!full.startsWith(`${REPOSITORY_DIRECTORY}/`))throw Error('VALIDATION_PATH_UNSAFE')
+      const relativePath=relative(REPOSITORY_DIRECTORY,full)
+      if(!relativePath||relativePath.startsWith('..')||isAbsolute(relativePath))
+        throw Error('VALIDATION_PATH_UNSAFE')
       const stat=await lstat(full)
       if(stat.isSymbolicLink())return Buffer.concat([Buffer.from('symlink\0'),await readlink(full,'buffer')])
       if(!stat.isFile()||stat.size>16*1024*1024)throw Error('VALIDATION_PATH_UNBOUNDED')
