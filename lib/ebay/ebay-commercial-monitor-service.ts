@@ -987,11 +987,32 @@ function verifiedListingForLine(
   ) ?? null
 }
 
+function persistencePayloadWithoutBuyerPiiMarker(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(persistencePayloadWithoutBuyerPiiMarker)
+  }
+  if (!value || typeof value !== "object") return value
+  const sanitized: Record<string, unknown> = {}
+  for (const [key, nested] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    if (key.toLowerCase() === "buyerpiiincluded") {
+      if (nested !== false) {
+        throw new Error("COMMERCIAL_PRIVATE_BUYER_DATA_MARKER_INVALID")
+      }
+      continue
+    }
+    sanitized[key] = persistencePayloadWithoutBuyerPiiMarker(nested)
+  }
+  return sanitized
+}
+
 async function insertEvent(supabase: SupabaseClient, accountKey: string, event: CommercialEvent & {
   marketplaceOrderId?: string | null
   marketplaceLineItemId?: string | null
 }) {
-  if (containsPrivateBuyerData(event.evidence)) {
+  const evidence = persistencePayloadWithoutBuyerPiiMarker(event.evidence)
+  if (containsPrivateBuyerData(evidence)) {
     throw new Error("COMMERCIAL_EVENT_PRIVATE_BUYER_DATA_BLOCKED")
   }
   const { data, error } = await supabase
@@ -1001,7 +1022,7 @@ async function insertEvent(supabase: SupabaseClient, accountKey: string, event: 
       marketplace: MARKETPLACE,
       event_type: event.eventType,
       severity: event.severity,
-      evidence: event.evidence,
+      evidence,
       threshold_config_version: event.thresholdConfigVersion,
       detected_at: event.detectedAt,
       listing_id: event.listingId,
@@ -1044,7 +1065,8 @@ async function enqueueAlert(supabase: SupabaseClient, input: {
   channel?: "whatsapp" | "in_app"
   payload: Record<string, unknown>
 }) {
-  if (containsPrivateBuyerData(input.payload)) {
+  const payload = persistencePayloadWithoutBuyerPiiMarker(input.payload)
+  if (containsPrivateBuyerData(payload)) {
     throw new Error("COMMERCIAL_ALERT_PRIVATE_BUYER_DATA_BLOCKED")
   }
   const channel = input.channel ?? "whatsapp"
@@ -1060,7 +1082,7 @@ async function enqueueAlert(supabase: SupabaseClient, input: {
     severity: input.severity,
     deduplication_key: `${channel}:${input.deduplicationKey}`,
     status: "pending",
-    payload: input.payload,
+    payload,
     due_at: dueAt,
   })
   if (error && error.code !== "23505") throw new Error("COMMERCIAL_ALERT_ENQUEUE_FAILED")
@@ -1081,7 +1103,8 @@ async function reserveAlertOutbox(supabase: SupabaseClient, input: {
   channel?: "whatsapp" | "in_app"
   payload: Record<string, unknown>
 }) {
-  if (containsPrivateBuyerData(input.payload)) {
+  const payload = persistencePayloadWithoutBuyerPiiMarker(input.payload)
+  if (containsPrivateBuyerData(payload)) {
     throw new Error("COMMERCIAL_ALERT_PRIVATE_BUYER_DATA_BLOCKED")
   }
   const channel = input.channel ?? "whatsapp"
@@ -1098,7 +1121,7 @@ async function reserveAlertOutbox(supabase: SupabaseClient, input: {
     severity: input.severity,
     deduplication_key: outboxDeduplicationKey,
     status: "pending",
-    payload: input.payload,
+    payload,
     due_at: dueAt,
   }).select("id").maybeSingle()
   if (error?.code === "23505") {
