@@ -200,6 +200,7 @@ export async function POST(req: Request) {
       capability: status.capability,
       workerId: `buyer-thank-you-canary:${randomUUID()}`,
       maximumDispatches: 1,
+      executionMode: "PREVIEW_CERTIFICATION_CANARY",
     })
     const oneMessageAccepted = result.buyerMessageSends === 1 &&
       result.accepted === 1

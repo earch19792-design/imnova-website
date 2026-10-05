@@ -102,9 +102,13 @@ export async function readSellerOsBuyerThankYouAuditV1(
         "string" && /^sha256:[0-9a-f]{64}$/.test(
           evidence.providerReferenceDigest)
       ? evidence.providerReferenceDigest : null
+    const executionMode = evidence.executionMode ===
+        "PREVIEW_CERTIFICATION_CANARY"
+      ? "PREVIEW_CERTIFICATION_CANARY" as const : "AUTOMATION" as const
     return [Object.freeze({
       deliveryKey,
       ledgerEventId: row.id,
+      executionMode,
       workflowState,
       attemptCount: Number.isSafeInteger(evidence.attemptCount)
         ? Math.max(0, Math.min(Number(evidence.attemptCount), 1_000)) : 0,

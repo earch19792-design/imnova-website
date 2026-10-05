@@ -79,6 +79,7 @@ export type SellerOsBuyerThankYouCapabilityV1 = Readonly<{
 export type SellerOsBuyerThankYouAuditRowV1 = Readonly<{
   deliveryKey: string
   ledgerEventId: string
+  executionMode: "AUTOMATION" | "PREVIEW_CERTIFICATION_CANARY"
   workflowState: "NOT_STARTED" | "IN_PROGRESS" | "SUCCEEDED" |
     "RETRYABLE_FAILURE" | "TERMINAL_FAILURE" | "BLOCKED" |
     "SKIPPED" | "NOT_APPLICABLE"
@@ -480,13 +481,19 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
       row.authoritativeRootSource === "EBAY_SELL_FULFILLMENT_GET_ORDERS")
     const capabilityReady = input.capability.status === "READY" &&
       input.capability.deliveryAttemptAllowed
-    const historicalLedgerViolation = historical && durable !== null
+    const previewCertificationReceipt = historical &&
+      durable?.executionMode === "PREVIEW_CERTIFICATION_CANARY" &&
+      durable.workflowState === "SUCCEEDED" &&
+      durable.receiptStatus === "PRESENT"
+    const historicalLedgerViolation = historical && durable !== null &&
+      !previewCertificationReceipt
     const eligible = !historical && sourceComplete && auditComplete &&
       orderEligible && capabilityReady &&
       durable?.workflowState !== "SUCCEEDED" &&
       durable?.manualReviewRequired !== true
     const state = historical
-      ? historicalLedgerViolation ? "BLOCKED" as const : "SKIPPED" as const
+      ? previewCertificationReceipt ? auditWorkflowState(durable)
+        : historicalLedgerViolation ? "BLOCKED" as const : "SKIPPED" as const
       : durable ? auditWorkflowState(durable)
         : sourceComplete && auditComplete && orderEligible && capabilityReady
           ? "NOT_STARTED" as const : "BLOCKED" as const

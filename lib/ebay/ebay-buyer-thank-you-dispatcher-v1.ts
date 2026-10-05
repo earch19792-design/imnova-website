@@ -19,6 +19,7 @@ const MAXIMUM_SAFE_RETRIES = 3
 
 type JsonRecord = Record<string, unknown>
 type FetchLike = typeof fetch
+type ExecutionMode = "AUTOMATION" | "PREVIEW_CERTIFICATION_CANARY"
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -31,6 +32,7 @@ function safeWorkerId(value: string) {
 
 function ledgerEvidence(input: Readonly<{
   entry: SellerOsBuyerThankYouStatusV1["entries"][number]
+  executionMode: ExecutionMode
   workflowState: string
   attemptCount: number
   leaseId: string | null
@@ -52,6 +54,7 @@ function ledgerEvidence(input: Readonly<{
     lineItemIds: input.entry.lineItemIds,
     itemIds: input.entry.itemIds,
     templateVersion: input.entry.templateVersion,
+    executionMode: input.executionMode,
     workflowState: input.workflowState,
     attemptCount: input.attemptCount,
     leaseId: input.leaseId,
@@ -94,12 +97,14 @@ async function reserveNewDelivery(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
   entry: SellerOsBuyerThankYouStatusV1["entries"][number]
+  executionMode: ExecutionMode
   leaseId: string
   now: Date
 }>) {
   const expiresAt = new Date(input.now.getTime() + LEASE_MILLISECONDS)
     .toISOString()
   const evidence = ledgerEvidence({ entry: input.entry,
+    executionMode: input.executionMode,
     workflowState: "IN_PROGRESS", attemptCount: 1,
     leaseId: input.leaseId, leaseExpiresAt: expiresAt,
     dispatchStarted: false, observedAt: input.now.toISOString() })
@@ -173,6 +178,7 @@ async function reclaimSafeRetry(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
   entry: SellerOsBuyerThankYouStatusV1["entries"][number]
+  executionMode: ExecutionMode
   row: { id: string; evidence: unknown }
   leaseId: string
   now: Date
@@ -183,6 +189,7 @@ async function reclaimSafeRetry(input: Readonly<{
   }
   const attempts = Number(previous.attemptCount) + 1
   const evidence = ledgerEvidence({ entry: input.entry,
+    executionMode: input.executionMode,
     workflowState: "IN_PROGRESS", attemptCount: attempts,
     leaseId: input.leaseId,
     leaseExpiresAt: new Date(input.now.getTime() + LEASE_MILLISECONDS)
@@ -221,6 +228,7 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
   prepareDispatch?: typeof prepareEbayBuyerThankYouDispatchV1
   now?: () => Date
   maximumDispatches?: number
+  executionMode?: ExecutionMode
 }>) {
   const workerId = safeWorkerId(input.workerId)
   if (!workerId || !input.accountKey || input.status.sourceStatus ===
@@ -239,6 +247,7 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
     })
   }
   const now = input.now ?? (() => new Date())
+  const executionMode = input.executionMode ?? "AUTOMATION"
   const maximumDispatches = input.maximumDispatches === undefined
     ? MAXIMUM_DISPATCHES_PER_RUN
     : Number.isSafeInteger(input.maximumDispatches) &&
@@ -263,13 +272,15 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
     const timestamp = now()
     const leaseId = `${workerId}:${entry.deliveryKey.slice(-24)}`
     const reservation = await reserveNewDelivery({ supabase: input.supabase,
-      accountKey: input.accountKey, entry, leaseId, now: timestamp })
+      accountKey: input.accountKey, entry, executionMode, leaseId,
+      now: timestamp })
     databaseMaintenanceWrites += reservation.databaseWrites
     let ownsClaim = reservation.claimed
     let attemptCount = Number(record(reservation.row.evidence).attemptCount) || 1
     if (!ownsClaim) {
       const reclaimed = await reclaimSafeRetry({ supabase: input.supabase,
-        accountKey: input.accountKey, entry, row: reservation.row,
+        accountKey: input.accountKey, entry, executionMode,
+        row: reservation.row,
         leaseId, now: timestamp })
       ownsClaim = reclaimed.claimed
       if (reclaimed.attemptCount !== null) {
@@ -298,7 +309,7 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
           phase: "PRE_DISPATCH", retrySafe: true,
           acceptanceOutcome: "NOT_ATTEMPTED",
         })
-      const evidence = ledgerEvidence({ entry,
+      const evidence = ledgerEvidence({ entry, executionMode,
         workflowState: failure.retrySafe
           ? "RETRYABLE_FAILURE" : "BLOCKED",
         attemptCount,
@@ -320,7 +331,8 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
     await updateLedger({ supabase: input.supabase,
       accountKey: input.accountKey, rowId: reservation.row.id,
       deliveryKey: entry.deliveryKey,
-      evidence: ledgerEvidence({ entry, workflowState: "IN_PROGRESS",
+      evidence: ledgerEvidence({ entry, executionMode,
+        workflowState: "IN_PROGRESS",
         attemptCount, leaseId,
         leaseExpiresAt: new Date(startedAt.getTime() + LEASE_MILLISECONDS)
           .toISOString(), dispatchStarted: true,
@@ -333,7 +345,8 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
       await updateLedger({ supabase: input.supabase,
         accountKey: input.accountKey, rowId: reservation.row.id,
         deliveryKey: entry.deliveryKey,
-        evidence: ledgerEvidence({ entry, workflowState: "SUCCEEDED",
+        evidence: ledgerEvidence({ entry, executionMode,
+          workflowState: "SUCCEEDED",
           attemptCount, leaseId: null, leaseExpiresAt: null,
           dispatchStarted: true, receiptStatus: "PRESENT",
           providerReferenceDigest: receipt.providerReferenceDigest,
@@ -353,7 +366,7 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
       await updateLedger({ supabase: input.supabase,
         accountKey: input.accountKey, rowId: reservation.row.id,
         deliveryKey: entry.deliveryKey,
-        evidence: ledgerEvidence({ entry,
+        evidence: ledgerEvidence({ entry, executionMode,
           workflowState: unknown ? "BLOCKED" : "TERMINAL_FAILURE",
           attemptCount, leaseId: null, leaseExpiresAt: null,
           dispatchStarted: true,
