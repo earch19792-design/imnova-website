@@ -235,7 +235,9 @@ test("route and bundle surface regress downward", () => {
   // Their old routes/runtimes remain intact.
   const surface = JSON.parse(read("tools/fixtures/seller-os-route-surface-v1.json"))
   const routeNames = (base, name) => readdirSync(join(root, base), { recursive: true })
-    .filter(path => path === name || path.endsWith(`/${name}`)).map(path => `${base}/${path}`).sort()
+    .map(path => String(path).replaceAll("\\", "/"))
+    .filter(path => path === name || path.endsWith(`/${name}`))
+    .map(path => `${base}/${path}`).sort()
   assert.deepEqual(routeNames("app", "page.tsx"), surface.pages,
     "Unregistered page added to the controlled Seller OS surface")
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS

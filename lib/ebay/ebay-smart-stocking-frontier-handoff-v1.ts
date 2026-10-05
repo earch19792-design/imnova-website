@@ -65,7 +65,7 @@ export const CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1 = Object.freeze({
   activeAskPricesUsd: Object.freeze([16.50, 19.95, 20.00, 22.46, 24.99]),
   commercialPriceMatrixUsd: Object.freeze([19.99, 20.99, 21.99, 22.99]),
   targetPriceUsd: 21.99,
-  maximumShippingAtTargetUsd: 7.44,
+  maximumShippingAtTargetUsd: 8.04,
 } as const)
 
 type JsonRecord = Record<string, unknown>

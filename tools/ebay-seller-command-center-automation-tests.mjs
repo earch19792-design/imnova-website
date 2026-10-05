@@ -136,7 +136,12 @@ test("cron cadence preserves priority while respecting the serverless budget", (
   assert.match(lunaCron, /reconcileSellerScanTasks/)
   assert.match(lunaCron, /limit: 300/)
   assert.match(lunaCron, /finishSellerAutomationRun/)
-  assert.equal("crons" in vercel, false)
+  assert.deepEqual(vercel.crons, [
+    { path: "/api/cron/ebay-commercial-monitor-schedule",
+      schedule: "*/5 * * * *" },
+    { path: "/api/cron/commercial-alert-dispatcher-schedule",
+      schedule: "* * * * *" },
+  ])
   for (const [lane, path, schedule] of [
     ["QUICK_PICK_RUNTIME_RECOVERY", "quick-pick-runtime-recovery", "20 7"],
     ["MARKET_RADAR_LUNA_SYNC", "market-radar-luna-sync", "0 9"],
