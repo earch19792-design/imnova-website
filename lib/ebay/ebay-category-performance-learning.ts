@@ -14,6 +14,9 @@ export const EBAY_CATEGORY_LEARNING_MODEL_VERSION =
 export const EBAY_CATEGORY_LEARNING_SOURCE =
   "EBAY_SELL_ANALYTICS_READONLY" as const
 
+export const TEO_OWNER_PERFORMANCE_SOURCE =
+  "EBAY_SELL_ANALYTICS_READONLY_TEO_OWNER_MANUAL" as const
+
 export const EBAY_CATEGORY_LEARNING_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
 
@@ -713,7 +716,9 @@ export async function persistOwnEbayPerformanceSnapshots(
       reported_sales_conversion_rate: metricRate(row, "SALES_CONVERSION_RATE"),
       ebay_last_updated_at: validTimestamp(dashboard.lastUpdatedDate),
       observed_at: observedAt,
-      source: EBAY_CATEGORY_LEARNING_SOURCE,
+      source: teoOwnerManualCollection
+        ? TEO_OWNER_PERFORMANCE_SOURCE
+        : EBAY_CATEGORY_LEARNING_SOURCE,
       snapshot_fingerprint: fingerprint,
     }]
   })
