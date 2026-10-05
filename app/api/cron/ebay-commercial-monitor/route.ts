@@ -52,6 +52,27 @@ function safeCode(error: unknown) {
   return /^[A-Z0-9_]+$/.test(value) ? value : "COMMERCIAL_MONITOR_CRON_FAILED"
 }
 
+function currentLiveRecoveryDiagnostics(value: unknown) {
+  const recovery = record(value)
+  const authority = record(recovery.authority)
+  return {
+    status: safeText(recovery.status) || null,
+    error: safeText(recovery.error) || null,
+    officialReadAttempted: recovery.officialReadAttempted === true,
+    currentState: safeText(authority.currentState) || null,
+    sourceFailureCode: safeText(authority.sourceFailureCode) || null,
+    nextRetryAt: safeText(authority.nextRetryAt) || null,
+    lastCertifiedAt: safeText(authority.lastCertifiedAt) || null,
+    lastCertifiedListingCount:
+      typeof authority.lastCertifiedListingCount === "number"
+        ? authority.lastCertifiedListingCount
+        : null,
+    marketplaceWrites: 0,
+    secretsReturned: false,
+    buyerPiiIncluded: false,
+  }
+}
+
 export async function POST(req: Request) {
   if (!commercialPreviewCronAuthorized(req)) return NextResponse.json(
     { success: false, error: "CRON_UNAUTHORIZED" },
@@ -313,16 +334,11 @@ export async function POST(req: Request) {
       },
     })
   }
+  let currentLiveAuthorityRecovery: unknown = null
   try {
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     if (!accountKey) throw new Error("COMMERCIAL_MONITOR_ACCOUNT_SCOPE_REQUIRED")
     const supabase = getSupabaseAdminClient()
-    let currentLiveAuthorityRecovery: Awaited<ReturnType<
-      typeof runCurrentLiveAuthorityRecoveryV1>> | {
-        status: "FAILED_RETRYABLE"
-        error: string
-        marketplaceWrites: 0
-      }
     try {
       currentLiveAuthorityRecovery = await runCurrentLiveAuthorityRecoveryV1({
         supabase, accountKey,
@@ -352,6 +368,8 @@ export async function POST(req: Request) {
         success: false,
         error: code,
         schedule,
+        currentLiveAuthorityRecovery:
+          currentLiveRecoveryDiagnostics(currentLiveAuthorityRecovery),
         safety: code === "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED"
           ? {
               externalReadersStarted: false,
