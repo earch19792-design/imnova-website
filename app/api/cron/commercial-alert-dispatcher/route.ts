@@ -40,6 +40,57 @@ function record(value: unknown) {
     : null
 }
 
+async function commercialDispatchFallbackAuthorization(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  accountKey: string,
+) {
+  const [configuration, authorization] = await Promise.all([
+    supabase
+      .from("ebay_monitoring_scheduler_config")
+      .select("enabled,environment,deployment_scope,supabase_project_ref,marketplace_account_key")
+      .eq("singleton", true)
+      .maybeSingle(),
+    supabase
+      .from("commercial_monitor_scheduler_authorizations")
+      .select("dry_run_id")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", "EBAY_US")
+      .is("revoked_at", null)
+      .order("authorized_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+  if (configuration.error || authorization.error) {
+    throw new Error("COMMERCIAL_DISPATCH_FALLBACK_AUTHORIZATION_READ_FAILED")
+  }
+  const config = configuration.data
+  const dryRunId = authorization.data?.dry_run_id
+  if (!config?.enabled || config.environment !== "STAGING" ||
+      config.deployment_scope !== "PREVIEW" ||
+      config.supabase_project_ref !== "vsfthqydfrdzulldbfbe" ||
+      config.marketplace_account_key !== accountKey || !dryRunId) {
+    return Object.freeze({ authorized: false, reason:
+      "COMMERCIAL_DISPATCH_DURABLE_AUTHORIZATION_REQUIRED" })
+  }
+  const dryRun = await supabase
+    .from("commercial_monitor_runs")
+    .select("trigger_source,status,dry_run_satisfactory,errors")
+    .eq("id", dryRunId)
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", "EBAY_US")
+    .maybeSingle()
+  if (dryRun.error) {
+    throw new Error("COMMERCIAL_DISPATCH_FALLBACK_DRY_RUN_READ_FAILED")
+  }
+  const row = dryRun.data
+  const authorized = row?.trigger_source === "dry_run" &&
+    row.status === "completed" && row.dry_run_satisfactory === true &&
+    Array.isArray(row.errors) && row.errors.length === 0
+  return Object.freeze({ authorized, reason: authorized
+    ? "DURABLE_DRY_RUN_AUTHORIZATION_CONFIRMED"
+    : "COMMERCIAL_DISPATCH_FALLBACK_DRY_RUN_NOT_SATISFIED" })
+}
+
 function nextDigestAt(now = new Date()) {
   const configured = Number(
     process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "0",
@@ -271,44 +322,62 @@ export async function POST(req: Request) {
         p_marketplace: "EBAY_US",
       },
     )
-    if (gateError) return NextResponse.json({
-      success: false,
-      error: "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED",
-      safety: {
-        alertClaimed: false,
-        whatsappAttempted: false,
-        productionUnchanged: true,
-      },
-    }, { status: 423 })
-    const { data: heartbeatData, error: heartbeatError } = await supabase.rpc(
-      "enqueue_ebay_monitoring_heartbeat_alerts",
-      {
-        p_marketplace_account_key: accountKey,
-        p_marketplace: "EBAY_US",
-        p_ebay_stale_minutes: boundedInteger(
-          process.env.EBAY_COMMERCIAL_HEARTBEAT_STALE_MINUTES,
-          20,
-          10,
-          1_440,
-        ),
-        p_luna_stale_minutes: boundedInteger(
-          process.env.EBAY_TARGETED_LUNA_HEARTBEAT_STALE_MINUTES,
-          45,
-          15,
-          1_440,
-        ),
-      },
+    const fallbackAuthorization = gateError
+      ? await commercialDispatchFallbackAuthorization(supabase, accountKey)
+      : null
+    if (gateError && !fallbackAuthorization?.authorized) {
+      return NextResponse.json({
+        success: false,
+        error: "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED",
+        safety: {
+          alertClaimed: false,
+          whatsappAttempted: false,
+          productionUnchanged: true,
+        },
+      }, { status: 423 })
+    }
+    const legacyExactListingGateBypassed = Boolean(
+      gateError && fallbackAuthorization?.authorized,
     )
-    const heartbeat = record(heartbeatData)
-    if (heartbeatError || !heartbeat) return NextResponse.json({
-      success: false,
-      error: "COMMERCIAL_MONITOR_HEARTBEAT_RECONCILE_FAILED",
-      safety: {
-        alertClaimed: false,
-        whatsappAttempted: false,
-        productionUnchanged: true,
-      },
-    }, { status: 502 })
+    let heartbeat: Record<string, unknown> | null = null
+    if (legacyExactListingGateBypassed) {
+      heartbeat = {
+        status: "SKIPPED_LEGACY_EXACT_LISTING_GATE",
+        eventsCreated: 0,
+        alertsCreated: 0,
+        alertsCancelled: 0,
+      }
+    } else {
+      const { data: heartbeatData, error: heartbeatError } = await supabase.rpc(
+        "enqueue_ebay_monitoring_heartbeat_alerts",
+        {
+          p_marketplace_account_key: accountKey,
+          p_marketplace: "EBAY_US",
+          p_ebay_stale_minutes: boundedInteger(
+            process.env.EBAY_COMMERCIAL_HEARTBEAT_STALE_MINUTES,
+            20,
+            10,
+            1_440,
+          ),
+          p_luna_stale_minutes: boundedInteger(
+            process.env.EBAY_TARGETED_LUNA_HEARTBEAT_STALE_MINUTES,
+            45,
+            15,
+            1_440,
+          ),
+        },
+      )
+      heartbeat = record(heartbeatData)
+      if (heartbeatError || !heartbeat) return NextResponse.json({
+        success: false,
+        error: "COMMERCIAL_MONITOR_HEARTBEAT_RECONCILE_FAILED",
+        safety: {
+          alertClaimed: false,
+          whatsappAttempted: false,
+          productionUnchanged: true,
+        },
+      }, { status: 502 })
+    }
     if (heartbeat.status === "BLOCKED_INEXACT_ACTIVE_LISTING_STATE") {
       return NextResponse.json({
         success: false,
@@ -382,6 +451,7 @@ export async function POST(req: Request) {
       heartbeat,
       result,
       buyerThankYou,
+      authorization: fallbackAuthorization,
       whatsappPolicy: {
         immediateEventTypes: [...IMMEDIATE_WHATSAPP_EVENT_TYPES],
         deferredNonUrgent,
@@ -391,6 +461,13 @@ export async function POST(req: Request) {
           0,
           23,
         ),
+      },
+      safety: {
+        legacyExactListingGateBypassed,
+        durableDryRunAuthorizationRequired: true,
+        ebayWriteUsed: false,
+        secretsReturned: false,
+        buyerPiiIncluded: false,
       },
     })
   } catch {
