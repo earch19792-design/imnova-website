@@ -59,6 +59,7 @@ type OfficialOrdersReadInputV1 = {
   orders: readonly SafeFulfillmentOrder[]
   pagesRead: number
   rawOrdersDiscardedAfterSanitization: number
+  policyExcludedOrdersAfterSanitization?: number
   gapCodes: readonly string[]
 }
 
@@ -181,10 +182,18 @@ export function buildSellerOsOfficialOrdersReadV1(input: {
     ? "PARTIAL" as const : status
   const lineItemQuantity = visibleOrders.reduce((sum, order) => sum +
     order.observedLineItemQuantity, 0)
+  const policyExcludedOrders = Math.max(
+    0,
+    input.orders.policyExcludedOrdersAfterSanitization ?? 0,
+  )
+  const unsafeDiscardedOrders = Math.max(
+    0,
+    input.orders.rawOrdersDiscardedAfterSanitization - policyExcludedOrders,
+  )
   const exactCountsAvailable = status === "AVAILABLE" &&
     sanitizedOrders.length === input.orders.orders.length &&
     visibleOrders.length === sanitizedOrders.length &&
-    input.orders.rawOrdersDiscardedAfterSanitization === 0
+    unsafeDiscardedOrders === 0
   const officialOrderCount = exactCountsAvailable
     ? visibleOrders.length
     : null
@@ -193,7 +202,7 @@ export function buildSellerOsOfficialOrdersReadV1(input: {
     : null
   const limitations = uniqueCodes([
     ...input.orders.gapCodes,
-    ...(input.orders.rawOrdersDiscardedAfterSanitization > 0
+    ...(unsafeDiscardedOrders > 0
       ? ["OFFICIAL_ORDERS_DISCARDED_AFTER_SANITIZATION"] : []),
     ...(sanitizedOrders.length !== input.orders.orders.length
       ? ["OFFICIAL_ORDERS_INTERNAL_NORMALIZATION_PARTIAL"] : []),
@@ -224,6 +233,12 @@ export function buildSellerOsOfficialOrdersReadV1(input: {
         ? visibleOrders.length !== sanitizedOrders.length ||
           input.orders.gapCodes.includes("FULFILLMENT_ORDER_PAGE_LIMIT_REACHED")
         : null },
+    eligibilityProjection: {
+      policy: "PAID_NON_CANCELLED_NON_REFUNDED_EBAY_US_ORDERS" as const,
+      policyExcludedOrderCount: policyExcludedOrders,
+      unsafeDiscardedOrderCount: unsafeDiscardedOrders,
+      allRawOrdersDeterministicallyClassified: unsafeDiscardedOrders === 0,
+    },
     officialOrderCount,
     officialLineItemQuantity,
     orders: visibleOrders.map(({ observedLineItemQuantity: _quantity, ...order }) => order),

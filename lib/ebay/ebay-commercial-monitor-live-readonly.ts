@@ -16,7 +16,7 @@ import {
   parseEbayTradingGetMyeBaySellingPage,
   parseEbayTradingGetSellerListPage,
   parseEbayTradingGetUser,
-  sanitizeLiveEbayOrders,
+  sanitizeLiveEbayOrdersWithDisposition,
   type EbayLiveListing,
   type EbayItemMarketplaceCertificationStatus,
   type EbayMonitorReadonlyCallEvidence,
@@ -2334,6 +2334,7 @@ export type EbayCommercialMonitorLiveReadonlyResult = {
     orders: SafeLiveEbayOrder[]
     pagesRead: number
     rawOrdersDiscardedAfterSanitization: number
+    policyExcludedOrdersAfterSanitization?: number
     observedOrderEvidenceKeys: string[]
     gapCodes: string[]
   }
@@ -4551,6 +4552,7 @@ async function ordersRead(input: {
     }
     const orders: SafeLiveEbayOrder[] = []
     let rawCount = 0
+    let policyExcludedOrders = 0
     const rawOrderIds = new Set<string>()
     let reportedTotal: number | null = null
     let pagesRead = 0
@@ -4608,28 +4610,24 @@ async function ordersRead(input: {
           }
           if (rawOrderId) rawOrderIds.add(rawOrderId)
         }
-        const sanitizedPayload = sanitizeLiveEbayOrders(payload)
+        const disposition = sanitizeLiveEbayOrdersWithDisposition(payload)
+        const sanitizedPayload = disposition.orders
         const sanitized = sanitizedPayload.filter((order) =>
           order.lastModifiedDate >= window.start &&
           order.lastModifiedDate <= window.end)
         if (sanitized.length !== sanitizedPayload.length) {
           gapCodes.push("FULFILLMENT_ORDER_OUTSIDE_REQUESTED_WINDOW")
         }
-        const rawLineCount = rawOrders.reduce((count, order) => {
-          const lines = record(order).lineItems
-          return count + (Array.isArray(lines) ? lines.length : 0)
-        }, 0)
-        const sanitizedLineCount = sanitized.reduce((count, order) =>
-          count + order.lineItems.length, 0)
         evidenceObserved = true
         rawCount += rawOrders.length
         orders.push(...sanitized)
-        if (sanitized.length < rawOrders.length) {
+        if (disposition.unsafeDiscardedOrders > 0) {
           gapCodes.push("FULFILLMENT_ROWS_DISCARDED_AFTER_SANITIZATION")
         }
-        if (sanitizedLineCount < rawLineCount) {
+        if (disposition.unsafeDiscardedLines > 0) {
           gapCodes.push("FULFILLMENT_LINES_DISCARDED_AFTER_SANITIZATION")
         }
+        policyExcludedOrders += disposition.policyExcludedOrders
         pagesRead += 1
         const nextUrl = text(payload.next, 2_000)
         next = nextUrl ? new URL(nextUrl, EBAY_API_ORIGIN) : null
@@ -4705,6 +4703,7 @@ async function ordersRead(input: {
         0,
         rawCount - dedupedOrders.length,
       ),
+      policyExcludedOrdersAfterSanitization: policyExcludedOrders,
       observedOrderEvidenceKeys: [...rawOrderIds]
         .map(hashEbayMonitorEvidenceIdentifier).sort(),
       gapCodes: [...new Set(gapCodes)],

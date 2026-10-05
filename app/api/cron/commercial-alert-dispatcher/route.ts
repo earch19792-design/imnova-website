@@ -58,6 +58,9 @@ const IMMEDIATE_WHATSAPP_EVENT_TYPES = new Set([
   "ACTIVE_LISTING_OUT_OF_STOCK",
 ])
 
+const BUYER_THANK_YOU_CANARY_CONFIRMATION =
+  "SEND_ONE_FIXED_EBAY_BUYER_THANK_YOU"
+
 async function deferNonUrgentWhatsappAlerts(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   accountKey: string,
@@ -134,6 +137,70 @@ export async function POST(req: Request) {
     })
   }
   const mode = new URL(req.url).searchParams.get("mode")
+  if (mode === "buyer-thank-you-preflight") {
+    const buyerMessaging = await preflightEbayBuyerMessagingCapabilityV1()
+    return NextResponse.json({
+      success: buyerMessaging.commerceMessageScopeConfirmed &&
+        buyerMessaging.accountBindingStatus === "MATCHED" &&
+        ["READY", "NOT_ACTIVATED"].includes(buyerMessaging.status),
+      mode,
+      buyerMessaging,
+      safety: {
+        alertClaimed: false,
+        realMessageSent: false,
+        providerWriteUsed: false,
+        whatsappPreflightUsed: false,
+        secretsReturned: false,
+      },
+    })
+  }
+  if (mode === "buyer-thank-you-canary") {
+    const confirmed = req.headers.get(
+      "x-imnova-buyer-thank-you-canary-confirmation",
+    ) === BUYER_THANK_YOU_CANARY_CONFIRMATION
+    if (!confirmed) return NextResponse.json({
+      success: false,
+      error: "BUYER_THANK_YOU_CANARY_CONFIRMATION_REQUIRED",
+      requiredConfirmation: BUYER_THANK_YOU_CANARY_CONFIRMATION,
+      safety: {
+        alertClaimed: false,
+        realMessageSent: false,
+        providerWriteUsed: false,
+        secretsReturned: false,
+      },
+    }, { status: 428 })
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) return NextResponse.json(
+      { success: false, error: "COMMERCIAL_MONITOR_ACCOUNT_SCOPE_REQUIRED" },
+      { status: 503 },
+    )
+    const status = await collectSellerOsBuyerThankYouStatusV1()
+    const result = await dispatchSellerOsBuyerThankYouV1({
+      supabase: getSupabaseAdminClient(),
+      accountKey,
+      status,
+      capability: status.capability,
+      workerId: `buyer-thank-you-canary:${randomUUID()}`,
+      maximumDispatches: 1,
+    })
+    const oneMessageAccepted = result.buyerMessageSends === 1 &&
+      result.accepted === 1
+    return NextResponse.json({
+      success: oneMessageAccepted,
+      mode,
+      result,
+      certification: {
+        fixedTemplateOnly: true,
+        callerSelectedRecipient: false,
+        maximumMessages: 1,
+        durableReceiptRequired: true,
+      },
+      safety: {
+        whatsappAttempted: false,
+        secretsReturned: false,
+      },
+    }, { status: oneMessageAccepted ? 200 : 409 })
+  }
   if (mode === "whatsapp-preflight" || mode === "post-sale-preflight") {
     const preflight = await preflightSellerWhatsAppGateway({ force: true })
     const buyerMessaging = mode === "post-sale-preflight"
@@ -266,7 +333,15 @@ export async function POST(req: Request) {
       }
     }
     let buyerThankYou: unknown
-    try {
+    if (process.env.EBAY_POST_PURCHASE_THANK_YOU_AUTOMATION_ENABLED !==
+        "true") {
+      buyerThankYou = {
+        status: "DISABLED",
+        reason: "BUYER_THANK_YOU_AUTOMATION_EXPLICIT_ACTIVATION_REQUIRED",
+        marketplaceWrites: 0,
+        buyerMessageSends: 0,
+      }
+    } else try {
       const status = await collectSellerOsBuyerThankYouStatusV1()
       buyerThankYou = await dispatchSellerOsBuyerThankYouV1({
         supabase,

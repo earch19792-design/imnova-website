@@ -220,6 +220,7 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
   fetchImpl?: FetchLike
   prepareDispatch?: typeof prepareEbayBuyerThankYouDispatchV1
   now?: () => Date
+  maximumDispatches?: number
 }>) {
   const workerId = safeWorkerId(input.workerId)
   if (!workerId || !input.accountKey || input.status.sourceStatus ===
@@ -238,10 +239,20 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
     })
   }
   const now = input.now ?? (() => new Date())
+  const maximumDispatches = input.maximumDispatches === undefined
+    ? MAXIMUM_DISPATCHES_PER_RUN
+    : Number.isSafeInteger(input.maximumDispatches) &&
+        input.maximumDispatches >= 1 &&
+        input.maximumDispatches <= MAXIMUM_DISPATCHES_PER_RUN
+      ? input.maximumDispatches
+      : 0
+  if (maximumDispatches === 0) {
+    throw new Error("BUYER_THANK_YOU_DISPATCH_LIMIT_INVALID")
+  }
   const eligible = input.status.entries.filter((entry) =>
     entry.eligibleForBuyerThankYou &&
     entry.detectionClass === "NEWLY_DETECTED_AFTER_ACTIVATION")
-    .slice(0, MAXIMUM_DISPATCHES_PER_RUN)
+    .slice(0, maximumDispatches)
   let claimed = 0
   let attempted = 0
   let accepted = 0

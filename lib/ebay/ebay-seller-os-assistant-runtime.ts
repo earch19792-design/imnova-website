@@ -267,6 +267,8 @@ export async function collectSellerOsBuyerThankYouStatusV1(input: {
     saleAlerts,
     capability,
     audit,
+    activationCutoverAt:
+      process.env.EBAY_POST_PURCHASE_THANK_YOU_ACTIVATION_CUTOVER_AT,
   })
 }
 

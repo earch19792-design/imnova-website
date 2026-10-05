@@ -1605,7 +1605,21 @@ function orderCannotBeFulfilled(order: Record<string, unknown>) {
 export function sanitizeLiveEbayOrders(
   payload: unknown,
 ): SafeLiveEbayOrder[] {
-  return jsonArray(jsonRecord(payload).orders).flatMap((value) => {
+  return sanitizeLiveEbayOrdersWithDisposition(payload).orders
+}
+
+/**
+ * Classify every Fulfillment Order before projecting the safe, PII-free
+ * order facts. Explicitly unpaid, cancelled or refunded orders are complete
+ * evidence of ineligibility, not a source-integrity gap. Malformed identities
+ * or line items remain unsafe discards and keep the source partial.
+ */
+export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
+  const orders: SafeLiveEbayOrder[] = []
+  let policyExcludedOrders = 0
+  let unsafeDiscardedOrders = 0
+  let unsafeDiscardedLines = 0
+  for (const value of jsonArray(jsonRecord(payload).orders)) {
     const order = jsonRecord(value)
     const ebayOrderId = jsonText(order.orderId, 100)
     const creationDate = jsonIso(order.creationDate)
@@ -1619,11 +1633,21 @@ export function sanitizeLiveEbayOrders(
       40,
     ).toUpperCase()
     if (!ebayOrderId || !creationDate || !lastModifiedDate ||
-        orderPaymentStatus !== "PAID" ||
-        !["NOT_STARTED", "IN_PROGRESS", "FULFILLED"].includes(
-          orderFulfillmentStatus,
-        ) ||
-        orderCannotBeFulfilled(order)) return []
+        !orderPaymentStatus || !orderFulfillmentStatus) {
+      unsafeDiscardedOrders += 1
+      continue
+    }
+    if (orderPaymentStatus !== "PAID" ||
+        orderCannotBeFulfilled(order)) {
+      policyExcludedOrders += 1
+      continue
+    }
+    if (!["NOT_STARTED", "IN_PROGRESS", "FULFILLED"].includes(
+      orderFulfillmentStatus,
+    )) {
+      unsafeDiscardedOrders += 1
+      continue
+    }
     const total = jsonRecord(jsonRecord(order.pricingSummary).total)
     const rawLineItems = jsonArray(order.lineItems)
     const lineItems = rawLineItems.flatMap((value) => {
@@ -1656,9 +1680,16 @@ export function sanitizeLiveEbayOrders(
     })
     // Do not turn a partially valid multi-line Order into a proven partial
     // identity with the original whole-order total.
-    if (!rawLineItems.length || lineItems.length !== rawLineItems.length) return []
+    if (!rawLineItems.length || lineItems.length !== rawLineItems.length) {
+      unsafeDiscardedOrders += 1
+      unsafeDiscardedLines += Math.max(
+        1,
+        rawLineItems.length - lineItems.length,
+      )
+      continue
+    }
     const currency = jsonText(total.currency, 3).toUpperCase()
-    return [{
+    orders.push({
       ebayOrderId,
       creationDate,
       lastModifiedDate,
@@ -1668,7 +1699,13 @@ export function sanitizeLiveEbayOrders(
       currency: /^[A-Z]{3}$/.test(currency) ? currency : null,
       marketplaceId: "EBAY_US" as const,
       lineItems,
-    }]
+    })
+  }
+  return Object.freeze({
+    orders,
+    policyExcludedOrders,
+    unsafeDiscardedOrders,
+    unsafeDiscardedLines,
   })
 }
 
