@@ -55,6 +55,10 @@ const MARKETPLACE_ID = "EBAY_US"
 const REQUEST_TIMEOUT_MS = 12_000
 const MAXIMUM_STATUS_ENTRIES = 50
 const STEP_TYPE = "SEND_EBAY_BUYER_THANK_YOU" as const
+const BUYER_THANK_YOU_ACCEPTED_SOURCE_LIMITATIONS = new Set([
+  "DASHBOARD_ALERTS_NOT_DURABLY_PERSISTED",
+  "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY",
+])
 
 export type SellerOsBuyerThankYouCapabilityV1 = Readonly<{
   observedAt: string
@@ -402,6 +406,17 @@ function groupAlertsByOrder(alerts: readonly SaleAlert[]) {
     left.orderId.localeCompare(right.orderId))
 }
 
+function buyerThankYouSourceComplete(
+  saleAlerts: SellerOsSaleAlertsReadV1,
+) {
+  if (saleAlerts.status !== "AVAILABLE") return false
+  if (saleAlerts.evidenceCompleteness === "COMPLETE") return true
+  return saleAlerts.evidenceCompleteness === "PARTIAL" &&
+    saleAlerts.limitations.includes("ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY") &&
+    saleAlerts.limitations.every((code) =>
+      BUYER_THANK_YOU_ACCEPTED_SOURCE_LIMITATIONS.has(code))
+}
+
 export function sellerOsBuyerThankYouDeliveryKeysForSaleAlertsV1(
   saleAlerts: SellerOsSaleAlertsReadV1,
 ) {
@@ -428,6 +443,9 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
     SELLER_OS_BUYER_THANK_YOU_ACTIVATION_CUTOVER_AT) ??
     SELLER_OS_BUYER_THANK_YOU_ACTIVATION_CUTOVER_AT
   const sourceUnavailable = input.saleAlerts.status === "UNAVAILABLE"
+  const sourceCompleteForBuyerThankYou = buyerThankYouSourceComplete(
+    input.saleAlerts,
+  )
   const grouped = sourceUnavailable ? [] : groupAlertsByOrder(
     input.saleAlerts.alerts,
   ).slice(0, MAXIMUM_STATUS_ENTRIES)
@@ -454,8 +472,7 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
       activationCutoverAt,
     )
     const historical = detectionClass === "HISTORICAL_REPLAY"
-    const sourceComplete = input.saleAlerts.status === "AVAILABLE" &&
-      input.saleAlerts.evidenceCompleteness === "COMPLETE"
+    const sourceComplete = sourceCompleteForBuyerThankYou
     const auditComplete = input.audit.status === "AVAILABLE"
     const orderEligible = rows.every((row) =>
       row.orderStatus === "PAID" &&
@@ -573,7 +590,7 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
     entry.detectionClass === "HISTORICAL_REPLAY").length
   const succeededCount = entries.filter((entry) =>
     entry.workflowStep.state === "SUCCEEDED").length
-  const partial = input.saleAlerts.status === "PARTIAL" ||
+  const partial = !sourceUnavailable && !sourceCompleteForBuyerThankYou ||
     input.audit.status === "PARTIAL" || truncated
   return Object.freeze({
     contractVersion: SELLER_OS_BUYER_THANK_YOU_STATUS_VERSION,
@@ -628,6 +645,12 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
           entry.workflowStep.state === "SUCCEEDED"),
     evidenceCompleteness: sourceUnavailable ? "UNAVAILABLE" as const
       : partial ? "PARTIAL" as const : "COMPLETE" as const,
+    sourceEvidencePolicy: Object.freeze({
+      checkoutCompletePaidOrderWindowAccepted: true as const,
+      nonDurableDashboardProjectionAcceptedBecauseDeliveryLedgerIsDurable:
+        true as const,
+      unexpectedSourceLimitationsAccepted: false as const,
+    }),
     limitations: Object.freeze(limitationCodes([
       ...input.saleAlerts.limitations,
       ...input.audit.limitationCodes,

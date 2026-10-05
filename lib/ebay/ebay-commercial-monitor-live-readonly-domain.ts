@@ -1679,7 +1679,10 @@ export function sanitizeLiveEbayOrdersWithDisposition(payload: unknown) {
         noteUnsafeDiscardReason("FULFILLMENT_LINE_LEGACY_ITEM_ID_INVALID")
         unsafe = true
       }
-      if (listingMarketplaceId !== "EBAY_US") {
+      const usMarketplaceCertified = listingMarketplaceId === "EBAY_US" ||
+        (listingMarketplaceId === "EBAY_MOTORS_US" &&
+          purchaseMarketplaceId === "EBAY_US")
+      if (!usMarketplaceCertified) {
         noteUnsafeDiscardReason(listingMarketplaceId
           ? listingMarketplaceId === "EBAY_MOTORS_US"
             ? "FULFILLMENT_LINE_LISTING_MARKETPLACE_EBAY_MOTORS_US_OBSERVED"
