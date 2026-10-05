@@ -8,6 +8,8 @@ import {
   getEbayCategoryLearningActivationConfiguration,
 } from "@/lib/ebay/ebay-category-performance-learning"
 import { reverifyManualEbayListingsReadonly } from "@/lib/ebay/ebay-manual-listing-service"
+import { refreshTeoOwnerListingExperimentsV1 } from
+  "@/lib/ebay/teo-owner-listing-experiment-service-v1"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import { sellerOsPostOnlyGetResponseV1 } from
   "@/lib/seller-os/post-only-runtime-route-v1"
@@ -48,11 +50,16 @@ export async function POST(req: Request) {
         timeBudgetMs: 15_000,
       })
     const learning = await collectOwnEbayPerformanceForLearning(supabase)
+    const teoListingExperiments = await refreshTeoOwnerListingExperimentsV1(
+      supabase,
+      { maximumExperiments: 5 },
+    )
     return NextResponse.json({
       success: true,
       status: learning.status,
       learning,
       manualListingReverification,
+      teoListingExperiments,
       activation,
       safety: {
         previewOnly: true,

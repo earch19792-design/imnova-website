@@ -60,6 +60,7 @@ export const SELLER_OS_NAVIGATION: readonly SellerOsNavigationItem[] = Object.fr
       child("identity-review", "Identity Review", "/admin/ebay/listings#identity-review"),
       child("publication", "Publicación", "/admin/ebay/publish"),
       child("quality", "Listing Quality", "/admin/ebay/listing-quality"),
+      child("teo-improvements", "TEO mejoras", "/admin/ebay/teo-listings"),
     ]),
   item("stockguard", "StockGuard", "/admin/ebay/stock-guard",
     "Vínculos exactos, vigilancia de stock y excepciones.",

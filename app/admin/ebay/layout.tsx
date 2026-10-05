@@ -19,6 +19,7 @@ function activeArea(pathname: string): SellerOsAreaId {
       pathname.includes("/mobile-review")) return "opportunities"
   if (pathname.includes("/listing-quality") ||
       pathname.includes("/listing-optimization") ||
+      pathname.includes("/teo-listings") ||
       pathname.includes("/seller-performance") ||
       pathname.endsWith("/monitor")) return "listings"
   if (pathname.includes("/post-sale")) return "orders"
