@@ -7,6 +7,24 @@ import { supabase } from "@/lib/supabase"
 type JsonRecord = Record<string, unknown>
 type Dashboard = {
   generatedAt?: string
+  liveCoverage?: {
+    currentState?: "CURRENT_FRESH" | "CURRENT_UNAVAILABLE"
+    currentListingCount?: number | null
+    currentObservedAt?: string | null
+    lastCertifiedListingCount?: number | null
+    lastCertifiedAt?: string | null
+    sourceFailureCode?: string | null
+    trading?: {
+      status?: "AVAILABLE" | "FAILED" | "NOT_ATTEMPTED"
+      causeClassification?: string | null
+      failedOperation?: string | null
+      providerErrorCode?: string | null
+      detailCode?: string | null
+      zeroListingsInterpretation?:
+        | "NO_SE_INTERPRETA_COMO_0_LISTINGS"
+        | "AUTHORITATIVE_ONLY_WHEN_CERTIFIED_COMPLETE"
+    }
+  } | null
   summary?: {
     verifiedListings?: number
     actionsToday?: number
@@ -68,6 +86,18 @@ function formatDate(value: unknown) {
 
 function label(value: unknown) {
   return text(value).replaceAll("_", " ") || "Pendiente"
+}
+
+function liveCoverageCause(value: unknown) {
+  const causes: Record<string, string> = {
+    QUOTA_EXHAUSTED: "Cuota de Trading agotada",
+    AUTH_ERROR: "Autenticación o autorización",
+    EBAY_TRADING_ERROR: "Error de Trading de eBay",
+    TEMPORARY_UPSTREAM_FAILURE: "Fallo temporal del servicio de eBay",
+    UNKNOWN_CAUSE: "Causa todavía no comprobada",
+  }
+  const code = text(value)
+  return causes[code] ?? label(code)
 }
 
 function SummaryCard({ label: title, value, detail }: {
@@ -215,6 +245,8 @@ export default function TeoListingsPage() {
   const pricing = dashboard?.pricing ?? []
   const pricingSources = dashboard?.pricingSourceStatus ?? {}
   const summary = dashboard?.summary ?? {}
+  const liveCoverage = dashboard?.liveCoverage ?? null
+  const liveTrading = liveCoverage?.trading ?? null
   const activeExperiments = useMemo(() =>
     (dashboard?.experiments ?? []).filter((entry) =>
       !["COMPLETED", "INCONCLUSIVE", "CANCELLED"]
@@ -249,6 +281,23 @@ export default function TeoListingsPage() {
       {loading && <section className="rounded-3xl border border-white/10 p-8 text-white/55">TEO está ordenando la ruta de hoy…</section>}
 
       {!loading && dashboard && <>
+        <section aria-label="Cobertura LIVE de eBay" className={`rounded-3xl border p-5 md:p-6 ${liveCoverage?.currentState === "CURRENT_FRESH" ? "border-emerald-200/25 bg-emerald-200/[0.06]" : "border-amber-200/25 bg-amber-200/[0.08]"}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Cobertura LIVE oficial</p>
+              <h2 className="mt-2 text-xl font-black">{liveCoverage?.currentState === "CURRENT_FRESH" ? "Cobertura certificada" : "Cobertura actual no certificada"}</h2>
+            </div>
+            <Status tone={liveCoverage?.currentState === "CURRENT_FRESH" ? "green" : "amber"}>{liveTrading?.status === "AVAILABLE" ? "Trading disponible" : liveTrading?.status === "FAILED" ? "Trading falló" : "Trading no comprobado"}</Status>
+          </div>
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+            <div><p className="text-xs font-bold text-white/45">Última cobertura LIVE certificada</p><p className="mt-1 font-black">{liveCoverage?.lastCertifiedListingCount ?? "No disponible"} listings</p></div>
+            <div><p className="text-xs font-bold text-white/45">Timestamp certificado</p><p className="mt-1 font-black">{formatDate(liveCoverage?.lastCertifiedAt)}</p></div>
+            <div><p className="text-xs font-bold text-white/45">Clasificación de causa</p><p className="mt-1 font-black">{liveTrading?.causeClassification ? liveCoverageCause(liveTrading.causeClassification) : "Sin fallo clasificado"}</p></div>
+            <div><p className="text-xs font-bold text-white/45">Detalle seguro</p><p className="mt-1 break-all font-black">{liveTrading?.detailCode ?? liveCoverage?.sourceFailureCode ?? "No comprobado"}</p></div>
+          </div>
+          {liveCoverage?.currentState !== "CURRENT_FRESH" && <p className="mt-4 rounded-xl border border-amber-100/20 bg-black/20 px-3 py-2 text-sm font-black text-amber-50">La falta de cobertura no se interpreta como 0 listings. TEO conserva la última cohorte certificada y no habilita automatizaciones de marketplace.</p>}
+        </section>
+
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
           <SummaryCard label="Acciones hoy" value={summary.actionsToday ?? 0} detail="En orden de prioridad." />
           <SummaryCard label="Descuentos seguros" value={summary.discountOpportunities ?? 0} detail="Con utilidad neta mínima de US$4 y guardas de margen." />

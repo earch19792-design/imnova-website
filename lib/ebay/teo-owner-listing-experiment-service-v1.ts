@@ -6,6 +6,8 @@ import { getEbayCategoryLearningAccountKey } from
   "./ebay-category-performance-learning"
 import { readManualListingFromTradingApi } from
   "./ebay-manual-listing-trading-readonly"
+import { readCurrentLiveAuthorityV1 } from
+  "./ebay-current-live-authority-v1"
 import {
   assessTeoOfficialReadbackV1,
   buildTeoListingPriceDecisionV1,
@@ -367,6 +369,7 @@ export async function loadTeoOwnerListingDashboardV1(
     economicsRead,
     competitorEventsRead,
     activeListingsRead,
+    currentLiveAuthority,
   ] =
     await Promise.all([
       supabase.from("ebay_manual_listing_links")
@@ -414,6 +417,8 @@ export async function loadTeoOwnerListingDashboardV1(
         .eq("account_key", accountKey)
         .order("updated_at", { ascending: false })
         .limit(2_000),
+      readCurrentLiveAuthorityV1({ supabase, accountKey })
+        .catch(() => null),
     ])
   if (linksRead.error) throw new Error("TEO_VERIFIED_LISTING_READ_FAILED")
   if (experimentsRead.error) throw new Error("TEO_EXPERIMENT_REGISTRY_READ_FAILED")
@@ -622,6 +627,7 @@ export async function loadTeoOwnerListingDashboardV1(
       oneVariableAtATime: true,
       mayelIncluded: false,
     },
+    liveCoverage: currentLiveAuthority,
     summary: {
       verifiedListings: linksRead.data?.length ?? 0,
       actionsToday: todayActions.length,

@@ -36,6 +36,7 @@ const HUMAN_LABELS: Readonly<Record<string, string>> = Object.freeze({
   ERROR: "Error de lectura",
   PASS: "Correcto",
   FAIL: "Requiere atención",
+  FAILED: "Falló",
   TRIGGERED: "Requiere atención",
   MITIGATED: "Mitigado",
   ACTIVE_VIOLATION: "Incidencia activa",
@@ -105,6 +106,12 @@ const HUMAN_LABELS: Readonly<Record<string, string>> = Object.freeze({
   ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_GUARD: "Reutilización del snapshot de tráfico",
   REVIEW_BURDEN_AUTHORITY_MISMATCH_GUARD: "Coherencia de revisión humana",
   OPERATIONAL_REVIEW_FALSE_ZERO_GUARD: "Protección del conteo de revisión humana",
+  QUOTA_EXHAUSTED: "Cuota agotada",
+  AUTH_ERROR: "Error de autenticación",
+  EBAY_TRADING_ERROR: "Error de Trading de eBay",
+  TEMPORARY_UPSTREAM_FAILURE: "Fallo temporal de eBay",
+  UNKNOWN_CAUSE: "Causa no comprobada",
+  NOT_ATTEMPTED: "No intentado",
 })
 
 const CAPABILITY_LABELS: Readonly<Record<string, string>> = Object.freeze({
@@ -140,7 +147,7 @@ export function sellerOsStatusTone(value: string | null | undefined) {
   if (["PARTIAL_CERTIFIED", "MITIGATED", "MITIGATED_BY_POLICY", "RECONCILED"].includes(value ?? "")) {
     return "border-cyan-200 bg-cyan-50 text-cyan-800"
   }
-  if (["CRITICAL", "ERROR", "FAIL", "TRIGGERED", "ACTIVE_VIOLATION"].includes(value ?? "")) {
+  if (["CRITICAL", "ERROR", "FAIL", "FAILED", "TRIGGERED", "ACTIVE_VIOLATION"].includes(value ?? "")) {
     return "border-rose-200 bg-rose-50 text-rose-800"
   }
   if (["PARTIAL", "DEGRADED", "UNPROVEN", "HIGH", "DETECTED_RISK"].includes(value ?? "")) {

@@ -10,6 +10,9 @@ import { getEbayCommercialMonitorLiveReadonly,
 import { currentLiveItemIdsV1, currentLiveScopeIdV1,
   officialCurrentLiveReadCertifiedV1, readCurrentLiveAuthorityV1 } from
   "./ebay-current-live-authority-v1"
+import { availableEbayLiveCoverageTradingV1,
+  classifyEbayLiveCoverageFailureV1 } from
+  "./ebay-live-coverage-failure-v1"
 import { collectSellerOsEbayTradingRateLimitStatusV1,
   type SellerOsEbayTradingRateLimitStatusV1 } from
   "./ebay-trading-rate-limit-observability-v1"
@@ -77,6 +80,16 @@ export function adaptOfficialListingSweepForCurrentLiveV1(
       status: complete ? "AVAILABLE" : "UNAVAILABLE",
       coverage: complete ? "COMPLETE" : "UNPROVEN",
       observedAt: sweep.observedAt,
+      trading: complete
+        ? availableEbayLiveCoverageTradingV1({
+            calls: sweep.calls,
+            observedAt: sweep.observedAt,
+          })
+        : classifyEbayLiveCoverageFailureV1({
+            detailCode: sweep.errorCode ??
+              sweep.gapCodes[0] ?? "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE",
+            calls: sweep.calls,
+          }),
       gapCodes: sweep.gapCodes.length ? sweep.gapCodes :
         sweep.errorCode ? [sweep.errorCode] : [],
       currentLiveListings: sweep.listings,

@@ -8,6 +8,8 @@ import type {
   CanonicalCommercialTimeSeriesPointV1,
 } from "./ebay-commercial-monitor-traffic-scope-v1"
 import type { SellerOsSaleAlertsReadV1 } from "./ebay-sale-alerts-read-v1"
+import type { EbayLiveCoverageTradingDiagnosticV1 } from
+  "./ebay-live-coverage-failure-v1"
 
 export const COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION =
   "COMMERCIAL_MONITOR_READONLY_FOUNDATION_V1" as const
@@ -1246,6 +1248,7 @@ export type EbayLiveCertificationReadModel = {
     coverage: "COMPLETE" | "PARTIAL" | "UNPROVEN"
     observedAt: string | null
     source: string
+    trading: EbayLiveCoverageTradingDiagnosticV1
     pagesRead: number
     totalPages: number | null
     totalEntries: number | null
@@ -1307,6 +1310,7 @@ export type EbayLiveCertificationReadModel = {
     gapCodes: string[]
   }
   calls: Array<{
+    providerErrorCode?: string | null
     operation: string
     method: "GET" | "POST"
     endpoint: string
@@ -1564,6 +1568,7 @@ export type CurrentLiveAuthorityReadModelV1 = {
   scopeId: string | null
   sourceAuthority:
     "EBAY_TRADING_GET_MY_EBAY_SELLING_PLUS_GET_ITEM_CERTIFICATION" | null
+  trading: EbayLiveCoverageTradingDiagnosticV1
   sourceFailureCode: string | null
   nextRetryAt: string | null
   ownerActionRequired: false

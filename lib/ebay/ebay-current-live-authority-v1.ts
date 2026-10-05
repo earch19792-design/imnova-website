@@ -4,6 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import type { EbayCommercialMonitorLiveReadonlyResult } from
   "./ebay-commercial-monitor-live-readonly"
+import {
+  availableEbayLiveCoverageTradingV1,
+  classifyEbayLiveCoverageFailureV1,
+  type EbayLiveCoverageTradingDiagnosticV1,
+} from "./ebay-live-coverage-failure-v1"
 
 export const SELLER_OS_CURRENT_LIVE_AUTHORITY_RECOVERY_V1 =
   "SELLER_OS_CURRENT_LIVE_AUTHORITY_RECOVERY_V1" as const
@@ -42,6 +47,7 @@ export type CurrentLiveAuthorityProjectionV1 = Readonly<{
   lastCertifiedFreshUntil: string | null
   scopeId: string | null
   sourceAuthority: typeof CURRENT_LIVE_SOURCE_AUTHORITY | null
+  trading: EbayLiveCoverageTradingDiagnosticV1
   sourceFailureCode: string | null
   nextRetryAt: string | null
   ownerActionRequired: false
@@ -137,6 +143,8 @@ export function resolveCurrentLiveAuthorityV1(input: Readonly<{
         CURRENT_MAXIMUM_AGE_MS).toISOString(),
       scopeId: currentLiveScopeIdV1(ids, input.accountKey),
       sourceAuthority: CURRENT_LIVE_SOURCE_AUTHORITY,
+      trading: input.live.discovery.trading ??
+        availableEbayLiveCoverageTradingV1({ observedAt: liveObservedAt }),
       sourceFailureCode: null,
       nextRetryAt: null,
       ownerActionRequired: false as const,
@@ -172,6 +180,10 @@ export function resolveCurrentLiveAuthorityV1(input: Readonly<{
       lastCertifiedFreshUntil: freshUntil,
       scopeId: input.stored.last_certified_live_scope_id,
       sourceAuthority: CURRENT_LIVE_SOURCE_AUTHORITY,
+      trading: availableEbayLiveCoverageTradingV1({
+        observedAt: certifiedAt,
+        detailCode: "CURRENT_LIVE_STORED_FRESH",
+      }),
       sourceFailureCode: null,
       nextRetryAt: null,
       ownerActionRequired: false as const,
@@ -182,6 +194,8 @@ export function resolveCurrentLiveAuthorityV1(input: Readonly<{
     ? "CURRENT_LIVE_OFFICIAL_CLOCK_SKEW_FUTURE"
     : input.live?.discovery.gapCodes.find((code) => SAFE_CODE.test(code)) ??
       input.stored?.current_live_last_error_code
+  const sourceFailureCode = safeCode(liveFailure,
+    "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE")
   return Object.freeze({
     contractVersion: SELLER_OS_CURRENT_LIVE_AUTHORITY_RECOVERY_V1,
     currentState: "CURRENT_UNAVAILABLE" as const,
@@ -199,8 +213,9 @@ export function resolveCurrentLiveAuthorityV1(input: Readonly<{
     lastCertifiedFreshUntil: validHistory ? freshUntil : null,
     scopeId: validHistory ? input.stored!.last_certified_live_scope_id : null,
     sourceAuthority: validHistory ? CURRENT_LIVE_SOURCE_AUTHORITY : null,
-    sourceFailureCode: safeCode(liveFailure,
-      "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE"),
+    trading: input.live?.discovery.trading ??
+      classifyEbayLiveCoverageFailureV1({ detailCode: sourceFailureCode }),
+    sourceFailureCode,
     nextRetryAt: iso(input.stored?.current_live_next_retry_at),
     ownerActionRequired: false as const,
     marketplaceWrites: 0 as const,

@@ -3739,6 +3739,7 @@ function liveCertificationProjection(
         live.discovery.coverage,
       observedAt: live.discovery.observedAt,
       source: live.discovery.source,
+      trading: live.discovery.trading,
       pagesRead: live.discovery.pagesRead,
       totalPages: live.discovery.totalPages,
       totalEntries: live.discovery.totalEntries,

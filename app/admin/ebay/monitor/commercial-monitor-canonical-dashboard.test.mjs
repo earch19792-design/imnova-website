@@ -40,7 +40,7 @@ test("canonical dashboard consumes backend DTO states without synthetic KPI fall
   }
   assert.match(dashboard, /No se inventan valores del Top 10 %/)
   assert.match(dashboard, /suffix="%"/)
-  assert.match(dashboard, /Métrica TRANSACTION de eBay Analytics; no equivale a órdenes/)
+  assert.match(dashboard, /Cantidad vendida informada por el reporte de tráfico; no equivale al número de órdenes/)
   assert.match(dashboard, /dashboardKpis\.accountTraffic/)
   assert.doesNotMatch(dashboard, /selectedTraffic|setTrafficScope/)
 })
@@ -184,12 +184,27 @@ test("technical evidence is preserved behind collapsed-by-default disclosure", (
   assert.match(dashboard, /FALSE_ZERO_REPRESENTATION_GUARD|deterministicGuards/)
 })
 
+test("LIVE coverage failure classification and last certified cohort stay visible", () => {
+  for (const expression of [
+    "Última cobertura LIVE certificada",
+    "Estado actual de Trading",
+    "Clasificación de causa",
+    "La falta de cobertura no se interpreta como 0 listings",
+    "TEMPORARY_UPSTREAM_FAILURE",
+    "EBAY_TRADING_ERROR",
+  ]) {
+    assert.match(dashboard, new RegExp(expression))
+  }
+  assert.match(client, /liveCertification\.discovery\.trading/)
+  assert.match(client, /no se interpreta como 0 listings/)
+})
+
 test("legacy technical diagnostics remain secondary to the canonical dashboard", () => {
   assert.match(client, /CommercialMonitorCanonicalDashboard/)
   assert.match(client, /<details id="advanced-diagnostics"/)
   assert.match(client, /Diagnóstico técnico avanzado/)
   assert.doesNotMatch(client, /Estado comercial verificable, sin ejecutar cambios/)
-  assert.match(client, /SellerOsMobileNav active="monitor" hideOnDesktop/)
+  assert.match(client, /SellerOsMobileNav active="live" hideOnDesktop/)
 })
 
 test("live Trading rows remain visible when Quality Report is unavailable", () => {

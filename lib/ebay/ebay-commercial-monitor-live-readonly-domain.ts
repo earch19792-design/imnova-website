@@ -33,6 +33,7 @@ export type EbayMonitorReadonlyOperation =
 
 export type EbayMonitorReadonlyCallEvidence = {
   latencyMs?: number
+  providerErrorCode?: string | null
   operation: EbayMonitorReadonlyOperation
   method: "GET" | "POST"
   endpoint: string

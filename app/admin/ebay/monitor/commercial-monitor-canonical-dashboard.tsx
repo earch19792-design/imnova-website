@@ -96,6 +96,19 @@ const reasonLabels: Record<string, string> = {
   GUIDANCE_NOT_AVAILABLE: "Guía de eBay no disponible",
 }
 
+const liveCoverageFailureLabels: Record<string, string> = {
+  QUOTA_EXHAUSTED: "Cuota de Trading agotada",
+  AUTH_ERROR: "Autenticación o autorización",
+  EBAY_TRADING_ERROR: "Error de Trading de eBay",
+  TEMPORARY_UPSTREAM_FAILURE: "Fallo temporal del servicio de eBay",
+  UNKNOWN_CAUSE: "Causa todavía no comprobada",
+}
+
+function liveCoverageFailureLabel(value: string | null) {
+  return value ? liveCoverageFailureLabels[value] ?? presentSellerOsCode(value)
+    : "Sin fallo clasificado"
+}
+
 function formatValue(value: number | null, maximumFractionDigits = 2) {
   return value === null ? "—" : new Intl.NumberFormat("es-US", {
     maximumFractionDigits,
@@ -326,6 +339,9 @@ export function CommercialMonitorCanonicalDashboard({
 }: CommercialMonitorCanonicalDashboardProps) {
   const [showAllLiveListings, setShowAllLiveListings] = useState(false)
   const backend = monitor.backend
+  const currentLiveAuthority = backend.currentLiveAuthority
+  const liveTrading = currentLiveAuthority.trading ??
+    monitor.liveCertification.discovery.trading
   const dashboardKpis = presentSellerOsCanonicalDashboardKpisV1(monitor)
   const livePortfolio = dashboardKpis.livePortfolio
   const canonicalLive = buildCanonicalLiveListingDashboardMetricsV1(monitor)
@@ -462,10 +478,10 @@ export function CommercialMonitorCanonicalDashboard({
           </div>
         </section>
 
-        {monitor.backend.currentLiveAuthority.currentState ===
-          "CURRENT_UNAVAILABLE" && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950"><p className="font-black">eBay no está disponible ahora.</p><p className="mt-1 text-sm">{monitor.backend.currentLiveAuthority.lastCertifiedListingCount === null
+        {currentLiveAuthority.currentState ===
+          "CURRENT_UNAVAILABLE" && <section aria-label="Estado de cobertura LIVE" className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950"><p className="font-black">La cobertura LIVE oficial no está certificada ahora.</p><p className="mt-1 text-sm">{currentLiveAuthority.lastCertifiedListingCount === null
           ? "Todavía no existe una cohorte LIVE certificada bajo el contrato durable."
-          : `Última lectura certificada: ${monitor.backend.currentLiveAuthority.lastCertifiedListingCount} listings · ${formatTimestamp(monitor.backend.currentLiveAuthority.lastCertifiedAt)}.`}</p><p className="mt-1 text-sm text-amber-800">Seller OS conserva esa evidencia y reintentará automáticamente. No necesitas hacer nada.</p></section>}
+          : `Última cobertura LIVE certificada: ${currentLiveAuthority.lastCertifiedListingCount} listings · ${formatTimestamp(currentLiveAuthority.lastCertifiedAt)}.`}</p><dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4"><div><dt className="font-bold text-amber-800">Estado actual de Trading</dt><dd>{presentSellerOsStatus(liveTrading.status)}</dd></div><div><dt className="font-bold text-amber-800">Clasificación de causa</dt><dd>{liveCoverageFailureLabel(liveTrading.causeClassification)}</dd></div><div><dt className="font-bold text-amber-800">Operación</dt><dd>{liveTrading.failedOperation ?? "No comprobada"}</dd></div><div><dt className="font-bold text-amber-800">Detalle seguro</dt><dd className="break-all">{liveTrading.detailCode ?? currentLiveAuthority.sourceFailureCode ?? "No comprobado"}</dd></div></dl><p className="mt-4 rounded-xl border border-amber-300 bg-white/60 px-3 py-2 text-sm font-black">La falta de cobertura no se interpreta como 0 listings.</p><p className="mt-2 text-sm text-amber-800">Seller OS conserva la última evidencia certificada, mantiene el cierre seguro y reintentará automáticamente.</p></section>}
 
         <section aria-labelledby="live-portfolio-kpis-heading">
           <div className="mb-3">

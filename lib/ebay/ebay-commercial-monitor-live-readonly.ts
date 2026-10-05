@@ -41,6 +41,11 @@ import {
   type AccountTrafficEvidenceV1,
 } from "./ebay-commercial-monitor-traffic-scope-v1"
 import {
+  availableEbayLiveCoverageTradingV1,
+  classifyEbayLiveCoverageFailureV1,
+  type EbayLiveCoverageTradingDiagnosticV1,
+} from "./ebay-live-coverage-failure-v1"
+import {
   readRegistry,
   readRegistrySyncKeyCollisions,
   type ReadonlyRegistryListingRow,
@@ -2298,6 +2303,7 @@ export type EbayCommercialMonitorLiveReadonlyResult = {
     coverage: "COMPLETE" | "PARTIAL" | "UNPROVEN"
     observedAt: string | null
     source: "EBAY_TRADING_GET_MY_EBAY_SELLING"
+    trading: EbayLiveCoverageTradingDiagnosticV1
     sellerWideEnumeration: {
       identities: EbaySellerWideEnumerationIdentity[]
       itemSetComplete: boolean
@@ -2638,6 +2644,9 @@ export function unavailableResult(input: {
       coverage: "UNPROVEN",
       observedAt: null,
       source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+      trading: classifyEbayLiveCoverageFailureV1({
+        detailCode: input.limitationCode,
+      }),
       sellerWideEnumeration: {
         identities: [],
         itemSetComplete: false,
@@ -2846,9 +2855,17 @@ async function allowlistedFetch(input: {
   }
 }
 
-function markResponseCallFailed(response: Response) {
+function markResponseCallFailed(
+  response: Response,
+  providerErrorCode?: string | null,
+) {
   const call = callEvidenceByResponse.get(response)
-  if (call) call.status = "FAILED"
+  if (call) {
+    call.status = "FAILED"
+    if (providerErrorCode && /^\d{1,12}$/.test(providerErrorCode)) {
+      call.providerErrorCode = providerErrorCode
+    }
+  }
 }
 
 async function readJsonResponse(input: {
@@ -3092,6 +3109,7 @@ async function verifyAccount(input: {
     const providerCode = xml.match(
       /<ErrorCode(?:\s[^>]*)?>(\d{1,12})<\/ErrorCode>/i,
     )?.[1]
+    markResponseCallFailed(response, providerCode)
     if (providerCode === "518" &&
         input.fulfillmentSellerIdentityFallback === true) {
       const window = orderWindow(input.clock())
@@ -3289,6 +3307,7 @@ async function sellerWideDiscovery(input: {
         const providerCode = xml.match(
           /<ErrorCode(?:\s[^>]*)?>(\d{1,12})<\/ErrorCode>/i,
         )?.[1]
+        markResponseCallFailed(response, providerCode)
         if (providerCode === "518" && page === 1 &&
             operation === "TRADING_GET_MY_EBAY_SELLING") {
           operation = "TRADING_GET_SELLER_LIST"
@@ -5947,6 +5966,16 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
         coverage: coverage.status,
         observedAt: discovery.observedAt,
         source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+        trading: coverage.status === "COMPLETE"
+          ? availableEbayLiveCoverageTradingV1({
+              calls,
+              observedAt: discovery.observedAt,
+            })
+          : classifyEbayLiveCoverageFailureV1({
+              detailCode: discovery.limitationCode ??
+                coverage.gapCodes[0] ?? "SELLER_WIDE_DISCOVERY_UNPROVEN",
+              calls,
+            }),
         sellerWideEnumeration: discovery.sellerWideEnumeration,
         currentLiveListings: discovery.currentLiveListings,
         listings: discovery.listings,
@@ -5997,14 +6026,19 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
     }
   } catch (error) {
     tradingToken = ""
+    const limitationCode = safeCode(error, "EBAY_MONITOR_LIVE_READ_FAILED")
     const result = unavailableResult({
       accountAlias: configuration.accountAlias,
       bindingConfigured: identity.bound,
-      limitationCode: safeCode(error, "EBAY_MONITOR_LIVE_READ_FAILED"),
+      limitationCode,
     })
     if (independentOrders) result.orders = await independentOrders
     if (independentInventory) result.discovery.inventory = await independentInventory
     result.calls = calls
+    result.discovery.trading = classifyEbayLiveCoverageFailureV1({
+      detailCode: limitationCode,
+      calls,
+    })
     if (verifiedAccount) {
       result.account = {
         status: verifiedAccount.site === "US" ? "CERTIFIED" : "PARTIAL",

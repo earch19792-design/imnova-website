@@ -1180,6 +1180,7 @@ export function buildCommercialMonitorBackendV1(input: {
     sourceAuthority: activeListingsProven
       ? "EBAY_TRADING_GET_MY_EBAY_SELLING_PLUS_GET_ITEM_CERTIFICATION" as const
       : null,
+    trading: input.liveCertification.discovery.trading,
     sourceFailureCode: activeListingsProven
       ? null : "CURRENT_LIVE_OFFICIAL_SOURCE_UNAVAILABLE",
     nextRetryAt: null,
