@@ -126,6 +126,7 @@ async function ensureCurrentLiveAuthorityForQuickPickV1(input: Readonly<{
     accountKey: input.accountKey,
     accountAlias: input.accountAlias,
     forceOfficialRead: true,
+    recheckQuotaBeforeRetry: true,
   })
   return Object.freeze({ status: recovered.status,
     marketplaceWrites: 0 as const })
