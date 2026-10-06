@@ -401,6 +401,8 @@ export async function POST(req: Request) {
         accountAlias: getEbaySellerAccountScopeConfiguration().accountAlias,
         recheckQuotaBeforeRetry: true,
       })
+      console.info("CURRENT_LIVE_AUTHORITY_RECOVERY_RECEIPT_V1",
+        currentLiveRecoveryDiagnostics(currentLiveAuthorityRecovery))
     } catch (error) {
       currentLiveAuthorityRecovery = {
         status: "FAILED_RETRYABLE",
