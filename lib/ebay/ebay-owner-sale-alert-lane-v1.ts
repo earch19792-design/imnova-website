@@ -42,29 +42,48 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-async function latestOrderModifiedAt(
+async function orderCursorPlan(
   supabase: SupabaseClient,
   accountKey: string,
   now: Date,
 ) {
-  const { data, error } = await supabase
-    .from("marketplace_order_snapshots")
-    .select("order_modified_at")
-    .eq("marketplace_account_key", accountKey)
-    .eq("marketplace", MARKETPLACE)
-    .order("order_modified_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (error) throw new Error("OWNER_SALE_ORDER_CURSOR_READ_FAILED")
+  const [latestRead, targetedRecoveryRead] = await Promise.all([
+    supabase
+      .from("marketplace_order_snapshots")
+      .select("order_modified_at")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .order("order_modified_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("marketplace_order_snapshots")
+      .select("marketplace_order_id")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("marketplace_order_id", TARGETED_RECOVERY.orderId)
+      .maybeSingle(),
+  ])
+  if (latestRead.error || targetedRecoveryRead.error) {
+    throw new Error("OWNER_SALE_ORDER_CURSOR_READ_FAILED")
+  }
   const oldest = now.getTime() - ORDER_LOOKBACK_HOURS * 60 * 60 * 1_000
-  const prior = typeof data?.order_modified_at === "string"
-    ? Date.parse(data.order_modified_at) -
+  const prior = typeof latestRead.data?.order_modified_at === "string"
+    ? Date.parse(latestRead.data.order_modified_at) -
       CURSOR_OVERLAP_MINUTES * 60 * 1_000
     : oldest
-  return new Date(Math.max(
+  const incrementalFrom = new Date(Math.max(
     oldest,
     Number.isFinite(prior) ? prior : oldest,
   )).toISOString()
+  const targetedRecoveryScan = !targetedRecoveryRead.data
+  return Object.freeze({
+    modifiedFrom: targetedRecoveryScan
+      ? new Date(oldest).toISOString()
+      : incrementalFrom,
+    incrementalFrom,
+    targetedRecoveryScan,
+  })
 }
 
 async function ownerSaleOrderRead(
@@ -133,9 +152,9 @@ export async function runEbayOwnerSaleAlertLaneV1(
   const now = input.now ?? new Date()
   const observedAt = now.toISOString()
   if (!accountKey) throw new Error("OWNER_SALE_ALERT_ACCOUNT_SCOPE_REQUIRED")
-  let modifiedFrom: string
+  let cursor: Awaited<ReturnType<typeof orderCursorPlan>>
   try {
-    modifiedFrom = await latestOrderModifiedAt(supabase, accountKey, now)
+    cursor = await orderCursorPlan(supabase, accountKey, now)
   } catch (error) {
     return Object.freeze({
       contractVersion: EBAY_OWNER_SALE_ALERT_LANE_VERSION,
@@ -155,7 +174,7 @@ export async function runEbayOwnerSaleAlertLaneV1(
   let response: Awaited<ReturnType<OrderReader>>
   try {
     response = await ownerSaleOrderRead(supabase, {
-      modifiedFrom,
+      modifiedFrom: cursor.modifiedFrom,
       modifiedTo: observedAt,
       readOrders: input.readOrders ?? getEbayCompletedCheckoutOrders,
     })
@@ -175,10 +194,19 @@ export async function runEbayOwnerSaleAlertLaneV1(
       marketplaceWrites: 0 as const,
     })
   }
+  // A one-time widened read is required when the known missed order has no
+  // snapshot. Persist only that order plus the normal incremental window so
+  // the recovery cannot fan out historical notifications or audit noise.
+  const incrementalBoundary = Date.parse(cursor.incrementalFrom)
+  const orders = cursor.targetedRecoveryScan
+    ? response.orders.filter((order) =>
+        order.ebayOrderId === TARGETED_RECOVERY.orderId ||
+        Date.parse(order.lastModifiedDate) >= incrementalBoundary)
+    : response.orders
   const work = await persistOrdersAndSales({
     supabase,
     accountKey,
-    orders: response.orders,
+    orders,
     listings: [],
     supplies: [],
     thresholds: normalizeCommercialThresholds({
@@ -186,6 +214,9 @@ export async function runEbayOwnerSaleAlertLaneV1(
     }),
     observedAt,
     verifiedIdentities: new Set(),
+    ownerAlertRecoveryOrderIds: cursor.targetedRecoveryScan && orders.some(
+      (order) => order.ebayOrderId === TARGETED_RECOVERY.orderId,
+    ) ? [TARGETED_RECOVERY.orderId] : [],
   })
   return Object.freeze({
     contractVersion: EBAY_OWNER_SALE_ALERT_LANE_VERSION,
@@ -194,9 +225,14 @@ export async function runEbayOwnerSaleAlertLaneV1(
     source: response.source,
     sourceStatus: "AVAILABLE" as const,
     observedAt,
-    modifiedFrom,
-    orderCount: response.orders.length,
-    lineCount: response.orders.reduce((sum, order) =>
+    modifiedFrom: cursor.modifiedFrom,
+    incrementalFrom: cursor.incrementalFrom,
+    targetedRecoveryScan: cursor.targetedRecoveryScan,
+    targetedRecoveryOrderObserved: orders.some((order) =>
+      order.ebayOrderId === TARGETED_RECOVERY.orderId),
+    upstreamOrderCount: response.orders.length,
+    orderCount: orders.length,
+    lineCount: orders.reduce((sum, order) =>
       sum + order.lineItems.length, 0),
     pagesRead: response.pagesRead,
     newSales: work.newSales,

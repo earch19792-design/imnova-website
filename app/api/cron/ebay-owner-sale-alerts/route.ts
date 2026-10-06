@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     const success = lane.success || [
       "RECOVERED", "ALREADY_MATERIALIZED",
     ].includes(backfill.status)
-    return NextResponse.json({
+    const receipt = {
       success,
       status: success ? "owner_sale_alert_lane_completed" :
         "owner_sale_alert_lane_degraded",
@@ -82,7 +82,28 @@ export async function POST(req: Request) {
         buyerPiiIncluded: false,
         rawUpstreamPayloadPersisted: false,
       },
-    }, { status: success ? 200 : 503 })
+    }
+    console.info("EBAY_OWNER_SALE_ALERT_LANE_RECEIPT_V1", {
+      success: receipt.success,
+      status: receipt.status,
+      laneStatus: lane.status,
+      sourceStatus: lane.sourceStatus,
+      orderCount: lane.orderCount,
+      lineCount: lane.lineCount,
+      ownerAlertOutboxesCreated: "ownerAlertOutboxesCreated" in lane
+        ? lane.ownerAlertOutboxesCreated : 0,
+      targetedRecoveryScan: "targetedRecoveryScan" in lane
+        ? lane.targetedRecoveryScan : false,
+      targetedRecoveryOrderObserved:
+        "targetedRecoveryOrderObserved" in lane
+          ? lane.targetedRecoveryOrderObserved : false,
+      backfillStatus: backfill.status,
+      backfillReasonCode: backfill.reasonCode,
+      backfillOutboxesCreated: backfill.outboxesCreated,
+      marketplaceWrites: 0,
+      buyerPiiIncluded: false,
+    })
+    return NextResponse.json(receipt, { status: success ? 200 : 503 })
   } catch (error) {
     return NextResponse.json({
       success: false,
