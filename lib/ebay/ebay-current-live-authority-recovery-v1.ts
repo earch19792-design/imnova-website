@@ -205,11 +205,20 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
   now?: Date
   clock?: () => Date
   forceOfficialRead?: boolean
+  recheckQuotaBeforeRetry?: boolean
   readOfficial?: typeof getEbayCommercialMonitorLiveReadonly
   readTradingQuota?: () => Promise<TradingQuotaAuthorityV1>
 }>) {
   const clock = input.clock ?? (() => new Date())
   const preReadNow = input.now ?? clock()
+  const readTradingQuota = async (): Promise<TradingQuotaAuthorityV1 | null> => {
+    try {
+      return await (input.readTradingQuota ??
+        collectSellerOsEbayTradingRateLimitStatusV1)()
+    } catch {
+      return null
+    }
+  }
   const stored = await readCurrentLiveAuthorityV1({ supabase: input.supabase,
     accountKey: input.accountKey, now: preReadNow })
   if (stored.currentState === "CURRENT_FRESH" &&
@@ -219,12 +228,25 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     marketplaceWrites: 0 as const,
   })
   const priorTradingQuota518 = isTradingQuota518(stored.sourceFailureCode)
+  let preflightQuota: TradingQuotaAuthorityV1 | null = null
   if (stored.nextRetryAt &&
-      Date.parse(stored.nextRetryAt) > preReadNow.getTime() &&
-      (input.forceOfficialRead !== true || priorTradingQuota518)) {
-    return Object.freeze({ status: "WAITING_FOR_RETRY" as const,
-      authority: stored, officialReadAttempted: false, databaseWrites: 0,
-      live: null, marketplaceWrites: 0 as const })
+      Date.parse(stored.nextRetryAt) > preReadNow.getTime()) {
+    if (priorTradingQuota518 && input.recheckQuotaBeforeRetry === true) {
+      preflightQuota = await readTradingQuota()
+      if (preflightQuota?.gateState !== "OPEN") {
+        return Object.freeze({
+          status: preflightQuota?.gateState === "BLOCKED"
+            ? "WAITING_FOR_TRADING_QUOTA_RESET" as const
+            : "CURRENT_UNAVAILABLE_TRADING_QUOTA_UNPROVEN" as const,
+          authority: stored, officialReadAttempted: false, databaseWrites: 0,
+          live: null, marketplaceWrites: 0 as const,
+        })
+      }
+    } else if (input.forceOfficialRead !== true || priorTradingQuota518) {
+      return Object.freeze({ status: "WAITING_FOR_RETRY" as const,
+        authority: stored, officialReadAttempted: false, databaseWrites: 0,
+        live: null, marketplaceWrites: 0 as const })
+    }
   }
 
   const runId = randomUUID()
@@ -257,14 +279,6 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     if (result.error) throw new Error(
       "CURRENT_LIVE_AUTHORITY_RECOVERY_FINISH_FAILED")
   }
-  const readTradingQuota = async (): Promise<TradingQuotaAuthorityV1 | null> => {
-    try {
-      return await (input.readTradingQuota ??
-        collectSellerOsEbayTradingRateLimitStatusV1)()
-    } catch {
-      return null
-    }
-  }
   const recordFailure = async <TStatus extends string>(failure: Readonly<{
     errorCode: string
     nextRetryAt: string
@@ -291,7 +305,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
   }
   try {
     if (priorTradingQuota518) {
-      const quota = await readTradingQuota()
+      const quota = preflightQuota ?? await readTradingQuota()
       if (quota?.gateState !== "OPEN") {
         return await recordFailure({
           errorCode: stored.sourceFailureCode!,
