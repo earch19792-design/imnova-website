@@ -92,6 +92,7 @@ export default function LotsManualCapturePage() {
   const [form, setForm] = useState<Form>(empty)
   const [recent, setRecent] = useState<Json[]>([])
   const [radar, setRadar] = useState<Json>({})
+  const [amazonStars, setAmazonStars] = useState<Json>({})
   const [result, setResult] = useState<Json | null>(null)
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState("")
@@ -110,6 +111,7 @@ export default function LotsManualCapturePage() {
       }
       setRecent(array(payload.recentCandidates).map(object))
       setRadar(object(payload.radar))
+      setAmazonStars(object(payload.amazonStars))
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo leer el Radar.")
     }
@@ -138,11 +140,35 @@ export default function LotsManualCapturePage() {
         throw new Error(String(payload.error ?? "No se pudo actualizar el catálogo."))
       }
       setRadar(object(payload.radar))
+      setAmazonStars(object(payload.amazonStars))
       const syncResult = object(payload.sync)
+      const preSearch = object(payload.preSearch)
       setMessage(`Catálogo actualizado: ${String(syncResult.productsObserved ?? 0)} ` +
-        `productos observados; ${String(syncResult.snapshotsInserted ?? 0)} cambios guardados.`)
+        `productos observados; ${String(syncResult.snapshotsInserted ?? 0)} cambios guardados. ` +
+        `PreSearch revisó ${String(preSearch.selectedCount ?? 0)} candidatos.`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo actualizar.")
+    } finally { setSyncing("") }
+  }
+
+  async function runPreSearch() {
+    setSyncing("presearch"); setMessage("")
+    try {
+      const response = await request({ method: "POST", body: JSON.stringify({
+        action: "RUN_DUAL_MARKET_PRESEARCH", limit: 5,
+      }) })
+      const payload = await response.json() as Json
+      if (!response.ok || payload.success !== true) {
+        throw new Error(String(payload.error ?? "No se pudo ejecutar PreSearch."))
+      }
+      setRadar(object(payload.radar))
+      setAmazonStars(object(payload.amazonStars))
+      const preSearch = object(payload.preSearch)
+      setMessage(`PreSearch terminado: ${String(preSearch.researchedCount ?? 0)} ` +
+        `investigaciones nuevas y ${String(preSearch.replayedCount ?? 0)} reutilizadas.`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No se pudo ejecutar PreSearch.")
     } finally { setSyncing("") }
   }
 
@@ -266,6 +292,7 @@ export default function LotsManualCapturePage() {
   const next = object(result?.nextBestEvidence)
   const summary = object(radar.summary)
   const source = object(radar.source)
+  const starCandidates = array(amazonStars.candidates).map(object)
   const cards = useMemo(() => array(radar.cards).map(object).filter((card) => {
     if (lane !== "ALL" && String(card.operatingLane) !== lane) return false
     const query = search.trim().toLowerCase()
@@ -296,6 +323,11 @@ export default function LotsManualCapturePage() {
               background: value === "trending" ? "#173d2d" : "#fff",
               color: value === "trending" ? "#fff" : "#17202b" }}>
             {syncing === value ? "Actualizando…" : `Actualizar ${title}`}</button>)}</div>
+      <button disabled={Boolean(syncing)} onClick={() => void runPreSearch()}
+        style={{ ...input, cursor: "pointer", marginTop: 10,
+          background: "#275ea8", color: "#fff" }}>
+        {syncing === "presearch" ? "Investigando…" :
+          "Ejecutar PreSearch de 5 candidatos"}</button>
       {source.last_error ? <p style={{ color: "#9d2d20" }}>
         Último error: {String(source.last_error)}</p> : null}
     </section>
@@ -307,6 +339,37 @@ export default function LotsManualCapturePage() {
       <SummaryCard title="Esperando evidencia" value={Number(summary.researchPending ?? 0) +
         Number(summary.hold ?? 0)} tone="#9a6700" />
       <SummaryCard title="Listos para compra" value={summary.buyReady} tone="#0b7a37" />
+    </section>
+
+    <section style={{ ...panel, background: "#eef5ff" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12,
+        alignItems: "start", flexWrap: "wrap" }}><div><h2 style={{ marginTop: 0 }}>
+          Productos estrella para Amazon</h2><p style={{ margin: 0, color: "#526071" }}>
+          Es la misma lista que TEO consulta cuando le pides desde el chat 10 o 20
+          candidatos. “Estrella” significa prioridad de investigación; no autoriza
+          comprar ni publicar.</p></div><strong>
+          {String(amazonStars.returnedCount ?? 0)} candidatos</strong></div>
+      {starCandidates.length === 0 ? <p style={{ marginBottom: 0 }}>
+        Actualiza una vista pública de 888lots para crear la primera lista.</p> :
+        <ol style={{ display: "grid", gap: 9, paddingLeft: 24, marginBottom: 0 }}>
+          {starCandidates.slice(0, 20).map((candidate) => {
+            const ebay = object(candidate.ebayEvidence)
+            const amazon = object(candidate.amazonEvidence)
+            const action = String(candidate.nextBestEvidence ?? "")
+            return <li key={String(candidate.supplierVariantId)} style={{ padding: 10,
+              background: "#fff", borderRadius: 10 }}><strong>
+                {String(candidate.title)}</strong><div style={{ fontSize: 13,
+                  color: "#526071", marginTop: 4 }}>
+                SKU {String(candidate.supplierSku)} · costo {displayMoney(
+                  candidate.currentSupplierUnitCostUsd)} · stock {String(
+                  candidate.availableQuantity ?? "?")} · ASIN {String(
+                  candidate.asin ?? "sin verificar")}</div><div style={{ fontSize: 13,
+                  marginTop: 4 }}>Amazon: {String(amazon.demandState ?? "UNPROVEN")} ·
+                  eBay vendidos: {String(ebay.soldEvidenceState ?? "UNAVAILABLE")} ·
+                  PreSearch: {String(candidate.preSearchStatus ?? "NOT_RUN")}</div>
+                <div style={{ fontSize: 13, marginTop: 4 }}><strong>Siguiente:</strong>{" "}
+                  {actionLabels[action] ?? action}</div></li>
+          })}</ol>}
     </section>
 
     <section style={panel}>
@@ -325,6 +388,8 @@ export default function LotsManualCapturePage() {
         : <div style={{ display: "grid", gridTemplateColumns:
           "repeat(auto-fit,minmax(300px,1fr))", gap: 14 }}>{cards.map((card) => {
             const risks = array(card.riskFlags).map(String)
+            const preSearch = object(card.preSearch)
+            const preSearchEbay = object(preSearch.ebay)
             const action = String(card.commercialNextBestEvidence ?? card.nextBestEvidence ?? "")
             const firstOrder = object(card.promotion).firstOrderOnly === true
             return <article key={`${String(card.productId)}:${String(card.snapshotId)}`}
@@ -351,6 +416,13 @@ export default function LotsManualCapturePage() {
               <div style={{ fontSize: 12, color: "#657184" }}>
                 Shipping público: {displayMoney(card.publicShippingEstimateUsd)}. Confirma el
                 costo entregado en el carrito antes de decidir una compra.
+              </div>
+              <div style={{ fontSize: 12, color: "#526071" }}>
+                PreSearch: {preSearch.contractVersion ?
+                  `${String(preSearch.preSearchScore ?? 0)}/100 · eBay ${String(
+                    preSearchEbay.soldEvidenceState ?? "UNPROVEN")}` :
+                  "pendiente"}. Amazon LIVE permanece sin probar hasta verificarlo
+                dentro de Seller Central.
               </div>
               <div style={{ fontSize: 13, padding: 10, borderRadius: 9,
                 background: "#fff8df" }}><strong>Siguiente:</strong> {actionLabels[action] ?? action}

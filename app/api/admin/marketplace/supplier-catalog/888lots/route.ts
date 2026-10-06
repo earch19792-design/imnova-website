@@ -1,5 +1,6 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+export const maxDuration = 300
 
 import { NextResponse } from "next/server"
 
@@ -16,6 +17,12 @@ import {
   SELLER_OS_888LOTS_SOURCE_KEY,
   SELLER_OS_888LOTS_TEMPLATE_HEADERS_V1,
 } from "@/lib/marketplace/seller-os-888lots-supplier-onboarding-v1"
+import {
+  get888LotsAmazonStarCandidatesV1,
+  run888LotsDualMarketPreSearchV1,
+  SELLER_OS_888LOTS_DUAL_MARKET_PRESEARCH_V1,
+  SELLER_OS_888LOTS_PRESEARCH_MAX_BATCH_V1,
+} from "@/lib/marketplace/seller-os-888lots-dual-market-presearch-v1"
 import {
   get888LotsRadarDashboardV1,
   run888LotsPublicRadarSyncV1,
@@ -63,9 +70,12 @@ export async function GET(req: Request) {
     return json({ success: false, error: "SELLER_OS_888LOTS_MEMORY_READ_FAILED" }, 503)
   }
   let radar
+  let amazonStars
   try {
     radar = await get888LotsRadarDashboardV1({ supabase,
       accountKey: account.accountKey })
+    amazonStars = await get888LotsAmazonStarCandidatesV1({ supabase,
+      accountKey: account.accountKey, limit: 20 })
   } catch {
     return json({ success: false,
       error: "SELLER_OS_888LOTS_RADAR_READ_FAILED" }, 503)
@@ -83,6 +93,8 @@ export async function GET(req: Request) {
     manualCaptureContractVersion: SELLER_OS_888LOTS_MANUAL_CAPTURE_V1,
     recentCandidates: recent.data ?? [],
     radar,
+    amazonStars,
+    preSearchContractVersion: SELLER_OS_888LOTS_DUAL_MARKET_PRESEARCH_V1,
     publicCatalogViews: SELLER_OS_888LOTS_PUBLIC_VIEWS_V1,
     nextStep: "CAPTURE_PUBLIC_888LOTS_PRODUCT_AND_MARKETPLACE_EVIDENCE",
     safety: { scrapeRequests: 0, internalDatabaseWrites: true, supplierPurchases: 0,
@@ -107,15 +119,44 @@ export async function POST(req: Request) {
           error: "SELLER_OS_888LOTS_PUBLIC_VIEW_INVALID" }, 400)
       }
       const supabase = getSupabaseAdminClient()
-      const sync = await run888LotsPublicRadarSyncV1({ supabase, sourceView })
       const account = getEbaySellerAccountScopeConfiguration()
       if (!account.accountKey) {
         return json({ success: false,
           error: "SELLER_OS_CANONICAL_ACCOUNT_REQUIRED" }, 503)
       }
+      const sync = await run888LotsPublicRadarSyncV1({ supabase, sourceView })
+      const preSearch = await run888LotsDualMarketPreSearchV1({ supabase,
+        accountKey: account.accountKey,
+        limit: SELLER_OS_888LOTS_PRESEARCH_MAX_BATCH_V1 })
       const radar = await get888LotsRadarDashboardV1({ supabase,
         accountKey: account.accountKey })
-      return json({ success: true, action: body.action, sync, radar })
+      const amazonStars = await get888LotsAmazonStarCandidatesV1({ supabase,
+        accountKey: account.accountKey, limit: 20 })
+      return json({ success: true, action: body.action, sync, preSearch,
+        radar, amazonStars })
+    }
+    if (body.action === "RUN_DUAL_MARKET_PRESEARCH") {
+      const requested = Number(body.limit ??
+        SELLER_OS_888LOTS_PRESEARCH_MAX_BATCH_V1)
+      if (!Number.isInteger(requested) || requested < 1 ||
+          requested > SELLER_OS_888LOTS_PRESEARCH_MAX_BATCH_V1) {
+        return json({ success: false,
+          error: "SELLER_OS_888LOTS_PRESEARCH_LIMIT_INVALID" }, 400)
+      }
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) {
+        return json({ success: false,
+          error: "SELLER_OS_CANONICAL_ACCOUNT_REQUIRED" }, 503)
+      }
+      const supabase = getSupabaseAdminClient()
+      const preSearch = await run888LotsDualMarketPreSearchV1({ supabase,
+        accountKey: account.accountKey, limit: requested })
+      const radar = await get888LotsRadarDashboardV1({ supabase,
+        accountKey: account.accountKey })
+      const amazonStars = await get888LotsAmazonStarCandidatesV1({ supabase,
+        accountKey: account.accountKey, limit: 20 })
+      return json({ success: true, action: body.action, preSearch,
+        radar, amazonStars })
     }
     if (body.action === "CAPTURE_MANUAL_DUAL_MARKETPLACE_SOURCING") {
       const now = new Date()

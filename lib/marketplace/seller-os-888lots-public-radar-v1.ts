@@ -80,6 +80,8 @@ export type SellerOs888LotsRadarCardV1 = SellerOs888LotsPublicCandidateV1 & {
   commercialLifecycleStage: string | null
   commercialNextBestEvidence: string | null
   commercialUpdatedAt: string | null
+  commercialMaxSupplierUnitCostUsd: number | null
+  preSearch: UnknownRecord | null
   operatingLane: "NEW_DISCOVERY" | "RESEARCH_PENDING" | "BUY_READY" |
     "HOLD" | "REJECTED" | "RESULT"
 }
@@ -704,12 +706,18 @@ export async function get888LotsRadarDashboardV1(input: {
     }
     const candidate = publicCandidate as SellerOs888LotsPublicCandidateV1
     const memory = memoryBySupplierProduct.get(text(product.supplier_product_id)) ?? null
+    const commercialDocument = record(memory?.commercial_memory)
+    const commercialEconomics = record(commercialDocument.economics)
+    const preSearch = record(record(snapshot?.raw).preSearch)
     return [{ ...candidate, productId: text(product.id),
       snapshotId: text(snapshot?.id), lastObservedAt: text(snapshot?.captured_at),
       commercialDecision: text(memory?.commercial_decision) || null,
       commercialLifecycleStage: text(memory?.commercial_lifecycle_stage) || null,
       commercialNextBestEvidence: text(memory?.commercial_next_best_evidence) || null,
       commercialUpdatedAt: text(memory?.commercial_updated_at) || null,
+      commercialMaxSupplierUnitCostUsd:
+        finite(commercialEconomics.conservativeMaxSupplierUnitCostUsd),
+      preSearch: text(preSearch.contractVersion) ? preSearch : null,
       operatingLane: operatingLane({ candidate, memory }) }]
   }).sort((left, right) => {
     const order = { BUY_READY: 0, NEW_DISCOVERY: 1, RESEARCH_PENDING: 2,

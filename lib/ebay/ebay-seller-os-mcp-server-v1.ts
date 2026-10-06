@@ -509,7 +509,21 @@ export function createSellerOsMcpServerV1(options: {
   const monitorLoader = options.monitorLoader ?? loadSellerOsAssistantMonitorV1
   const monitor = () => (monitorPromise ??= monitorLoader())
   const localToolExecutor: SellerOsAssistantToolExecutorV1 = async (input) =>
-    input.toolName === "seller_os_prepare_listing_optimization_preview"
+    input.toolName === "seller_os_get_888lots_amazon_star_candidates"
+      ? (() => {
+          const account = getEbaySellerAccountScopeConfiguration()
+          if (!account.accountKey) throw new Error(
+            "SELLER_OS_CANONICAL_ACCOUNT_REQUIRED")
+          return import(
+            "../marketplace/seller-os-888lots-dual-market-presearch-v1"
+          ).then((service) => service.get888LotsAmazonStarCandidatesV1({
+            supabase: getSupabaseAdminClient(),
+            accountKey: account.accountKey as string,
+            limit: service.assert888LotsAmazonStarLimitV1(
+              input.arguments.limit),
+          }))
+        })()
+      : input.toolName === "seller_os_prepare_listing_optimization_preview"
       ? (await import("../seller-os/revenue-first-preview-v1")).loadRevenueFirstListingPreviewV1(String(input.arguments.itemId ?? ""))
       :     input.toolName === "seller_os_get_product_case" ||
       input.toolName === "seller_os_get_publication_execution"
@@ -564,13 +578,17 @@ export function createSellerOsMcpServerV1(options: {
     const needsItem = descriptor.name === "seller_os_get_listing_intelligence" ||
       descriptor.name === "seller_os_prepare_listing_optimization_preview"
     const needsCase = descriptor.name === "seller_os_get_opportunity_case"
+    const is888LotsStars = descriptor.name ===
+      "seller_os_get_888lots_amazon_star_candidates"
     const config = { title: descriptor.title,
       description: descriptor.description,
       inputSchema: { ...(needsItem ? { itemId: z.string().regex(/^\d{9,19}$/) } : {}),
         ...(needsCase ? { opportunityCaseId: z.string().regex(
           /^opportunity-case-v1:sha256:[0-9a-f]{64}$/,
         ) } : {}),
-        limit: z.number().int().min(1).max(100).optional() },
+        limit: is888LotsStars
+          ? z.union([z.literal(10), z.literal(20)]).optional()
+          : z.number().int().min(1).max(100).optional() },
       annotations: descriptor.annotations, securitySchemes,
       _meta: { securitySchemes },
     }

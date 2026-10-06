@@ -272,8 +272,11 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
     throw new Error("SELLER_OS_RELAY_ARGUMENT_NOT_ALLOWLISTED")
   }
   if (args.limit !== undefined) {
-    if (!Number.isInteger(args.limit) || Number(args.limit) < 1 ||
-      Number(args.limit) > 100) {
+    const starLimit = toolName ===
+      "seller_os_get_888lots_amazon_star_candidates"
+    if (!Number.isInteger(args.limit) || starLimit &&
+        ![10, 20].includes(Number(args.limit)) || !starLimit &&
+        (Number(args.limit) < 1 || Number(args.limit) > 100)) {
       throw new Error("SELLER_OS_RELAY_LIMIT_INVALID")
     }
     normalized.limit = Number(args.limit)
@@ -602,6 +605,8 @@ export async function handleSellerOsCloudReadRelayRequestV1(
       args: Record<string, unknown>) => Promise<unknown>
     productCaseCollector?: (args: Record<string, unknown>) => Promise<unknown>
     publicationExecutionCollector?: (args: Record<string, unknown>) => Promise<unknown>
+    amazonStarCandidatesCollector?: (
+      args: Record<string, unknown>) => Promise<unknown>
     systemReviewDrilldownEnricher?: (bundle: unknown) => Promise<unknown>
   } = {},
 ) {
@@ -756,6 +761,26 @@ export async function handleSellerOsCloudReadRelayRequestV1(
         return preview.loadRevenueFirstListingPreviewV1(itemId, traceId)
       })
       result = await collector(String(envelope.arguments.itemId ?? ""), envelope.requestId)
+    } else if (envelope.toolName ===
+        "seller_os_get_888lots_amazon_star_candidates") {
+      const collector = options.amazonStarCandidatesCollector ??
+        (async (args: Record<string, unknown>) => {
+          const accountModule = await import("./ebay-seller-account-scope")
+          const account = accountModule.getEbaySellerAccountScopeConfiguration(
+            environment)
+          if (!account.accountKey) throw new Error(
+            "SELLER_OS_CANONICAL_ACCOUNT_REQUIRED")
+          const service = await import(
+            "../marketplace/seller-os-888lots-dual-market-presearch-v1"
+          )
+          const supabaseModule = await import("../supabase-admin")
+          return service.get888LotsAmazonStarCandidatesV1({
+            supabase: supabaseModule.getSupabaseAdminClient(),
+            accountKey: account.accountKey,
+            limit: service.assert888LotsAmazonStarLimitV1(args.limit),
+          })
+        })
+      result = await collector(envelope.arguments)
     } else if (envelope.toolName === "seller_os_get_product_case" ||
         envelope.toolName === "seller_os_get_publication_execution") {
       const accountModule = await import("./ebay-seller-account-scope")
