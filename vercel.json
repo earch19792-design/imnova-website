@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/commercial-alert-dispatcher-schedule",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/ebay-owner-sale-alerts-schedule",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

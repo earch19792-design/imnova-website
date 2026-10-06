@@ -107,18 +107,36 @@ export function buildSellerOsWhatsappSaleAlertDeliveryPlanV1(input: Readonly<{
   detectionClass: "HISTORICAL_REPLAY" |
     "NEWLY_DETECTED_AFTER_I04_ACTIVATION"
   providerDeliveryAttemptAllowed: boolean
+  registryStatus?: "PROVEN" | "PARTIAL" | "AMBIGUOUS" |
+    "UNPROVEN" | "UNAVAILABLE"
+  lunaLinkageStatus?: "PROVEN" | "PENDING_VERIFICATION"
+  stockVerificationStatus?: "PROVEN_AVAILABLE" |
+    "PROVEN_UNAVAILABLE" | "PENDING_VERIFICATION"
+  recoveryPolicyVersion?: string | null
   legacyNotificationAlreadyMaterialized?: boolean
 }>) {
   const deliveryKey = sellerOsWhatsappSaleAlertDeliveryKeyV1(input.eventId)
   const alertId = sellerOsDashboardSaleAlertIdentityV1(input.eventId)
   const historical = input.detectionClass === "HISTORICAL_REPLAY" ||
     input.legacyNotificationAlreadyMaterialized === true
-  const eligible = !historical && input.providerDeliveryAttemptAllowed
+  // The durable notification obligation belongs to the official paid order,
+  // not to the current health of Meta, Registry, StockGuard, or Luna. Provider
+  // readiness is checked later by the dispatcher; a temporary outage must not
+  // discard the outbox reservation.
+  const eligible = !historical
   const reasonCode = historical
     ? "HISTORICAL_REPLAY_EXTERNAL_NOTIFICATION_FORBIDDEN" as const
     : !input.providerDeliveryAttemptAllowed
-      ? "WHATSAPP_PROVIDER_OR_DESTINATION_NOT_READY" as const
+      ? "OWNER_SALE_ALERT_OUTBOX_RESERVED_PROVIDER_PENDING" as const
       : "NEW_CANONICAL_SALE_ALERT_DELIVERY_ALLOWED" as const
+  const registryStatus = input.registryStatus ?? "UNPROVEN"
+  const lunaLinkageStatus = input.lunaLinkageStatus ??
+    "PENDING_VERIFICATION"
+  const stockVerificationStatus = input.stockVerificationStatus ??
+    "PENDING_VERIFICATION"
+  const pendingEnrichment = registryStatus !== "PROVEN" ||
+    lunaLinkageStatus !== "PROVEN" ||
+    stockVerificationStatus === "PENDING_VERIFICATION"
   return Object.freeze({
     contractVersion: SELLER_OS_WHATSAPP_SALE_ALERT_VERSION,
     eventId: input.eventId,
@@ -130,9 +148,11 @@ export function buildSellerOsWhatsappSaleAlertDeliveryPlanV1(input: Readonly<{
     destinationClass: DESTINATION_CLASS,
     detectionClass: input.detectionClass,
     eligible,
+    outboxReservationAllowed: eligible,
+    providerDeliveryAttemptAllowed: input.providerDeliveryAttemptAllowed,
     reasonCode,
     sideEffectClass: "WHATSAPP_SEND" as const,
-    authority: eligible
+    authority: eligible && input.providerDeliveryAttemptAllowed
       ? "AUTO_EXECUTION_ALLOWED" as const
       : "READ_ONLY" as const,
     payload: Object.freeze({
@@ -142,6 +162,9 @@ export function buildSellerOsWhatsappSaleAlertDeliveryPlanV1(input: Readonly<{
         input.itemId ? `Item ${input.itemId}` : "Item ID no disponible",
         `Cantidad ${input.quantity}`,
         `Order ${input.orderId}`,
+        pendingEnrichment
+          ? "Stock/linkage pendiente de verificar"
+          : "Stock/linkage verificado",
       ].join(" · "),
       action: `Estado ${input.orderStatus ?? "no disponible"}; fulfillment ${input.fulfillmentStatus ?? "no disponible"}. Revisar la venta en Seller OS.`,
       eventId: input.eventId,
@@ -156,6 +179,12 @@ export function buildSellerOsWhatsappSaleAlertDeliveryPlanV1(input: Readonly<{
       marketplaceId: input.marketplaceId,
       notificationScope: "INTERNAL_OPERATOR_SALE_ALERT_ONLY",
       destinationClass: DESTINATION_CLASS,
+      providerDeliveryAttemptAllowed: input.providerDeliveryAttemptAllowed,
+      registryStatus,
+      lunaLinkageStatus,
+      stockVerificationStatus,
+      enrichmentPending: pendingEnrichment,
+      recoveryPolicyVersion: input.recoveryPolicyVersion ?? null,
       buyerPiiIncluded: false as const,
       rawUpstreamPayloadIncluded: false as const,
     }),

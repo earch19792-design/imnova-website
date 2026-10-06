@@ -40,57 +40,6 @@ function record(value: unknown) {
     : null
 }
 
-async function commercialDispatchFallbackAuthorization(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
-  accountKey: string,
-) {
-  const [configuration, authorization] = await Promise.all([
-    supabase
-      .from("ebay_monitoring_scheduler_config")
-      .select("enabled,environment,deployment_scope,supabase_project_ref,marketplace_account_key")
-      .eq("singleton", true)
-      .maybeSingle(),
-    supabase
-      .from("commercial_monitor_scheduler_authorizations")
-      .select("dry_run_id")
-      .eq("marketplace_account_key", accountKey)
-      .eq("marketplace", "EBAY_US")
-      .is("revoked_at", null)
-      .order("authorized_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ])
-  if (configuration.error || authorization.error) {
-    throw new Error("COMMERCIAL_DISPATCH_FALLBACK_AUTHORIZATION_READ_FAILED")
-  }
-  const config = configuration.data
-  const dryRunId = authorization.data?.dry_run_id
-  if (!config?.enabled || config.environment !== "STAGING" ||
-      config.deployment_scope !== "PREVIEW" ||
-      config.supabase_project_ref !== "vsfthqydfrdzulldbfbe" ||
-      config.marketplace_account_key !== accountKey || !dryRunId) {
-    return Object.freeze({ authorized: false, reason:
-      "COMMERCIAL_DISPATCH_DURABLE_AUTHORIZATION_REQUIRED" })
-  }
-  const dryRun = await supabase
-    .from("commercial_monitor_runs")
-    .select("trigger_source,status,dry_run_satisfactory,errors")
-    .eq("id", dryRunId)
-    .eq("marketplace_account_key", accountKey)
-    .eq("marketplace", "EBAY_US")
-    .maybeSingle()
-  if (dryRun.error) {
-    throw new Error("COMMERCIAL_DISPATCH_FALLBACK_DRY_RUN_READ_FAILED")
-  }
-  const row = dryRun.data
-  const authorized = row?.trigger_source === "dry_run" &&
-    row.status === "completed" && row.dry_run_satisfactory === true &&
-    Array.isArray(row.errors) && row.errors.length === 0
-  return Object.freeze({ authorized, reason: authorized
-    ? "DURABLE_DRY_RUN_AUTHORIZATION_CONFIRMED"
-    : "COMMERCIAL_DISPATCH_FALLBACK_DRY_RUN_NOT_SATISFIED" })
-}
-
 function nextDigestAt(now = new Date()) {
   const configured = Number(
     process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "0",
@@ -296,7 +245,9 @@ export async function POST(req: Request) {
       },
     })
   }
-  if (!schedule.enabled) {
+  const ownerSaleLaneEnabled =
+    process.env.EBAY_OWNER_SALE_ALERT_LANE_ENABLED !== "false"
+  if (!schedule.enabled && !ownerSaleLaneEnabled) {
     return NextResponse.json({
       success: true,
       status: "disabled",
@@ -322,27 +273,11 @@ export async function POST(req: Request) {
         p_marketplace: "EBAY_US",
       },
     )
-    const fallbackAuthorization = gateError
-      ? await commercialDispatchFallbackAuthorization(supabase, accountKey)
-      : null
-    if (gateError && !fallbackAuthorization?.authorized) {
-      return NextResponse.json({
-        success: false,
-        error: "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED",
-        safety: {
-          alertClaimed: false,
-          whatsappAttempted: false,
-          productionUnchanged: true,
-        },
-      }, { status: 423 })
-    }
-    const legacyExactListingGateBypassed = Boolean(
-      gateError && fallbackAuthorization?.authorized,
-    )
+    let ownerSaleOnly = Boolean(gateError) || !schedule.enabled
     let heartbeat: Record<string, unknown> | null = null
-    if (legacyExactListingGateBypassed) {
+    if (ownerSaleOnly) {
       heartbeat = {
-        status: "SKIPPED_LEGACY_EXACT_LISTING_GATE",
+        status: "SKIPPED_FOR_INDEPENDENT_OWNER_SALE_LANE",
         eventsCreated: 0,
         alertsCreated: 0,
         alertsCancelled: 0,
@@ -368,35 +303,24 @@ export async function POST(req: Request) {
         },
       )
       heartbeat = record(heartbeatData)
-      if (heartbeatError || !heartbeat) return NextResponse.json({
-        success: false,
-        error: "COMMERCIAL_MONITOR_HEARTBEAT_RECONCILE_FAILED",
-        safety: {
-          alertClaimed: false,
-          whatsappAttempted: false,
-          productionUnchanged: true,
-        },
-      }, { status: 502 })
-    }
-    if (heartbeat.status === "BLOCKED_INEXACT_ACTIVE_LISTING_STATE") {
-      return NextResponse.json({
-        success: false,
-        error: "COMMERCIAL_MONITOR_EXACT_ACTIVE_LISTING_STATE_REQUIRED",
-        heartbeat,
-        safety: {
-          alertClaimed: false,
-          whatsappAttempted: false,
-          productionUnchanged: true,
-        },
-      }, { status: 423 })
+      if (heartbeatError || !heartbeat ||
+          heartbeat.status === "BLOCKED_INEXACT_ACTIVE_LISTING_STATE") {
+        ownerSaleOnly = true
+        heartbeat = {
+          status: "SKIPPED_FOR_INDEPENDENT_OWNER_SALE_LANE",
+          monitoringState: heartbeat?.status ?? "UNAVAILABLE",
+          eventsCreated: 0,
+          alertsCreated: 0,
+          alertsCancelled: 0,
+        }
+      }
     }
     // Only a confirmed sale or a confirmed exact Luna stock-out is immediate.
     // Reclassify legacy pending rows once; rows already marked digest keep their
     // original due_at so the five-minute cron cannot postpone them forever.
-    const deferredNonUrgent = await deferNonUrgentWhatsappAlerts(
-      supabase,
-      accountKey,
-    )
+    const deferredNonUrgent = ownerSaleOnly
+      ? 0
+      : await deferNonUrgentWhatsappAlerts(supabase, accountKey)
     let result: unknown
     try {
       result = await dispatchCommercialAlertOutbox(
@@ -408,6 +332,7 @@ export async function POST(req: Request) {
           // together and rendered as one WhatsApp summary by the dispatcher.
           limit: 10,
           dryRun: false,
+          lane: ownerSaleOnly ? "owner_sale" : "all",
         },
       )
     } catch {
@@ -421,7 +346,14 @@ export async function POST(req: Request) {
       }
     }
     let buyerThankYou: unknown
-    if (process.env.EBAY_POST_PURCHASE_THANK_YOU_AUTOMATION_ENABLED !==
+    if (ownerSaleOnly) {
+      buyerThankYou = {
+        status: "SKIPPED_OWNER_SALE_LANE",
+        reason: "NON_OWNER_SALE_WRITES_REMAIN_FAIL_CLOSED",
+        marketplaceWrites: 0,
+        buyerMessageSends: 0,
+      }
+    } else if (process.env.EBAY_POST_PURCHASE_THANK_YOU_AUTOMATION_ENABLED !==
         "true") {
       buyerThankYou = {
         status: "DISABLED",
@@ -451,7 +383,7 @@ export async function POST(req: Request) {
       heartbeat,
       result,
       buyerThankYou,
-      authorization: fallbackAuthorization,
+      dispatchLane: ownerSaleOnly ? "owner_sale" : "all",
       whatsappPolicy: {
         immediateEventTypes: [...IMMEDIATE_WHATSAPP_EVENT_TYPES],
         deferredNonUrgent,
@@ -463,8 +395,9 @@ export async function POST(req: Request) {
         ),
       },
       safety: {
-        legacyExactListingGateBypassed,
-        durableDryRunAuthorizationRequired: true,
+        exactActiveListingStateRequiredForOwnerSaleAlerts: false,
+        nonSaleAlertsFailClosed: ownerSaleOnly,
+        monitoringGateBlocked: Boolean(gateError),
         ebayWriteUsed: false,
         secretsReturned: false,
         buyerPiiIncluded: false,

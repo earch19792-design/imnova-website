@@ -80,8 +80,24 @@ export async function quarantineExpiredCommercialWhatsappDispatchesV1(
   supabase: SupabaseClient,
   marketplaceAccountKey: string,
   observedAt = new Date().toISOString(),
+  lane: "all" | "owner_sale" = "all",
 ) {
-  const { data, error } = await supabase
+  let ownerSaleEventIds: string[] | null = null
+  if (lane === "owner_sale") {
+    const { data: events, error: eventError } = await supabase
+      .from("commercial_alert_events")
+      .select("id")
+      .eq("marketplace_account_key", marketplaceAccountKey)
+      .eq("marketplace", "EBAY_US")
+      .eq("event_type", "SALE_DETECTED")
+      .limit(5_000)
+    if (eventError) {
+      throw new Error("OWNER_SALE_ALERT_QUARANTINE_EVENT_READ_FAILED")
+    }
+    ownerSaleEventIds = (events ?? []).map((event) => event.id)
+    if (!ownerSaleEventIds.length) return 0
+  }
+  let query = supabase
     .from("alert_delivery_outbox")
     .update({
       status: "dead_letter",
@@ -96,6 +112,10 @@ export async function quarantineExpiredCommercialWhatsappDispatchesV1(
     .eq("status", "leased")
     .eq("last_error_code", COMMERCIAL_WHATSAPP_DISPATCH_STARTED_MARKER)
     .lt("lease_expires_at", observedAt)
+  if (ownerSaleEventIds) {
+    query = query.in("commercial_event_id", ownerSaleEventIds)
+  }
+  const { data, error } = await query
     .select("id,attempts")
     .limit(10)
   if (error) {
@@ -136,13 +156,32 @@ export async function previewCommercialAlertOutbox(
   supabase: SupabaseClient,
   marketplaceAccountKey: string,
   limit = 20,
+  lane: "all" | "owner_sale" = "all",
 ) {
-  const { data, error } = await supabase
+  let ownerSaleEventIds: string[] | null = null
+  if (lane === "owner_sale") {
+    const { data: events, error: eventError } = await supabase
+      .from("commercial_alert_events")
+      .select("id")
+      .eq("marketplace_account_key", marketplaceAccountKey)
+      .eq("marketplace", "EBAY_US")
+      .eq("event_type", "SALE_DETECTED")
+      .order("detected_at", { ascending: false })
+      .limit(200)
+    if (eventError) throw new Error("OWNER_SALE_ALERT_PREVIEW_EVENT_READ_FAILED")
+    ownerSaleEventIds = (events ?? []).map((event) => event.id)
+    if (!ownerSaleEventIds.length) return []
+  }
+  let query = supabase
     .from("alert_delivery_outbox")
     .select("id,marketplace_account_key,marketplace,channel,delivery_class,severity,status,payload,attempts,due_at")
     .eq("marketplace_account_key", marketplaceAccountKey)
     .eq("channel", "whatsapp")
     .in("status", ["pending", "failed", "dead_letter"])
+  if (ownerSaleEventIds) {
+    query = query.in("commercial_event_id", ownerSaleEventIds)
+  }
+  const { data, error } = await query
     .order("due_at", { ascending: true })
     .limit(Math.max(1, Math.min(limit, 50)))
   if (error) throw new Error("COMMERCIAL_ALERT_PREVIEW_FAILED")
@@ -168,6 +207,7 @@ export async function dispatchCommercialAlertOutbox(
     workerId?: string
     limit?: number
     dryRun?: boolean
+    lane?: "all" | "owner_sale"
   },
 ) {
   const configuration = getSellerWhatsAppGatewayConfiguration()
@@ -178,6 +218,7 @@ export async function dispatchCommercialAlertOutbox(
     return {
       mode: "preview" as const,
       environment: process.env.VERCEL_ENV ?? "development",
+      lane: input.lane ?? "all",
       configuration,
       claimed: 0,
       metaAccepted: 0,
@@ -188,6 +229,7 @@ export async function dispatchCommercialAlertOutbox(
         supabase,
         input.marketplaceAccountKey,
         input.limit,
+        input.lane,
       ),
       safety: {
         authorizedSellerOsRuntimeOnly: true,
@@ -204,14 +246,24 @@ export async function dispatchCommercialAlertOutbox(
     await quarantineExpiredCommercialWhatsappDispatchesV1(
       supabase,
       input.marketplaceAccountKey,
+      new Date().toISOString(),
+      input.lane,
     )
-  const { data, error } = await supabase.rpc("claim_alert_delivery_outbox", {
-    p_marketplace_account_key: input.marketplaceAccountKey,
-    p_channel: "whatsapp",
-    p_worker_id: workerId,
-    p_limit: Math.max(1, Math.min(input.limit ?? 10, 10)),
-    p_lease_seconds: 120,
-  })
+  const ownerSaleOnly = input.lane === "owner_sale"
+  const { data, error } = ownerSaleOnly
+    ? await supabase.rpc("claim_owner_sale_alert_delivery_outbox_v1", {
+        p_marketplace_account_key: input.marketplaceAccountKey,
+        p_worker_id: workerId,
+        p_limit: Math.max(1, Math.min(input.limit ?? 10, 10)),
+        p_lease_seconds: 120,
+      })
+    : await supabase.rpc("claim_alert_delivery_outbox", {
+        p_marketplace_account_key: input.marketplaceAccountKey,
+        p_channel: "whatsapp",
+        p_worker_id: workerId,
+        p_limit: Math.max(1, Math.min(input.limit ?? 10, 10)),
+        p_lease_seconds: 120,
+      })
   if (error) throw new Error("COMMERCIAL_ALERT_CLAIM_FAILED")
   const rows = (data ?? []) as OutboxRow[]
   let metaAccepted = 0
@@ -321,6 +373,7 @@ export async function dispatchCommercialAlertOutbox(
   }
   return {
     mode: "delivery" as const,
+    lane: input.lane ?? "all",
     environment: runtimeBoundary.boundaryClassification,
     configuration,
     claimed: rows.length,

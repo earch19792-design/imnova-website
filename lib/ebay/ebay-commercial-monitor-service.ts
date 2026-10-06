@@ -1672,7 +1672,11 @@ export function buildOrderPersistenceOrchestrationV1(input: {
       learningEvent,
       buyerMessageEligibility,
       whatsappEligibility,
-      whatsappOutboxAllowed: whatsappEligibility.sendAllowed,
+      // Persist the owner-alert obligation independently of momentary provider
+      // readiness. The dispatcher remains responsible for deciding whether a
+      // network attempt is allowed now.
+      ownerAlertOutboxRequired: true as const,
+      whatsappOutboxAllowed: true as const,
     })
   })
   return Object.freeze({
@@ -1710,6 +1714,7 @@ export async function persistOrdersAndSales(input: {
   thresholds: CommercialThresholds
   observedAt: string
   verifiedIdentities: Set<string>
+  ownerAlertRecoveryOrderIds?: readonly string[]
 }) {
   const {
     supabase, accountKey, orders, listings, supplies, thresholds, observedAt,
@@ -1722,6 +1727,9 @@ export async function persistOrdersAndSales(input: {
   let duplicatesAvoided = 0
   let estimatedProfit = 0
   const errors: RunError[] = []
+  const ownerAlertRecoveryOrderIds = new Set(
+    input.ownerAlertRecoveryOrderIds ?? [],
+  )
 
   const whatsappConfiguration = getSellerWhatsAppGatewayConfiguration()
   const whatsappDurableDeliveryConfigurationAvailable =
@@ -1850,6 +1858,9 @@ export async function persistOrdersAndSales(input: {
     })
     const historicalOrderObservation =
       notificationDisposition.historicalOrderObservation
+    const explicitOwnerAlertRecovery = ownerAlertRecoveryOrderIds.has(
+      order.ebayOrderId,
+    )
     const orderAlreadyFulfilled = order.orderFulfillmentStatus === "FULFILLED"
     const persistedStockRecheck = orderAlreadyFulfilled
       ? Object.freeze({
@@ -2028,9 +2039,27 @@ export async function persistOrdersAndSales(input: {
         orderId: saleEvent.orderId,
         lineItemId: lineEvent.orderLineItemId,
       })
-      const detectionClass = classifySellerOsSaleAlertDetectionV1(
+      const observedDetectionClass = classifySellerOsSaleAlertDetectionV1(
         saleEvent.soldAt,
       )
+      const detectionClass = explicitOwnerAlertRecovery
+        ? "NEWLY_DETECTED_AFTER_I04_ACTIVATION" as const
+        : observedDetectionClass
+      const linkedLine = effect.linkedLines.find((candidate) =>
+        candidate.line.lineItemId === lineEvent.orderLineItemId) ?? null
+      const lunaLinkageStatus = linkedLine?.exactLink
+        ? "PROVEN" as const
+        : "PENDING_VERIFICATION" as const
+      const stockVerificationStatus = linkedLine?.exactLink &&
+          isFreshLunaSupplyEvidence(linkedLine.supply, observedAt)
+        ? linkedLine.supply?.available === false ||
+            linkedLine.supply?.inventory_quantity === 0
+          ? "PROVEN_UNAVAILABLE" as const
+          : linkedLine.supply?.available === true ||
+              (linkedLine.supply?.inventory_quantity ?? 0) > 0
+            ? "PROVEN_AVAILABLE" as const
+            : "PENDING_VERIFICATION" as const
+        : "PENDING_VERIFICATION" as const
       const deliveryPlan = buildSellerOsWhatsappSaleAlertDeliveryPlanV1({
         eventId: canonicalEventId,
         orderId: saleEvent.orderId,
@@ -2046,7 +2075,15 @@ export async function persistOrdersAndSales(input: {
         providerDeliveryAttemptAllowed:
           whatsappDurableDeliveryConfigurationAvailable &&
           whatsappConfiguration.recipientConfigured,
-        legacyNotificationAlreadyMaterialized: legacyLineSaleObservation,
+        registryStatus: lineEvent.attribution.localRelationshipStatus,
+        lunaLinkageStatus,
+        stockVerificationStatus,
+        recoveryPolicyVersion: explicitOwnerAlertRecovery
+          ? "MISSING_OWNER_SALE_ALERT_RECOVERY_V1"
+          : null,
+        legacyNotificationAlreadyMaterialized: explicitOwnerAlertRecovery
+          ? false
+          : legacyLineSaleObservation,
       })
       if (!deliveryPlan.eligible) continue
       const adapterEvent = await insertEvent(supabase, accountKey, {
@@ -2062,10 +2099,17 @@ export async function persistOrdersAndSales(input: {
           storageEventTypeCompatibilityAdapter: "SALE_DETECTED",
           legacyOrderGrainSaleDetectedUsedAsCanonicalOwner: false,
           detectionClass,
-          historicalBackfillSendAllowed: false,
+          observedDetectionClass,
+          historicalBackfillSendAllowed: explicitOwnerAlertRecovery,
+          recoveryPolicyVersion: explicitOwnerAlertRecovery
+            ? "MISSING_OWNER_SALE_ALERT_RECOVERY_V1"
+            : null,
           source: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
           sourceOperation: "GET_ORDERS",
           quantity: lineEvent.quantity,
+          registryStatus: lineEvent.attribution.localRelationshipStatus,
+          lunaLinkageStatus,
+          stockVerificationStatus,
           buyerPiiIncluded: false,
           rawUpstreamPayloadIncluded: false,
         },
