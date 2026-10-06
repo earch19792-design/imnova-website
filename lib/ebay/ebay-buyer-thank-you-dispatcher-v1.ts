@@ -10,9 +10,12 @@ import {
   type SellerOsBuyerThankYouStatusV1,
   prepareEbayBuyerThankYouDispatchV1,
 } from "./ebay-post-purchase-buyer-message-v1"
+import { SELLER_OS_BUYER_THANK_YOU_AUTHORITY } from
+  "./ebay-buyer-thank-you-policy-v1"
 
 const MARKETPLACE = "EBAY_US"
-const EVENT_TYPE = "EBAY_BUYER_THANK_YOU_DELIVERY"
+const EVENT_TYPE = "EBAY_BUYER_THANK_YOU_WORKFLOW"
+const LEGACY_EVENT_TYPE = "EBAY_BUYER_THANK_YOU_DELIVERY"
 const LEASE_MILLISECONDS = 2 * 60_000
 const MAXIMUM_DISPATCHES_PER_RUN = 5
 const MAXIMUM_SAFE_RETRIES = 3
@@ -43,12 +46,18 @@ function ledgerEvidence(input: Readonly<{
   succeededAt?: string | null
   lastErrorCode?: string | null
   manualReviewRequired?: boolean
+  deliveryState?: "PREPARED" | "SEND_ATTEMPTED" |
+    "ACCEPTED_BY_EBAY" | "DELIVERED"
   observedAt: string
 }>) {
+  const deliveryState = input.deliveryState ?? (
+    input.dispatchStarted ? "SEND_ATTEMPTED" : "PREPARED"
+  )
   return {
     contractVersion: SELLER_OS_BUYER_THANK_YOU_STORAGE_ADAPTER_VERSION,
     deliveryContractVersion: SELLER_OS_EBAY_BUYER_THANK_YOU_VERSION,
     deliveryKey: input.entry.deliveryKey,
+    semanticEventType: EVENT_TYPE,
     orderId: input.entry.orderId,
     eventIds: input.entry.eventIds,
     lineItemIds: input.entry.lineItemIds,
@@ -65,6 +74,8 @@ function ledgerEvidence(input: Readonly<{
     succeededAt: input.succeededAt ?? null,
     lastErrorCode: input.lastErrorCode ?? null,
     manualReviewRequired: input.manualReviewRequired ?? false,
+    deliveryState,
+    deliveredConfirmed: deliveryState === "DELIVERED",
     updatedAt: input.observedAt,
     messageGrain: "ONE_BUYER_THANK_YOU_PER_EBAY_ORDER",
     sideEffectClass: "BUYER_MESSAGE_SEND",
@@ -86,7 +97,7 @@ async function readLedger(
     .select("id,evidence,created_at")
     .eq("marketplace_account_key", accountKey)
     .eq("marketplace", MARKETPLACE)
-    .eq("event_type", EVENT_TYPE)
+    .in("event_type", [EVENT_TYPE, LEGACY_EVENT_TYPE])
     .eq("deduplication_key", deliveryKey)
     .maybeSingle()
   if (error) throw new Error("BUYER_THANK_YOU_LEDGER_READ_FAILED")
@@ -154,7 +165,6 @@ async function updateLedger(input: Readonly<{
     .eq("id", input.rowId)
     .eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", MARKETPLACE)
-    .eq("event_type", EVENT_TYPE)
     .eq("deduplication_key", input.deliveryKey)
     .eq("evidence->>leaseId", input.expectedLeaseId)
     .select("id")
@@ -201,7 +211,7 @@ async function reclaimSafeRetry(input: Readonly<{
     .eq("id", input.row.id)
     .eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", MARKETPLACE)
-    .eq("event_type", EVENT_TYPE)
+    .in("event_type", [EVENT_TYPE, LEGACY_EVENT_TYPE])
     .eq("deduplication_key", input.entry.deliveryKey)
     .eq("evidence->>workflowState", "RETRYABLE_FAILURE")
     .eq("evidence->>dispatchStarted", "false")
@@ -236,9 +246,15 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
   if (input.capability.status !== "READY" ||
       !input.capability.deliveryAttemptAllowed ||
       input.capability.automaticExecutionAuthority !==
-        "AUTO_EXECUTION_ALLOWED") {
+        SELLER_OS_BUYER_THANK_YOU_AUTHORITY) {
     return Object.freeze({ status: "BLOCKED" as const,
       reason: "BUYER_MESSAGE_CAPABILITY_OR_AUTHORITY_NOT_READY" as const,
+      reasonCodes: Object.freeze([
+        ...input.capability.limitationCodes,
+        ...(input.capability.automaticExecutionAuthority !==
+            SELLER_OS_BUYER_THANK_YOU_AUTHORITY
+          ? ["OWNER_AUTHORIZED_FIXED_TEMPLATE_REQUIRED"] : []),
+      ]),
       eligibleOrders: input.status.entries.filter((entry) =>
         entry.detectionClass === "NEWLY_DETECTED_AFTER_ACTIVATION").length,
       claimed: 0, attempted: 0, accepted: 0, failed: 0,
@@ -351,6 +367,7 @@ export async function dispatchSellerOsBuyerThankYouV1(input: Readonly<{
           dispatchStarted: true, receiptStatus: "PRESENT",
           providerReferenceDigest: receipt.providerReferenceDigest,
           succeededAt: receipt.acceptedAt,
+          deliveryState: "ACCEPTED_BY_EBAY",
           observedAt: now().toISOString() }),
         expectedLeaseId: leaseId })
       databaseMaintenanceWrites += 1

@@ -608,9 +608,6 @@ export function evaluateBuyerMessageEligibilityV1(input: {
   const reasons: string[] = []
   if (input.saleEvent.status !== "PROVEN") reasons.push("ORDER_STATUS_NOT_PROVEN")
   if (!normalizedText(input.saleEvent.orderId, 100)) reasons.push("ORDER_ID_NOT_PROVEN")
-  if (input.saleEvent.attributionStatus !== "PROVEN") {
-    reasons.push("ORDER_TO_LISTING_ATTRIBUTION_NOT_PROVEN")
-  }
   if (input.buyerOrderContext !== "PROVEN") {
     reasons.push(`BUYER_ORDER_CONTEXT_${input.buyerOrderContext}`)
   }
@@ -631,8 +628,7 @@ export function evaluateBuyerMessageEligibilityV1(input: {
   const status = input.previouslySent === "YES"
     ? "ALREADY_SENT" as const
     : input.capability === "UNAVAILABLE" ||
-        input.buyerOrderContext === "UNAVAILABLE" ||
-        input.saleEvent.attributionStatus === "UNAVAILABLE"
+        input.buyerOrderContext === "UNAVAILABLE"
       ? "UNAVAILABLE" as const
       : reasons.length
         ? "UNPROVEN" as const

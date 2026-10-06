@@ -11,8 +11,9 @@ export default function SellerOsPostSalePage() {
           Comunicación, alertas y excepciones
         </h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
-          Estado respaldado por órdenes oficiales y receipts de entrega. Un
-          mecanismo armado no se presenta como una entrega realizada.
+          Estado respaldado por órdenes oficiales y receipts de aceptación.
+          Un mecanismo armado no se presenta como un envío; una aceptación de
+          eBay tampoco se presenta como entrega o lectura confirmada.
         </p>
       </header>
       <section className="mt-5"><PostSaleReadModel /></section>

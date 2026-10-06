@@ -108,7 +108,7 @@ export function PostSaleReadModel() {
   return <div className="grid gap-4 md:grid-cols-2"
     data-post-sale-read-only data-get-business-mutations="0">
     {([
-      ["Comunicación", "Mensajes al comprador respaldados por receipt.",
+      ["Comunicación", "Mensajes al comprador respaldados por receipt de aceptación de eBay; no implica lectura ni entrega confirmada.",
         view.communication, MessageCircle],
       ["Alertas", "Alertas al owner; armado no equivale a enviado.",
         view.alerts, BellRing],

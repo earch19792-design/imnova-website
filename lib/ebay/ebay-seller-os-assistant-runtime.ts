@@ -26,6 +26,8 @@ import { readSellerOsWhatsappSaleAlertAuditV1 } from "./ebay-whatsapp-sale-alert
 import { buildSellerOsBuyerThankYouStatusV1, preflightEbayBuyerMessagingCapabilityV1, sellerOsBuyerThankYouDeliveryKeysForSaleAlertsV1 } from "./ebay-post-purchase-buyer-message-v1.ts"
 // @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
 import { readSellerOsBuyerThankYouAuditV1 } from "./ebay-buyer-thank-you-readonly-repository-v1.ts"
+// @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
+import { createUnavailableSellerOsBuyerThankYouPolicyV1, readSellerOsBuyerThankYouPolicyV1 } from "./ebay-buyer-thank-you-policy-v1.ts"
 import { buildSellerOsLunaSupplierLinkageStatusFromMonitorV1,
   createUnavailableSellerOsLunaSupplierLinkageStatusV1 } from
 // @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
@@ -241,14 +243,25 @@ export async function collectSellerOsBuyerThankYouStatusV1(input: {
       buildSellerOsSalesOrderEventsReadV1(officialOrders),
     ),
   )
-  const capability = await preflightEbayBuyerMessagingCapabilityV1()
   const account = getEbaySellerAccountScopeConfiguration()
+  const supabase = getSupabaseAdminClient()
+  const policy = account.accountKey
+    ? await readSellerOsBuyerThankYouPolicyV1(
+        supabase,
+        account.accountKey,
+        observedAt,
+      )
+    : createUnavailableSellerOsBuyerThankYouPolicyV1(
+        "CANONICAL_SELLER_ACCOUNT_BINDING_UNAVAILABLE",
+        observedAt,
+      )
+  const capability = await preflightEbayBuyerMessagingCapabilityV1({ policy })
   const deliveryKeys = sellerOsBuyerThankYouDeliveryKeysForSaleAlertsV1(
     saleAlerts,
   )
   const audit = account.accountKey
     ? await readSellerOsBuyerThankYouAuditV1(
-        getSupabaseAdminClient(),
+        supabase,
         account.accountKey,
         deliveryKeys,
         observedAt,
@@ -267,6 +280,7 @@ export async function collectSellerOsBuyerThankYouStatusV1(input: {
     saleAlerts,
     capability,
     audit,
+    policy,
     activationCutoverAt:
       process.env.EBAY_POST_PURCHASE_THANK_YOU_ACTIVATION_CUTOVER_AT,
   })

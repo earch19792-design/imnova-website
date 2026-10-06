@@ -347,7 +347,7 @@ function parsePostSale(value: unknown): DashboardPostSale {
     buyerMessageCapabilityReady:
       buyer.provider === "EBAY_COMMERCE_MESSAGE_API" &&
       buyer.capability === "READY" &&
-      buyer.automaticExecution === "AUTO_EXECUTION_ALLOWED",
+      buyer.automaticExecution === "OWNER_AUTHORIZED_FIXED_TEMPLATE",
     buyerThankYouLastSendAt: nullableText(buyer.lastSendAt, 80),
     buyerThankYouSendCount: safeCount(buyer.totalNewSaleMessagesSent),
     buyerThankYouManualReviewCount: safeCount(buyer.manualReviewRequired),
@@ -446,10 +446,13 @@ function postSaleTone(status: PostSaleStatus) {
 function postSaleHumanStatus(input: Readonly<{
   status: PostSaleStatus
   lastSucceededAt?: string | null
+  successLabel?: "ENVIADO" | "ACEPTADO POR EBAY"
 }>) {
   if (input.status === "SUCCEEDED") {
+    const successLabel = input.successLabel ?? "ENVIADO"
     return input.lastSucceededAt
-      ? `ENVIADO · ${shortTimestamp(input.lastSucceededAt)}` : "ENVIADO"
+      ? `${successLabel} · ${shortTimestamp(input.lastSucceededAt)}`
+      : successLabel
   }
   if (input.status === "ARMED") return "ARMADO · esperando próxima venta"
   if (input.status === "READY") return "LISTO"
@@ -1737,7 +1740,8 @@ export function SellerOsOperationalDashboard() {
               <span className={`rounded-full px-2.5 py-1 text-right text-[10px] font-black ${postSaleTone(snapshot.postSale.buyerThankYouStatus)}`}>
                 {postSaleHumanStatus({ status:
                   snapshot.postSale.buyerThankYouStatus,
-                lastSucceededAt: snapshot.postSale.buyerThankYouLastSendAt })}
+                lastSucceededAt: snapshot.postSale.buyerThankYouLastSendAt,
+                successLabel: "ACEPTADO POR EBAY" })}
               </span>
             </div>
           </dl>
@@ -1760,9 +1764,11 @@ export function SellerOsOperationalDashboard() {
             </ul>
           </details>}
           <p className="mt-2 text-[10px] leading-4 text-white/40">
-            LISTO/ARMADO significa que el mecanismo espera una venta nueva;
-            sólo ENVIADO implica un receipt real. Los históricos se omiten,
-            no se envían y no se muestran como fallo.
+            LISTO/ARMADO significa que el mecanismo espera una venta nueva.
+            ENVIADO confirma receipt del canal; ACEPTADO POR EBAY confirma que
+            eBay aceptó el mensaje, no que el comprador lo haya leído o que
+            exista evidencia independiente de entrega. Los históricos se
+            omiten, no se envían y no se muestran como fallo.
           </p>
         </section>
       </section>

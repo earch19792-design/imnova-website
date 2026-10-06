@@ -15,6 +15,13 @@ import { SELLER_OS_DASHBOARD_SALE_ALERT_VERSION, type SellerOsSaleAlertsReadV1 }
 import { buildSellerOsCorrelationEnvelopeV1, buildSellerOsWorkflowStepExecutionV1 } from "./ebay-seller-os-workflow-foundation-v1.ts"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { getSellerOsOperationalRuntimeBoundary } from "./environment-boundaries.ts"
+import {
+  SELLER_OS_BUYER_THANK_YOU_AUTHORITY,
+  createUnavailableSellerOsBuyerThankYouPolicyV1,
+  createUnauthorizedSellerOsBuyerThankYouPolicyV1,
+  type SellerOsBuyerThankYouPolicyV1,
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+} from "./ebay-buyer-thank-you-policy-v1.ts"
 
 export const POST_PURCHASE_BUYER_MESSAGE_VERSION =
   "POST_PURCHASE_BUYER_MESSAGE_V1" as const
@@ -60,25 +67,37 @@ const BUYER_THANK_YOU_ACCEPTED_SOURCE_LIMITATIONS = new Set([
   "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY",
 ])
 
+function independentNonMessagingLimitation(code: string) {
+  return /^(?:REGISTRY|ANALYTICS|STOCKGUARD|LUNA)_/.test(code) ||
+    code === "EXACT_ACTIVE_LISTING_STATE_REQUIRED" ||
+    code === "ACTIVE_LISTING_EXACT_MONITORING_FIELDS_REQUIRED"
+}
+
 export type SellerOsBuyerThankYouCapabilityV1 = Readonly<{
   observedAt: string
   provider: "EBAY_COMMERCE_MESSAGE_API"
   status: "READY" | "NOT_ACTIVATED" | "AUTHORIZATION_BLOCKED" |
     "ACCOUNT_BINDING_MISMATCH" | "UPSTREAM_ERROR" | "UNAVAILABLE" |
-    "BLOCKED_NON_PREVIEW"
+    "BLOCKED_NON_PREVIEW" | "POLICY_BLOCKED"
   accountBindingStatus: "MATCHED" | "MISMATCHED" | "UNAVAILABLE"
   commerceMessageScopeConfirmed: boolean
   refreshCapabilityConfirmed: boolean
   fixedReadPreflightUsed: boolean
+  fixedWriteCapabilityConfirmed: boolean
+  providerWritePreflightUsed: false
   deliveryAttemptAllowed: boolean
-  automaticExecutionAuthority: "AUTO_EXECUTION_ALLOWED" |
+  automaticExecutionAuthority: typeof SELLER_OS_BUYER_THANK_YOU_AUTHORITY |
     "HUMAN_APPROVAL_REQUIRED"
+  ownerPolicyStatus:
+    SellerOsBuyerThankYouPolicyV1["status"]
   limitationCodes: readonly string[]
 }>
 
 export type SellerOsBuyerThankYouAuditRowV1 = Readonly<{
   deliveryKey: string
   ledgerEventId: string
+  ledgerEventType: "EBAY_BUYER_THANK_YOU_WORKFLOW" |
+    "EBAY_BUYER_THANK_YOU_DELIVERY"
   executionMode: "AUTOMATION" | "PREVIEW_CERTIFICATION_CANARY"
   workflowState: "NOT_STARTED" | "IN_PROGRESS" | "SUCCEEDED" |
     "RETRYABLE_FAILURE" | "TERMINAL_FAILURE" | "BLOCKED" |
@@ -91,6 +110,9 @@ export type SellerOsBuyerThankYouAuditRowV1 = Readonly<{
   succeededAt: string | null
   lastErrorCode: string | null
   manualReviewRequired: boolean
+  deliveryState: "PREPARED" | "SEND_ATTEMPTED" |
+    "ACCEPTED_BY_EBAY" | "DELIVERED"
+  deliveredConfirmed: boolean
   createdAt: string
 }>
 
@@ -287,6 +309,7 @@ async function verifyCanonicalSellerAccount(
 
 export async function preflightEbayBuyerMessagingCapabilityV1(options: {
   environment?: NodeJS.ProcessEnv
+  policy?: SellerOsBuyerThankYouPolicyV1
   fetchImpl?: FetchLike
   now?: () => Date
   tokenProvider?: () => Promise<string>
@@ -297,13 +320,36 @@ export async function preflightEbayBuyerMessagingCapabilityV1(options: {
   const now = options.now ?? (() => new Date())
   const observedAt = now().toISOString()
   const configuration = getPostPurchaseBuyerMessageCapabilityV1(environment)
+  const policy = options.policy ??
+    createUnauthorizedSellerOsBuyerThankYouPolicyV1(
+      "OWNER_AUTHORIZED_AUTOMATIC_BUYER_THANK_YOU_POLICY_REQUIRED",
+      observedAt,
+    )
+  const authority = policy.status === "AUTHORIZED"
+    ? SELLER_OS_BUYER_THANK_YOU_AUTHORITY
+    : "HUMAN_APPROVAL_REQUIRED" as const
   if (configuration.status === "BLOCKED_NON_PREVIEW") {
     return Object.freeze({ observedAt, provider: "EBAY_COMMERCE_MESSAGE_API",
       status: "BLOCKED_NON_PREVIEW", accountBindingStatus: "UNAVAILABLE",
       commerceMessageScopeConfirmed: false, refreshCapabilityConfirmed: false,
       fixedReadPreflightUsed: false, deliveryAttemptAllowed: false,
-      automaticExecutionAuthority: "HUMAN_APPROVAL_REQUIRED",
+      fixedWriteCapabilityConfirmed: false,
+      providerWritePreflightUsed: false as const,
+      automaticExecutionAuthority: authority,
+      ownerPolicyStatus: policy.status,
       limitationCodes: Object.freeze(["BUYER_MESSAGE_PREVIEW_ONLY"]),
+    })
+  }
+  if (policy.status !== "AUTHORIZED") {
+    return Object.freeze({ observedAt, provider: "EBAY_COMMERCE_MESSAGE_API",
+      status: "POLICY_BLOCKED", accountBindingStatus: "UNAVAILABLE",
+      commerceMessageScopeConfirmed: false, refreshCapabilityConfirmed: false,
+      fixedReadPreflightUsed: false, fixedWriteCapabilityConfirmed: false,
+      providerWritePreflightUsed: false as const,
+      deliveryAttemptAllowed: false,
+      automaticExecutionAuthority: "HUMAN_APPROVAL_REQUIRED" as const,
+      ownerPolicyStatus: policy.status,
+      limitationCodes: Object.freeze([...policy.limitationCodes]),
     })
   }
   let token = ""
@@ -325,8 +371,11 @@ export async function preflightEbayBuyerMessagingCapabilityV1(options: {
       accountBindingStatus: code.includes("ACCOUNT_BINDING")
         ? "MISMATCHED" as const : "UNAVAILABLE" as const,
       commerceMessageScopeConfirmed: false, refreshCapabilityConfirmed: false,
-      fixedReadPreflightUsed: false, deliveryAttemptAllowed: false,
-      automaticExecutionAuthority: "HUMAN_APPROVAL_REQUIRED" as const,
+      fixedReadPreflightUsed: false, fixedWriteCapabilityConfirmed: false,
+      providerWritePreflightUsed: false as const,
+      deliveryAttemptAllowed: false,
+      automaticExecutionAuthority: authority,
+      ownerPolicyStatus: policy.status,
       limitationCodes: Object.freeze([code]),
     })
   }
@@ -354,8 +403,11 @@ export async function preflightEbayBuyerMessagingCapabilityV1(options: {
         commerceMessageScopeConfirmed: false,
         refreshCapabilityConfirmed: true,
         fixedReadPreflightUsed: true,
+        fixedWriteCapabilityConfirmed: false,
+        providerWritePreflightUsed: false as const,
         deliveryAttemptAllowed: false,
-        automaticExecutionAuthority: "HUMAN_APPROVAL_REQUIRED" as const,
+        automaticExecutionAuthority: authority,
+        ownerPolicyStatus: policy.status,
         limitationCodes: Object.freeze([authorization
           ? `EBAY_BUYER_MESSAGE_PREFLIGHT_${response.status}`
           : "EBAY_BUYER_MESSAGE_PREFLIGHT_UNAVAILABLE"]),
@@ -368,10 +420,11 @@ export async function preflightEbayBuyerMessagingCapabilityV1(options: {
       commerceMessageScopeConfirmed: true,
       refreshCapabilityConfirmed: true,
       fixedReadPreflightUsed: true,
-      deliveryAttemptAllowed: enabled,
-      automaticExecutionAuthority: enabled
-        ? "AUTO_EXECUTION_ALLOWED" as const
-        : "HUMAN_APPROVAL_REQUIRED" as const,
+      fixedWriteCapabilityConfirmed: true,
+      providerWritePreflightUsed: false as const,
+      deliveryAttemptAllowed: enabled && policy.status === "AUTHORIZED",
+      automaticExecutionAuthority: authority,
+      ownerPolicyStatus: policy.status,
       limitationCodes: Object.freeze(enabled ? [] : [
         "BUYER_MESSAGE_EXPLICIT_ACTIVATION_REQUIRED",
       ]),
@@ -381,8 +434,11 @@ export async function preflightEbayBuyerMessagingCapabilityV1(options: {
     return Object.freeze({ observedAt, provider: "EBAY_COMMERCE_MESSAGE_API",
       status: "UPSTREAM_ERROR", accountBindingStatus: "MATCHED",
       commerceMessageScopeConfirmed: false, refreshCapabilityConfirmed: true,
-      fixedReadPreflightUsed: true, deliveryAttemptAllowed: false,
-      automaticExecutionAuthority: "HUMAN_APPROVAL_REQUIRED",
+      fixedReadPreflightUsed: true, fixedWriteCapabilityConfirmed: false,
+      providerWritePreflightUsed: false as const,
+      deliveryAttemptAllowed: false,
+      automaticExecutionAuthority: authority,
+      ownerPolicyStatus: policy.status,
       limitationCodes: Object.freeze([
         "EBAY_BUYER_MESSAGE_PREFLIGHT_UPSTREAM_ERROR",
       ]),
@@ -410,12 +466,16 @@ function groupAlertsByOrder(alerts: readonly SaleAlert[]) {
 function buyerThankYouSourceComplete(
   saleAlerts: SellerOsSaleAlertsReadV1,
 ) {
-  if (saleAlerts.status !== "AVAILABLE") return false
+  if (saleAlerts.status === "UNAVAILABLE") return false
   if (saleAlerts.evidenceCompleteness === "COMPLETE") return true
+  const acceptedPartialCause = saleAlerts.limitations.some((code) =>
+    code === "ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY" ||
+    independentNonMessagingLimitation(code))
   return saleAlerts.evidenceCompleteness === "PARTIAL" &&
-    saleAlerts.limitations.includes("ORDERS_WINDOW_CHECKOUT_COMPLETE_ONLY") &&
+    acceptedPartialCause &&
     saleAlerts.limitations.every((code) =>
-      BUYER_THANK_YOU_ACCEPTED_SOURCE_LIMITATIONS.has(code))
+      BUYER_THANK_YOU_ACCEPTED_SOURCE_LIMITATIONS.has(code) ||
+      independentNonMessagingLimitation(code))
 }
 
 export function sellerOsBuyerThankYouDeliveryKeysForSaleAlertsV1(
@@ -438,6 +498,7 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
   saleAlerts: SellerOsSaleAlertsReadV1
   capability: SellerOsBuyerThankYouCapabilityV1
   audit: SellerOsBuyerThankYouAuditV1
+  policy: SellerOsBuyerThankYouPolicyV1
   activationCutoverAt?: string
 }>) {
   const activationCutoverAt = iso(input.activationCutoverAt ??
@@ -480,7 +541,10 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
       row.source === "SELLER_OS_RECENT_SALES_FEED_V1" &&
       row.authoritativeRootSource === "EBAY_SELL_FULFILLMENT_GET_ORDERS")
     const capabilityReady = input.capability.status === "READY" &&
-      input.capability.deliveryAttemptAllowed
+      input.capability.deliveryAttemptAllowed &&
+      input.capability.automaticExecutionAuthority ===
+        SELLER_OS_BUYER_THANK_YOU_AUTHORITY &&
+      input.policy.status === "AUTHORIZED"
     const previewCertificationReceipt = historical &&
       durable?.executionMode === "PREVIEW_CERTIFICATION_CANARY" &&
       durable.workflowState === "SUCCEEDED" &&
@@ -525,6 +589,8 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
         ? ["BUYER_THANK_YOU_DURABLE_LEDGER_EVIDENCE_INCOMPLETE"] : []),
       ...(!historical && !capabilityReady
         ? input.capability.limitationCodes : []),
+      ...(!historical && input.policy.status !== "AUTHORIZED"
+        ? input.policy.limitationCodes : []),
       ...(durable?.manualReviewRequired
         ? ["UNKNOWN_PROVIDER_OUTCOME_MANUAL_REVIEW_REQUIRED"] : []),
       ...(durable?.lastErrorCode ? [durable.lastErrorCode] : []),
@@ -547,6 +613,7 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
       eligibleForBuyerThankYou: eligible,
       buyerMessageSendAllowed: eligible,
       authority: input.capability.automaticExecutionAuthority,
+      ownerAuthorizationPolicy: input.policy.policyName,
       deliveryKey,
       templateVersion: POST_PURCHASE_THANK_YOU_TEMPLATE_VERSION,
       workflowStep: buildSellerOsWorkflowStepExecutionV1({
@@ -571,7 +638,14 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
         providerReferenceDigest: durable?.providerReferenceDigest ?? null,
         succeededAt: durable?.succeededAt ?? null,
         manualReviewRequired: durable?.manualReviewRequired ?? false,
+        evidenceMeaning: durable?.receiptStatus === "PRESENT"
+          ? "ACCEPTED_BY_EBAY" as const
+          : durable?.receiptStatus === "UNKNOWN_OUTCOME"
+            ? "SEND_ATTEMPTED_OUTCOME_UNKNOWN" as const
+            : "NO_PROVIDER_ACCEPTANCE_RECEIPT" as const,
+        deliveredConfirmed: durable?.deliveredConfirmed ?? false,
       }),
+      deliveryState: durable?.deliveryState ?? "PREPARED" as const,
       correlation: Object.freeze({ ...correlation,
         involvedEventIds: Object.freeze(eventIds),
         orderLevelDeliveryKey: deliveryKey,
@@ -628,6 +702,7 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
       messageGrain: "ONE_BUYER_THANK_YOU_PER_EBAY_ORDER" as const,
       arbitraryTextAllowed: false as const,
     }),
+    policy: input.policy,
     capability: input.capability,
     deliverySemantics: Object.freeze({
       guarantee: "AT_MOST_ONCE_BEST_EFFORT" as const,
@@ -635,6 +710,8 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
       durablePreDispatchClaimRequired: true as const,
       successReceiptPreventsRestartResend: true as const,
       unknownProviderOutcomePolicy: "MANUAL_REVIEW_NO_AUTOMATIC_RESEND" as const,
+      providerSuccessReceiptMeaning: "ACCEPTED_BY_EBAY_NOT_DELIVERED" as const,
+      deliveredRequiresIndependentProviderEvidence: true as const,
     }),
     auditTrail: Object.freeze({
       contractVersion: "SELLER_OS_AUDIT_TRAIL_POLICY_V1" as const,
@@ -662,6 +739,7 @@ export function buildSellerOsBuyerThankYouStatusV1(input: Readonly<{
       ...input.saleAlerts.limitations,
       ...input.audit.limitationCodes,
       ...input.capability.limitationCodes,
+      ...input.policy.limitationCodes,
       ...(sourceUnavailable ? ["DASHBOARD_SALE_ALERT_SOURCE_UNAVAILABLE",
         "NO_EVIDENCE_DOES_NOT_PROVE_ZERO"] : []),
       ...(truncated ? ["BUYER_THANK_YOU_STATUS_TRUNCATED"] : []),
@@ -678,8 +756,11 @@ export function createUnavailableSellerOsBuyerThankYouStatusV1(
     observedAt, provider: "EBAY_COMMERCE_MESSAGE_API", status: "UNAVAILABLE",
     accountBindingStatus: "UNAVAILABLE", commerceMessageScopeConfirmed: false,
     refreshCapabilityConfirmed: false, fixedReadPreflightUsed: false,
+    fixedWriteCapabilityConfirmed: false,
+    providerWritePreflightUsed: false,
     deliveryAttemptAllowed: false,
     automaticExecutionAuthority: "HUMAN_APPROVAL_REQUIRED",
+    ownerPolicyStatus: "UNAVAILABLE",
     limitationCodes: Object.freeze([limitationCode]),
   })
   const audit: SellerOsBuyerThankYouAuditV1 = Object.freeze({
@@ -694,6 +775,7 @@ export function createUnavailableSellerOsBuyerThankYouStatusV1(
   } as unknown as SellerOsSaleAlertsReadV1
   return buildSellerOsBuyerThankYouStatusV1({
     saleAlerts: unavailableAlerts, capability, audit,
+    policy: createUnavailableSellerOsBuyerThankYouPolicyV1(limitationCode),
   })
 }
 

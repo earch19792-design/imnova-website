@@ -20,6 +20,10 @@ import { collectSellerOsBuyerThankYouStatusV1 } from
   "@/lib/ebay/ebay-seller-os-assistant-runtime"
 import { preflightEbayBuyerMessagingCapabilityV1 } from
   "@/lib/ebay/ebay-post-purchase-buyer-message-v1"
+import {
+  createUnavailableSellerOsBuyerThankYouPolicyV1,
+  readSellerOsBuyerThankYouPolicyV1,
+} from "@/lib/ebay/ebay-buyer-thank-you-policy-v1"
 import { getSellerOsOperationalRuntimeBoundary } from
   "@/lib/ebay/environment-boundaries"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
@@ -38,6 +42,27 @@ function record(value: unknown) {
   return resolved && typeof resolved === "object" && !Array.isArray(resolved)
     ? resolved as Record<string, unknown>
     : null
+}
+
+function safeErrorCode(error: unknown, fallback: string) {
+  const value = error instanceof Error ? error.message : ""
+  return /^[A-Z0-9_]{3,160}$/.test(value) ? value : fallback
+}
+
+async function preflightCanonicalBuyerMessaging() {
+  const observedAt = new Date().toISOString()
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  const policy = accountKey
+    ? await readSellerOsBuyerThankYouPolicyV1(
+        getSupabaseAdminClient(),
+        accountKey,
+        observedAt,
+      )
+    : createUnavailableSellerOsBuyerThankYouPolicyV1(
+        "CANONICAL_SELLER_ACCOUNT_BINDING_UNAVAILABLE",
+        observedAt,
+      )
+  return preflightEbayBuyerMessagingCapabilityV1({ policy })
 }
 
 function nextDigestAt(now = new Date()) {
@@ -138,7 +163,7 @@ export async function POST(req: Request) {
   }
   const mode = new URL(req.url).searchParams.get("mode")
   if (mode === "buyer-thank-you-preflight") {
-    const buyerMessaging = await preflightEbayBuyerMessagingCapabilityV1()
+    const buyerMessaging = await preflightCanonicalBuyerMessaging()
     return NextResponse.json({
       success: buyerMessaging.commerceMessageScopeConfirmed &&
         buyerMessaging.accountBindingStatus === "MATCHED" &&
@@ -223,7 +248,7 @@ export async function POST(req: Request) {
   if (mode === "whatsapp-preflight" || mode === "post-sale-preflight") {
     const preflight = await preflightSellerWhatsAppGateway({ force: true })
     const buyerMessaging = mode === "post-sale-preflight"
-      ? await preflightEbayBuyerMessagingCapabilityV1()
+      ? await preflightCanonicalBuyerMessaging()
       : null
     const buyerMessagingPreflightPassed = buyerMessaging === null || (
       buyerMessaging.commerceMessageScopeConfirmed &&
@@ -247,7 +272,10 @@ export async function POST(req: Request) {
   }
   const ownerSaleLaneEnabled =
     process.env.EBAY_OWNER_SALE_ALERT_LANE_ENABLED !== "false"
-  if (!schedule.enabled && !ownerSaleLaneEnabled) {
+  const buyerThankYouLaneEnabled =
+    process.env.EBAY_POST_PURCHASE_THANK_YOU_AUTOMATION_ENABLED !== "false"
+  if (!schedule.enabled && !ownerSaleLaneEnabled &&
+      !buyerThankYouLaneEnabled) {
     return NextResponse.json({
       success: true,
       status: "disabled",
@@ -346,18 +374,10 @@ export async function POST(req: Request) {
       }
     }
     let buyerThankYou: unknown
-    if (ownerSaleOnly) {
-      buyerThankYou = {
-        status: "SKIPPED_OWNER_SALE_LANE",
-        reason: "NON_OWNER_SALE_WRITES_REMAIN_FAIL_CLOSED",
-        marketplaceWrites: 0,
-        buyerMessageSends: 0,
-      }
-    } else if (process.env.EBAY_POST_PURCHASE_THANK_YOU_AUTOMATION_ENABLED !==
-        "true") {
+    if (!buyerThankYouLaneEnabled) {
       buyerThankYou = {
         status: "DISABLED",
-        reason: "BUYER_THANK_YOU_AUTOMATION_EXPLICIT_ACTIVATION_REQUIRED",
+        reason: "BUYER_THANK_YOU_OPERATIONAL_KILL_SWITCH_DISABLED",
         marketplaceWrites: 0,
         buyerMessageSends: 0,
       }
@@ -370,10 +390,13 @@ export async function POST(req: Request) {
         capability: status.capability,
         workerId: `buyer-thank-you:${randomUUID()}`,
       })
-    } catch {
+    } catch (error) {
       buyerThankYou = {
         status: "FAILED",
-        error: "BUYER_THANK_YOU_DISPATCH_FAILED_CLOSED",
+        error: safeErrorCode(
+          error,
+          "BUYER_THANK_YOU_DISPATCH_FAILED_CLOSED",
+        ),
         marketplaceWrites: 0,
         buyerMessageSends: 0,
       }
@@ -396,9 +419,13 @@ export async function POST(req: Request) {
       },
       safety: {
         exactActiveListingStateRequiredForOwnerSaleAlerts: false,
+        exactActiveListingStateRequiredForBuyerThankYou: false,
+        registryRequiredForBuyerThankYou: false,
+        analyticsRequiredForBuyerThankYou: false,
+        stockGuardRequiredForBuyerThankYou: false,
         nonSaleAlertsFailClosed: ownerSaleOnly,
         monitoringGateBlocked: Boolean(gateError),
-        ebayWriteUsed: false,
+        ebayWriteUsed: Number(record(buyerThankYou)?.buyerMessageSends) > 0,
         secretsReturned: false,
         buyerPiiIncluded: false,
       },

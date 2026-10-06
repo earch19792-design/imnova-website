@@ -143,9 +143,10 @@ function postSaleProjection(value: unknown,
       text(record(entry.workflowStep).state, 40) ?? "")
   }).length
   const buyerCapabilityReady = buyerCapability.provider ===
-      "EBAY_COMMERCE_MESSAGE_API" && buyerCapability.status === "READY" &&
+    "EBAY_COMMERCE_MESSAGE_API" && buyerCapability.status === "READY" &&
     buyerCapability.deliveryAttemptAllowed === true &&
-    buyerCapability.automaticExecutionAuthority === "AUTO_EXECUTION_ALLOWED"
+    buyerCapability.automaticExecutionAuthority ===
+      "OWNER_AUTHORIZED_FIXED_TEMPLATE"
   const buyerNewEntries = buyerEntries.filter((entry) =>
     entry.detectionClass === "NEWLY_DETECTED_AFTER_ACTIVATION")
   const lastBuyerEntry = [...buyerNewEntries].sort((left, right) =>

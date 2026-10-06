@@ -10,9 +10,17 @@ const STATES = new Set([
   "NOT_STARTED", "IN_PROGRESS", "SUCCEEDED", "RETRYABLE_FAILURE",
   "TERMINAL_FAILURE", "BLOCKED", "SKIPPED", "NOT_APPLICABLE",
 ])
+const EVENT_TYPES = [
+  "EBAY_BUYER_THANK_YOU_WORKFLOW",
+  "EBAY_BUYER_THANK_YOU_DELIVERY",
+] as const
+const DELIVERY_STATES = new Set([
+  "PREPARED", "SEND_ATTEMPTED", "ACCEPTED_BY_EBAY", "DELIVERED",
+])
 
 type LedgerRow = Readonly<{
   id: string
+  event_type: string
   deduplication_key: string
   evidence: unknown
   created_at: string
@@ -73,10 +81,10 @@ export async function readSellerOsBuyerThankYouAuditV1(
   })
   const { data, error } = await supabase
     .from("commercial_alert_events")
-    .select("id,deduplication_key,evidence,created_at")
+    .select("id,event_type,deduplication_key,evidence,created_at")
     .eq("marketplace_account_key", accountKey)
     .eq("marketplace", "EBAY_US")
-    .eq("event_type", "EBAY_BUYER_THANK_YOU_DELIVERY")
+    .in("event_type", EVENT_TYPES)
     .in("deduplication_key", keys)
     .order("created_at", { ascending: false })
     .limit(MAXIMUM_DELIVERIES + 1)
@@ -105,9 +113,22 @@ export async function readSellerOsBuyerThankYouAuditV1(
     const executionMode = evidence.executionMode ===
         "PREVIEW_CERTIFICATION_CANARY"
       ? "PREVIEW_CERTIFICATION_CANARY" as const : "AUTOMATION" as const
+    const derivedDeliveryState = receiptStatus === "PRESENT"
+      ? "ACCEPTED_BY_EBAY" as const
+      : evidence.dispatchStarted === true
+        ? "SEND_ATTEMPTED" as const : "PREPARED" as const
+    const deliveryState = typeof evidence.deliveryState === "string" &&
+        DELIVERY_STATES.has(evidence.deliveryState)
+      ? evidence.deliveryState as SellerOsBuyerThankYouAuditRowV1[
+        "deliveryState"] : derivedDeliveryState
+    const deliveredConfirmed = deliveryState === "DELIVERED" &&
+      evidence.deliveredConfirmed === true
     return [Object.freeze({
       deliveryKey,
       ledgerEventId: row.id,
+      ledgerEventType: row.event_type === "EBAY_BUYER_THANK_YOU_DELIVERY"
+        ? "EBAY_BUYER_THANK_YOU_DELIVERY" as const
+        : "EBAY_BUYER_THANK_YOU_WORKFLOW" as const,
       executionMode,
       workflowState,
       attemptCount: Number.isSafeInteger(evidence.attemptCount)
@@ -119,6 +140,8 @@ export async function readSellerOsBuyerThankYouAuditV1(
       succeededAt: safeIso(evidence.succeededAt),
       lastErrorCode: safeCode(evidence.lastErrorCode),
       manualReviewRequired: evidence.manualReviewRequired === true,
+      deliveryState,
+      deliveredConfirmed,
       createdAt: row.created_at,
     })]
   })
