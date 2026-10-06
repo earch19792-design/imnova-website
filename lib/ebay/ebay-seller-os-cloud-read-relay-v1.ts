@@ -598,6 +598,8 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     longitudinalOpportunityReadCollector?: typeof
       collectSellerOsLongitudinalOpportunityReadV1
     demandFirstBroadNetReplayCollector?: () => Promise<unknown>
+    replacementReadinessCollector?: (
+      args: Record<string, unknown>) => Promise<unknown>
     productCaseCollector?: (args: Record<string, unknown>) => Promise<unknown>
     publicationExecutionCollector?: (args: Record<string, unknown>) => Promise<unknown>
     systemReviewDrilldownEnricher?: (bundle: unknown) => Promise<unknown>
@@ -730,6 +732,24 @@ export async function handleSellerOsCloudReadRelayRequestV1(
           return runtime.collectSellerOsDemandFirstBroadNetServerReplayV1()
         })
       result = await collector()
+    } else if (envelope.toolName ===
+        SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1 ||
+        envelope.toolName === SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1 &&
+        envelope.arguments.view === "REPLACEMENT_FOR") {
+      const collector = options.replacementReadinessCollector ??
+        (async (args: Record<string, unknown>) => {
+          const service = await import(
+            "./teo-owner-listing-experiment-service-v1"
+          )
+          const supabaseModule = await import("../supabase-admin")
+          return service.readTeoPreparedReplacementV1(
+            supabaseModule.getSupabaseAdminClient(), {
+              itemId: typeof args.itemId === "string"
+                ? args.itemId : undefined,
+              sku: typeof args.sku === "string" ? args.sku : undefined,
+            })
+        })
+      result = await collector(envelope.arguments)
     } else if (envelope.toolName === "seller_os_prepare_listing_optimization_preview") {
       const collector = options.previewCollector ?? (async (itemId, traceId) => {
         const preview = await import("../seller-os/revenue-first-preview-v1")

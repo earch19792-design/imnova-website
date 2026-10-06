@@ -8,6 +8,9 @@ import { readManualListingFromTradingApi } from
   "./ebay-manual-listing-trading-readonly"
 import { readCurrentLiveAuthorityV1 } from
   "./ebay-current-live-authority-v1"
+import { buildSellerOsReplacementReadinessV1,
+  type SellerOsReplacementTargetV1 } from
+  "./seller-os-replacement-readiness-v1"
 import {
   assessTeoOfficialReadbackV1,
   buildTeoListingPriceDecisionV1,
@@ -373,7 +376,7 @@ export async function loadTeoOwnerListingDashboardV1(
   ] =
     await Promise.all([
       supabase.from("ebay_manual_listing_links")
-        .select("id,ebay_item_id,connector_ebay_sku,connector_listing_status,verification_status,verified_at,last_verification_at")
+        .select("id,ebay_item_id,connector_ebay_sku,connector_listing_status,verification_status,verified_at,last_verification_at,opportunity_id,candidate_key")
         .eq("account_key", accountKey)
         .eq("marketplace_id", "EBAY_US")
         .eq("verification_status", "verified")
@@ -425,6 +428,45 @@ export async function loadTeoOwnerListingDashboardV1(
   if (snapshotsRead.error) throw new Error("TEO_PERFORMANCE_HISTORY_READ_FAILED")
   if (eventsRead.error) throw new Error("TEO_EXPERIMENT_MEMORY_READ_FAILED")
 
+  const verifiedLinks = (linksRead.data ?? []).map(record)
+  const linkedOpportunityIds = [...new Set(verifiedLinks.flatMap((row) => {
+    const opportunityId = text(row.opportunity_id)
+    return opportunityId ? [opportunityId] : []
+  }))].slice(0, 500)
+  const currentFamilyRead = linkedOpportunityIds.length
+    ? await supabase.from("ebay_luna_opportunity_queue")
+      .select("id,market_family_id")
+      .in("id", linkedOpportunityIds).limit(500)
+    : { data: [], error: null }
+  const replacementCandidateRead = await supabase
+    .from("ebay_luna_opportunity_queue")
+    .select([
+      "id", "candidate_key", "supplier_product_id", "supplier_variant_id",
+      "supplier_sku", "product_title", "market_family_id",
+      "commercial_lifecycle_stage", "commercial_decision",
+      "commercial_next_best_evidence", "commercial_evidence_freshness",
+      "commercial_blockers", "commercial_evaluation_receipt_id",
+      "commercial_memory_digest",
+      "memory_contract_version:commercial_memory->>contractVersion",
+      "memory_canonical_result_version:commercial_memory->>canonicalResultVersion",
+      "memory_digest_projection:commercial_memory->>memoryDigest",
+      "memory_candidate:commercial_memory->candidate",
+      "memory_demand:commercial_memory->demand",
+      "memory_product_fit:commercial_memory->productFit",
+      "memory_shipping:commercial_memory->shipping",
+      "memory_economics:commercial_memory->economics",
+      "memory_duplicate_gate:commercial_memory->duplicateGate",
+      "memory_compliance:commercial_memory->compliance",
+      "memory_decision_provenance:commercial_memory->decisionProvenance",
+      "commercial_observed_at", "commercial_updated_at",
+    ].join(","))
+    .eq("commercial_account_key", accountKey)
+    .not("commercial_memory", "is", null)
+    .order("commercial_updated_at", { ascending: false }).limit(500)
+  const replacementAuthorityStatus = currentFamilyRead.error ||
+      replacementCandidateRead.error ? "UNAVAILABLE" as const :
+    "AVAILABLE" as const
+
   const latestEconomicsByItem = new Map<string, JsonRecord>()
   if (!economicsRead.error) {
     for (const row of (economicsRead.data ?? []).map(record)) {
@@ -454,7 +496,7 @@ export async function loadTeoOwnerListingDashboardV1(
   }
 
   const pricingByItem = new Map<string, JsonRecord>()
-  for (const link of (linksRead.data ?? []).map(record)) {
+  for (const link of verifiedLinks) {
     const itemId = text(link.ebay_item_id)
     if (!itemId) continue
     const economics = latestEconomicsByItem.get(itemId)
@@ -519,7 +561,7 @@ export async function loadTeoOwnerListingDashboardV1(
   const protectedListings: JsonRecord[] = []
   const replacementCandidates: JsonRecord[] = []
   const recommendations: JsonRecord[] = []
-  for (const link of (linksRead.data ?? []).map(record)) {
+  for (const link of verifiedLinks) {
     const itemId = text(link.ebay_item_id)
     if (!itemId) continue
     const pricing = pricingByItem.get(itemId) ?? null
@@ -589,6 +631,7 @@ export async function loadTeoOwnerListingDashboardV1(
     const row = {
       ebayItemId: itemId,
       sku: text(link.connector_ebay_sku),
+      currentOpportunityId: text(link.opportunity_id),
       recommendation,
       performance: history[0] ?? null,
       pricing,
@@ -617,6 +660,40 @@ export async function loadTeoOwnerListingDashboardV1(
     .filter((row) => ["COMPLETED", "INCONCLUSIVE", "CANCELLED"]
       .includes(text(row.lifecycle_status) ?? ""))
     .map(publicExperiment)
+  const replacementReadiness = buildSellerOsReplacementReadinessV1({
+    targets: replacementCandidates.flatMap((entry) => {
+      const recommendation = record(entry.recommendation)
+      const itemId = text(entry.ebayItemId)
+      const reasonCode = text(recommendation.reasonCode)
+      if (!itemId || !reasonCode) return []
+      return [{ itemId, sku: text(entry.sku),
+        currentOpportunityId: text(entry.currentOpportunityId),
+        priority: (["CRITICAL", "HIGH", "MEDIUM", "LOW"].includes(
+          String(recommendation.priority ?? ""))
+          ? recommendation.priority : "LOW") as
+          SellerOsReplacementTargetV1["priority"],
+        reasonCode,
+        headline: text(recommendation.headline) ?? "Evaluar reemplazo",
+        rationale: text(recommendation.rationale) ??
+          "El listing requiere una alternativa con evidencia durable.",
+      }]
+    }),
+    opportunityFamilies: (currentFamilyRead.data ?? []).flatMap((entry) => {
+      const row = record(entry)
+      const opportunityId = text(row.id)
+      return opportunityId ? [{ opportunityId,
+        familyId: text(row.market_family_id) }] : []
+    }),
+    candidates: (replacementCandidateRead.data ?? []).map(record),
+    liveOpportunityIds: verifiedLinks.flatMap((link) => {
+      const opportunityId = text(link.opportunity_id)
+      return opportunityId && text(link.connector_listing_status)
+        ?.toLowerCase() === "active" ? [opportunityId] : []
+    }),
+    currentLiveState: currentLiveAuthority?.currentState === "CURRENT_FRESH"
+      ? "CURRENT_FRESH" : "CURRENT_UNAVAILABLE",
+    sourceStatus: replacementAuthorityStatus,
+  })
   return {
     contractVersion: TEO_OWNER_LISTING_EXPERIMENT_VERSION,
     generatedAt: new Date().toISOString(),
@@ -637,6 +714,11 @@ export async function loadTeoOwnerListingDashboardV1(
           text(row.lifecycle_status) as typeof ACTIVE_STATES[number],
         )).length,
       replacementCandidates: replacementCandidates.length,
+      preparedReplacements: replacementReadiness.preparedCount,
+      replacementReadyForOwnerReview:
+        replacementReadiness.readyForOwnerReviewCount,
+      replacementPreparedUnproven:
+        replacementReadiness.preparedUnprovenCount,
       learnedResults: memory.length,
       pricingReady: [...pricingByItem.values()].filter((row) =>
         text(row.status) === "READY").length,
@@ -647,6 +729,7 @@ export async function loadTeoOwnerListingDashboardV1(
       (number(a.priority) ?? 99) - (number(b.priority) ?? 99)),
     protectedListings,
     replacementCandidates,
+    replacementReadiness,
     recommendations,
     pricing: [...pricingByItem.values()].sort((a, b) => {
       if (a.safeToDiscount === true && b.safeToDiscount !== true) return -1
@@ -671,6 +754,51 @@ export async function loadTeoOwnerListingDashboardV1(
       evidence: row.evidence,
     })),
   }
+}
+
+export async function readTeoPreparedReplacementV1(
+  supabase: SupabaseClient,
+  input: Readonly<{ itemId?: string; sku?: string }>,
+) {
+  const dashboard = await loadTeoOwnerListingDashboardV1(supabase)
+  const readiness = record(dashboard.replacementReadiness)
+  const pairs = Array.isArray(readiness.pairs)
+    ? readiness.pairs.map(record) : []
+  const unpaired = Array.isArray(readiness.unpaired)
+    ? readiness.unpaired.map(record) : []
+  const matches = (value: JsonRecord) => {
+    const listing = record(value.listing)
+    return input.itemId ? text(listing.itemId) === input.itemId
+      : text(listing.sku)?.toLocaleUpperCase("en-US") ===
+        input.sku?.trim().toLocaleUpperCase("en-US")
+  }
+  const pair = pairs.find(matches) ?? null
+  const missing = unpaired.find(matches) ?? null
+  return Object.freeze({
+    contractVersion: "SELLER_OS_REPLACEMENT_FOR_V1",
+    status: readiness.status === "AVAILABLE"
+      ? pair ? "AVAILABLE" as const : "UNPROVEN" as const
+      : "CAPABILITY_BLOCKED" as const,
+    decision: pair
+      ? text(pair.readiness) === "READY_FOR_OWNER_REVIEW"
+        ? "OWNER_REVIEW_REPLACEMENT" as const
+        : "PREPARED_UNPROVEN" as const
+      : "NO_CERTIFIED_REPLACEMENT" as const,
+    pair,
+    limitation: pair ? null : missing ?? {
+      reasonCode: readiness.status === "AVAILABLE"
+        ? "LISTING_NOT_IN_REPLACEMENT_QUEUE"
+        : "REPLACEMENT_AUTHORITY_READ_UNAVAILABLE",
+    },
+    currentLiveValidation: text(readiness.currentLiveValidation) ??
+      "CURRENT_UNAVAILABLE",
+    minimumNetProfitUsd: 4 as const,
+    tradingReads: 0 as const,
+    marketplaceWrites: 0 as const,
+    listingEnds: 0 as const,
+    publications: 0 as const,
+    automaticExecutionAllowed: false as const,
+  })
 }
 
 export async function startTeoOwnerListingExperimentV1(

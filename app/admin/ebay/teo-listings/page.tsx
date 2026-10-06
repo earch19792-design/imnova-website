@@ -31,6 +31,9 @@ type Dashboard = {
     protectedListings?: number
     activeExperiments?: number
     replacementCandidates?: number
+    preparedReplacements?: number
+    replacementReadyForOwnerReview?: number
+    replacementPreparedUnproven?: number
     learnedResults?: number
     pricingReady?: number
     discountOpportunities?: number
@@ -38,6 +41,13 @@ type Dashboard = {
   todayActions?: JsonRecord[]
   protectedListings?: JsonRecord[]
   replacementCandidates?: JsonRecord[]
+  replacementReadiness?: {
+    status?: string
+    currentLiveValidation?: string
+    minimumNetProfitUsd?: number
+    pairs?: JsonRecord[]
+    unpaired?: JsonRecord[]
+  }
   experiments?: JsonRecord[]
   memory?: JsonRecord[]
   timeline?: JsonRecord[]
@@ -245,6 +255,9 @@ export default function TeoListingsPage() {
   const pricing = dashboard?.pricing ?? []
   const pricingSources = dashboard?.pricingSourceStatus ?? {}
   const summary = dashboard?.summary ?? {}
+  const replacementReadiness = dashboard?.replacementReadiness ?? {}
+  const replacementPairs = replacementReadiness.pairs ?? []
+  const unpairedReplacements = replacementReadiness.unpaired ?? []
   const liveCoverage = dashboard?.liveCoverage ?? null
   const liveTrading = liveCoverage?.trading ?? null
   const activeExperiments = useMemo(() =>
@@ -303,7 +316,7 @@ export default function TeoListingsPage() {
           <SummaryCard label="Descuentos seguros" value={summary.discountOpportunities ?? 0} detail="Con utilidad neta mínima de US$4 y guardas de margen." />
           <SummaryCard label="No tocar" value={summary.protectedListings ?? 0} detail="Protegidos para no contaminar evidencia." />
           <SummaryCard label="Experimentos" value={summary.activeExperiments ?? 0} detail="Mejoras bajo seguimiento." />
-          <SummaryCard label="Reemplazo" value={summary.replacementCandidates ?? 0} detail="Casos que ya no conviene retocar." />
+          <SummaryCard label="Reemplazos preparados" value={summary.preparedReplacements ?? 0} detail={`De ${summary.replacementCandidates ?? 0} listings que podrían requerir sustitución.`} />
           <SummaryCard label="Memoria" value={summary.learnedResults ?? 0} detail="Resultados positivos, negativos o neutros." />
         </section>
 
@@ -433,16 +446,36 @@ export default function TeoListingsPage() {
         </section>}
 
         {tab === "REEMPLAZO" && <section className="rounded-3xl border border-white/10 bg-black/20 p-5 md:p-7">
-          <h2 className="text-2xl font-black">Candidatos a reemplazo</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">TEO sólo propone reemplazar cuando el listing no está activo, acumula dos ventanas sin exposición o dos experimentos limpios fueron negativos.</p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-2xl font-black">Reemplazos preparados 1:1</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">TEO enlaza cada listing débil con un solo candidato de la misma familia, con demanda, Product Truth, shipping, fees y utilidad neta mínima de US$4.</p></div>
+            <Status tone={replacementReadiness.currentLiveValidation === "CURRENT_FRESH" ? "green" : "amber"}>{replacementReadiness.currentLiveValidation === "CURRENT_FRESH" ? "LIVE comprobado" : "Falta validación LIVE"}</Status>
+          </div>
+          {replacementReadiness.currentLiveValidation !== "CURRENT_FRESH" && <p className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-200/[0.06] p-4 text-sm font-bold text-amber-50">Los pares pueden quedar preparados, pero permanecen UNPROVEN hasta confirmar Duplicate Gate y estado LIVE cuando eBay vuelva. No se termina ni publica ningún listing.</p>}
           <div className="mt-5 space-y-4">
-            {!(dashboard.replacementCandidates ?? []).length && <p className="rounded-2xl border border-emerald-200/20 p-5 text-emerald-100">Ningún listing requiere reemplazo hoy.</p>}
-            {(dashboard.replacementCandidates ?? []).map((entry, index) => {
-              const recommendation = record(entry.recommendation)
-              return <article key={`${text(entry.ebayItemId)}:${index}`} className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.05] p-5">
-                <div className="flex items-center justify-between gap-3"><strong>Listing {text(entry.ebayItemId)}</strong><Status tone="rose">Candidato</Status></div>
-                <h3 className="mt-3 text-lg font-black">{text(recommendation.headline)}</h3>
-                <p className="mt-2 text-sm text-white/60">{text(recommendation.rationale)}</p>
+            {!replacementPairs.length && !unpairedReplacements.length && <p className="rounded-2xl border border-emerald-200/20 p-5 text-emerald-100">Ningún listing requiere reemplazo hoy.</p>}
+            {replacementPairs.map((entry, index) => {
+              const listing = record(entry.listing)
+              const candidate = record(entry.replacement)
+              const ready = text(entry.readiness) === "READY_FOR_OWNER_REVIEW"
+              return <article key={text(entry.pairId) || index} className={`rounded-2xl border p-5 ${ready ? "border-emerald-200/25 bg-emerald-200/[0.06]" : "border-amber-200/25 bg-amber-200/[0.06]"}`}>
+                <div className="flex flex-wrap items-center justify-between gap-3"><strong>Listing {text(listing.itemId)} → {text(candidate.title) || text(candidate.supplierSku) || "Producto Luna"}</strong><Status tone={ready ? "green" : "amber"}>{ready ? "Listo para revisión" : "Preparado · no probado"}</Status></div>
+                <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                  <div><p className="text-xs font-bold text-white/40">Listing actual</p><p className="mt-1 font-black">{text(listing.sku) || text(listing.itemId)}</p></div>
+                  <div><p className="text-xs font-bold text-white/40">Sustituto Luna</p><p className="mt-1 font-black">{text(candidate.supplierSku) || "SKU pendiente"}</p></div>
+                  <div><p className="text-xs font-bold text-white/40">Utilidad esperada</p><p className="mt-1 font-black text-emerald-100">{usd(candidate.expectedNetProfit)}</p></div>
+                  <div><p className="text-xs font-bold text-white/40">Demanda vendida</p><p className="mt-1 font-black">{numeric(candidate.soldQuantity) ?? "Probada sin cifra visible"}</p></div>
+                </div>
+                <p className="mt-4 text-sm leading-6 text-white/60">{text(listing.rationale)}</p>
+                <p className="mt-2 text-xs font-bold text-cyan-100">Siguiente paso: {ready ? "revisión del owner; ninguna ejecución automática" : "esperar validación LIVE de eBay"}.</p>
+              </article>
+            })}
+            {unpairedReplacements.map((entry, index) => {
+              const listing = record(entry.listing)
+              return <article key={`unpaired:${text(listing.itemId)}:${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3"><strong>Listing {text(listing.itemId)}</strong><Status tone="rose">Sin sustituto listo</Status></div>
+                <p className="mt-3 text-sm text-white/60">{text(listing.rationale)}</p>
+                <p className="mt-2 text-xs font-bold text-amber-100">Siguiente paso: {label(entry.nextAction)} · {label(entry.reasonCode)}</p>
               </article>
             })}
           </div>
