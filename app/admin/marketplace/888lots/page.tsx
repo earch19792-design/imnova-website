@@ -312,8 +312,9 @@ export default function LotsManualCapturePage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16,
         alignItems: "start", flexWrap: "wrap" }}><div><h2 style={{ marginTop: 0 }}>
           Bandeja del proveedor</h2><p style={{ margin: 0, color: "#526071" }}>
-          Actualización iniciada por el propietario. La automatización queda desactivada
-          hasta contar con feed o exportación oficial.</p></div><div style={{ color: "#526071",
+          La actualización del catálogo la inicia el propietario. Después TEO ejecuta
+          automáticamente PreSearch sobre los 5 candidatos prioritarios; no compra ni
+          publica.</p></div><div style={{ color: "#526071",
             fontSize: 13 }}>Última captura: {String(source.last_success_at ?? "Nunca")}</div></div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
         {[["trending", "Trending"], ["newest", "Nuevos"],
