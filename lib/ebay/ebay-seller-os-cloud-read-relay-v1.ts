@@ -607,6 +607,8 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     publicationExecutionCollector?: (args: Record<string, unknown>) => Promise<unknown>
     amazonStarCandidatesCollector?: (
       args: Record<string, unknown>) => Promise<unknown>
+    amazonContributorPerformanceCollector?: (
+      args: Record<string, unknown>) => Promise<unknown>
     systemReviewDrilldownEnricher?: (bundle: unknown) => Promise<unknown>
   } = {},
 ) {
@@ -778,6 +780,20 @@ export async function handleSellerOsCloudReadRelayRequestV1(
             supabase: supabaseModule.getSupabaseAdminClient(),
             accountKey: account.accountKey,
             limit: service.assert888LotsAmazonStarLimitV1(args.limit),
+          })
+        })
+      result = await collector(envelope.arguments)
+    } else if (envelope.toolName ===
+        "seller_os_get_amazon_contributor_performance") {
+      const collector = options.amazonContributorPerformanceCollector ??
+        (async (args: Record<string, unknown>) => {
+          const service = await import(
+            "../marketplace/seller-os-amazon-contributor-performance-v1"
+          )
+          const supabaseModule = await import("../supabase-admin")
+          return service.readAmazonContributorPerformanceV1({
+            supabase: supabaseModule.getSupabaseAdminClient(),
+            limit: typeof args.limit === "number" ? args.limit : 50,
           })
         })
       result = await collector(envelope.arguments)

@@ -523,6 +523,14 @@ export function createSellerOsMcpServerV1(options: {
               input.arguments.limit),
           }))
         })()
+      : input.toolName === "seller_os_get_amazon_contributor_performance"
+      ? import(
+          "../marketplace/seller-os-amazon-contributor-performance-v1"
+        ).then((service) => service.readAmazonContributorPerformanceV1({
+          supabase: getSupabaseAdminClient(),
+          limit: typeof input.arguments.limit === "number"
+            ? input.arguments.limit : 50,
+        }))
       : input.toolName === "seller_os_prepare_listing_optimization_preview"
       ? (await import("../seller-os/revenue-first-preview-v1")).loadRevenueFirstListingPreviewV1(String(input.arguments.itemId ?? ""))
       :     input.toolName === "seller_os_get_product_case" ||

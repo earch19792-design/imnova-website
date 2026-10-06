@@ -376,6 +376,23 @@ export function SellerOsHomeDashboardV1() {
       </section>
 
       <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"
+        aria-labelledby="connie-heading">
+        <div className="flex items-center gap-3">
+          <TrendingUp className="text-cyan-100" />
+          <h2 id="connie-heading" className="text-xl font-black">Connie · Amazon</h2>
+        </div>
+        <p className="mt-4 text-sm leading-6 text-white/55">
+          Mide productos propuestos, demanda confirmada, movimiento, utilidad
+          real y candidatos de recompra. Una afirmación sin evidencia permanece
+          como no comprobada, nunca como venta ni como cero.
+        </p>
+        <a href="/admin/marketplace/amazon/connie"
+          className="mt-3 inline-flex min-h-11 items-center text-sm font-black text-cyan-100">
+          Abrir seguimiento <ArrowRight className="ml-2" size={15} />
+        </a>
+      </section>
+
+      <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"
         aria-labelledby="system-state-heading">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
