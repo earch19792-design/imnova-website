@@ -261,8 +261,9 @@ test("route and bundle surface regress downward", () => {
   // invited, singleton remote-operator enrollment route (no public signup)
   // -> one owner-only Listing Quality Report import route that persists only
   // normalized CURRENT-LIVE signals and performs no marketplace writes
-  // -> one owner-only 888 Lots authorized-export preview route with zero
-  // database, supplier, or marketplace writes.
+  // -> one owner-only 888 Lots manual capture page/API. It writes only the
+  // existing internal radar and commercial-memory ledgers and performs zero
+  // supplier or marketplace mutations.
   // The old product/community domain remains at zero.
   // The current isolated base also includes prior publisher recovery surfaces;
   // this WO adds the read-only Publisher cohort and POST-only batch runtime.

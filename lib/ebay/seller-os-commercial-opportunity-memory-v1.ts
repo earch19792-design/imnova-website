@@ -25,6 +25,15 @@ export const SELLER_OS_NEXT_BEST_EVIDENCE_ACTIONS_V1 = [
   "MEASURE_RESULT",
   "REVIEW_REJECTION",
   "RESOLVE_BLOCKER",
+  "CAPTURE_DELIVERED_COST",
+  "VERIFY_AMAZON_ASIN",
+  "GET_EBAY_EXACT_SOLD",
+  "GET_AMAZON_DEMAND",
+  "COMPLETE_EBAY_ECONOMICS",
+  "COMPLETE_AMAZON_ECONOMICS",
+  "VERIFY_AMAZON_ELIGIBILITY",
+  "REVIEW_AMAZON_COMPETITION",
+  "READY_FOR_OWNER_BUY_REVIEW",
   "NONE",
 ] as const
 
@@ -368,6 +377,7 @@ export function buildSellerOsCommercialOpportunityMemoryV1(
     contractVersion: SELLER_OS_COMMERCIAL_OPPORTUNITY_MEMORY_V1,
     canonicalResultVersion: CANONICAL_OPPORTUNITY_RESULT_VERSION_V2,
     candidate: {
+      sourceKey: text(candidate.sourceKey, 80) ?? "luna-portex",
       productId: text(candidate.productId, 100),
       variantId: text(candidate.variantId, 100),
       supplierSku: text(candidate.supplierSku, 160),
@@ -445,6 +455,14 @@ export async function persistSellerOsCommercialOpportunityMemoryV1(
   evaluation: GoldenRecord,
 ) {
   const memory = buildSellerOsCommercialOpportunityMemoryV1(evaluation, ctx.now)
+  return persistSellerOsCommercialMemoryDocumentV1(ctx, memory)
+}
+
+export async function persistSellerOsCommercialMemoryDocumentV1(
+  ctx: SellerOsCommercialMemoryContextV1,
+  memory: ReturnType<typeof buildSellerOsCommercialOpportunityMemoryV1> |
+    GoldenRecord,
+) {
   const write = await ctx.supabase.rpc(
     "put_seller_os_commercial_opportunity_memory_v1",
     { p_account_key: ctx.accountKey,
@@ -453,19 +471,19 @@ export async function persistSellerOsCommercialOpportunityMemoryV1(
       p_idempotency_key: `commercial-memory:${memory.memoryDigest}` },
   )
   if (write.error) throw new SellerOsCommercialMemoryPersistenceErrorV1("WRITE")
-  const candidate = memory.candidate
+  const candidate = goldenRecord(memory.candidate)
+  const sourceKey = text(candidate.sourceKey, 80) ?? "luna-portex"
+  const candidateKey = `${sourceKey}:${candidate.productId}:${candidate.variantId}`
   const read = await ctx.supabase.from("ebay_luna_opportunity_queue")
     .select("id,commercial_memory_digest,commercial_evaluation_receipt_id,commercial_memory,commercial_updated_at")
     .eq("commercial_account_key", ctx.accountKey)
-    .eq("supplier_product_id", candidate.productId)
-    .eq("supplier_variant_id", candidate.variantId)
-    .eq("supplier_sku", candidate.supplierSku).limit(1).maybeSingle()
+    .eq("candidate_key", candidateKey).limit(1).maybeSingle()
   const stored = goldenRecord(read.data?.commercial_memory)
   if (read.error || !read.data ||
       read.data.commercial_memory_digest !== memory.memoryDigest ||
       stored.memoryDigest !== memory.memoryDigest ||
       read.data.commercial_evaluation_receipt_id !==
-        memory.decisionProvenance.evaluationReceiptId) {
+        goldenRecord(memory.decisionProvenance).evaluationReceiptId) {
     throw new SellerOsCommercialMemoryPersistenceErrorV1("READBACK")
   }
   return Object.freeze({ ...memory, persistence: Object.freeze({

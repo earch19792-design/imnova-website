@@ -45,6 +45,7 @@ export type SellerOs888LotsConditionV1 =
 
 export type SellerOs888LotsInventoryModeV1 =
   | "REPEATABLE_STOCK"
+  | "PUBLIC_CATALOG_AVAILABLE"
   | "ONE_OFF_LIQUIDATION"
   | "LOT_ALLOCATION"
   | "UNPROVEN"
@@ -67,6 +68,7 @@ export type SellerOs888LotsDualMarketNextActionV1 =
   | "COMPLETE_AMAZON_ECONOMICS"
   | "RESOLVE_DUPLICATE"
   | "VERIFY_AMAZON_ELIGIBILITY"
+  | "REVIEW_AMAZON_COMPETITION"
   | "WAIT_UPSTREAM"
   | "READY_FOR_OWNER_BUY_REVIEW"
 
@@ -257,6 +259,12 @@ function inventoryMode(input: {
   ) {
     return "REPEATABLE_STOCK"
   }
+  if (input.availableQuantity !== null && input.availableQuantity > 0 &&
+    input.minimumOrderQuantity !== null &&
+    input.minimumOrderQuantity <= input.availableQuantity &&
+    ["publiccatalogavailable", "publiccataloginstock", "instock"].includes(restock)) {
+    return "PUBLIC_CATALOG_AVAILABLE"
+  }
   return "UNPROVEN"
 }
 
@@ -318,7 +326,7 @@ export function normalize888LotsCatalogRowV1(value: unknown, options: {
   } else if (availableQuantity !== null && minimumOrderQuantity > availableQuantity) {
     blockers.push("SUPPLIER_MOQ_EXCEEDS_AVAILABLE_QUANTITY")
   }
-  if (mode === "UNPROVEN") blockers.push("REPEATABLE_STOCK_AUTHORITY_UNPROVEN")
+  if (mode === "UNPROVEN") blockers.push("SUPPLIER_INVENTORY_MODE_UNPROVEN")
   if (mode === "ONE_OFF_LIQUIDATION") blockers.push("ONE_OFF_NOT_REPLACEMENT_ELIGIBLE")
   if (mode === "LOT_ALLOCATION") blockers.push("LOT_ALLOCATION_REQUIRED")
   if (unitCostUsd === null || unitCostUsd <= 0) blockers.push("SUPPLIER_UNIT_COST_UNPROVEN")
@@ -346,7 +354,7 @@ export function normalize888LotsCatalogRowV1(value: unknown, options: {
   } else if (freshness !== "FRESH" || availableQuantity === null || minimumOrderQuantity === null ||
     mode === "UNPROVEN") {
     nextBestEvidence = { action: "WAIT_UPSTREAM", priority: 1,
-      reasonCode: mode === "UNPROVEN" ? "REPEATABLE_STOCK_AUTHORITY_REQUIRED"
+      reasonCode: mode === "UNPROVEN" ? "SUPPLIER_INVENTORY_MODE_REQUIRED"
         : "FRESH_SUPPLIER_INVENTORY_AND_MOQ_REQUIRED",
       authority: "888LOTS_AUTHORIZED_EXPORT", inventedEvidence: false }
   } else if (!costsSupported) {
@@ -472,6 +480,17 @@ type DualMarketEvidenceRowV1 = {
   eligibleToSell?: unknown
   capturedAt?: unknown
   authorityContract?: unknown
+  searchClicks30Days?: unknown
+  searchClickGrowth30Percent?: unknown
+  searchClicks90Days?: unknown
+  searchClickGrowth90Percent?: unknown
+  averageOfferPrice90DaysUsd?: unknown
+  minimumOfferPrice90DaysUsd?: unknown
+  maximumOfferPrice90DaysUsd?: unknown
+  averageReferralFeeUsd?: unknown
+  averageFbaFeeUsd?: unknown
+  totalOfferDepth90Days?: unknown
+  averageOfferDepth90Days?: unknown
 }
 
 const DUAL_MARKET_EVIDENCE_FRESHNESS_MINUTES = 1_440
@@ -479,6 +498,7 @@ const MINIMUM_NET_PROFIT_USD = 4
 const INITIAL_BUY_COVERAGE_DAYS = 14
 const INITIAL_BUY_CAPTURE_RATE = 0.1
 const INITIAL_BUY_MAX_UNITS = 12
+const POLICY_LIMITED_TEST_MAX_UNITS = 3
 
 function evidenceState(value: unknown): DualMarketEvidenceStateV1 {
   const normalized = text(value, 40)?.toUpperCase()
@@ -490,6 +510,14 @@ function evidenceState(value: unknown): DualMarketEvidenceStateV1 {
 function positiveInteger(value: unknown) {
   const parsed = integer(value)
   return parsed !== null && parsed > 0 ? parsed : null
+}
+
+function finiteNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
+  const normalized = typeof value === "string"
+    ? value.replace(/[,%$\s]/g, "") : value
+  const numeric = Number(normalized)
+  return Number.isFinite(numeric) ? Number(numeric.toFixed(4)) : null
 }
 
 function marketplaceProductId(marketplace: "EBAY_US" | "AMAZON_US", value: unknown) {
@@ -509,6 +537,7 @@ function normalizeDualMarketEvidenceRowV1(value: DualMarketEvidenceRowV1, now: D
   const freshness = capturedAt && Date.parse(capturedAt) <= now.getTime() && freshUntil &&
     Date.parse(freshUntil) > now.getTime() ? "FRESH" as const : "STALE" as const
   const productId = marketplaceProductId(marketplace, value.marketplaceProductId)
+  const authorityContract = text(value.authorityContract, 160)
   const identityState = evidenceState(value.identityState)
   const demandState = evidenceState(value.demandState)
   const salePriceState = evidenceState(value.salePriceState)
@@ -520,18 +549,39 @@ function normalizeDualMarketEvidenceRowV1(value: DualMarketEvidenceRowV1, now: D
   const eligibilityState = evidenceState(value.eligibilityState)
   const observedUnitsSold = integer(value.observedUnitsSold)
   const observationWindowDays = positiveInteger(value.observationWindowDays)
-  const buyerLandedSalePriceUsd = money(value.buyerLandedSalePriceUsd)
-  const marketplaceFeeUsd = money(value.marketplaceFeeUsd)
-  const fulfillmentCostUsd = money(value.fulfillmentCostUsd)
+  const averageOfferPrice90DaysUsd = money(value.averageOfferPrice90DaysUsd)
+  const minimumOfferPrice90DaysUsd = money(value.minimumOfferPrice90DaysUsd)
+  const maximumOfferPrice90DaysUsd = money(value.maximumOfferPrice90DaysUsd)
+  const averageReferralFeeUsd = money(value.averageReferralFeeUsd)
+  const averageFbaFeeUsd = money(value.averageFbaFeeUsd)
+  const buyerLandedSalePriceUsd = money(value.buyerLandedSalePriceUsd) ??
+    (marketplace === "AMAZON_US" ? averageOfferPrice90DaysUsd : null)
+  const marketplaceFeeUsd = money(value.marketplaceFeeUsd) ??
+    (marketplace === "AMAZON_US" ? averageReferralFeeUsd : null)
+  const fulfillmentCostUsd = money(value.fulfillmentCostUsd) ??
+    (marketplace === "AMAZON_US" ? averageFbaFeeUsd : null)
   const promotionCostUsd = money(value.promotionCostUsd)
   const returnsReserveUsd = money(value.returnsReserveUsd)
   const otherVariableCostUsd = money(value.otherVariableCostUsd)
+  const searchClicks30Days = integer(value.searchClicks30Days)
+  const searchClickGrowth30Percent = finiteNumber(value.searchClickGrowth30Percent)
+  const searchClicks90Days = integer(value.searchClicks90Days)
+  const searchClickGrowth90Percent = finiteNumber(value.searchClickGrowth90Percent)
+  const totalOfferDepth90Days = integer(value.totalOfferDepth90Days)
+  const averageOfferDepth90Days = integer(value.averageOfferDepth90Days)
   const stateSupported = (state: DualMarketEvidenceStateV1) =>
     state === "PROVEN" || state === "SUPPORTED"
   const identitySupported = freshness === "FRESH" && stateSupported(identityState) &&
     value.exactProductMatch === true && Boolean(productId)
-  const demandSupported = freshness === "FRESH" && stateSupported(demandState) &&
-    observedUnitsSold !== null && observationWindowDays !== null
+  const exactUnitDemandSupported = freshness === "FRESH" &&
+    stateSupported(demandState) && observedUnitsSold !== null &&
+    observationWindowDays !== null
+  const amazonClickDemandSupported = marketplace === "AMAZON_US" &&
+    freshness === "FRESH" && stateSupported(demandState) &&
+    /^AMAZON_PRODUCT_OPPORTUNITY_EXPLORER(?:_OWNER_READONLY)?$/.test(
+      authorityContract ?? "") &&
+    ((searchClicks30Days ?? 0) > 0 || (searchClicks90Days ?? 0) > 0)
+  const demandSupported = exactUnitDemandSupported || amazonClickDemandSupported
   const economicsSupported = freshness === "FRESH" &&
     [salePriceState, feeState, fulfillmentState, promotionState,
       returnsReserveState, otherVariableCostState].every(stateSupported) &&
@@ -549,23 +599,39 @@ function normalizeDualMarketEvidenceRowV1(value: DualMarketEvidenceRowV1, now: D
     marketplace,
     marketplaceProductId: productId,
     exactProductMatch: value.exactProductMatch === true,
-    authorityContract: text(value.authorityContract, 160),
+    authorityContract,
     capturedAt,
     freshUntil,
     freshness,
     identity: { state: identityState, supported: identitySupported },
     demand: { state: demandState, observedUnitsSold, observationWindowDays,
       supported: demandSupported,
-      velocityUnitsPerDay: demandSupported
+      evidenceKind: exactUnitDemandSupported ? "EXACT_UNITS_SOLD"
+        : amazonClickDemandSupported ? "AMAZON_SEARCH_CLICKS" : "UNPROVEN",
+      searchClicks30Days, searchClickGrowth30Percent,
+      searchClicks90Days, searchClickGrowth90Percent,
+      velocityUnitsPerDay: exactUnitDemandSupported
         ? Number(((observedUnitsSold ?? 0) / (observationWindowDays ?? 1)).toFixed(4))
         : null,
-      authoritativeZero: freshness === "FRESH" && demandState === "PROVEN" &&
+      authoritativeZero: exactUnitDemandSupported && demandState === "PROVEN" &&
         observedUnitsSold === 0 },
     economics: { salePriceState, buyerLandedSalePriceUsd, feeState,
       marketplaceFeeUsd, fulfillmentState, fulfillmentCostUsd, promotionState,
       promotionCostUsd, returnsReserveState, returnsReserveUsd,
       otherVariableCostState, otherVariableCostUsd, variableCostUsd,
+      averageOfferPrice90DaysUsd, minimumOfferPrice90DaysUsd,
+      maximumOfferPrice90DaysUsd, averageReferralFeeUsd, averageFbaFeeUsd,
       supported: economicsSupported },
+    competition: {
+      totalOfferDepth90Days,
+      averageOfferDepth90Days,
+      pressure: marketplace !== "AMAZON_US" || averageOfferDepth90Days === null
+        ? "UNPROVEN" as const
+        : averageOfferDepth90Days >= 100 ? "HIGH" as const
+          : averageOfferDepth90Days >= 20 ? "MEDIUM" as const : "LOW" as const,
+      ownerReviewRequired: marketplace === "AMAZON_US" &&
+        averageOfferDepth90Days !== null && averageOfferDepth90Days >= 100,
+    },
     eligibility: { state: eligibilityState,
       eligibleToSell: typeof value.eligibleToSell === "boolean"
         ? value.eligibleToSell : null, supported: eligibilitySupported },
@@ -582,7 +648,10 @@ function evaluateDualMarketChannelV1(
   const economicsReady = evidence?.economics.supported === true
   const eligibilityReady = evidence?.eligibility.supported === true
   const provenZeroDemand = demandReady && evidence?.demand.authoritativeZero === true
-  const positiveDemand = demandReady && (evidence?.demand.observedUnitsSold ?? 0) > 0
+  const positiveDemand = demandReady && (
+    (evidence?.demand.observedUnitsSold ?? 0) > 0 ||
+    (evidence?.demand.searchClicks30Days ?? 0) > 0 ||
+    (evidence?.demand.searchClicks90Days ?? 0) > 0)
   const knownIneligible = eligibilityReady && evidence?.eligibility.eligibleToSell === false
   const maxDeliveredUnitCostUsd = economicsReady
     ? Number(((evidence?.economics.buyerLandedSalePriceUsd ?? 0) -
@@ -649,29 +718,39 @@ export function preview888LotsDualMarketplaceSourcingV1(input: {
   const currentCostWithinDualMarketCeiling = unitCostUsd !== null &&
     conservativeMaxSupplierUnitCostUsd !== null
     ? unitCostUsd <= conservativeMaxSupplierUnitCostUsd : null
-  const inventoryReady = candidate.inventory.mode === "REPEATABLE_STOCK" &&
+  const inventoryReady = ["REPEATABLE_STOCK", "PUBLIC_CATALOG_AVAILABLE"].includes(
+    candidate.inventory.mode) &&
     candidate.inventory.freshness === "FRESH" &&
     (candidate.inventory.availableQuantity ?? 0) > 0
   const bothGo = ebay.decision === "GO" && amazon.decision === "GO"
   const anyReject = ebay.decision === "REJECT" || amazon.decision === "REJECT"
-  const combinedVelocityUnitsPerDay = bothGo
+  const bothHaveUnitVelocity = bothGo &&
+    ebay.evidence?.demand.velocityUnitsPerDay !== null &&
+    amazon.evidence?.demand.velocityUnitsPerDay !== null
+  const combinedVelocityUnitsPerDay = bothHaveUnitVelocity
     ? Number(((ebay.evidence?.demand.velocityUnitsPerDay ?? 0) +
       (amazon.evidence?.demand.velocityUnitsPerDay ?? 0)).toFixed(4)) : null
   const demandBasedInitialUnits = combinedVelocityUnitsPerDay !== null
     ? Math.floor(combinedVelocityUnitsPerDay * INITIAL_BUY_COVERAGE_DAYS *
       INITIAL_BUY_CAPTURE_RATE) : null
-  const recommendedPurchaseQuantity = demandBasedInitialUnits !== null &&
+  const policyLimitedTestUnits = bothGo && demandBasedInitialUnits === null
+    ? POLICY_LIMITED_TEST_MAX_UNITS : null
+  const suggestedUnits = demandBasedInitialUnits ?? policyLimitedTestUnits
+  const recommendedPurchaseQuantity = suggestedUnits !== null &&
     candidate.inventory.availableQuantity !== null
-    ? Math.min(demandBasedInitialUnits, candidate.inventory.availableQuantity,
+    ? Math.min(suggestedUnits, candidate.inventory.availableQuantity,
       INITIAL_BUY_MAX_UNITS) : null
   const quantityPassesMoq = recommendedPurchaseQuantity !== null &&
     candidate.inventory.minimumOrderQuantity !== null &&
     recommendedPurchaseQuantity >= candidate.inventory.minimumOrderQuantity &&
     recommendedPurchaseQuantity > 0
+  const amazonCompetitionReviewRequired =
+    amazon.evidence?.competition.ownerReviewRequired === true
   const decision = anyReject || currentCostWithinDualMarketCeiling === false
     ? "REJECT" as const
     : bothGo && inventoryReady && currentCostWithinDualMarketCeiling === true &&
-      candidate.condition.status === "SUPPORTED" && quantityPassesMoq
+      candidate.condition.status === "SUPPORTED" && quantityPassesMoq &&
+      !amazonCompetitionReviewRequired
       ? "READY_FOR_OWNER_BUY_REVIEW" as const : "HOLD" as const
 
   let nextBestEvidence: { action: SellerOs888LotsDualMarketNextActionV1,
@@ -725,6 +804,11 @@ export function preview888LotsDualMarketplaceSourcingV1(input: {
     nextBestEvidence = { action: "VERIFY_AMAZON_ELIGIBILITY", priority: 1,
       reasonCode: "AMAZON_ASIN_CATEGORY_BRAND_ELIGIBILITY_REQUIRED",
       authority: "AMAZON_RESTRICTION_CATEGORY_BRAND_GTIN_GATE_V1", inventedEvidence: false }
+  } else if (amazonCompetitionReviewRequired) {
+    nextBestEvidence = { action: "REVIEW_AMAZON_COMPETITION", priority: 1,
+      reasonCode: "AMAZON_HIGH_OFFER_DEPTH_OWNER_REVIEW_REQUIRED",
+      authority: "AMAZON_PRODUCT_OPPORTUNITY_EXPLORER_OWNER_READONLY",
+      inventedEvidence: false }
   } else if (decision === "READY_FOR_OWNER_BUY_REVIEW") {
     nextBestEvidence = { action: "READY_FOR_OWNER_BUY_REVIEW", priority: 1,
       reasonCode: "DUAL_MARKET_DEMAND_AND_ECONOMICS_SUPPORTED_FOR_REVIEW",
@@ -746,17 +830,23 @@ export function preview888LotsDualMarketplaceSourcingV1(input: {
       inboundCostPerUnitUsd, currentCostWithinDualMarketCeiling,
       combinedVelocityUnitsPerDay, recommendedPurchaseQuantity,
       quantityPassesMoq,
+      quantityBasis: demandBasedInitialUnits !== null
+        ? "DEMAND_VELOCITY" : policyLimitedTestUnits !== null
+          ? "POLICY_LIMITED_TEST_NOT_VELOCITY" : "UNPROVEN",
       quantityReasonCode: recommendedPurchaseQuantity === null
         ? "DUAL_MARKET_DEMAND_REQUIRED"
         : recommendedPurchaseQuantity < 1
           ? "CONSERVATIVE_INITIAL_DEMAND_BELOW_ONE_UNIT"
           : quantityPassesMoq
-            ? "CONSERVATIVE_14_DAY_10_PERCENT_CAPTURE_CAPPED_12"
+            ? demandBasedInitialUnits !== null
+              ? "CONSERVATIVE_14_DAY_10_PERCENT_CAPTURE_CAPPED_12"
+              : "POLICY_LIMITED_THREE_UNIT_TEST_NOT_DEMAND_ESTIMATE"
             : "CONSERVATIVE_INITIAL_BUY_BELOW_SUPPLIER_MOQ",
       purchasePolicy: { contractVersion: "SELLER_OS_888LOTS_INITIAL_BUY_POLICY_V1",
         coverageDays: INITIAL_BUY_COVERAGE_DAYS,
         marketCaptureRate: INITIAL_BUY_CAPTURE_RATE,
         maximumInitialUnits: INITIAL_BUY_MAX_UNITS,
+        maximumPolicyLimitedTestUnits: POLICY_LIMITED_TEST_MAX_UNITS,
         supplierAvailabilityCap: true, supplierMoqRequired: true } },
     nextBestEvidence,
     reusedAuthorities: ["CANONICAL_OPPORTUNITY_RESULT_V2",
@@ -771,4 +861,102 @@ export function preview888LotsDualMarketplaceSourcingV1(input: {
       ebayWrites: 0, amazonWrites: 0, publications: 0, repricing: 0 },
   }
   return { ...result, evidenceDigest: digest(result) }
+}
+
+export function build888LotsCommercialMemoryV1(input: {
+  evaluation: ReturnType<typeof preview888LotsDualMarketplaceSourcingV1>
+  evaluationReceiptId: string
+  evaluationReceiptDigest: string
+  observedAt: string
+}) {
+  const { evaluation } = input
+  const candidate = evaluation.candidate
+  if (!candidate.candidate.supplierProductId ||
+    !candidate.candidate.supplierVariantId ||
+    !candidate.candidate.canonicalSku ||
+    !candidate.candidate.title ||
+    !candidate.inventory.availableQuantity ||
+    candidate.inventory.availableQuantity < 1) {
+    throw new Error("SELLER_OS_888LOTS_COMMERCIAL_MEMORY_IDENTITY_INVALID")
+  }
+  const decision = evaluation.sourcing.decision === "READY_FOR_OWNER_BUY_REVIEW"
+    ? "GO" as const : evaluation.sourcing.decision === "REJECT"
+      ? "REJECT" as const : "HOLD" as const
+  const demandSupported = [evaluation.marketplaces.ebay,
+    evaluation.marketplaces.amazon].some((entry) => entry.evidence?.demand.supported)
+  const demandProven = [evaluation.marketplaces.ebay,
+    evaluation.marketplaces.amazon].every((entry) =>
+      entry.evidence?.demand.evidenceKind === "EXACT_UNITS_SOLD" &&
+      entry.evidence?.demand.supported)
+  const freshness = candidate.inventory.freshness === "STALE" ||
+    [evaluation.marketplaces.ebay, evaluation.marketplaces.amazon]
+      .some((entry) => entry.evidence?.freshness === "STALE")
+    ? "STALE" as const : "FRESH" as const
+  const blockers = [...new Set([
+    ...candidate.blockers,
+    ...(evaluation.marketplaces.amazon.evidence?.competition.ownerReviewRequired
+      ? ["AMAZON_HIGH_OFFER_DEPTH_OWNER_REVIEW_REQUIRED"] : []),
+    ...(decision === "HOLD" ? [evaluation.nextBestEvidence.reasonCode] : []),
+  ])]
+  const completedStages = ["DISCOVERED",
+    ...(demandProven ? ["DEMAND_PROVEN"] : demandSupported
+      ? ["DEMAND_SUPPORTED"] : []),
+    ...(candidate.candidate.asin || candidate.candidate.upc || candidate.candidate.ean
+      ? ["PRODUCT_FIT"] : []),
+    ...(candidate.costs.status === "SUPPORTED" ? ["SHIPPING", "ECONOMICS"] : []),
+    decision,
+  ]
+  const memoryWithoutDigest = {
+    contractVersion: "SELLER_OS_COMMERCIAL_OPPORTUNITY_MEMORY_V1",
+    canonicalResultVersion: "CANONICAL_OPPORTUNITY_RESULT_V2_2026_08_12",
+    candidate: { sourceKey: SELLER_OS_888LOTS_SOURCE_KEY,
+      productId: candidate.candidate.supplierProductId,
+      variantId: candidate.candidate.supplierVariantId,
+      supplierSku: candidate.candidate.canonicalSku,
+      supplierQuantity: candidate.inventory.availableQuantity,
+      title: candidate.candidate.title },
+    lifecycleStage: decision,
+    completedStages: [...new Set(completedStages)],
+    decision,
+    demand: { status: demandProven ? "PROVEN" : demandSupported
+      ? "SUPPORTED" : "UNPROVEN", soldQuantity: null,
+      realizedBuyerLandedPrice: null,
+      noFalseZero: true,
+      authorities: { ebay: evaluation.marketplaces.ebay.evidence,
+        amazon: evaluation.marketplaces.amazon.evidence } },
+    productFit: { status: candidate.candidate.asin || candidate.candidate.upc ||
+      candidate.candidate.ean ? "SUPPORTED" : "UNPROVEN",
+      supplierIdentity: candidate.candidate },
+    shipping: { status: candidate.costs.status,
+      deliveredUnitCostUsd: candidate.costs.deliveredUnitCostUsd },
+    economics: { status: [evaluation.marketplaces.ebay,
+      evaluation.marketplaces.amazon].every((entry) => entry.evidence?.economics.supported)
+      ? "SUPPORTED" : "UNPROVEN", minimumNetProfitUsd: MINIMUM_NET_PROFIT_USD,
+      ebay: evaluation.marketplaces.ebay,
+      amazon: evaluation.marketplaces.amazon,
+      conservativeMaxSupplierUnitCostUsd:
+        evaluation.sourcing.conservativeMaxSupplierUnitCostUsd },
+    duplicateGate: { status: evaluation.marketplaces.ebay.evidence?.eligibility.supported
+      ? "SUPPORTED" : "UNPROVEN" },
+    supplier: candidate,
+    sourcing: evaluation.sourcing,
+    evidenceFreshness: freshness,
+    blockers,
+    nextBestEvidence: evaluation.nextBestEvidence,
+    decisionProvenance: { evaluationReceiptId: input.evaluationReceiptId,
+      evaluationEvidenceDigest: input.evaluationReceiptDigest,
+      sourceEvaluationEvidenceDigest: evaluation.evidenceDigest,
+      minimumNetProfitUsd: MINIMUM_NET_PROFIT_USD,
+      failClosed: true,
+      captureMode: "OWNER_MANUAL_PUBLIC_CATALOG_AND_MARKETPLACE_READONLY" },
+    marketOpportunityCase: { opportunityCaseId: null, familyId: null,
+      linkageStatus: "UNPROVEN_NOT_INVENTED" },
+    experimentRegistry: { status: "UNPROVEN", experimentId: null,
+      authority: "EBAY_LISTING_EXPERIMENTS_V1" },
+    observedAt: input.observedAt,
+    safety: { marketplaceWrites: 0, publications: 0, repricing: 0,
+      ebayMutationAllowed: false, amazonMutationAllowed: false,
+      supplierPurchases: 0 },
+  }
+  return { ...memoryWithoutDigest, memoryDigest: digest(memoryWithoutDigest) }
 }

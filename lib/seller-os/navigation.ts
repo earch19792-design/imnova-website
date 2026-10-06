@@ -51,6 +51,7 @@ export const SELLER_OS_NAVIGATION: readonly SellerOsNavigationItem[] = Object.fr
     "Examinar oportunidades antes de preparar una publicación.", 2, [
       child("pre-research", "Pre-Research", "/admin/ebay/opportunity-queue/research"),
       child("radar", "Radar", "/admin/ebay/mobile-review"),
+      child("supplier-888lots", "888lots + Amazon", "/admin/marketplace/888lots"),
       child("luna-matches", "Matches Luna", "/admin/ebay/opportunity-queue"),
       child("preparation", "Preparación", "/admin/ebay/quick-pick"),
     ]),

@@ -40,6 +40,7 @@
     "app/admin/ebay/strategic-review/page.tsx",
     "app/admin/ebay/teo-listings/page.tsx",
     "app/admin/login/page.tsx",
+    "app/admin/marketplace/888lots/page.tsx",
     "app/admin/page.tsx",
     "app/page.tsx",
     "app/privacy/page.tsx",
