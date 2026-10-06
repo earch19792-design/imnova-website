@@ -399,7 +399,6 @@ export async function POST(req: Request) {
       currentLiveAuthorityRecovery = await runCurrentLiveAuthorityRecoveryV1({
         supabase, accountKey,
         accountAlias: getEbaySellerAccountScopeConfiguration().accountAlias,
-        recheckQuotaBeforeRetry: true,
       })
       console.info("CURRENT_LIVE_AUTHORITY_RECOVERY_RECEIPT_V1",
         currentLiveRecoveryDiagnostics(currentLiveAuthorityRecovery))
