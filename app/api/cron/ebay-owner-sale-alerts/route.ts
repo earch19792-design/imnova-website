@@ -88,8 +88,15 @@ export async function POST(req: Request) {
       status: receipt.status,
       laneStatus: lane.status,
       sourceStatus: lane.sourceStatus,
+      errorCode: "errorCode" in lane ? lane.errorCode : null,
+      accountIdentitySource: "accountIdentitySource" in lane
+        ? lane.accountIdentitySource : null,
       orderCount: lane.orderCount,
+      observedOrderCount: "observedOrderCount" in lane
+        ? lane.observedOrderCount : null,
       lineCount: lane.lineCount,
+      observedLineCount: "observedLineCount" in lane
+        ? lane.observedLineCount : null,
       ownerAlertOutboxesCreated: "ownerAlertOutboxesCreated" in lane
         ? lane.ownerAlertOutboxesCreated : 0,
       targetedRecoveryScan: "targetedRecoveryScan" in lane

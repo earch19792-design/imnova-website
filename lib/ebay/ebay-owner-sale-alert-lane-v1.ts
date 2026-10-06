@@ -6,6 +6,8 @@ import {
   normalizeCommercialThresholds,
   persistOrdersAndSales,
 } from "./ebay-commercial-monitor-service"
+import { getEbayOfficialOrdersLiveReadonly } from
+  "./ebay-commercial-monitor-live-readonly"
 import { getEbayCompletedCheckoutOrders } from "./ebay-commercial-readers"
 import { getEbaySellerAccountScopeConfiguration } from
   "./ebay-seller-account-scope"
@@ -30,6 +32,18 @@ const TARGETED_RECOVERY = Object.freeze({
 })
 
 type OrderReader = typeof getEbayCompletedCheckoutOrders
+type OrderReadResponse = Awaited<ReturnType<OrderReader>> & {
+  sourceStatus?: "AVAILABLE" | "PARTIAL"
+  accountIdentitySource?:
+    | "EBAY_TRADING_GET_USER"
+    | "EBAY_SELL_FULFILLMENT_GET_ORDERS_SELLER_ID"
+    | null
+}
+type FallbackOrderReader = (input: {
+  accountKey: string
+  modifiedFrom: string
+  modifiedTo: string
+}) => Promise<OrderReadResponse>
 
 function safeCode(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : ""
@@ -89,9 +103,11 @@ async function orderCursorPlan(
 async function ownerSaleOrderRead(
   supabase: SupabaseClient,
   input: {
+    accountKey: string
     modifiedFrom: string
     modifiedTo: string
     readOrders: OrderReader
+    readFallback?: FallbackOrderReader
   },
 ) {
   const dependencies = [
@@ -113,9 +129,16 @@ async function ownerSaleOrderRead(
     }
   }
   try {
-    return await input.readOrders({
+    const response = await input.readOrders({
       modifiedFrom: input.modifiedFrom,
       modifiedTo: input.modifiedTo,
+    })
+    return Object.freeze({
+      ...response,
+      sourceStatus: response.rawOrdersDiscardedAfterSanitization > 0
+        ? "PARTIAL" as const
+        : "AVAILABLE" as const,
+      accountIdentitySource: "EBAY_TRADING_GET_USER" as const,
     })
   } catch (error) {
     const dependency = dependencies.at(-1) as (typeof dependencies)[number]
@@ -130,8 +153,65 @@ async function ownerSaleOrderRead(
       },
       retryCount: 0,
     })
+    if (input.readFallback) {
+      return input.readFallback({
+        accountKey: input.accountKey,
+        modifiedFrom: input.modifiedFrom,
+        modifiedTo: input.modifiedTo,
+      })
+    }
     throw error
   }
+}
+
+/**
+ * Existing fixed-account Orders reader. It can prove the canonical account
+ * from the Fulfillment token's seller_id when Trading GetUser is temporarily
+ * unavailable, without weakening the account binding or consulting Registry.
+ */
+async function canonicalFixedAccountOrderFallback(
+  input: Parameters<FallbackOrderReader>[0],
+): Promise<OrderReadResponse> {
+  const account = getEbaySellerAccountScopeConfiguration()
+  const evidence = await getEbayOfficialOrdersLiveReadonly({
+    accountKey: input.accountKey,
+    accountAlias: account.accountAlias,
+  })
+  if (evidence.canonicalAccountBinding !== "MATCHED" ||
+      !["CERTIFIED", "PARTIAL"].includes(evidence.orders.status)) {
+    const code = evidence.orders.gapCodes.find((candidate) =>
+      /^[A-Z0-9_]+$/.test(candidate)) ??
+      "EBAY_OWNER_SALE_CANONICAL_ORDER_FALLBACK_UNAVAILABLE"
+    throw new Error(code)
+  }
+  const modifiedFrom = Date.parse(input.modifiedFrom)
+  const modifiedTo = Date.parse(input.modifiedTo)
+  const orders: SafeMarketplaceOrder[] = evidence.orders.orders.filter(
+    (order) => {
+      const modifiedAt = Date.parse(order.lastModifiedDate)
+      return modifiedAt >= modifiedFrom && modifiedAt <= modifiedTo
+    },
+  ).map((order) => ({
+    ...order,
+    lineItems: order.lineItems.map((line) => ({
+      ...line,
+      // The fixed-account projection deliberately omits titles. An empty
+      // optional display value is persisted rather than fabricating one.
+      title: "",
+    })),
+  }))
+  return Object.freeze({
+    status: "AVAILABLE" as const,
+    source: "EBAY_SELL_FULFILLMENT_GET_ORDERS" as const,
+    sourceStatus: evidence.orders.status === "CERTIFIED"
+      ? "AVAILABLE" as const : "PARTIAL" as const,
+    accountIdentitySource: evidence.accountIdentitySource,
+    orders,
+    observedAt: evidence.orders.observedAt ?? new Date().toISOString(),
+    pagesRead: evidence.orders.pagesRead,
+    rawOrdersDiscardedAfterSanitization:
+      evidence.orders.rawOrdersDiscardedAfterSanitization,
+  })
 }
 
 /**
@@ -145,6 +225,7 @@ export async function runEbayOwnerSaleAlertLaneV1(
     accountKey?: string
     now?: Date
     readOrders?: OrderReader
+    readFallback?: FallbackOrderReader
   } = {},
 ) {
   const accountKey = input.accountKey ??
@@ -171,12 +252,16 @@ export async function runEbayOwnerSaleAlertLaneV1(
       marketplaceWrites: 0 as const,
     })
   }
-  let response: Awaited<ReturnType<OrderReader>>
+  let response: OrderReadResponse
   try {
     response = await ownerSaleOrderRead(supabase, {
+      accountKey,
       modifiedFrom: cursor.modifiedFrom,
       modifiedTo: observedAt,
       readOrders: input.readOrders ?? getEbayCompletedCheckoutOrders,
+      readFallback: input.readFallback ?? (input.readOrders
+        ? undefined
+        : canonicalFixedAccountOrderFallback),
     })
   } catch (error) {
     return Object.freeze({
@@ -223,7 +308,8 @@ export async function runEbayOwnerSaleAlertLaneV1(
     success: true as const,
     status: "COMPLETED" as const,
     source: response.source,
-    sourceStatus: "AVAILABLE" as const,
+    sourceStatus: response.sourceStatus ?? "AVAILABLE" as const,
+    accountIdentitySource: response.accountIdentitySource ?? null,
     observedAt,
     modifiedFrom: cursor.modifiedFrom,
     incrementalFrom: cursor.incrementalFrom,
@@ -231,8 +317,11 @@ export async function runEbayOwnerSaleAlertLaneV1(
     targetedRecoveryOrderObserved: orders.some((order) =>
       order.ebayOrderId === TARGETED_RECOVERY.orderId),
     upstreamOrderCount: response.orders.length,
-    orderCount: orders.length,
-    lineCount: orders.reduce((sum, order) =>
+    orderCount: response.sourceStatus === "PARTIAL" ? null : orders.length,
+    observedOrderCount: orders.length,
+    lineCount: response.sourceStatus === "PARTIAL" ? null : orders.reduce(
+      (sum, order) => sum + order.lineItems.length, 0),
+    observedLineCount: orders.reduce((sum, order) =>
       sum + order.lineItems.length, 0),
     pagesRead: response.pagesRead,
     newSales: work.newSales,
@@ -244,7 +333,7 @@ export async function runEbayOwnerSaleAlertLaneV1(
     stockGuardRequired: false as const,
     lunaLinkageRequired: false as const,
     analyticsRequired: false as const,
-    falseZeroPrevented: false as const,
+    falseZeroPrevented: response.sourceStatus === "PARTIAL",
     marketplaceWrites: 0 as const,
   })
 }
