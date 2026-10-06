@@ -16,6 +16,12 @@ import {
   SELLER_OS_888LOTS_SOURCE_KEY,
   SELLER_OS_888LOTS_TEMPLATE_HEADERS_V1,
 } from "@/lib/marketplace/seller-os-888lots-supplier-onboarding-v1"
+import {
+  get888LotsRadarDashboardV1,
+  run888LotsPublicRadarSyncV1,
+  SELLER_OS_888LOTS_PUBLIC_VIEWS_V1,
+  type SellerOs888LotsPublicViewV1,
+} from "@/lib/marketplace/seller-os-888lots-public-radar-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
@@ -56,6 +62,14 @@ export async function GET(req: Request) {
   if (recent.error) {
     return json({ success: false, error: "SELLER_OS_888LOTS_MEMORY_READ_FAILED" }, 503)
   }
+  let radar
+  try {
+    radar = await get888LotsRadarDashboardV1({ supabase,
+      accountKey: account.accountKey })
+  } catch {
+    return json({ success: false,
+      error: "SELLER_OS_888LOTS_RADAR_READ_FAILED" }, 503)
+  }
   return json({
     success: true,
     contractVersion: SELLER_OS_888LOTS_IMPORT_CONTRACT_V1,
@@ -68,6 +82,8 @@ export async function GET(req: Request) {
     maximumRows: SELLER_OS_888LOTS_MAX_PREVIEW_ROWS,
     manualCaptureContractVersion: SELLER_OS_888LOTS_MANUAL_CAPTURE_V1,
     recentCandidates: recent.data ?? [],
+    radar,
+    publicCatalogViews: SELLER_OS_888LOTS_PUBLIC_VIEWS_V1,
     nextStep: "CAPTURE_PUBLIC_888LOTS_PRODUCT_AND_MARKETPLACE_EVIDENCE",
     safety: { scrapeRequests: 0, internalDatabaseWrites: true, supplierPurchases: 0,
       marketplaceWrites: 0, publications: 0, repricing: 0, canPublish: false },
@@ -81,6 +97,26 @@ export async function POST(req: Request) {
   }
   try {
     const body = record(await req.json())
+    if (body.action === "SYNC_PUBLIC_CATALOG_VIEW") {
+      const sourceView = typeof body.sourceView === "string" &&
+        SELLER_OS_888LOTS_PUBLIC_VIEWS_V1.includes(
+          body.sourceView as SellerOs888LotsPublicViewV1)
+        ? body.sourceView as SellerOs888LotsPublicViewV1 : null
+      if (!sourceView) {
+        return json({ success: false,
+          error: "SELLER_OS_888LOTS_PUBLIC_VIEW_INVALID" }, 400)
+      }
+      const supabase = getSupabaseAdminClient()
+      const sync = await run888LotsPublicRadarSyncV1({ supabase, sourceView })
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) {
+        return json({ success: false,
+          error: "SELLER_OS_CANONICAL_ACCOUNT_REQUIRED" }, 503)
+      }
+      const radar = await get888LotsRadarDashboardV1({ supabase,
+        accountKey: account.accountKey })
+      return json({ success: true, action: body.action, sync, radar })
+    }
     if (body.action === "CAPTURE_MANUAL_DUAL_MARKETPLACE_SOURCING") {
       const now = new Date()
       const capturedAt = typeof body.capturedAt === "string"
