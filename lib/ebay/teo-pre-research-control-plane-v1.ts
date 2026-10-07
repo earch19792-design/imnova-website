@@ -246,6 +246,7 @@ Readonly<{
   const missingRead = await input.supabase.from(
     "seller_os_pre_research_batch_members_v1")
     .select("batch_id").is("plan_id", null)
+    .neq("execution_state", "QUARANTINED")
     .order("created_at", { ascending: true }).limit(1000)
   if (missingRead.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READ_FAILED")
   const missingBatchIds = [...new Set((missingRead.data ?? []).flatMap(
@@ -272,11 +273,13 @@ Readonly<{
   }
   const memberRead = await input.supabase.from(
     "seller_os_pre_research_batch_members_v1")
-    .select("luna_product_id,luna_variant_id,luna_sku")
+    .select("member_id,luna_product_id,luna_variant_id,luna_sku")
     .eq("batch_id", batchId).is("plan_id", null)
+    .neq("execution_state", "QUARANTINED")
     .order("ordinal", { ascending: true }).limit(50)
   if (memberRead.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READ_FAILED")
   const candidates = (memberRead.data ?? []).map((member) => Object.freeze({
+    memberId: uuid(member.member_id),
     productId: text(member.luna_product_id, 40),
     variantId: text(member.luna_variant_id, 40),
     sku: text(member.luna_sku, 160),
@@ -284,37 +287,71 @@ Readonly<{
   if (!candidates.length) return Object.freeze({ batchesScanned: 1,
     batchesSealed: 0, plansAttached: 0, marketplaceWrites: 0 as const })
   const planBindings: JsonRecord[] = []
-  for (let offset = 0; offset < candidates.length; offset += 10) {
-    const plans = await requestLunaPreResearchV1({ supabase: input.supabase,
-      accountKey: input.accountKey, snapshotId,
-      candidates: candidates.slice(offset, offset + 10) })
-    for (const value of plans.results) {
-      const result = record(value)
-      const planId = uuid(result.planId)
-      if (result.status !== "PRE_RESEARCH_QUEUED" || !planId) {
-        fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_PLAN_FAILED")
+  let membersQuarantined = 0
+  for (const candidate of candidates) {
+    if (!candidate.memberId) {
+      fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_IDENTITY_INVALID")
+    }
+    try {
+      const plans = await requestLunaPreResearchV1({ supabase: input.supabase,
+        accountKey: input.accountKey, snapshotId, candidates: [{
+          productId: candidate.productId, variantId: candidate.variantId,
+          sku: candidate.sku,
+        }] })
+      for (const value of plans.results) {
+        const result = record(value)
+        const planId = uuid(result.planId)
+        if (result.status !== "PRE_RESEARCH_QUEUED" || !planId) {
+          throw new Error("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_PLAN_FAILED")
+        }
+        planBindings.push({ productId: result.productId,
+          variantId: result.variantId, sku: result.sku, planId })
       }
-      planBindings.push({ productId: result.productId,
-        variantId: result.variantId, sku: result.sku, planId })
+    } catch (cause) {
+      const code = cause instanceof Error &&
+        ["LUNA_PRE_RESEARCH_QUERY_EMPTY",
+          "TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_PLAN_FAILED"]
+          .includes(cause.message)
+        ? cause.message : null
+      if (!code) throw cause
+      const quarantined = await input.supabase.rpc(
+        "quarantine_seller_os_missing_pre_research_plan_v2", {
+          p_marketplace_account_key: input.accountKey,
+          p_batch_id: batchId,p_member_id: candidate.memberId,
+          p_error_code: code,
+        })
+      if (quarantined.error ||
+          rpcRow(quarantined.data).state !== "QUARANTINED") {
+        fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_QUARANTINE_FAILED")
+      }
+      membersQuarantined += 1
     }
   }
-  if (planBindings.length !== candidates.length) {
-    fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_PLAN_FAILED")
+  let attachedResult: JsonRecord = {}
+  if (planBindings.length > 0) {
+    const attached = await input.supabase.rpc(
+      "attach_seller_os_pre_research_batch_plans_v1", {
+        p_batch_id: batchId, p_owner_user_id: ownerUserId,
+        p_command_client_id: commandClientId, p_plans: planBindings,
+      })
+    if (attached.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_ATTACH_FAILED")
+    attachedResult = rpcRow(attached.data)
+    if (Number(attachedResult.newPlanAttachments ?? -1) < 0) {
+      fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READBACK_FAILED")
+    }
   }
-  const attached = await input.supabase.rpc(
-    "attach_seller_os_pre_research_batch_plans_v1", {
-      p_batch_id: batchId, p_owner_user_id: ownerUserId,
-      p_command_client_id: commandClientId, p_plans: planBindings,
-    })
-  if (attached.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_ATTACH_FAILED")
-  const result = rpcRow(attached.data)
-  if (result.planAttachmentComplete !== true ||
-      Number(result.missingPlanAttachments) !== 0) {
+  const remaining = await input.supabase.from(
+    "seller_os_pre_research_batch_members_v1")
+    .select("member_id").eq("batch_id", batchId).is("plan_id", null)
+    .neq("execution_state", "QUARANTINED").limit(1)
+  if (remaining.error || (remaining.data ?? []).length > 0) {
     fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READBACK_FAILED")
   }
-  return Object.freeze({ batchesScanned: 1, batchesSealed: 1,
-    plansAttached: Number(result.newPlanAttachments ?? 0),
-    batchId, state: result.state, marketplaceWrites: 0 as const })
+  return Object.freeze({ batchesScanned: 1,
+    batchesSealed: attachedResult.planAttachmentComplete === true ? 1 : 0,
+    plansAttached: Number(attachedResult.newPlanAttachments ?? 0),
+    membersQuarantined,batchId,state: attachedResult.state ?? "REQUESTED",
+    marketplaceWrites: 0 as const })
 }
 
 function numeric(value: unknown) {
