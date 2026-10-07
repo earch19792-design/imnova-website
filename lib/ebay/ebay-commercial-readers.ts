@@ -1,6 +1,7 @@
 import {
   getEbaySellerTrafficPerformance,
 } from "./ebay-seller-analytics-readonly-gateway"
+import { createHash } from "node:crypto"
 import { normalizeEbaySellerTrafficReport } from "./ebay-seller-traffic-report"
 import { reconcileEbayTrafficAnalyticsReport } from "./ebay-commercial-analytics-domain"
 import {
@@ -45,9 +46,24 @@ const MAX_MESSAGE_PAGES = 5
 const MAX_MESSAGE_API_CALLS = 40
 const MAX_MESSAGE_WINDOW_SPLITS = 8
 const WATCHER_CONCURRENCY = 4
+const OFFICIAL_ACCOUNT_VERIFICATION_CACHE_TTL_MS = 55 * 60_000
+const OFFICIAL_ACCOUNT_VERIFICATION_CACHE_MAX_ENTRIES = 8
 
 type JsonRecord = Record<string, unknown>
 type FetchLike = typeof fetch
+type OfficialAccountVerification = {
+  identityMatch: true
+  fingerprintMatches: true
+  userIdReturned: false
+}
+
+const officialAccountVerificationCache = new WeakMap<
+  FetchLike,
+  Map<string, {
+    expiresAt: number
+    result: Promise<OfficialAccountVerification>
+  }>
+>()
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -107,48 +123,78 @@ export async function verifyEbayCommercialOfficialAccount(
 ) {
   const identity = getEbayProductionIdentityBindingConfiguration()
   if (!identity.bound) throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_REQUIRED")
-  const response = await fetchImpl(TRADING_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/xml",
-      "X-EBAY-API-CALL-NAME": "GetUser",
-      "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
-      "X-EBAY-API-SITEID": "0",
-      "X-EBAY-API-IAF-TOKEN": accessToken,
-    },
-    body: "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
-      "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
-      "<OutputSelector>User.UserID</OutputSelector>" +
-      "</GetUserRequest>",
-    cache: "no-store",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  })
-  const xml = await response.text()
-  if (response.status === 429) {
-    throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, {
-      apiFamily: "TRADING",
-      operation: "GET_USER",
-      endpoint: "/ws/api.dll",
+  const now = Date.now()
+  const cacheKey = createHash("sha256").update(JSON.stringify([
+    accessToken,
+    identity.expectedUserId,
+    identity.expectedAccountFingerprint,
+  ])).digest("hex")
+  const cache = officialAccountVerificationCache.get(fetchImpl) ?? new Map()
+  officialAccountVerificationCache.set(fetchImpl, cache)
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key)
+  }
+  const cached = cache.get(cacheKey)
+  if (cached && cached.expiresAt > now) return cached.result
+
+  const verification = (async (): Promise<OfficialAccountVerification> => {
+    const response = await fetchImpl(TRADING_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml",
+        "X-EBAY-API-CALL-NAME": "GetUser",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-IAF-TOKEN": accessToken,
+      },
+      body: "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+        "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+        "<OutputSelector>User.UserID</OutputSelector>" +
+        "</GetUserRequest>",
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
+    const xml = await response.text()
+    if (response.status === 429) {
+      throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, {
+        apiFamily: "TRADING",
+        operation: "GET_USER",
+        endpoint: "/ws/api.dll",
+      })
+    }
+    const ack = xmlValue(xml, "Ack")?.toLowerCase()
+    const userId = xmlValue(xml, "UserID")
+    if (!response.ok || !["success", "warning"].includes(ack ?? "") || !userId) {
+      throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_UNAVAILABLE")
+    }
+    const userMatches = !identity.expectedUserId ||
+      identity.expectedUserId.toLocaleLowerCase("en-US") === userId.toLocaleLowerCase("en-US")
+    const fingerprintMatches = ebayProductionAccountFingerprint(userId) === identity.expectedAccountFingerprint
+    if (!userMatches) {
+      throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_MISMATCH")
+    }
+    if (!fingerprintMatches) {
+      throw new Error("EBAY_COMMERCIAL_ACCOUNT_FINGERPRINT_MISMATCH")
+    }
+    return {
+      identityMatch: true,
+      fingerprintMatches: true,
+      userIdReturned: false,
+    }
+  })()
+  cache.set(cacheKey, {
+    expiresAt: now + OFFICIAL_ACCOUNT_VERIFICATION_CACHE_TTL_MS,
+    result: verification,
+  })
+  if (cache.size > OFFICIAL_ACCOUNT_VERIFICATION_CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value
+    if (oldestKey) cache.delete(oldestKey)
   }
-  const ack = xmlValue(xml, "Ack")?.toLowerCase()
-  const userId = xmlValue(xml, "UserID")
-  if (!response.ok || !["success", "warning"].includes(ack ?? "") || !userId) {
-    throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_UNAVAILABLE")
-  }
-  const userMatches = !identity.expectedUserId ||
-    identity.expectedUserId.toLocaleLowerCase("en-US") === userId.toLocaleLowerCase("en-US")
-  const fingerprintMatches = ebayProductionAccountFingerprint(userId) === identity.expectedAccountFingerprint
-  if (!userMatches) {
-    throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_MISMATCH")
-  }
-  if (!fingerprintMatches) {
-    throw new Error("EBAY_COMMERCIAL_ACCOUNT_FINGERPRINT_MISMATCH")
-  }
-  return {
-    identityMatch: true as const,
-    fingerprintMatches: true as const,
-    userIdReturned: false as const,
+  try {
+    return await verification
+  } catch (error) {
+    cache.delete(cacheKey)
+    throw error
   }
 }
 

@@ -1177,7 +1177,9 @@ export type CommercialListingIdentity = {
   marketplaceCertification:
     | {
         status: "US_CERTIFIED"
-        source: "EBAY_TRADING_GET_ITEM"
+        source:
+          | "EBAY_TRADING_GET_MY_EBAY_SELLING"
+          | "EBAY_TRADING_GET_ITEM"
         observedAt: string
         grain: "ITEM"
       }

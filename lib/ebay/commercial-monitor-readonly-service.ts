@@ -133,7 +133,9 @@ const RESPONSE_LOCAL_LIVE_PRESENCE = Symbol("RESPONSE_LOCAL_LIVE_PRESENCE")
 
 type ResponseLocalMarketplaceCertification = {
   status: "US_CERTIFIED"
-  source: "EBAY_TRADING_GET_ITEM"
+  source:
+    | "EBAY_TRADING_GET_MY_EBAY_SELLING"
+    | "EBAY_TRADING_GET_ITEM"
   observedAt: string
   marketplaceSite: "US"
   grain: "ITEM"
@@ -2294,7 +2296,8 @@ function withLiveReadonlyEvidence(input: {
       )
       const marketplaceCertifiedUs = listing.marketplaceSite === "US" &&
         listing.marketplaceCertification.status === "US_CERTIFIED" &&
-        marketplaceSource === "EBAY_TRADING_GET_ITEM" &&
+        (marketplaceSource === "EBAY_TRADING_GET_MY_EBAY_SELLING" ||
+          marketplaceSource === "EBAY_TRADING_GET_ITEM") &&
         Boolean(marketplaceObservedAt)
       const itemRows = stored.registry.rows.filter((row) =>
         row.ebay_item_id === listing.itemId)
@@ -2350,8 +2353,7 @@ function withLiveReadonlyEvidence(input: {
       created_at: linkedRow?.created_at ?? listing.observedAt,
       updated_at: linkedRow?.updated_at ?? listing.observedAt,
       [RESPONSE_LOCAL_LIVE_PRESENCE]: true,
-      ...(marketplaceCertifiedUs && marketplaceSource === "EBAY_TRADING_GET_ITEM" &&
-          marketplaceObservedAt
+      ...(marketplaceCertifiedUs && marketplaceSource && marketplaceObservedAt
         ? {
             [RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION]: {
               status: "US_CERTIFIED" as const,

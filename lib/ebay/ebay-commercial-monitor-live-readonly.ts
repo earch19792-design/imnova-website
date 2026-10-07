@@ -3569,11 +3569,22 @@ async function certifySellerWideItemMarketplaces(input: {
       })
       continue
     }
+    if (explicitSites.size === 1) {
+      const marketplaceSite = [...explicitSites][0]
+      certifications.set(itemId, {
+        status: marketplaceSite === "US"
+          ? "US_CERTIFIED"
+          : "NON_US_CERTIFIED",
+        marketplaceSite,
+        source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+        observedAt: rows.map((row) => row.observedAt).sort().at(-1) ?? null,
+        limitationCode: null,
+      })
+      continue
+    }
     pending.push({
       itemId,
-      sellerWideMarketplaceSite: explicitSites.size === 1
-        ? [...explicitSites][0]
-        : null,
+      sellerWideMarketplaceSite: null,
     })
   }
   const maximumUniqueItems = input.maximumUniqueItems ??
