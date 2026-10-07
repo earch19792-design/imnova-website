@@ -139,7 +139,7 @@ export default function ConnieAmazonPerformancePage() {
         ? "Listings capturados. Amazon está preparando ventas y tráfico; Seller OS los recogerá automáticamente en la siguiente pasada."
         : result.status === "WAITING_UPSTREAM"
           ? "Amazon pidió una pausa temporal. Seller OS conservó el reporte pendiente y volverá a leerlo sin convertir la espera en cero."
-          : `Sincronización terminada: ${Number(result.listingsAttributed ?? 0)} SKU de Connie detectados.`)
+          : `Sincronización terminada: ${Number(result.pendingProposalCandidates ?? 0)} propuesta(s) nueva(s) y ${Number(result.listingsAttributed ?? 0)} producto(s) ya confirmado(s).`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo sincronizar.")
     } finally { setSyncing(false) }
@@ -355,8 +355,9 @@ export default function ConnieAmazonPerformancePage() {
       <h2 className="text-xl font-black">Productos y siguiente evidencia</h2>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {cards.length === 0 && <p className="text-sm text-white/50">
-          Al conectarse Amazon, aparecerán automáticamente los listings cuyo
-          Seller SKU empiece con {String(connection.skuPrefix ?? "CON-")}.
+          {proposalInbox.length > 0
+            ? "Selecciona arriba una propuesta y registra costo y cantidad para ver su Buy Box, tarifas y ganancia."
+            : `Aparecerán automáticamente los SKU ${String(connection.skuPrefix ?? "CON-")} y los listings nuevos pendientes de revisión.`}
         </p>}
         {cards.map((card) => {
           const observation = object(card.observation)
