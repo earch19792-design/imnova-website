@@ -640,7 +640,7 @@ export async function readAmazonContributorPerformanceV1(input: {
       .eq("collaborator_id", collaborator.data.id)
       .order("updated_at", { ascending: false }).limit(1).maybeSingle(),
     input.supabase.from("seller_os_amazon_contributor_sku_attribution_v1")
-      .select("id,marketplace_id,seller_sku,asin,attribution_basis,status,title,listing_state,first_observed_at,last_observed_at")
+      .select("id,marketplace_id,seller_sku,asin,attribution_basis,status,title,listing_state,first_observed_at,last_observed_at,listing_price_usd,listing_available_quantity,listing_fulfillment_channel,featured_offer_state,featured_offer_price_usd,featured_offer_listing_price_usd,featured_offer_shipping_usd,featured_offer_fulfillment_channel,featured_offer_count,pricing_observed_at,pricing_authority,estimated_amazon_fees_usd,fee_estimate_state,fee_estimate_observed_at,fee_estimate_price_usd,fee_estimate_fulfillment_channel,fee_estimate_authority,demand_signal_state,display_group_rank,display_group_title,classification_rank,classification_title,catalog_observed_at,catalog_authority,seller_units_ordered_30d,seller_sales_30d_state,seller_sales_window_start,seller_sales_window_end,seller_sales_authority,market_monthly_sold_estimate,market_sales_rank_drops_30,market_sales_rank_drops_90,market_sales_rank_drops_180,market_demand_estimate_state,market_demand_estimate_method,market_demand_observed_at,market_demand_authority")
       .eq("collaborator_id", collaborator.data.id)
       .order("last_observed_at", { ascending: false }).limit(100),
   ])

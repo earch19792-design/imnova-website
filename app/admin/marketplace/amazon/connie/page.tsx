@@ -300,8 +300,9 @@ export default function ConnieAmazonPerformancePage() {
       </summary>
       <p className="mt-2 text-sm text-white/50">
         Selecciona el listing nuevo de Amazon, ingresa costo por unidad y la
-        cantidad disponible del proveedor. Esto también confirma que es una
-        propuesta de Connie.
+        cantidad disponible del proveedor. El Buy Box y las tarifas aparecen
+        antes de confirmar; estos dos datos calculan la ganancia y también
+        confirman que es una propuesta de Connie.
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <label className="grid min-w-0 gap-1 text-xs font-bold text-white/65">Seller SKU
@@ -339,14 +340,30 @@ export default function ConnieAmazonPerformancePage() {
 
     {proposalInbox.length > 0 && <section className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.06] p-5">
       <h2 className="text-xl font-black">Propuestas nuevas detectadas en Amazon</h2>
-      <p className="mt-2 text-sm text-white/55">Todavía no se atribuyen a Connie hasta que tú selecciones una y guardes costo y cantidad.</p>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <p className="mt-2 text-sm text-white/55">Puedes revisar precio, tarifas y demanda de mercado de los últimos meses antes de ingresar costo. Todavía no se atribuyen a Connie hasta que guardes costo y cantidad.</p>
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {proposalInbox.map((candidate) => <button type="button"
           key={String(candidate.id)} onClick={() => setCost((current) => ({
             ...current, sellerSku: String(candidate.seller_sku ?? "") }))}
-          className="rounded-xl border border-white/10 bg-black/20 p-3 text-left text-sm">
-          <strong>{String(candidate.title ?? "Producto nuevo")}</strong>
-          <span className="mt-1 block text-xs text-white/45">SKU {String(candidate.seller_sku ?? "—")} · ASIN {String(candidate.asin ?? "—")}</span>
+          className="min-w-0 rounded-xl border border-white/10 bg-black/20 p-4 text-left text-sm transition hover:border-violet-200/40">
+          <strong className="block break-words">{String(candidate.title ?? "Producto nuevo")}</strong>
+          <span className="mt-1 block break-all text-xs text-white/45">SKU {String(candidate.seller_sku ?? "—")} · ASIN {String(candidate.asin ?? "—")}</span>
+          <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-lg bg-white/[0.05] p-2"><dt className="text-white/40">Buy Box actual</dt><dd className="mt-1 font-black">{money(candidate.featured_offer_price_usd)}</dd></div>
+            <div className="rounded-lg bg-white/[0.05] p-2"><dt className="text-white/40">Tarifas Amazon</dt><dd className="mt-1 font-black">{money(candidate.estimated_amazon_fees_usd)}</dd></div>
+            <div className="rounded-lg bg-white/[0.05] p-2"><dt className="text-white/40">Precio de nuestro listing</dt><dd className="mt-1 font-black">{money(candidate.listing_price_usd)}</dd></div>
+            <div className="rounded-lg bg-white/[0.05] p-2"><dt className="text-white/40">Ranking Amazon</dt><dd className="mt-1 font-black">{candidate.display_group_rank == null ? "Sin evidencia" : `#${String(candidate.display_group_rank)}`}</dd></div>
+            <div className="rounded-lg bg-white/[0.05] p-2"><dt className="text-white/40">Ventas mercado estimadas · 30 días</dt><dd className="mt-1 font-black">{candidate.market_monthly_sold_estimate == null ? "Fuente pendiente" : `≈ ${String(candidate.market_monthly_sold_estimate)} unidades`}</dd></div>
+            <div className="rounded-lg bg-white/[0.05] p-2"><dt className="text-white/40">Movimientos de ranking · 30 días</dt><dd className="mt-1 font-black">{candidate.market_sales_rank_drops_30 == null ? "Sin evidencia" : String(candidate.market_sales_rank_drops_30)}</dd></div>
+            <div className="rounded-lg bg-white/[0.05] p-2"><dt className="text-white/40">Movimientos de ranking · 90 días</dt><dd className="mt-1 font-black">{candidate.market_sales_rank_drops_90 == null ? "Sin evidencia" : String(candidate.market_sales_rank_drops_90)}</dd></div>
+            <div className="rounded-lg bg-white/[0.05] p-2"><dt className="text-white/40">Movimientos de ranking · 180 días</dt><dd className="mt-1 font-black">{candidate.market_sales_rank_drops_180 == null ? "Sin evidencia" : String(candidate.market_sales_rank_drops_180)}</dd></div>
+          </dl>
+          <span className="mt-3 block text-[11px] leading-4 text-white/40">
+            Precio observado: {date(candidate.pricing_observed_at)}. La venta
+            mensual es una estimación de mercado de Keepa; los movimientos de
+            ranking muestran tendencia, no unidades exactas. Amazon SP-API no
+            entrega las ventas totales de todos los vendedores.
+          </span>
         </button>)}
       </div>
     </section>}
@@ -356,7 +373,7 @@ export default function ConnieAmazonPerformancePage() {
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {cards.length === 0 && <p className="text-sm text-white/50">
           {proposalInbox.length > 0
-            ? "Selecciona arriba una propuesta y registra costo y cantidad para ver su Buy Box, tarifas y ganancia."
+            ? "Selecciona arriba una propuesta y registra costo y cantidad para calcular la ganancia. El Buy Box y las tarifas ya están visibles en la propuesta."
             : `Aparecerán automáticamente los SKU ${String(connection.skuPrefix ?? "CON-")} y los listings nuevos pendientes de revisión.`}
         </p>}
         {cards.map((card) => {

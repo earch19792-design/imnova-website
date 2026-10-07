@@ -15,8 +15,14 @@ import {
   type AmazonCatalogDemandSignalV1,
   type AmazonCompetitiveSummaryV1,
   type AmazonFeeEstimateV1,
+  type AmazonListingReadV1,
   type AmazonSalesTrafficMetricV1,
 } from "@/lib/marketplace/amazon-sp-api-readonly-v1"
+import {
+  getKeepaMarketDemandConfigurationV1,
+  readKeepaMarketDemandV1,
+  type KeepaMarketDemandV1,
+} from "@/lib/marketplace/keepa-market-demand-readonly-v1"
 import {
   buildAmazonContributorObservationV1,
   persistAmazonContributorObservationV1,
@@ -55,7 +61,7 @@ function daysBetween(start: string, end: string) {
 function reportWindow(now: Date) {
   const end = new Date(now.getTime() - 72 * 60 * 60 * 1_000)
   end.setUTCHours(23, 59, 59, 999)
-  const start = new Date(end.getTime() - 27 * 86_400_000)
+  const start = new Date(end.getTime() - 29 * 86_400_000)
   start.setUTCHours(0, 0, 0, 0)
   return { start: start.toISOString(), end: end.toISOString() }
 }
@@ -151,6 +157,109 @@ function marketFromEvidence(existing: Json,
     featuredOfferCount: market.featuredOfferCount,
     observedAt: market.observedAt,
     authority: "AMAZON_PRODUCT_PRICING_GET_COMPETITIVE_SUMMARY_V2022_05_01" }
+}
+
+export function buildAmazonPendingProposalMarketEvidenceV1(input: {
+  listing: AmazonListingReadV1
+  market?: AmazonCompetitiveSummaryV1
+  feeEstimate?: AmazonFeeEstimateV1
+  catalog?: AmazonCatalogDemandSignalV1
+  marketDemand?: KeepaMarketDemandV1
+  salesMetric?: AmazonSalesTrafficMetricV1
+  salesReportCompleted?: boolean
+  salesWindowStart?: string | null
+  salesWindowEnd?: string | null
+}) {
+  const evidence: Json = {
+    listing_price_usd: input.listing.priceUsd,
+    listing_available_quantity: input.listing.availableQuantity,
+    listing_fulfillment_channel: input.listing.fulfillmentChannel,
+  }
+  if (input.market) Object.assign(evidence, {
+    featured_offer_state: input.market.state,
+    featured_offer_price_usd: input.market.featuredOfferPriceUsd,
+    featured_offer_listing_price_usd:
+      input.market.featuredOfferListingPriceUsd,
+    featured_offer_shipping_usd: input.market.featuredOfferShippingUsd,
+    featured_offer_fulfillment_channel:
+      input.market.featuredOfferFulfillmentChannel,
+    featured_offer_count: input.market.featuredOfferCount,
+    pricing_observed_at: input.market.observedAt,
+    pricing_authority:
+      "AMAZON_PRODUCT_PRICING_GET_COMPETITIVE_SUMMARY_V2022_05_01",
+  })
+  if (input.feeEstimate) Object.assign(evidence, {
+    fee_estimate_state: input.feeEstimate.status,
+    estimated_amazon_fees_usd: input.feeEstimate.status === "AVAILABLE"
+      ? input.feeEstimate.totalFeesUsd : null,
+    fee_estimate_observed_at: input.feeEstimate.estimatedAt,
+    fee_estimate_price_usd: input.feeEstimate.status === "AVAILABLE"
+      ? input.market?.featuredOfferPriceUsd ?? null : null,
+    fee_estimate_fulfillment_channel:
+      input.feeEstimate.status === "AVAILABLE"
+        ? input.listing.fulfillmentChannel : null,
+    fee_estimate_authority: "AMAZON_PRODUCT_FEES_API_V0",
+  })
+  if (input.catalog) Object.assign(evidence, {
+    demand_signal_state: input.catalog.signalState,
+    display_group_rank: input.catalog.displayGroupRank,
+    display_group_title: input.catalog.displayGroupTitle,
+    classification_rank: input.catalog.classificationRank,
+    classification_title: input.catalog.classificationTitle,
+    catalog_observed_at: input.catalog.observedAt,
+    catalog_authority: "AMAZON_CATALOG_ITEMS_SALES_RANKS_V2022_04_01",
+  })
+  if (input.marketDemand) Object.assign(evidence, {
+    market_monthly_sold_estimate: input.marketDemand.monthlySoldEstimate,
+    market_sales_rank_drops_30: input.marketDemand.salesRankDrops30,
+    market_sales_rank_drops_90: input.marketDemand.salesRankDrops90,
+    market_sales_rank_drops_180: input.marketDemand.salesRankDrops180,
+    market_demand_estimate_state: input.marketDemand.state,
+    market_demand_estimate_method: input.marketDemand.method,
+    market_demand_observed_at: input.marketDemand.observedAt,
+    market_demand_authority: "KEEPA_PRODUCT_API_READ_ONLY",
+  })
+  if (input.salesReportCompleted) Object.assign(evidence, {
+    seller_units_ordered_30d: input.salesMetric?.unitsOrdered ?? null,
+    seller_sales_30d_state: input.salesMetric ? "CONFIRMED" : "UNAVAILABLE",
+    seller_sales_window_start: input.salesWindowStart ?? null,
+    seller_sales_window_end: input.salesWindowEnd ?? null,
+    seller_sales_authority: "AMAZON_GET_SALES_AND_TRAFFIC_REPORT",
+  })
+  return Object.freeze(evidence)
+}
+
+async function persistAmazonPendingProposalMarketEvidenceV1(input: {
+  supabase: SupabaseClient
+  contributorId: string
+  marketplaceId: string
+  sellerSku: string
+  evidence: Json
+}) {
+  const result = await input.supabase
+    .from("seller_os_amazon_contributor_sku_attribution_v1")
+    .update(input.evidence)
+    .eq("collaborator_id", input.contributorId)
+    .eq("marketplace_id", input.marketplaceId)
+    .eq("seller_sku", input.sellerSku)
+    .eq("status", "PENDING_REVIEW")
+    .select("seller_sku,featured_offer_state,featured_offer_price_usd,fee_estimate_state,estimated_amazon_fees_usd,display_group_rank,seller_units_ordered_30d,seller_sales_30d_state,market_monthly_sold_estimate,market_sales_rank_drops_30,market_sales_rank_drops_90,market_sales_rank_drops_180,market_demand_estimate_state,market_demand_estimate_method")
+    .limit(1).maybeSingle()
+  if (result.error || !result.data) {
+    throw new Error("AMAZON_SP_API_CANDIDATE_EVIDENCE_WRITE_FAILED")
+  }
+  const readback = record(result.data)
+  for (const key of ["featured_offer_state", "featured_offer_price_usd",
+    "fee_estimate_state", "estimated_amazon_fees_usd",
+    "display_group_rank", "seller_units_ordered_30d",
+    "seller_sales_30d_state", "market_monthly_sold_estimate",
+    "market_sales_rank_drops_30", "market_sales_rank_drops_90",
+    "market_sales_rank_drops_180", "market_demand_estimate_state",
+    "market_demand_estimate_method"] as const) {
+    if (key in input.evidence && readback[key] !== input.evidence[key]) {
+      throw new Error("AMAZON_SP_API_CANDIDATE_EVIDENCE_READBACK_FAILED")
+    }
+  }
 }
 
 function isRecentProposalCandidate(listing: {
@@ -277,7 +386,11 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       }
     }
 
-    const asins = attributed.flatMap((listing) => listing.asin
+    const pricingScope = [...pendingCandidates, ...attributed]
+      .filter((listing, index, entries) => entries.findIndex((candidate) =>
+        candidate.sellerSku.toUpperCase() === listing.sellerSku.toUpperCase()) ===
+        index).slice(0, 20)
+    const asins = pricingScope.flatMap((listing) => listing.asin
       ? [listing.asin] : [])
     let competitive = new Map<string, AmazonCompetitiveSummaryV1>()
     let pricingStatus = "AVAILABLE"
@@ -295,7 +408,22 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
     } catch (error) {
       catalogStatus = safeCode(error, "AMAZON_SP_API_CATALOG_UNAVAILABLE")
     }
-    const feeInputs = attributed.flatMap((listing) => {
+    const keepaConnection = getKeepaMarketDemandConfigurationV1(
+      input.environment)
+    let marketDemand = new Map<string, KeepaMarketDemandV1>()
+    let marketDemandStatus: string = keepaConnection.status
+    if (keepaConnection.status === "READY") {
+      try {
+        marketDemand = await readKeepaMarketDemandV1({ asins:
+          pendingCandidates.flatMap((listing) => listing.asin
+            ? [listing.asin] : []), environment: input.environment,
+          fetcher: input.fetcher, now })
+        marketDemandStatus = "AVAILABLE"
+      } catch (error) {
+        marketDemandStatus = safeCode(error, "KEEPA_API_UNAVAILABLE")
+      }
+    }
+    const feeInputs = pricingScope.flatMap((listing) => {
       const market = listing.asin ? competitive.get(listing.asin) : undefined
       const priceUsd = market?.featuredOfferPriceUsd ?? null
       return listing.asin && priceUsd !== null && listing.fulfillmentChannel
@@ -342,6 +470,24 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       })
       reportStatus = reportCompleted ? "DONE_AND_REFRESH_REQUESTED"
         : "IN_QUEUE"
+    }
+
+    for (const listing of pendingCandidates) {
+      const market = listing.asin ? competitive.get(listing.asin) : undefined
+      const catalog = listing.asin ? catalogSignals.get(listing.asin) : undefined
+      const feeEstimate = feeEstimates.get(listing.sellerSku)
+      const salesMetric = listing.asin ? sales.get(listing.asin) : undefined
+      const demandEstimate = listing.asin
+        ? marketDemand.get(listing.asin) : undefined
+      await persistAmazonPendingProposalMarketEvidenceV1({
+        supabase: input.supabase, contributorId,
+        marketplaceId: config.marketplaceId,
+        sellerSku: listing.sellerSku,
+        evidence: buildAmazonPendingProposalMarketEvidenceV1({ listing,
+          market, catalog, feeEstimate, marketDemand: demandEstimate,
+          salesMetric, salesReportCompleted:
+            reportCompleted, salesWindowStart, salesWindowEnd }),
+      })
     }
 
     let finances = new Map<string, AmazonFinanceMetricV1>()
@@ -493,7 +639,8 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       metadata: { contractVersion:
         SELLER_OS_AMAZON_CONNIE_AUTOMATIC_CAPTURE_V1,
         reportStatus, financeStatus, pricingStatus, catalogStatus,
-        feeEstimateStatus, pendingProposalCandidates: pendingCandidates.length,
+        feeEstimateStatus, marketDemandStatus,
+        pendingProposalCandidates: pendingCandidates.length,
         idempotentReplays,
         credentialsStored: false, buyerPersonalDataStored: false,
         marketplaceWrites: 0 } })
@@ -508,7 +655,7 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       connection: config, listingsSeen: listings.length,
       listingsAttributed: attributed.length, observationsWritten,
       idempotentReplays, reportStatus, financeStatus, pricingStatus,
-      catalogStatus, feeEstimateStatus,
+      catalogStatus, feeEstimateStatus, marketDemandStatus,
       pendingProposalCandidates: pendingCandidates.length,
       safety: { amazonReadOnly: true, amazonWrites: 0,
         reportRequests: 1, listingMutations: 0, priceChanges: 0,
