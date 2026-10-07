@@ -460,6 +460,10 @@ export function MayelMarketRevalidationRunner() {
             if (!planId) break
           }
         }
+        if (planId) await authorizedPost({
+          action: "REPORT_PRODUCT_RESEARCH_PROGRESS", workerId, planId,
+          stage: "PENDING",
+        })
         const claimPayload = await authorizedPost({
           action: "CLAIM_AUTONOMOUS_RESEARCH_PLAN", workerId,
           leaderSessionId,
@@ -492,12 +496,16 @@ export function MayelMarketRevalidationRunner() {
         heartbeat = await persistHeartbeat("WORKING")
         const claimedPlanId = String(claim.planId ?? "")
         try {
+          await authorizedPost({ action: "REPORT_PRODUCT_RESEARCH_PROGRESS",
+            workerId, planId: claimedPlanId, stage: "CLAIMED" })
           const claimedPlan = claim.plan && typeof claim.plan === "object"
             ? claim.plan as JsonRecord : {}
           const plan = buildEbayOneClickResearchPlan(claim.plan as never)
           const lease = buildEbayOneClickResearchLease({
             sessionId: crypto.randomUUID(),
           })
+          await authorizedPost({ action: "REPORT_PRODUCT_RESEARCH_PROGRESS",
+            workerId, planId: claimedPlanId, stage: "RUNNING" })
           for (const task of plan.tasks) {
             setState(`Investigando comparables vendidos en eBay · ${completed + 1}/${maximumPlans}…`)
             const captured = await extensionCommand<{
@@ -539,16 +547,30 @@ export function MayelMarketRevalidationRunner() {
                 pagesCaptured: exactPages,
                 pagesCapturedMinimum: 1, pagesCapturedMaximum: 2 } })
           }
+          await authorizedPost({ action: "REPORT_PRODUCT_RESEARCH_PROGRESS",
+            workerId, planId: claimedPlanId, stage: "COMPLETED" })
           succeeded += 1
         } catch (error) {
           workerState = "IDLE"
           failedMembers += 1
-          const released = await authorizedPost({ action: "RELEASE_AUTONOMOUS_RESEARCH_PLAN",
+          const releasePayload = await authorizedPost({ action: "RELEASE_AUTONOMOUS_RESEARCH_PLAN",
             workerId, planId: claimedPlanId,
             errorCode: error instanceof Error ? error.message :
-              "PRODUCT_RESEARCH_WORKER_FAILED" }).then(() => true,
-              () => false)
+              "PRODUCT_RESEARCH_WORKER_FAILED" }).then((payload) => payload,
+              () => null)
+          const released = releasePayload !== null
           if (!released) releaseFailures += 1
+          const releaseResult = releasePayload?.result &&
+            typeof releasePayload.result === "object"
+            ? releasePayload.result as JsonRecord : {}
+          const recoveryAction = String(releaseResult.recoveryAction ?? "")
+          setState(recoveryAction === "RENEW_SESSION_AND_RETRY"
+            ? "La sesión se renovará antes del reintento; los demás miembros continúan."
+            : recoveryAction === "HOLD_UNPROVEN_CONTINUE"
+              ? "Este candidato queda UNPROVEN; los demás miembros continúan."
+              : recoveryAction === "QUARANTINE_TASK"
+                ? "Esta tarea quedó aislada para revisión; los demás miembros continúan."
+                : "Esta tarea quedó en espera de reintento; los demás miembros continúan.")
           if (browserWorkerControl && autonomous) continue
           throw error
         }

@@ -359,7 +359,8 @@ export async function readTeoPreResearchBatchV1(input: Readonly<{
       lastReleaseCode: boundedFailureCode(plan.worker_last_release_code),
       lastReleaseAt: boundedTimestamp(workerResult.releasedAt) ??
         boundedTimestamp(workerResult.recoveredAt),
-      lastWorkerState: ["RELEASED_RETRY_SAFE", "RECOVERY_POLICY_EXHAUSTED",
+      lastWorkerState: ["RETRY_WAIT", "QUARANTINED", "RECLAIMED_PENDING",
+        "RELEASED_RETRY_SAFE", "RECOVERY_POLICY_EXHAUSTED",
         "STALE_LEASE_RECOVERED", "STALE_LEASE_REVIEW_REQUIRED",
         "PRE_RESEARCH_HIGH", "PRE_RESEARCH_MEDIUM", "PRE_RESEARCH_LOW",
         "INSUFFICIENT_MARKET_EVIDENCE"].includes(String(workerResult.state))

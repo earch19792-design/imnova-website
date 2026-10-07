@@ -84,6 +84,10 @@ import {
   getSupabaseAdminClient,
   validateSellerOsApiRequest,
 } from "@/lib/supabase-admin"
+import {
+  reconcileSellerOsWorkerStuckWorkV2,
+  recordSellerOsWorkerProgressV2,
+} from "@/lib/seller-os/worker-self-healing-v2"
 
 const VISUAL_CACHE_TTL_MS = 15 * 60_000
 let visualCache: Readonly<{
@@ -431,18 +435,47 @@ export async function POST(request: Request) {
     try {
       const account = getEbaySellerAccountScopeConfiguration()
       if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const supabase = getSupabaseAdminClient()
+      const workerId = String(body?.workerId ?? "")
       const result = await persistSellerOsBrowserWorkerHeartbeatV1({
-        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        supabase, accountKey: account.accountKey,
         workerFamily: "PRODUCT_RESEARCH",
-        workerInstanceId: String(body?.workerId ?? ""),
+        workerInstanceId: workerId,
         extensionVersion: String(body?.extensionVersion ?? ""),
         extensionIdentityMatch: body?.extensionIdentityMatch === true,
         workerState: body?.workerState === "WORKING" ? "WORKING" :
           body?.workerState === "AVAILABLE" ? "AVAILABLE" : "IDLE",
         claimAuthoritySessionId: uuid(body?.leaderSessionId) ?? "",
       })
-      return NextResponse.json({ success: true, result,
+      const reconciliation = result.claimAuthorityGranted === true
+        ? await reconcileSellerOsWorkerStuckWorkV2({ supabase,
+          accountKey: account.accountKey, workerId }) : null
+      return NextResponse.json({ success: true,
+        result: { ...result, reconciliation },
         safety: { businessOutputWrites: 0, marketplaceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error) },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
+  if (action === "REPORT_PRODUCT_RESEARCH_PROGRESS") {
+    try {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) throw new Error("CANONICAL_ACCOUNT_SCOPE_REQUIRED")
+      const stage = typeof body?.stage === "string" ? body.stage : ""
+      if (!["PENDING", "CLAIMED", "RUNNING", "COMPLETED"].includes(stage)) {
+        throw new Error("PRODUCT_RESEARCH_PROGRESS_INVALID")
+      }
+      const result = await recordSellerOsWorkerProgressV2({
+        supabase: getSupabaseAdminClient(), accountKey: account.accountKey,
+        workerId: String(body?.workerId ?? ""),
+        planId: String(body?.planId ?? ""),
+        stage: stage as "PENDING" | "CLAIMED" | "RUNNING" | "COMPLETED",
+      })
+      return NextResponse.json({ success: true, result,
+        safety: { marketplaceWrites: 0, priceWrites: 0,
+          commercialDecisionWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {
       return NextResponse.json({ success: false, error: safeCode(error) },

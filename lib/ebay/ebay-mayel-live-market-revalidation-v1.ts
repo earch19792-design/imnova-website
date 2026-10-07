@@ -38,6 +38,8 @@ import {
   buildLunaPreResearchProductTruthFingerprintV1,
   LUNA_PRE_RESEARCH_SOURCE_CONTEXT_V1,
 } from "./luna-pre-research-intake-v1"
+import { releaseSellerOsProductResearchFailureV2 } from
+  "@/lib/seller-os/worker-self-healing-v2"
 
 export const MAYEL_LIVE_MARKET_REVALIDATION_VERSION =
   "MAYEL_LIVE_MARKET_REVALIDATION_V1_2026_09_06"
@@ -567,19 +569,10 @@ export async function releaseMayelAutonomousResearchPlanV1(input: {
   if (!workerId || !planId) {
     throw new Error("MAYEL_RESEARCH_WORKER_RELEASE_INVALID")
   }
-  const released = await input.supabase.rpc(
-    "release_live_listing_product_research_v1", {
-      p_marketplace_account_key: input.accountKey,
-      p_plan_id: planId,
-      p_worker_id: workerId,
-      p_error_code: safeFailureCode(input.errorCode),
-    })
-  if (released.error || released.data !== true) {
-    throw new Error("MAYEL_RESEARCH_WORKER_RELEASE_FAILED")
-  }
-  return Object.freeze({ released: true as const, planId,
-    retrySafety: "SAFE_IDEMPOTENT_RUNTIME_RESUME" as const,
-    marketplaceWrites: 0 as const })
+  return releaseSellerOsProductResearchFailureV2({
+    supabase: input.supabase, accountKey: input.accountKey,
+    workerId, planId, errorCode: safeFailureCode(input.errorCode),
+  })
 }
 
 async function completeQuickPickProductResearchPlanV1(input: {

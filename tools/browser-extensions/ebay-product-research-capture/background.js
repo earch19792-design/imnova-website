@@ -893,7 +893,31 @@ function soldSearchUrl(searchQuery, page, freeShippingOnly = false) {
   return url.href
 }
 
-async function runOneClickQueryOnce(message, lease) {
+async function captureProductResearchWithSelfHealing(input) {
+  try {
+    return await productResearchContentCapture(input)
+  } catch (error) {
+    if (safeFailureCode(error, "") !==
+        "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND" ||
+        input.allowInTabRecovery !== true) throw error
+    input.recoveryStages.push("WAIT_RENDER_CHECK")
+    input.trace.selfHealingStages = [...input.recoveryStages]
+    await wait(2_000)
+  }
+  try {
+    return await productResearchContentCapture({ ...input, timeoutMs: 20_000 })
+  } catch (error) {
+    if (safeFailureCode(error, "") !==
+        "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") throw error
+    input.recoveryStages.push("REFRESH_PAGE")
+    input.trace.selfHealingStages = [...input.recoveryStages]
+    await chrome.tabs.reload(input.tabId, { bypassCache: true })
+    await wait(1_500)
+  }
+  return productResearchContentCapture({ ...input, timeoutMs: 30_000 })
+}
+
+async function runOneClickQueryOnce(message, lease, recovery) {
   const task = message.task && typeof message.task === "object" ? message.task : {}
   const searchQuery = typeof task.searchQuery === "string"
     ? task.searchQuery.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, 100) : ""
@@ -909,6 +933,7 @@ async function runOneClickQueryOnce(message, lease) {
     lease, task, searchQuery, categoryId, ordinal,
   )
   const productResearchTrace = newProductResearchTrace()
+  productResearchTrace.selfHealingStages = [...recovery.stages]
   const tab = await chrome.tabs.create({
     url: productResearchUrl(searchQuery, categoryId), active: false,
   })
@@ -916,7 +941,7 @@ async function runOneClickQueryOnce(message, lease) {
   productResearchTrace.tabCreated = true
   updateProductResearchTabTrace(tab, { searchQuery, categoryId }, productResearchTrace)
   try {
-    const productResearch = await productResearchContentCapture({
+    const productResearch = await captureProductResearchWithSelfHealing({
       tabId: tab.id,
       expiresAt: lease.expiresAt,
       timeoutMs: 60_000,
@@ -927,6 +952,8 @@ async function runOneClickQueryOnce(message, lease) {
       trace: productResearchTrace,
       message: { type: PRODUCT_RESEARCH_CAPTURE, searchQuery, categoryId,
         maxRows: Number(lease.bounds.maxRowsPerCapture) },
+      allowInTabRecovery: recovery.allowInTabRecovery,
+      recoveryStages: recovery.stages,
     })
     const soldRows = []
     let soldFilterAutomated = false
@@ -968,13 +995,26 @@ async function runOneClickQueryOnce(message, lease) {
 async function runOneClickQuery(message) {
   const lease = boundedLease(message.lease)
   let lastError = null
+  const recoveryStages = []
   for (let attempt = 0; attempt <= Number(lease.bounds.maxRetries); attempt += 1) {
     try {
-      return await runOneClickQueryOnce(message, lease)
+      if (attempt > 0) recoveryStages.push("RECREATE_TAB_SESSION")
+      return await runOneClickQueryOnce(message, lease, {
+        allowInTabRecovery: attempt === 0,
+        stages: recoveryStages,
+      })
     } catch (error) {
       lastError = error
       if (Date.now() >= lease.expiresAt) break
     }
+  }
+  if (safeFailureCode(lastError, "") ===
+      "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") {
+    recoveryStages.push("RESTART_BROWSER_WORKER")
+    if (lastError?.diagnosticTrace) {
+      lastError.diagnosticTrace.selfHealingStages = [...recoveryStages]
+    }
+    lastError.restartWorkerControl = true
   }
   throw lastError ?? new Error("ONE_CLICK_RESEARCH_QUERY_FAILED")
 }
@@ -1327,10 +1367,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     ? runNearExactSoldEnrichment(message) : runOneClickQuery(message)
   void operation.then(
     (result) => sendResponse(result),
-    (error) => sendResponse({ success: false,
-      error: safeFailureCode(error, "ONE_CLICK_RESEARCH_QUERY_FAILED"),
-      diagnosticTrace: boundedProductResearchTrace(error?.diagnosticTrace),
-      cookieAccess: false, marketplaceWrites: 0 }),
+    (error) => {
+      sendResponse({ success: false,
+        error: safeFailureCode(error, "ONE_CLICK_RESEARCH_QUERY_FAILED"),
+        diagnosticTrace: boundedProductResearchTrace(error?.diagnosticTrace),
+        recoveryExhausted: error?.restartWorkerControl === true,
+        cookieAccess: false, marketplaceWrites: 0 })
+      if (error?.restartWorkerControl === true) {
+        setTimeout(() => void ensureWorkerControlTab({
+          forceReloadExisting: true,
+        }), 5_000)
+      }
+    },
   )
   return true
 })

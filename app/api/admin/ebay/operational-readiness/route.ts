@@ -45,6 +45,8 @@ import { readLatestSellerOsOperationalIntegrityV1 } from
   "@/lib/seller-os/operational-integrity-ledger-v1"
 import { readLatestSellerOsRuntimeCapabilityAssuranceV1 } from
   "@/lib/seller-os/runtime-capability-assurance-v1"
+import { readSellerOsWorkerResilienceV2 } from
+  "@/lib/seller-os/worker-self-healing-v2"
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -92,13 +94,17 @@ export async function GET(req: Request) {
   const current = capabilities()
   const account = getEbaySellerAccountScopeConfiguration()
   const supabase = getSupabaseAdminClient()
-  const [integrityResult, schedulerResult, assuranceResult] =
+  const [integrityResult, schedulerResult, assuranceResult,
+    workerResilienceResult] =
     await Promise.allSettled([
     account.accountKey ? readLatestSellerOsOperationalIntegrityV1({
       supabase, accountKey: account.accountKey,
     }) : Promise.reject(new Error("ACCOUNT_SCOPE_REQUIRED")),
     supabase.rpc("get_seller_os_post_runtime_status_v1"),
     account.accountKey ? readLatestSellerOsRuntimeCapabilityAssuranceV1({
+      supabase, accountKey: account.accountKey,
+    }) : Promise.reject(new Error("ACCOUNT_SCOPE_REQUIRED")),
+    account.accountKey ? readSellerOsWorkerResilienceV2({
       supabase, accountKey: account.accountKey,
     }) : Promise.reject(new Error("ACCOUNT_SCOPE_REQUIRED")),
   ])
@@ -109,12 +115,15 @@ export async function GET(req: Request) {
     ? schedulerResult.value.data : null
   const runtimeAssurance = assuranceResult.status === "fulfilled"
     ? assuranceResult.value : null
+  const workerResilience = workerResilienceResult.status === "fulfilled"
+    ? workerResilienceResult.value : null
   return NextResponse.json({
     success: true,
     capabilities: current,
     operationalIntegrity,
     runtimeScheduler,
     runtimeAssurance,
+    workerResilience,
     templates: WHATSAPP_TEMPLATE_DEFINITIONS_V1,
     readiness: assessProductCaseOperationalReadinessV1({
       marketResearchReady: true, supplierCaptureReady: true, supplierIdentityReady: false,

@@ -20,7 +20,8 @@ type ReadinessPayload = { success?: boolean; capabilities?: Record<string, strin
   result?: Record<string, unknown>; error?: string; diagnosis?: Record<string, unknown>;
   operationalIntegrity?: Record<string, unknown> | null;
   runtimeScheduler?: Record<string, unknown> | null;
-  runtimeAssurance?: Record<string, unknown> | null }
+  runtimeAssurance?: Record<string, unknown> | null;
+  workerResilience?: Record<string, unknown> | null }
 type HumanPreview = { title?: string; subject?: string; problem?: string; evidence?: string;
   recommendedAction?: string; observedAt?: string; deepLinkLabel?: string; deepLink?: string }
 
@@ -45,6 +46,11 @@ function shownDate(value: unknown) {
   return Number.isFinite(parsed) ? new Intl.DateTimeFormat("es-NI", {
     timeZone: "America/Managua", dateStyle: "short", timeStyle: "short",
   }).format(new Date(parsed)) : "—"
+}
+
+function shownCount(value: unknown) {
+  const count = Number(value)
+  return Number.isSafeInteger(count) && count >= 0 ? String(count) : "—"
 }
 
 export default function OperationalReadinessPage() {
@@ -103,6 +109,12 @@ export default function OperationalReadinessPage() {
   const unhealthyCapabilities = capabilityMatrix.filter((entry) =>
     entry.finalHealthState !== "HEALTHY")
   const assuranceCounts = object(assuranceReceipt.counts)
+  const workerResilience = object(payload?.workerResilience)
+  const workerLiveness = object(workerResilience.liveness)
+  const workerReadiness = object(workerResilience.readiness)
+  const workerProgress = object(workerResilience.progress)
+  const workerIncident = object(workerResilience.latestIncident)
+  const workerCanary = object(workerResilience.functionalCanary)
   const lowStockPreview = whatsappResults.LOW_STOCK_CONFIRMED?.humanPreview as HumanPreview | undefined
   const stalePreview = whatsappResults.STALE_EVIDENCE?.humanPreview as HumanPreview | undefined
 
@@ -119,6 +131,20 @@ export default function OperationalReadinessPage() {
       <section id="extensions" className="rounded-2xl border border-slate-200 bg-white p-5">
         <div><p className="text-[13px] font-black uppercase tracking-wider text-violet-700">Extensiones</p><h2 className="mt-1 text-lg font-black">Puentes de navegador</h2><p className="mt-1 text-sm text-slate-500">La conexión sólo acredita el canal. La capacidad operativa se comprueba contra cola, binding y receipts.</p></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2"><Link href="/admin/ebay/luna-shipping-capture" className="rounded-xl border border-slate-200 p-4 hover:border-cyan-400"><strong>Luna Shipping Capture</strong><p className="mt-1 text-sm text-slate-500">Binding, cola, ejecución y trazas durables.</p></Link><Link href="/admin/ebay/mobile-review/product-research-capture" className="rounded-xl border border-slate-200 p-4 hover:border-cyan-400"><strong>Product Research</strong><p className="mt-1 text-sm text-slate-500">Plan de consultas y receipts de captura.</p></Link></div>
+      </section>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5"
+        data-worker-resilience-read-only>
+        <div><p className="text-[13px] font-black uppercase tracking-wider text-cyan-700">Worker autocurable V2</p><h2 className="mt-1 text-lg font-black">Salud real de Product Research</h2><p className="mt-1 text-sm text-slate-500">Estar conectado, poder recibir trabajo y producir resultados son pruebas distintas.</p></div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          {[["LIVENESS", workerLiveness.state, "El proceso y la extensión responden."], ["READINESS", workerReadiness.state, `Circuito: ${String(workerReadiness.circuitState ?? "—")}.`], ["PROGRESS", workerProgress.state, String(workerProgress.reasonCode ?? "Sin evidencia todavía.").replaceAll("_", " ")]].map(([label, value, detail]) => <article key={String(label)} className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-black tracking-wider text-slate-500">{String(label)}</p><p className={`mt-2 text-xl font-black ${value === "PASS" ? "text-emerald-700" : value === "FAIL" ? "text-rose-700" : "text-amber-700"}`}>{String(value ?? "UNAVAILABLE")}</p><p className="mt-1 text-xs text-slate-500">{String(detail)}</p></article>)}
+        </div>
+        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-4">
+          <div className="rounded-xl border border-slate-100 p-3"><dt className="text-slate-500">Tareas pendientes</dt><dd className="mt-1 text-xl font-black">{shownCount(workerProgress.pendingTaskCount)}</dd></div>
+          <div className="rounded-xl border border-slate-100 p-3"><dt className="text-slate-500">En reintento</dt><dd className="mt-1 text-xl font-black">{shownCount(workerProgress.retryWaitCount)}</dd></div>
+          <div className="rounded-xl border border-slate-100 p-3"><dt className="text-slate-500">Aisladas</dt><dd className="mt-1 text-xl font-black">{shownCount(workerProgress.quarantinedCount)}</dd></div>
+          <div className="rounded-xl border border-slate-100 p-3"><dt className="text-slate-500">Planes faltantes</dt><dd className="mt-1 text-xl font-black">{shownCount(workerProgress.missingPlanAttachmentCount)}</dd></div>
+        </dl>
+        {(Object.keys(workerIncident).length > 0 || Object.keys(workerCanary).length > 0) && <details className="mt-4 rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-sm font-black">Incidente y canary funcional</summary><div className="mt-3 grid gap-3 text-sm md:grid-cols-2"><article className="rounded-lg bg-slate-50 p-3"><strong>Incidente actual</strong><p className="mt-1 text-slate-600">{String(workerIncident.invariantCode ?? "Sin incidente abierto").replaceAll("_", " ")} · {String(workerIncident.state ?? "—")}</p><p className="mt-1 text-xs text-slate-500">Repeticiones consecutivas: {shownCount(workerIncident.consecutiveCount)} · versión: {String(workerIncident.codeVersion ?? "—")}</p></article><article className="rounded-lg bg-slate-50 p-3"><strong>Canary PENDING → COMPLETED</strong><p className="mt-1 text-slate-600">{String(workerCanary.stage ?? "Aún no ejecutado")} · {String(workerCanary.state ?? "—")}</p><p className="mt-1 text-xs text-slate-500">Plan: {String(workerCanary.planId ?? "—")} · final: {shownDate(workerCanary.completedAt)}</p></article></div></details>}
       </section>
       <section id="runtime" className="rounded-2xl border border-slate-200 bg-white p-5"
         data-operational-integrity-read-only>
