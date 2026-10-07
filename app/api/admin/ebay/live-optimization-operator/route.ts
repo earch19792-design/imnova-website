@@ -462,6 +462,12 @@ export async function POST(request: Request) {
             errorCode: safeCode(error), marketplaceWrites: 0 })
         }
       }
+      console.info("PRODUCT_RESEARCH_PLAN_ATTACHMENT_REPAIR_V2", {
+        observedAt: new Date().toISOString(),
+        claimAuthorityGranted: result.claimAuthorityGranted,
+        planAttachmentRepair,
+        marketplaceWrites: 0,
+      })
       return NextResponse.json({ success: true,
         result: { ...result, reconciliation, planAttachmentRepair },
         safety: { businessOutputWrites: 0, marketplaceWrites: 0 } },
