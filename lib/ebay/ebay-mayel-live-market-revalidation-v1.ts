@@ -469,8 +469,10 @@ export async function readMayelAutonomousResearchAcquisitionV1(input: {
     [String(receipt.id), receipt] as const))
   const pending = (plans.data ?? []).filter((plan) =>
     resumablePlanIds.has(String(plan.id)) && (
-      plan.source_context === "QUICK_PICK_RESEARCH_REQUIRED" ||
-      plan.source_context === "LUNA_PRE_RESEARCH" ||
+      (["QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"].includes(
+        plan.source_context) && (Number(plan.worker_claim_count ?? 0) < 5 ||
+        Boolean(plan.worker_lease_owner && plan.worker_lease_expires_at &&
+          Date.parse(String(plan.worker_lease_expires_at)) > Date.now()))) ||
       receiptById.get(String(plan.request_receipt_id))?.status === "OPEN"))
   const activeClaimCount = pending.filter((plan) => {
     if (["QUICK_PICK_RESEARCH_REQUIRED", "LUNA_PRE_RESEARCH"].includes(

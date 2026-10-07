@@ -68,7 +68,8 @@ import {
 } from "@/lib/ebay/ebay-remote-operator-safe-mutation-canary-v1"
 import { SELLER_OS_ACCESS_ROLES } from "@/lib/seller-os-access-control"
 import { nextAuthorizedTeoPreResearchPlanV1,
-  prepareAuthorizedTeoPreResearchRunnerV1 } from
+  prepareAuthorizedTeoPreResearchRunnerV1,
+  repairMissingTeoPreResearchPlanAttachmentsV2 } from
   "@/lib/ebay/teo-pre-research-control-plane-v1"
 import { assertPreResearchCanaryPlanClaimV1,
   readPreResearchCanaryGateV1 } from
@@ -450,8 +451,19 @@ export async function POST(request: Request) {
       const reconciliation = result.claimAuthorityGranted === true
         ? await reconcileSellerOsWorkerStuckWorkV2({ supabase,
           accountKey: account.accountKey, workerId }) : null
+      let planAttachmentRepair: Readonly<Record<string, unknown>> | null = null
+      if (result.claimAuthorityGranted === true) {
+        try {
+          planAttachmentRepair =
+            await repairMissingTeoPreResearchPlanAttachmentsV2({ supabase,
+              accountKey: account.accountKey })
+        } catch (error) {
+          planAttachmentRepair = Object.freeze({ status: "FAILED_CLOSED",
+            errorCode: safeCode(error), marketplaceWrites: 0 })
+        }
+      }
       return NextResponse.json({ success: true,
-        result: { ...result, reconciliation },
+        result: { ...result, reconciliation, planAttachmentRepair },
         safety: { businessOutputWrites: 0, marketplaceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {

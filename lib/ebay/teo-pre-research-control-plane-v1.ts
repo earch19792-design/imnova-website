@@ -231,6 +231,82 @@ export async function requestTeoPreResearchBatchV1(input: Readonly<{
     accountKey: input.accountKey, principal: input.principal, batchId })
 }
 
+/**
+ * Repairs one historical batch that reached durable REQUESTED state without
+ * its canonical plan attachments. Query generation and plan persistence stay
+ * in the existing Luna Pre-Research authority; this function only replays the
+ * exact stored product/variant/SKU identities and seals them atomically through
+ * the existing attachment contract.
+ */
+export async function repairMissingTeoPreResearchPlanAttachmentsV2(input:
+Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+}>) {
+  const batchRead = await input.supabase.from(
+    "seller_os_pre_research_batches_v1")
+    .select("batch_id,source_snapshot_id,owner_user_id,command_client_id,batch_state")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("batch_state", "REQUESTED")
+    .order("created_at", { ascending: true }).limit(1).maybeSingle()
+  if (batchRead.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READ_FAILED")
+  if (!batchRead.data) return Object.freeze({ batchesScanned: 0,
+    batchesSealed: 0, plansAttached: 0, marketplaceWrites: 0 as const })
+  const batchId = uuid(batchRead.data.batch_id)
+  const snapshotId = uuid(batchRead.data.source_snapshot_id)
+  const ownerUserId = uuid(batchRead.data.owner_user_id)
+  const commandClientId = text(batchRead.data.command_client_id, 180)
+  if (!batchId || !snapshotId || !ownerUserId ||
+      !/^[A-Za-z0-9._:-]{8,160}$/.test(commandClientId)) {
+    fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_IDENTITY_INVALID")
+  }
+  const memberRead = await input.supabase.from(
+    "seller_os_pre_research_batch_members_v1")
+    .select("luna_product_id,luna_variant_id,luna_sku")
+    .eq("batch_id", batchId).is("plan_id", null)
+    .order("ordinal", { ascending: true }).limit(50)
+  if (memberRead.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READ_FAILED")
+  const candidates = (memberRead.data ?? []).map((member) => Object.freeze({
+    productId: text(member.luna_product_id, 40),
+    variantId: text(member.luna_variant_id, 40),
+    sku: text(member.luna_sku, 160),
+  }))
+  if (!candidates.length) return Object.freeze({ batchesScanned: 1,
+    batchesSealed: 0, plansAttached: 0, marketplaceWrites: 0 as const })
+  const planBindings: JsonRecord[] = []
+  for (let offset = 0; offset < candidates.length; offset += 10) {
+    const plans = await requestLunaPreResearchV1({ supabase: input.supabase,
+      accountKey: input.accountKey, snapshotId,
+      candidates: candidates.slice(offset, offset + 10) })
+    for (const value of plans.results) {
+      const result = record(value)
+      const planId = uuid(result.planId)
+      if (result.status !== "PRE_RESEARCH_QUEUED" || !planId) {
+        fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_PLAN_FAILED")
+      }
+      planBindings.push({ productId: result.productId,
+        variantId: result.variantId, sku: result.sku, planId })
+    }
+  }
+  if (planBindings.length !== candidates.length) {
+    fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_PLAN_FAILED")
+  }
+  const attached = await input.supabase.rpc(
+    "attach_seller_os_pre_research_batch_plans_v1", {
+      p_batch_id: batchId, p_owner_user_id: ownerUserId,
+      p_command_client_id: commandClientId, p_plans: planBindings,
+    })
+  if (attached.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_ATTACH_FAILED")
+  const result = rpcRow(attached.data)
+  if (result.planAttachmentComplete !== true ||
+      Number(result.missingPlanAttachments) !== 0) {
+    fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READBACK_FAILED")
+  }
+  return Object.freeze({ batchesScanned: 1, batchesSealed: 1,
+    plansAttached: Number(result.newPlanAttachments ?? 0),
+    batchId, state: result.state, marketplaceWrites: 0 as const })
+}
+
 function numeric(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? number : 0
