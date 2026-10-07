@@ -1,0 +1,427 @@
+import { createHash } from "node:crypto"
+import { gunzipSync } from "node:zlib"
+
+export const AMAZON_SP_API_READONLY_V1 =
+  "SELLER_OS_AMAZON_SP_API_READONLY_V1" as const
+export const AMAZON_US_MARKETPLACE_ID_V1 = "ATVPDKIKX0DER" as const
+
+type Json = Record<string, unknown>
+type FetchLike = typeof fetch
+
+function record(value: unknown): Json {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Json : {}
+}
+
+function array(value: unknown) {
+  return Array.isArray(value) ? value : []
+}
+
+function clean(value: unknown, maximum = 500) {
+  if (typeof value !== "string") return null
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/g, " ")
+  return normalized && !/[\p{Cc}\p{Cf}]/u.test(normalized)
+    ? normalized.slice(0, maximum) : null
+}
+
+function numeric(value: unknown) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function amount(value: unknown) {
+  const input = record(value)
+  return numeric(input.amount ?? input.currencyAmount)
+}
+
+function iso(value: unknown) {
+  const parsed = Date.parse(String(value ?? ""))
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
+}
+
+export type AmazonSpApiReadOnlyConfigurationV1 = Readonly<{
+  status: "READY" | "NOT_CONFIGURED" | "INVALID_CONFIG"
+  endpoint: "https://sellingpartnerapi-na.amazon.com"
+  marketplaceId: string
+  sellerId: string | null
+  skuPrefix: string
+  missing: readonly string[]
+  credentialsExposed: false
+}>
+
+export function getAmazonSpApiReadOnlyConfigurationV1(
+  environment: NodeJS.ProcessEnv = process.env,
+): AmazonSpApiReadOnlyConfigurationV1 {
+  const clientId = environment.AMAZON_SP_API_LWA_CLIENT_ID?.trim() ?? ""
+  const clientSecret = environment.AMAZON_SP_API_LWA_CLIENT_SECRET?.trim() ?? ""
+  const refreshToken = environment.AMAZON_SP_API_REFRESH_TOKEN?.trim() ?? ""
+  const sellerId = environment.AMAZON_SP_API_SELLER_ID?.trim() ?? ""
+  const marketplaceId = environment.AMAZON_SP_API_MARKETPLACE_ID?.trim() ||
+    AMAZON_US_MARKETPLACE_ID_V1
+  const skuPrefix = environment.AMAZON_CONNIE_SKU_PREFIX?.trim() || "CON-"
+  const missing = [
+    ["AMAZON_SP_API_LWA_CLIENT_ID", clientId],
+    ["AMAZON_SP_API_LWA_CLIENT_SECRET", clientSecret],
+    ["AMAZON_SP_API_REFRESH_TOKEN", refreshToken],
+    ["AMAZON_SP_API_SELLER_ID", sellerId],
+  ].filter((entry) => !entry[1]).map((entry) => entry[0])
+  const valid = /^[A-Z0-9]{6,20}$/.test(marketplaceId) &&
+    /^[\p{L}\p{N}._:/-]{2,20}$/u.test(skuPrefix) &&
+    (!sellerId || /^[A-Z0-9]{8,30}$/.test(sellerId))
+  return Object.freeze({
+    status: !valid ? "INVALID_CONFIG" : missing.length ? "NOT_CONFIGURED"
+      : "READY",
+    endpoint: "https://sellingpartnerapi-na.amazon.com" as const,
+    marketplaceId,
+    sellerId: sellerId || null,
+    skuPrefix,
+    missing: Object.freeze(missing),
+    credentialsExposed: false as const,
+  })
+}
+
+type RuntimeConfig = AmazonSpApiReadOnlyConfigurationV1 & Readonly<{
+  clientId: string
+  clientSecret: string
+  refreshToken: string
+}>
+
+function runtimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig {
+  const safe = getAmazonSpApiReadOnlyConfigurationV1(environment)
+  if (safe.status !== "READY" || !safe.sellerId) {
+    throw new Error(safe.status === "INVALID_CONFIG"
+      ? "AMAZON_SP_API_CONFIGURATION_INVALID"
+      : "AMAZON_SP_API_CONNECTION_REQUIRED")
+  }
+  return Object.freeze({ ...safe,
+    clientId: environment.AMAZON_SP_API_LWA_CLIENT_ID!.trim(),
+    clientSecret: environment.AMAZON_SP_API_LWA_CLIENT_SECRET!.trim(),
+    refreshToken: environment.AMAZON_SP_API_REFRESH_TOKEN!.trim(),
+  })
+}
+
+let tokenCache: { key: string; token: string; expiresAt: number } | null = null
+
+async function accessToken(config: RuntimeConfig, fetcher: FetchLike,
+  now = Date.now()) {
+  const key = createHash("sha256").update(`${config.clientId}:` +
+    config.refreshToken).digest("hex")
+  if (tokenCache?.key === key && tokenCache.expiresAt > now + 60_000) {
+    return tokenCache.token
+  }
+  const response = await fetcher("https://api.amazon.com/auth/o2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+    body: new URLSearchParams({ grant_type: "refresh_token",
+      refresh_token: config.refreshToken, client_id: config.clientId,
+      client_secret: config.clientSecret }),
+    cache: "no-store",
+  })
+  if (!response.ok) throw new Error("AMAZON_SP_API_LWA_TOKEN_UNAVAILABLE")
+  const payload = record(await response.json())
+  const token = clean(payload.access_token, 4_000)
+  const expiresIn = numeric(payload.expires_in)
+  if (!token || !expiresIn || expiresIn < 60) {
+    throw new Error("AMAZON_SP_API_LWA_TOKEN_INVALID")
+  }
+  tokenCache = { key, token, expiresAt: now + expiresIn * 1_000 }
+  return token
+}
+
+export type AmazonSpApiReadOnlyClientV1 = Readonly<{
+  configuration: AmazonSpApiReadOnlyConfigurationV1
+  requestJson(path: string, options?: Readonly<{
+    method?: "GET" | "POST"
+    query?: Record<string, string | number | undefined>
+    body?: Json
+  }>): Promise<Json>
+  downloadReportDocument(reportDocumentId: string): Promise<Json>
+}>
+
+export function createAmazonSpApiReadOnlyClientV1(options: {
+  environment?: NodeJS.ProcessEnv
+  fetcher?: FetchLike
+  now?: () => Date
+} = {}): AmazonSpApiReadOnlyClientV1 {
+  const environment = options.environment ?? process.env
+  const config = runtimeConfig(environment)
+  const fetcher = options.fetcher ?? fetch
+  const now = options.now ?? (() => new Date())
+
+  async function requestJson(path: string, request: Readonly<{
+    method?: "GET" | "POST"
+    query?: Record<string, string | number | undefined>
+    body?: Json
+  }> = {}) {
+    if (!path.startsWith("/") || path.includes("..")) {
+      throw new Error("AMAZON_SP_API_PATH_INVALID")
+    }
+    const url = new URL(path, config.endpoint)
+    for (const [key, value] of Object.entries(request.query ?? {})) {
+      if (value !== undefined) url.searchParams.set(key, String(value))
+    }
+    const token = await accessToken(config, fetcher, now().getTime())
+    const response = await fetcher(url, {
+      method: request.method ?? "GET",
+      headers: { Accept: "application/json", "x-amz-access-token": token,
+        "x-amz-date": now().toISOString().replace(/[-:]|\.\d{3}/g, ""),
+        "User-Agent": "IMNOVA-Seller-OS/1.0 (Language=TypeScript)",
+        ...(request.body ? { "Content-Type": "application/json" } : {}) },
+      ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+      cache: "no-store",
+    })
+    if (!response.ok) {
+      const retryable = response.status === 429 || response.status >= 500
+      throw new Error(retryable ? "AMAZON_SP_API_UPSTREAM_RETRYABLE"
+        : response.status === 401 || response.status === 403
+          ? "AMAZON_SP_API_AUTHORIZATION_REQUIRED"
+          : "AMAZON_SP_API_REQUEST_FAILED")
+    }
+    return record(await response.json())
+  }
+
+  async function downloadReportDocument(reportDocumentId: string) {
+    if (!/^[A-Za-z0-9._:-]{1,300}$/.test(reportDocumentId)) {
+      throw new Error("AMAZON_SP_API_REPORT_DOCUMENT_ID_INVALID")
+    }
+    const document = await requestJson(
+      `/reports/2021-06-30/documents/${encodeURIComponent(reportDocumentId)}`)
+    const documentUrl = clean(document.url, 4_000)
+    if (!documentUrl) throw new Error("AMAZON_SP_API_REPORT_URL_MISSING")
+    const url = new URL(documentUrl)
+    if (url.protocol !== "https:") {
+      throw new Error("AMAZON_SP_API_REPORT_URL_INVALID")
+    }
+    const response = await fetcher(url, { method: "GET", cache: "no-store" })
+    if (!response.ok) throw new Error("AMAZON_SP_API_REPORT_DOWNLOAD_FAILED")
+    let bytes = Buffer.from(await response.arrayBuffer())
+    if (document.compressionAlgorithm === "GZIP") bytes = gunzipSync(bytes)
+    try { return record(JSON.parse(bytes.toString("utf8"))) } catch {
+      throw new Error("AMAZON_SP_API_REPORT_DOCUMENT_INVALID")
+    }
+  }
+
+  return Object.freeze({ configuration: getAmazonSpApiReadOnlyConfigurationV1(
+    environment), requestJson, downloadReportDocument })
+}
+
+export type AmazonListingReadV1 = Readonly<{
+  sellerSku: string
+  asin: string | null
+  title: string
+  brand: string | null
+  productType: string | null
+  condition: string | null
+  state: "ACTIVE" | "INACTIVE" | "SUPPRESSED"
+  priceUsd: number | null
+  availableQuantity: number | null
+  createdAt: string | null
+  lastUpdatedAt: string | null
+  digest: string
+}>
+
+export function parseAmazonListingItemV1(value: unknown): AmazonListingReadV1 | null {
+  const item = record(value)
+  const sellerSku = clean(item.sku, 160)
+  const summary = record(array(item.summaries)[0])
+  const title = clean(summary.itemName, 500)
+  if (!sellerSku || !title) return null
+  const statuses = array(summary.status).flatMap((state) => {
+    const normalized = clean(state, 40)
+    return normalized ? [normalized] : []
+  })
+  const issues = array(item.issues).map(record)
+  const suppressed = issues.some((issue) =>
+    clean(issue.severity, 40)?.toUpperCase() === "ERROR")
+  const offer = record(array(item.offers)[0])
+  const price = amount(offer.price)
+  const quantities = array(item.fulfillmentAvailability).map((entry) =>
+    numeric(record(entry).quantity)).filter((entry): entry is number =>
+      entry !== null && entry >= 0)
+  const normalized = {
+    sellerSku, asin: clean(summary.asin, 20)?.toUpperCase() ?? null,
+    title, brand: clean(summary.brand, 160),
+    productType: clean(summary.productType, 160),
+    condition: clean(summary.conditionType, 80),
+    state: suppressed ? "SUPPRESSED" as const
+      : statuses.includes("BUYABLE") ? "ACTIVE" as const : "INACTIVE" as const,
+    priceUsd: price === null ? null : Number(price.toFixed(2)),
+    availableQuantity: quantities.length
+      ? quantities.reduce((total, entry) => total + entry, 0) : null,
+    createdAt: iso(summary.createdDate),
+    lastUpdatedAt: iso(summary.lastUpdatedDate),
+  }
+  return Object.freeze({ ...normalized, digest: `sha256:${createHash("sha256")
+    .update(JSON.stringify(normalized)).digest("hex")}` })
+}
+
+export async function searchAmazonListingsReadOnlyV1(
+  client: AmazonSpApiReadOnlyClientV1, options: { maximumPages?: number } = {},
+) {
+  const items: AmazonListingReadV1[] = []
+  let pageToken: string | undefined
+  const maximumPages = Math.min(100, Math.max(1,
+    Math.trunc(options.maximumPages ?? 25)))
+  for (let page = 0; page < maximumPages; page += 1) {
+    const response = await client.requestJson(
+      `/listings/2021-08-01/items/${encodeURIComponent(
+        client.configuration.sellerId ?? "")}`, { query: {
+        marketplaceIds: client.configuration.marketplaceId,
+        includedData: "summaries,issues,offers,fulfillmentAvailability",
+        sortBy: "lastUpdatedDate", sortOrder: "DESC", pageSize: 20,
+        pageToken,
+      } })
+    items.push(...array(response.items).flatMap((entry) => {
+      const parsed = parseAmazonListingItemV1(entry)
+      return parsed ? [parsed] : []
+    }))
+    pageToken = clean(record(response.pagination).nextToken, 2_000) ?? undefined
+    if (!pageToken) break
+  }
+  return Object.freeze(items)
+}
+
+export type AmazonSalesTrafficMetricV1 = Readonly<{
+  asin: string
+  sellerSku: string | null
+  unitsOrdered: number
+  grossSalesUsd: number
+  sessions: number | null
+  pageViews: number | null
+  unitSessionPercentage: number | null
+}>
+
+export function parseAmazonSalesTrafficReportV1(value: unknown) {
+  const report = record(value)
+  const metrics = new Map<string, AmazonSalesTrafficMetricV1>()
+  for (const entry of array(report.salesAndTrafficByAsin).map(record)) {
+    const asin = clean(entry.childAsin ?? entry.asin, 20)?.toUpperCase()
+    if (!asin || !/^[A-Z0-9]{10}$/.test(asin)) continue
+    const sales = record(entry.salesByAsin)
+    const traffic = record(entry.trafficByAsin)
+    const units = numeric(sales.unitsOrdered)
+    const gross = amount(sales.orderedProductSales)
+    if (units === null || units < 0 || gross === null || gross < 0) continue
+    metrics.set(asin, Object.freeze({ asin,
+      sellerSku: clean(entry.sku, 160),
+      unitsOrdered: Math.trunc(units), grossSalesUsd: Number(gross.toFixed(2)),
+      sessions: numeric(traffic.sessions), pageViews: numeric(traffic.pageViews),
+      unitSessionPercentage: numeric(traffic.unitSessionPercentage),
+    }))
+  }
+  const specification = record(report.reportSpecification)
+  return Object.freeze({
+    dataStartTime: iso(specification.dataStartTime),
+    dataEndTime: iso(specification.dataEndTime), metrics,
+  })
+}
+
+function breakdowns(value: unknown): Json[] {
+  return array(value).map(record).flatMap((entry) => [entry,
+    ...breakdowns(entry.breakdowns)])
+}
+
+export type AmazonFinanceMetricV1 = Readonly<{
+  sellerSku: string
+  asin: string | null
+  matchedTransactions: number
+  amazonFeesUsd: number
+  fulfillmentFeesUsd: number
+  refundsUsd: number
+}>
+
+export function parseAmazonFinanceTransactionsV1(value: unknown) {
+  const root = record(value)
+  const payload = record(root.payload)
+  const metrics = new Map<string, { sellerSku: string; asin: string | null;
+    matchedTransactions: number; amazonFeesUsd: number;
+    fulfillmentFeesUsd: number; refundsUsd: number }>()
+  for (const transaction of array(payload.transactions).map(record)) {
+    const description = clean(transaction.description, 200)?.toLowerCase() ?? ""
+    for (const item of array(transaction.items).map(record)) {
+      const contexts = array(item.contexts).map(record)
+      const sku = contexts.map((context) => clean(context.sku, 160))
+        .find((candidate) => candidate) ?? null
+      if (!sku) continue
+      const asin = contexts.map((context) => clean(context.asin, 20)?.toUpperCase())
+        .find((candidate) => candidate) ?? null
+      const current = metrics.get(sku) ?? { sellerSku: sku, asin,
+        matchedTransactions: 0, amazonFeesUsd: 0,
+        fulfillmentFeesUsd: 0, refundsUsd: 0 }
+      current.matchedTransactions += 1
+      for (const part of breakdowns(item.breakdowns)) {
+        const type = clean(part.breakdownType, 200)?.toLowerCase() ?? ""
+        const value = amount(part.breakdownAmount)
+        if (value === null || value >= 0) continue
+        const absolute = Math.abs(value)
+        if (/fulfillment|fba|shipping chargeback|pick.*pack|weight handling/.test(type)) {
+          current.fulfillmentFeesUsd += absolute
+        } else if (/fee|commission|closing|service|storage/.test(type)) {
+          current.amazonFeesUsd += absolute
+        } else if (/refund|principal|product charges/.test(type) &&
+            /refund|adjustment/.test(description)) {
+          current.refundsUsd += absolute
+        }
+      }
+      metrics.set(sku, current)
+    }
+  }
+  return new Map([...metrics].map(([sku, metric]) => [sku, Object.freeze({
+    ...metric, amazonFeesUsd: Number(metric.amazonFeesUsd.toFixed(2)),
+    fulfillmentFeesUsd: Number(metric.fulfillmentFeesUsd.toFixed(2)),
+    refundsUsd: Number(metric.refundsUsd.toFixed(2)),
+  })]))
+}
+
+export async function readAmazonFinancesV1(client: AmazonSpApiReadOnlyClientV1,
+  input: { postedAfter: string; postedBefore: string; maximumPages?: number }) {
+  const transactions: unknown[] = []
+  let nextToken: string | undefined
+  const maximumPages = Math.min(25, Math.max(1,
+    Math.trunc(input.maximumPages ?? 10)))
+  for (let page = 0; page < maximumPages; page += 1) {
+    const response = await client.requestJson(
+      "/finances/2024-06-19/transactions", { query: {
+        postedAfter: input.postedAfter, postedBefore: input.postedBefore,
+        transactionStatus: "RELEASED", nextToken,
+      } })
+    const payload = record(response.payload)
+    transactions.push(...array(payload.transactions))
+    nextToken = clean(payload.nextToken, 2_000) ?? undefined
+    if (!nextToken) break
+  }
+  return parseAmazonFinanceTransactionsV1({ payload: { transactions } })
+}
+
+export async function createAmazonSalesTrafficReportV1(
+  client: AmazonSpApiReadOnlyClientV1,
+  input: { dataStartTime: string; dataEndTime: string },
+) {
+  const response = await client.requestJson("/reports/2021-06-30/reports", {
+    method: "POST", body: {
+      reportType: "GET_SALES_AND_TRAFFIC_REPORT",
+      dataStartTime: input.dataStartTime, dataEndTime: input.dataEndTime,
+      marketplaceIds: [client.configuration.marketplaceId],
+      reportOptions: { dateGranularity: "DAY", asinGranularity: "CHILD" },
+    },
+  })
+  const reportId = clean(response.reportId, 300)
+  if (!reportId) throw new Error("AMAZON_SP_API_REPORT_ID_MISSING")
+  return reportId
+}
+
+export async function readAmazonSalesTrafficReportStatusV1(
+  client: AmazonSpApiReadOnlyClientV1, reportId: string,
+) {
+  if (!/^[A-Za-z0-9._:-]{1,300}$/.test(reportId)) {
+    throw new Error("AMAZON_SP_API_REPORT_ID_INVALID")
+  }
+  const report = await client.requestJson(
+    `/reports/2021-06-30/reports/${encodeURIComponent(reportId)}`)
+  const status = clean(report.processingStatus, 40) ?? "UNKNOWN"
+  const reportDocumentId = clean(report.reportDocumentId, 300)
+  return Object.freeze({ status, reportDocumentId,
+    createdTime: iso(report.createdTime),
+    dataStartTime: iso(report.dataStartTime),
+    dataEndTime: iso(report.dataEndTime) })
+}

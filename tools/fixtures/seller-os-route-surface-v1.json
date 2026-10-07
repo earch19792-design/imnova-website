@@ -155,6 +155,8 @@
     "app/api/admin/marketplace/supplier-catalog/888lots/route.ts",
     "app/api/admin/remote-live-operator-enrollment/route.ts",
     "app/api/admin/session/route.ts",
+    "app/api/cron/amazon-connie-readonly-sync-schedule/route.ts",
+    "app/api/cron/amazon-connie-readonly-sync/route.ts",
     "app/api/cron/commercial-alert-dispatcher-schedule/route.ts",
     "app/api/cron/commercial-alert-dispatcher/route.ts",
     "app/api/cron/daily-dollar-radar-autopilot/route.ts",

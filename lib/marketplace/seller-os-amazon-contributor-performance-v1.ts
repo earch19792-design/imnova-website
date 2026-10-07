@@ -124,6 +124,7 @@ export function buildAmazonContributorObservationV1(value: unknown,
   const economicsInput = record(input.economics)
   const listingInput = record(input.amazonListing)
   const performanceInput = record(input.performance)
+  const captureInput = record(input.capture)
   const now = options.now ?? new Date()
   const observedAt = iso(input.observedAt) ?? now.toISOString()
   if (Date.parse(observedAt) > now.getTime() + 5 * 60_000) {
@@ -147,6 +148,10 @@ export function buildAmazonContributorObservationV1(value: unknown,
     ? upcCandidate : null
   const supplierInventoryQuantity = integer(supplierInput.inventoryQuantity)
   const supplierProductUrl = safeHttps(supplierInput.productUrl)
+  const sourceKeyOverride = text(supplierInput.sourceKeyOverride, 80)
+  const canonicalSourceKey = sourceKeyOverride &&
+      /^[a-z0-9][a-z0-9-]{1,79}$/.test(sourceKeyOverride)
+    ? sourceKeyOverride : sourceKey(supplierName, supplierBaseUrl)
 
   const demandEvidenceState = oneOf(demandInput.evidenceState,
     ["CONFIRMED", "CONTRIBUTOR_ASSERTED", "UNPROVEN", "UNAVAILABLE"] as const,
@@ -339,11 +344,27 @@ export function buildAmazonContributorObservationV1(value: unknown,
     contributor: { key: SELLER_OS_CONNIE_COLLABORATOR_KEY_V1,
       displayName: "Connie G. Yape", operatingRole: "AMAZON_STORE_OPERATOR",
       sellerCentralProductUploadAccessDeclaredByOwner: true },
-    supplier: { sourceKey: sourceKey(supplierName, supplierBaseUrl),
+    capture: { mode: oneOf(captureInput.mode,
+      ["MANUAL_OWNER", "AMAZON_SP_API_READ_ONLY"] as const, "MANUAL_OWNER"),
+      authority: text(captureInput.authority, 120),
+      automated: captureInput.automated === true,
+      listingApi: text(captureInput.listingApi, 160),
+      demandReport: text(captureInput.demandReport, 160),
+      financeApi: text(captureInput.financeApi, 160),
+      reportStatus: text(captureInput.reportStatus, 120),
+      financeStatus: text(captureInput.financeStatus, 120),
+      reportWindowStart: iso(captureInput.reportWindowStart),
+      reportWindowEnd: iso(captureInput.reportWindowEnd),
+      amazonDoesNotExposeListingCreator:
+        captureInput.amazonDoesNotExposeListingCreator === true,
+      attributionBasis: text(captureInput.attributionBasis, 80) },
+    supplier: { sourceKey: canonicalSourceKey,
       name: supplierName, baseUrl: supplierBaseUrl,
       productId: supplierProductId, variantId: supplierVariantId,
       sku: supplierSku, productUrl: supplierProductUrl,
-      inventoryQuantity: supplierInventoryQuantity },
+      inventoryQuantity: supplierInventoryQuantity,
+      evidenceState: oneOf(supplierInput.evidenceState,
+        ["CONFIRMED", "UNPROVEN"] as const, "CONFIRMED") },
     product: { title, brand: text(productInput.brand, 160),
       category: text(productInput.category, 160), asin, upc,
       condition: text(productInput.condition, 80),
@@ -370,7 +391,9 @@ export function buildAmazonContributorObservationV1(value: unknown,
     amazonListing: { state: listingState,
       sellerSku: text(listingInput.sellerSku, 160),
       listingPriceUsd: money(listingInput.listingPriceUsd),
-      listedAt: iso(listingInput.listedAt) },
+      availableQuantity: integer(listingInput.availableQuantity),
+      listedAt: iso(listingInput.listedAt),
+      lastUpdatedAt: iso(listingInput.lastUpdatedAt) },
     performance: { authority: resultAuthority,
       authoritative: resultAuthoritative,
       observationWindowDays, unitsPurchased,
@@ -380,6 +403,10 @@ export function buildAmazonContributorObservationV1(value: unknown,
       actualNetProfitUsd, actualNetProfitPerUnitUsd, sellThroughRate,
       velocityUnitsPerDay, firstSaleAt: iso(performanceInput.firstSaleAt),
       daysToFirstSale, observedAt: performanceObservedAt,
+      sessions: integer(performanceInput.sessions),
+      pageViews: integer(performanceInput.pageViews),
+      unitSessionPercentage: money(performanceInput.unitSessionPercentage),
+      financeMatchState: text(performanceInput.financeMatchState, 120),
       freshness: performanceFreshness,
       falseZeroGuard: reportedUnitsSold === 0 && !resultAuthoritative
         ? "ZERO_NOT_ACCEPTED_WITHOUT_AUTHORITY" : "PASS" },
@@ -401,9 +428,57 @@ export function buildAmazonContributorObservationV1(value: unknown,
     idempotencyKey: `amazon-contributor-observation:${observationDigest}` })
 }
 
+export function linkAmazonContributorSupplierCostV1(input: {
+  existingObservation: unknown
+  supplier: unknown
+  economics: unknown
+  unitsPurchased?: unknown
+  otherActualCostsUsd?: unknown
+  now?: Date
+}) {
+  const existing = record(input.existingObservation)
+  const priorSupplier = record(existing.supplier)
+  const supplier = record(input.supplier)
+  const priorEconomics = record(existing.economics)
+  const economics = record(input.economics)
+  const performance = record(existing.performance)
+  return buildAmazonContributorObservationV1({
+    observedAt: (input.now ?? new Date()).toISOString(),
+    capture: { ...record(existing.capture), mode: "MANUAL_OWNER",
+      automated: false, supplierCostLinked: true },
+    supplier: { ...priorSupplier, ...supplier,
+      sourceKeyOverride: text(priorSupplier.sourceKey, 80) ??
+        "amazon-connie-products",
+      productId: text(supplier.productId, 240) ??
+        text(priorSupplier.productId, 240) ?? text(supplier.sku, 240),
+      variantId: text(supplier.variantId, 240) ??
+        text(supplier.sku, 240), evidenceState: "CONFIRMED" },
+    product: existing.product,
+    demand: existing.demand,
+    eligibility: existing.eligibility,
+    economics: { ...priorEconomics, ...economics },
+    amazonListing: existing.amazonListing,
+    performance: { authority: performance.authority,
+      observationWindowDays: performance.observationWindowDays,
+      unitsPurchased: input.unitsPurchased ?? performance.unitsPurchased,
+      unitsSold: performance.reportedUnitsSold,
+      grossSalesUsd: performance.grossSalesUsd,
+      amazonFeesUsd: performance.amazonFeesUsd,
+      fulfillmentFeesUsd: performance.fulfillmentFeesUsd,
+      refundsUsd: performance.refundsUsd,
+      otherActualCostsUsd: input.otherActualCostsUsd ??
+        performance.otherActualCostsUsd,
+      firstSaleAt: performance.firstSaleAt,
+      observedAt: performance.observedAt,
+      sessions: performance.sessions, pageViews: performance.pageViews,
+      unitSessionPercentage: performance.unitSessionPercentage,
+      financeMatchState: performance.financeMatchState },
+  }, { now: input.now })
+}
+
 export async function persistAmazonContributorObservationV1(input: {
   supabase: SupabaseClient
-  recordedByUserId: string
+  recordedByUserId: string | null
   observation: ReturnType<typeof buildAmazonContributorObservationV1>
 }) {
   const write = await input.supabase.rpc(
@@ -435,11 +510,20 @@ export async function readAmazonContributorPerformanceV1(input: {
   if (collaborator.error || !collaborator.data) {
     throw new Error("SELLER_OS_AMAZON_CONTRIBUTOR_PROFILE_UNAVAILABLE")
   }
-  const products = await input.supabase.from("market_radar_products")
-    .select("id,source_id,supplier_product_id,title,vendor,product_type,product_url,last_snapshot_at,metadata")
-    .eq("sourcing_collaborator_id", collaborator.data.id)
-    .order("last_snapshot_at", { ascending: false }).limit(limit)
-  if (products.error) {
+  const [products, syncState, attribution] = await Promise.all([
+    input.supabase.from("market_radar_products")
+      .select("id,source_id,supplier_product_id,title,vendor,product_type,product_url,last_snapshot_at,metadata")
+      .eq("sourcing_collaborator_id", collaborator.data.id)
+      .order("last_snapshot_at", { ascending: false }).limit(limit),
+    input.supabase.from("seller_os_amazon_contributor_sync_state_v1")
+      .select("marketplace_id,seller_sku_prefix,connection_status,run_status,last_attempt_at,last_success_at,last_listing_sync_at,last_finance_sync_at,last_report_requested_at,last_report_completed_at,pending_report_id,report_window_start,report_window_end,last_error_code,listings_seen,listings_attributed,observations_written,metadata,updated_at")
+      .eq("collaborator_id", collaborator.data.id)
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    input.supabase.from("seller_os_amazon_contributor_sku_attribution_v1")
+      .select("id", { count: "exact", head: true })
+      .eq("collaborator_id", collaborator.data.id).eq("status", "ACTIVE"),
+  ])
+  if (products.error || syncState.error || attribution.error) {
     throw new Error("SELLER_OS_AMAZON_CONTRIBUTOR_PRODUCTS_READ_FAILED")
   }
   const productRows = products.data ?? []
@@ -495,6 +579,11 @@ export async function readAmazonContributorPerformanceV1(input: {
   return Object.freeze({
     contractVersion: SELLER_OS_AMAZON_CONTRIBUTOR_PERFORMANCE_V1,
     collaborator: collaborator.data,
+    automation: { sync: syncState.data ?? null,
+      attributedSellerSkus: attribution.count ?? 0,
+      creatorAttributionRule: "SELLER_SKU_PREFIX_OR_OWNER_CONFIRMED",
+      amazonExposesListingCreator: false,
+      credentialsIncluded: false },
     summary: {
       productsProposed: cards.length,
       demandConfirmed: cards.filter((card) => demand(card).confirmed === true).length,
