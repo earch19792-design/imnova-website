@@ -75,6 +75,11 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[],
   return allowed.includes(value as T) ? value as T : fallback
 }
 
+function optionalOneOf<T extends string>(value: unknown,
+  allowed: readonly T[]) {
+  return allowed.includes(value as T) ? value as T : null
+}
+
 function sum(values: Array<number | null>) {
   return values.every((value): value is number => value !== null)
     ? Number(values.reduce((total, value) => total + value, 0).toFixed(2))
@@ -130,6 +135,7 @@ export function buildAmazonContributorObservationV1(value: unknown,
   const eligibilityInput = record(input.eligibility)
   const economicsInput = record(input.economics)
   const listingInput = record(input.amazonListing)
+  const marketInput = record(input.amazonMarket)
   const performanceInput = record(input.performance)
   const captureInput = record(input.capture)
   const now = options.now ?? new Date()
@@ -161,7 +167,8 @@ export function buildAmazonContributorObservationV1(value: unknown,
     ? sourceKeyOverride : sourceKey(supplierName, supplierBaseUrl)
 
   const demandEvidenceState = oneOf(demandInput.evidenceState,
-    ["CONFIRMED", "CONTRIBUTOR_ASSERTED", "UNPROVEN", "UNAVAILABLE"] as const,
+    ["CONFIRMED", "SUPPORTED", "CONTRIBUTOR_ASSERTED", "UNPROVEN",
+      "UNAVAILABLE"] as const,
     "UNPROVEN")
   const demandClaim = oneOf(demandInput.claim,
     ["HIGH", "MEDIUM", "LOW", "UNKNOWN"] as const, "UNKNOWN")
@@ -192,15 +199,34 @@ export function buildAmazonContributorObservationV1(value: unknown,
   const fbaFeePerUnitUsd = money(economicsInput.fbaFeePerUnitUsd)
   const otherVariableCostPerUnitUsd = money(
     economicsInput.otherVariableCostPerUnitUsd)
+  const estimatedAmazonFeesPerUnitUsd = money(
+    economicsInput.estimatedAmazonFeesPerUnitUsd)
+  const feeEstimateObservedAt = iso(economicsInput.feeEstimateObservedAt)
+  const feeEstimateFreshness = freshness(feeEstimateObservedAt, now, 14)
+  const featuredOfferObservedAt = iso(marketInput.observedAt)
+  const featuredOfferFreshness = freshness(featuredOfferObservedAt, now, 7)
+  const featuredOfferPriceUsd = money(marketInput.featuredOfferPriceUsd)
+  const featuredOfferPriceMaximumUsd = money(
+    marketInput.featuredOfferPriceMaximumUsd)
+  const projectedAmazonFeesPerUnitUsd = estimatedAmazonFeesPerUnitUsd ??
+    sum([referralFeePerUnitUsd, fbaFeePerUnitUsd])
   const deliveredUnitCostUsd = sum([unitCostUsd,
     inboundShippingPerUnitUsd, prepCostPerUnitUsd])
   const projectedVariableCostUsd = sum([deliveredUnitCostUsd,
-    referralFeePerUnitUsd, fbaFeePerUnitUsd, otherVariableCostPerUnitUsd])
+    projectedAmazonFeesPerUnitUsd, otherVariableCostPerUnitUsd])
   const projectedNetProfitPerUnitUsd = expectedSalePriceUsd !== null &&
       projectedVariableCostUsd !== null
     ? Number((expectedSalePriceUsd - projectedVariableCostUsd).toFixed(2))
     : null
   const projectedEconomicsComplete = projectedNetProfitPerUnitUsd !== null
+  const contributionAfterAmazonFeesPerUnitUsd = expectedSalePriceUsd !== null &&
+      unitCostUsd !== null && projectedAmazonFeesPerUnitUsd !== null
+    ? Number((expectedSalePriceUsd - unitCostUsd -
+      projectedAmazonFeesPerUnitUsd).toFixed(2)) : null
+  const maximumAdditionalCostForMinimumProfitUsd =
+    contributionAfterAmazonFeesPerUnitUsd === null ? null
+      : Number((contributionAfterAmazonFeesPerUnitUsd -
+        SELLER_OS_MINIMUM_NET_PROFIT_USD_V1).toFixed(2))
 
   const observationWindowDays = integer(performanceInput.observationWindowDays)
   const unitsPurchased = integer(performanceInput.unitsPurchased)
@@ -242,6 +268,8 @@ export function buildAmazonContributorObservationV1(value: unknown,
 
   const demandConfirmedByResearch = demandEvidenceState === "CONFIRMED" &&
     demandFreshness === "CURRENT"
+  const demandSupported = demandEvidenceState === "SUPPORTED" &&
+    demandFreshness === "CURRENT"
   const demandConfirmedByResult = resultAuthoritative &&
     authoritativeUnitsSold !== null && authoritativeUnitsSold > 0 &&
     performanceFreshness === "CURRENT"
@@ -272,7 +300,8 @@ export function buildAmazonContributorObservationV1(value: unknown,
     blockers.push(demandFreshness === "STALE" ? "AMAZON_DEMAND_STALE"
       : demandEvidenceState === "CONTRIBUTOR_ASSERTED"
       ? "AMAZON_DEMAND_REQUIRES_INDEPENDENT_CONFIRMATION"
-      : "AMAZON_DEMAND_UNPROVEN")
+      : demandSupported ? "AMAZON_DEMAND_SUPPORTED_NOT_PROVEN"
+        : "AMAZON_DEMAND_UNPROVEN")
   }
   if (deliveredUnitCostUsd === null) blockers.push("DELIVERED_UNIT_COST_UNPROVEN")
   if (!projectedEconomicsComplete) blockers.push("AMAZON_ECONOMICS_INCOMPLETE")
@@ -301,6 +330,7 @@ export function buildAmazonContributorObservationV1(value: unknown,
     action = "GET_AMAZON_DEMAND"
     reasonCode = demandFreshness === "STALE"
       ? "AMAZON_DEMAND_REFRESH_REQUIRED"
+      : demandSupported ? "AMAZON_SALES_RANK_SUPPORTS_DEMAND_BUT_NOT_UNITS"
       : demandEvidenceState === "CONTRIBUTOR_ASSERTED"
       ? "CONTRIBUTOR_DEMAND_CLAIM_REQUIRES_CONFIRMATION"
       : "AMAZON_DEMAND_EVIDENCE_REQUIRED"
@@ -358,8 +388,14 @@ export function buildAmazonContributorObservationV1(value: unknown,
       listingApi: text(captureInput.listingApi, 160),
       demandReport: text(captureInput.demandReport, 160),
       financeApi: text(captureInput.financeApi, 160),
+      pricingApi: text(captureInput.pricingApi, 160),
+      catalogApi: text(captureInput.catalogApi, 160),
+      feeEstimateApi: text(captureInput.feeEstimateApi, 160),
       reportStatus: text(captureInput.reportStatus, 120),
       financeStatus: text(captureInput.financeStatus, 120),
+      pricingStatus: text(captureInput.pricingStatus, 120),
+      catalogStatus: text(captureInput.catalogStatus, 120),
+      feeEstimateStatus: text(captureInput.feeEstimateStatus, 120),
       reportWindowStart: iso(captureInput.reportWindowStart),
       reportWindowEnd: iso(captureInput.reportWindowEnd),
       amazonDoesNotExposeListingCreator:
@@ -370,6 +406,8 @@ export function buildAmazonContributorObservationV1(value: unknown,
       productId: supplierProductId, variantId: supplierVariantId,
       sku: supplierSku, productUrl: supplierProductUrl,
       inventoryQuantity: supplierInventoryQuantity,
+      evidenceBasis: text(supplierInput.evidenceBasis, 160),
+      ownerConfirmedAt: iso(supplierInput.ownerConfirmedAt),
       evidenceState: oneOf(supplierInput.evidenceState,
         ["CONFIRMED", "UNPROVEN"] as const, "CONFIRMED") },
     product: { title, brand: text(productInput.brand, 160),
@@ -381,6 +419,11 @@ export function buildAmazonContributorObservationV1(value: unknown,
       observedAt: demandObservedAt, freshness: demandFreshness,
       notes: text(demandInput.notes, 2_000),
       confirmed: demandConfirmed,
+      supported: demandSupported || demandConfirmed,
+      displayGroupRank: integer(demandInput.displayGroupRank),
+      displayGroupTitle: text(demandInput.displayGroupTitle, 200),
+      classificationRank: integer(demandInput.classificationRank),
+      classificationTitle: text(demandInput.classificationTitle, 200),
       confirmationBasis: demandConfirmedByResult
         ? "SELLER_CENTRAL_RESULT" : demandConfirmedByResearch
           ? "INDEPENDENT_RESEARCH" : "UNPROVEN",
@@ -388,9 +431,39 @@ export function buildAmazonContributorObservationV1(value: unknown,
     eligibility: { state: eligibilityState,
       observedAt: eligibilityObservedAt, freshness: eligibilityFreshness,
       confirmed: eligibilityConfirmed },
+    amazonMarket: {
+      featuredOfferState: oneOf(marketInput.featuredOfferState,
+        ["AVAILABLE", "NO_FEATURED_OFFER", "UNAVAILABLE"] as const,
+        "UNAVAILABLE"),
+      featuredOfferPriceUsd, featuredOfferPriceMaximumUsd,
+      featuredOfferListingPriceUsd: money(
+        marketInput.featuredOfferListingPriceUsd),
+      featuredOfferShippingUsd: money(marketInput.featuredOfferShippingUsd),
+      featuredOfferFulfillmentChannel: optionalOneOf(
+        marketInput.featuredOfferFulfillmentChannel,
+        ["FBA", "FBM"] as const),
+      featuredOfferCount: integer(marketInput.featuredOfferCount),
+      observedAt: featuredOfferObservedAt,
+      freshness: featuredOfferFreshness,
+      authority: text(marketInput.authority, 160),
+      regionalPriceMayVary: featuredOfferPriceUsd !== null &&
+        featuredOfferPriceMaximumUsd !== null &&
+        featuredOfferPriceUsd !== featuredOfferPriceMaximumUsd,
+    },
     economics: { unitCostUsd, inboundShippingPerUnitUsd,
       prepCostPerUnitUsd, deliveredUnitCostUsd, expectedSalePriceUsd,
       referralFeePerUnitUsd, fbaFeePerUnitUsd, otherVariableCostPerUnitUsd,
+      estimatedAmazonFeesPerUnitUsd, projectedAmazonFeesPerUnitUsd,
+      feeEstimateState: oneOf(economicsInput.feeEstimateState,
+        ["AVAILABLE", "UNAVAILABLE"] as const, "UNAVAILABLE"),
+      feeEstimateObservedAt, feeEstimateFreshness,
+      feeEstimatePriceUsd: money(economicsInput.feeEstimatePriceUsd),
+      feeEstimateFulfillmentChannel: optionalOneOf(
+        economicsInput.feeEstimateFulfillmentChannel,
+        ["FBA", "FBM"] as const),
+      feeEstimateAuthority: text(economicsInput.feeEstimateAuthority, 160),
+      contributionAfterAmazonFeesPerUnitUsd,
+      maximumAdditionalCostForMinimumProfitUsd,
       projectedNetProfitPerUnitUsd, complete: projectedEconomicsComplete,
       minimumNetProfitUsd: SELLER_OS_MINIMUM_NET_PROFIT_USD_V1,
       minimumProfitMet: projectedNetProfitPerUnitUsd === null ? null
@@ -399,6 +472,8 @@ export function buildAmazonContributorObservationV1(value: unknown,
       sellerSku: text(listingInput.sellerSku, 160),
       listingPriceUsd: money(listingInput.listingPriceUsd),
       availableQuantity: integer(listingInput.availableQuantity),
+      fulfillmentChannel: optionalOneOf(listingInput.fulfillmentChannel,
+        ["FBA", "FBM"] as const),
       listedAt: iso(listingInput.listedAt),
       lastUpdatedAt: iso(listingInput.lastUpdatedAt) },
     performance: { authority: resultAuthority,
@@ -463,6 +538,7 @@ export function linkAmazonContributorSupplierCostV1(input: {
     product: existing.product,
     demand: existing.demand,
     eligibility: existing.eligibility,
+    amazonMarket: existing.amazonMarket,
     economics: { ...priorEconomics, ...economics },
     amazonListing: existing.amazonListing,
     performance: { authority: performance.authority,
@@ -481,6 +557,42 @@ export function linkAmazonContributorSupplierCostV1(input: {
       unitSessionPercentage: performance.unitSessionPercentage,
       financeMatchState: performance.financeMatchState },
   }, { now: input.now })
+}
+
+export function linkAmazonContributorCostAndQuantityV1(input: {
+  existingObservation: unknown
+  unitCostUsd: unknown
+  supplierInventoryQuantity: unknown
+  now?: Date
+}) {
+  const existing = record(input.existingObservation)
+  const priorSupplier = record(existing.supplier)
+  const unitCostUsd = money(input.unitCostUsd)
+  const supplierInventoryQuantity = integer(input.supplierInventoryQuantity)
+  if (unitCostUsd === null || unitCostUsd <= 0) {
+    throw new Error("SELLER_OS_AMAZON_UNIT_COST_REQUIRED")
+  }
+  if (supplierInventoryQuantity === null || supplierInventoryQuantity <= 0) {
+    throw new Error("SELLER_OS_AMAZON_SUPPLIER_QUANTITY_REQUIRED")
+  }
+  const now = input.now ?? new Date()
+  const priorName = text(priorSupplier.name, 160)
+  return linkAmazonContributorSupplierCostV1({
+    existingObservation: existing,
+    supplier: { name: priorName && !/pendiente de vincular/i.test(priorName)
+        ? priorName : "Proveedor de Connie",
+      baseUrl: safeHttps(priorSupplier.baseUrl) ??
+        "https://sellercentral.amazon.com",
+      sku: text(priorSupplier.sku, 240) ??
+        text(record(existing.amazonListing).sellerSku, 160),
+      productId: text(priorSupplier.productId, 240),
+      variantId: text(priorSupplier.variantId, 240),
+      productUrl: safeHttps(priorSupplier.productUrl),
+      inventoryQuantity: supplierInventoryQuantity,
+      evidenceBasis: "OWNER_COST_AND_QUANTITY_CONFIRMATION",
+      ownerConfirmedAt: now.toISOString() },
+    economics: { unitCostUsd }, now,
+  })
 }
 
 export async function persistAmazonContributorObservationV1(input: {
@@ -528,8 +640,9 @@ export async function readAmazonContributorPerformanceV1(input: {
       .eq("collaborator_id", collaborator.data.id)
       .order("updated_at", { ascending: false }).limit(1).maybeSingle(),
     input.supabase.from("seller_os_amazon_contributor_sku_attribution_v1")
-      .select("id", { count: "exact", head: true })
-      .eq("collaborator_id", collaborator.data.id).eq("status", "ACTIVE"),
+      .select("id,marketplace_id,seller_sku,asin,attribution_basis,status,title,listing_state,first_observed_at,last_observed_at")
+      .eq("collaborator_id", collaborator.data.id)
+      .order("last_observed_at", { ascending: false }).limit(100),
   ])
   if (products.error || syncState.error || attribution.error) {
     throw new Error("SELLER_OS_AMAZON_CONTRIBUTOR_PRODUCTS_READ_FAILED")
@@ -592,10 +705,15 @@ export async function readAmazonContributorPerformanceV1(input: {
     contractVersion: SELLER_OS_AMAZON_CONTRIBUTOR_PERFORMANCE_V1,
     collaborator: collaborator.data,
     automation: { sync: syncState.data ?? null,
-      attributedSellerSkus: attribution.count ?? 0,
+      attributedSellerSkus: (attribution.data ?? [])
+        .filter((row) => row.status === "ACTIVE").length,
+      pendingProposalCandidates: (attribution.data ?? [])
+        .filter((row) => row.status === "PENDING_REVIEW").length,
       creatorAttributionRule: "SELLER_SKU_PREFIX_OR_OWNER_CONFIRMED",
       amazonExposesListingCreator: false,
       credentialsIncluded: false },
+    proposalInbox: (attribution.data ?? []).filter((row) =>
+      row.status === "PENDING_REVIEW"),
     summary: {
       productsProposed: cards.length,
       demandConfirmed: cards.filter((card) => demand(card).confirmed === true).length,

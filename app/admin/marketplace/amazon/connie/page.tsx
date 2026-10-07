@@ -8,11 +8,8 @@ import { supabase } from "@/lib/supabase"
 type Json = Record<string, unknown>
 type CostForm = Record<string, string>
 
-const emptyCost: CostForm = { sellerSku: "", supplierName: "",
-  supplierBaseUrl: "", supplierSku: "", supplierProductUrl: "",
-  unitCostUsd: "", inboundShippingPerUnitUsd: "",
-  prepCostPerUnitUsd: "", unitsPurchased: "",
-  otherActualCostsUsd: "0" }
+const emptyCost: CostForm = { sellerSku: "", unitCostUsd: "",
+  supplierInventoryQuantity: "" }
 
 const actionLabels: Record<string, string> = {
   VERIFY_AMAZON_ASIN: "Esperar el ASIN exacto de Amazon",
@@ -152,24 +149,17 @@ export default function ConnieAmazonPerformancePage() {
     setLinking(true); setMessage("")
     try {
       const response = await request({ method: "POST", body: JSON.stringify({
-        action: "LINK_SUPPLIER_AND_COST", sellerSku: cost.sellerSku,
-        supplier: { name: cost.supplierName,
-          baseUrl: cost.supplierBaseUrl, sku: cost.supplierSku,
-          productId: cost.supplierSku, variantId: cost.supplierSku,
-          productUrl: cost.supplierProductUrl },
-        economics: { unitCostUsd: numberOrNull(cost.unitCostUsd),
-          inboundShippingPerUnitUsd:
-            numberOrNull(cost.inboundShippingPerUnitUsd),
-          prepCostPerUnitUsd: numberOrNull(cost.prepCostPerUnitUsd) },
-        unitsPurchased: numberOrNull(cost.unitsPurchased),
-        otherActualCostsUsd: numberOrNull(cost.otherActualCostsUsd),
+        action: "CONFIRM_COST_AND_QUANTITY", sellerSku: cost.sellerSku,
+        unitCostUsd: numberOrNull(cost.unitCostUsd),
+        supplierInventoryQuantity:
+          numberOrNull(cost.supplierInventoryQuantity),
       }) })
       const payload = await response.json() as Json
       if (!response.ok || payload.success !== true) {
         throw new Error(String(payload.error ?? "No se pudo vincular el costo."))
       }
       setMonitor(object(payload.monitor)); setCost(emptyCost)
-      setMessage("Proveedor y costo vinculados. Amazon continuará llenando los resultados automáticamente.")
+      setMessage("Costo y cantidad guardados. Seller OS confirmó la propuesta y actualizó Buy Box, tarifas y ganancia disponible.")
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo vincular.")
     } finally { setLinking(false) }
@@ -180,6 +170,21 @@ export default function ConnieAmazonPerformancePage() {
   const automation = object(monitor.automation)
   const syncState = object(automation.sync)
   const cards = list(monitor.cards)
+  const proposalInbox = list(monitor.proposalInbox)
+  const proposalOptions = [
+    ...proposalInbox.map((candidate) => ({
+      sellerSku: String(candidate.seller_sku ?? ""),
+      title: String(candidate.title ?? "Producto nuevo de Amazon"),
+      pending: true,
+    })),
+    ...cards.map((card) => ({
+      sellerSku: String(object(object(card.observation).amazonListing)
+        .sellerSku ?? ""),
+      title: String(card.title ?? "Producto"), pending: false,
+    })),
+  ].filter((candidate, index, entries) => candidate.sellerSku &&
+    entries.findIndex((entry) => entry.sellerSku === candidate.sellerSku) ===
+      index)
   const ready = connection.status === "READY"
 
   return <main className="mx-auto max-w-7xl space-y-5 p-4 text-white sm:p-6">
@@ -190,7 +195,8 @@ export default function ConnieAmazonPerformancePage() {
       <h1 className="mt-2 text-3xl font-black">De producto propuesto a decisión de compra</h1>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">
         Seller OS conecta el producto de Connie con Amazon, el proveedor, el
-        costo, la demanda y la utilidad. Te muestra una sola decisión:
+        costo, la demanda, el Buy Box y la utilidad. Tú sólo registras costo y
+        cantidad; Seller OS completa la evidencia de Amazon. Te muestra una sola decisión:
         prueba pequeña, esperar, descartar o revisar recompra. Nunca compra,
         publica ni cambia precios automáticamente.
       </p>
@@ -227,7 +233,7 @@ export default function ConnieAmazonPerformancePage() {
           </h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
             {ready
-              ? `Todo SKU que empiece con ${String(connection.skuPrefix ?? "CON-")} se atribuye automáticamente a Connie. Amazon no informa qué usuario creó el listing.`
+              ? `Los SKU ${String(connection.skuPrefix ?? "CON-")} se atribuyen automáticamente. Los demás listings nuevos entran a una bandeja privada y se confirman como propuesta de Connie cuando tú guardas costo y cantidad.`
               : "Hay que autorizar una app privada de lectura en Seller Central una sola vez. Después, la captura corre sola cada seis horas."}
           </p>
         </div>
@@ -241,6 +247,7 @@ export default function ConnieAmazonPerformancePage() {
         <div className="rounded-xl bg-black/15 p-3"><dt className="text-white/40">Última pasada</dt><dd className="mt-1 font-bold">{date(syncState.last_attempt_at)}</dd></div>
         <div className="rounded-xl bg-black/15 p-3"><dt className="text-white/40">Estado</dt><dd className="mt-1 font-bold">{String(syncState.run_status ?? "SIN EJECUTAR")}</dd></div>
         <div className="rounded-xl bg-black/15 p-3"><dt className="text-white/40">SKU atribuidos</dt><dd className="mt-1 font-bold">{Number(automation.attributedSellerSkus ?? 0)}</dd></div>
+        <div className="rounded-xl bg-black/15 p-3"><dt className="text-white/40">Propuestas nuevas</dt><dd className="mt-1 font-bold">{Number(automation.pendingProposalCandidates ?? 0)}</dd></div>
         <div className="rounded-xl bg-black/15 p-3"><dt className="text-white/40">Próxima acción técnica</dt><dd className="mt-1 font-bold">{syncState.pending_report_id ? "Recoger reporte Amazon" : ready ? "Leer Seller Central" : "Autorizar conexión"}</dd></div>
       </dl>
       {Boolean(syncState.last_error_code) && <p className="mt-3 rounded-xl bg-amber-200/10 p-3 text-xs font-bold text-amber-50">
@@ -277,23 +284,24 @@ export default function ConnieAmazonPerformancePage() {
     <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
       <h2 className="text-xl font-black">Qué se llena automáticamente</h2>
       <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-        {["SKU, ASIN y título", "Precio, stock y estado", "Ventas, sesiones y conversión", "Tarifas, reembolsos y movimiento"].map((item) =>
+        {["SKU, ASIN y título", "Buy Box y precio propio", "Ranking, ventas y conversión", "Tarifas Amazon y ganancia"].map((item) =>
           <p key={item} className="rounded-xl bg-cyan-200/10 p-3 font-bold text-cyan-50">✓ {item}</p>)}
       </div>
       <p className="mt-4 rounded-xl bg-amber-200/10 p-3 text-sm text-amber-50">
-        Amazon no conoce el costo de compra ni el proveedor de Connie. Ésos se
-        vinculan una sola vez desde factura o catálogo; no tendrás que copiar
-        ventas, tráfico ni resultados cada día.
+        Amazon no conoce el costo de compra ni la disponibilidad del proveedor.
+        Ésos son los únicos dos datos que registras; no copiarás precio, Buy Box,
+        tarifas, tráfico ni resultados.
       </p>
     </section>
 
     <details className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
       <summary className="cursor-pointer text-xl font-black">
-        Vincular proveedor y costo · una sola vez
+        Confirmar costo y cantidad · sólo dos datos
       </summary>
       <p className="mt-2 text-sm text-white/50">
-        No copies ventas ni tarifas. Sólo identifica el origen y el costo del
-        lote; Seller OS conserva el vínculo con el Seller SKU de Amazon.
+        Selecciona el listing nuevo de Amazon, ingresa costo por unidad y la
+        cantidad disponible del proveedor. Esto también confirma que es una
+        propuesta de Connie.
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label className="grid gap-1 text-xs font-bold text-white/65">Seller SKU
@@ -301,22 +309,15 @@ export default function ConnieAmazonPerformancePage() {
             setCost((current) => ({ ...current, sellerSku: event.target.value }))}
             className="min-h-11 rounded-xl border border-white/15 bg-slate-950 px-3">
             <option value="">Seleccionar producto</option>
-            {cards.map((card) => {
-              const sku = String(object(object(card.observation).amazonListing).sellerSku ?? "")
-              return sku ? <option key={sku} value={sku}>{sku} · {String(card.title ?? "Producto")}</option> : null
-            })}
+            {proposalOptions.map((candidate) => <option
+              key={candidate.sellerSku} value={candidate.sellerSku}>
+              {candidate.pending ? "Nueva · " : ""}{candidate.sellerSku} · {candidate.title}
+            </option>)}
           </select>
         </label>
         {[
-          ["supplierName", "Proveedor", "Nombre comercial", "text"],
-          ["supplierBaseUrl", "Sitio del proveedor", "https://proveedor.com", "url"],
-          ["supplierSku", "SKU del proveedor", "SKU / código", "text"],
-          ["supplierProductUrl", "Enlace del producto", "https://…", "url"],
           ["unitCostUsd", "Costo del producto / unidad", "0.00", "number"],
-          ["inboundShippingPerUnitUsd", "Envío inbound / unidad", "0.00", "number"],
-          ["prepCostPerUnitUsd", "Preparación / unidad", "0.00", "number"],
-          ["unitsPurchased", "Unidades compradas", "0", "number"],
-          ["otherActualCostsUsd", "Otros costos del lote (0 si no aplica)", "0", "number"],
+          ["supplierInventoryQuantity", "Cantidad disponible del proveedor", "0", "number"],
         ].map(([name, label, placeholder, type]) =>
           <label key={name} className="grid gap-1 text-xs font-bold text-white/65">
             {label}
@@ -329,12 +330,26 @@ export default function ConnieAmazonPerformancePage() {
           </label>)}
       </div>
       <button type="button" onClick={() => void linkCost()}
-        disabled={linking || !cost.sellerSku || !cost.supplierName ||
-          !cost.supplierBaseUrl || !cost.supplierSku || !cost.unitCostUsd}
+        disabled={linking || !cost.sellerSku || !cost.unitCostUsd ||
+          !cost.supplierInventoryQuantity}
         className="mt-4 min-h-11 rounded-xl bg-emerald-200 px-4 font-black text-emerald-950 disabled:opacity-40">
-        {linking ? "Vinculando…" : "Guardar proveedor y costo"}
+        {linking ? "Calculando…" : "Guardar y calcular"}
       </button>
     </details>
+
+    {proposalInbox.length > 0 && <section className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.06] p-5">
+      <h2 className="text-xl font-black">Propuestas nuevas detectadas en Amazon</h2>
+      <p className="mt-2 text-sm text-white/55">Todavía no se atribuyen a Connie hasta que tú selecciones una y guardes costo y cantidad.</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {proposalInbox.map((candidate) => <button type="button"
+          key={String(candidate.id)} onClick={() => setCost((current) => ({
+            ...current, sellerSku: String(candidate.seller_sku ?? "") }))}
+          className="rounded-xl border border-white/10 bg-black/20 p-3 text-left text-sm">
+          <strong>{String(candidate.title ?? "Producto nuevo")}</strong>
+          <span className="mt-1 block text-xs text-white/45">SKU {String(candidate.seller_sku ?? "—")} · ASIN {String(candidate.asin ?? "—")}</span>
+        </button>)}
+      </div>
+    </section>}
 
     <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
       <h2 className="text-xl font-black">Productos y siguiente evidencia</h2>
@@ -346,11 +361,12 @@ export default function ConnieAmazonPerformancePage() {
         {cards.map((card) => {
           const observation = object(card.observation)
           const purchaseGate = object(card.purchaseGate)
-          const purchaseEconomics = object(purchaseGate.economics)
           const purchaseNext = object(purchaseGate.nextBestEvidence)
           const outcome = object(observation.outcome)
           const performance = object(observation.performance)
           const economics = object(observation.economics)
+          const market = object(observation.amazonMarket)
+          const demand = object(observation.demand)
           const listing = object(observation.amazonListing)
           const next = object(observation.nextBestEvidence)
           return <article key={String(card.id)} className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -363,15 +379,19 @@ export default function ConnieAmazonPerformancePage() {
               </span>
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Precio Amazon</dt><dd className="mt-1 font-bold">{money(listing.listingPriceUsd)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Buy Box</dt><dd className="mt-1 font-bold">{money(market.featuredOfferPriceUsd)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Nuestro precio</dt><dd className="mt-1 font-bold">{money(listing.listingPriceUsd)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Stock Amazon</dt><dd className="mt-1 font-bold">{listing.availableQuantity == null ? "Sin evidencia" : String(listing.availableQuantity)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Ranking Amazon</dt><dd className="mt-1 font-bold">{demand.displayGroupRank == null ? "Sin evidencia" : `#${String(demand.displayGroupRank)}`}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Unidades vendidas</dt><dd className="mt-1 font-bold">{performance.observedUnitsSold == null ? "Sin evidencia" : String(performance.observedUnitsSold)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Neto real / unidad</dt><dd className="mt-1 font-bold">{money(performance.actualNetProfitPerUnitUsd)}</dd></div>
-              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Sesiones</dt><dd className="mt-1 font-bold">{performance.sessions == null ? "Sin evidencia" : String(performance.sessions)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Tarifas estimadas Amazon</dt><dd className="mt-1 font-bold">{money(economics.estimatedAmazonFeesPerUnitUsd)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Ganancia tras Amazon*</dt><dd className="mt-1 font-bold">{money(economics.contributionAfterAmazonFeesPerUnitUsd)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Neto proyectado</dt><dd className="mt-1 font-bold">{money(economics.projectedNetProfitPerUnitUsd)}</dd></div>
-              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Máximo a pagar</dt><dd className="mt-1 font-bold">{money(purchaseEconomics.maximumSupplierUnitCostUsd)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Presupuesto restante para logística y conservar $4</dt><dd className="mt-1 font-bold">{money(economics.maximumAdditionalCostForMinimumProfitUsd)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Cantidad sugerida</dt><dd className="mt-1 font-bold">{purchaseGate.recommendedPurchaseQuantity == null ? "Sin autorizar" : `${String(purchaseGate.recommendedPurchaseQuantity)} unidades`}</dd></div>
             </dl>
+            <p className="mt-2 text-[11px] text-white/40">* Buy Box menos costo del producto y tarifas estimadas de Amazon. El neto final sólo aparece cuando los costos externos de logística/preparación están probados.</p>
             <p className="mt-3 rounded-xl bg-amber-200/10 p-3 text-xs font-bold text-amber-50">
               Siguiente: {actionLabels[String(purchaseNext.action)] ??
                 actionLabels[String(next.action)] ??

@@ -26,13 +26,15 @@ function clean(value: unknown, maximum = 500) {
 }
 
 function numeric(value: unknown) {
+  if (typeof value !== "number" &&
+      !(typeof value === "string" && value.trim())) return null
   const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
 
 function amount(value: unknown) {
   const input = record(value)
-  return numeric(input.amount ?? input.currencyAmount)
+  return numeric(input.amount ?? input.Amount ?? input.currencyAmount)
 }
 
 function iso(value: unknown) {
@@ -131,10 +133,15 @@ async function accessToken(config: RuntimeConfig, fetcher: FetchLike,
 
 export type AmazonSpApiReadOnlyClientV1 = Readonly<{
   configuration: AmazonSpApiReadOnlyConfigurationV1
+  requestValue(path: string, options?: Readonly<{
+    method?: "GET" | "POST"
+    query?: Record<string, string | number | undefined>
+    body?: Json | readonly Json[]
+  }>): Promise<unknown>
   requestJson(path: string, options?: Readonly<{
     method?: "GET" | "POST"
     query?: Record<string, string | number | undefined>
-    body?: Json
+    body?: Json | readonly Json[]
   }>): Promise<Json>
   downloadReportDocument(reportDocumentId: string): Promise<Json>
 }>
@@ -155,10 +162,10 @@ export function createAmazonSpApiReadOnlyClientV1(options: {
   const maximumAttempts = Math.min(5, Math.max(1,
     Math.trunc(options.maximumAttempts ?? 3)))
 
-  async function requestJson(path: string, request: Readonly<{
+  async function requestValue(path: string, request: Readonly<{
     method?: "GET" | "POST"
     query?: Record<string, string | number | undefined>
-    body?: Json
+    body?: Json | readonly Json[]
   }> = {}) {
     if (!path.startsWith("/") || path.includes("..")) {
       throw new Error("AMAZON_SP_API_PATH_INVALID")
@@ -178,7 +185,7 @@ export function createAmazonSpApiReadOnlyClientV1(options: {
         ...(request.body ? { body: JSON.stringify(request.body) } : {}),
         cache: "no-store",
       })
-      if (response.ok) return record(await response.json())
+      if (response.ok) return await response.json() as unknown
       const retryable = response.status === 429 || response.status >= 500
       if (retryable && attempt + 1 < maximumAttempts) {
         const retryAfter = response.headers.get("retry-after")
@@ -198,6 +205,14 @@ export function createAmazonSpApiReadOnlyClientV1(options: {
           : "AMAZON_SP_API_REQUEST_FAILED")
     }
     throw new Error("AMAZON_SP_API_UPSTREAM_RETRYABLE")
+  }
+
+  async function requestJson(path: string, request: Readonly<{
+    method?: "GET" | "POST"
+    query?: Record<string, string | number | undefined>
+    body?: Json | readonly Json[]
+  }> = {}) {
+    return record(await requestValue(path, request))
   }
 
   async function downloadReportDocument(reportDocumentId: string) {
@@ -222,7 +237,7 @@ export function createAmazonSpApiReadOnlyClientV1(options: {
   }
 
   return Object.freeze({ configuration: getAmazonSpApiReadOnlyConfigurationV1(
-    environment), requestJson, downloadReportDocument })
+    environment), requestValue, requestJson, downloadReportDocument })
 }
 
 export type AmazonListingReadV1 = Readonly<{
@@ -235,6 +250,7 @@ export type AmazonListingReadV1 = Readonly<{
   state: "ACTIVE" | "INACTIVE" | "SUPPRESSED"
   priceUsd: number | null
   availableQuantity: number | null
+  fulfillmentChannel: "FBA" | "FBM" | null
   createdAt: string | null
   lastUpdatedAt: string | null
   digest: string
@@ -255,9 +271,18 @@ export function parseAmazonListingItemV1(value: unknown): AmazonListingReadV1 | 
     clean(issue.severity, 40)?.toUpperCase() === "ERROR")
   const offer = record(array(item.offers)[0])
   const price = amount(offer.price)
-  const quantities = array(item.fulfillmentAvailability).map((entry) =>
-    numeric(record(entry).quantity)).filter((entry): entry is number =>
+  const fulfillmentAvailability = array(item.fulfillmentAvailability).map(record)
+  const quantities = fulfillmentAvailability.map((entry) =>
+    numeric(entry.quantity)).filter((entry): entry is number =>
       entry !== null && entry >= 0)
+  const fulfillmentCodes = fulfillmentAvailability.flatMap((entry) => {
+    const code = clean(entry.fulfillmentChannelCode, 80)?.toUpperCase()
+    return code ? [code] : []
+  })
+  const fulfillmentChannel = fulfillmentCodes.some((code) =>
+    code !== "DEFAULT" && /AMAZON|AFN/.test(code))
+    ? "FBA" as const : fulfillmentCodes.includes("DEFAULT")
+      ? "FBM" as const : null
   const normalized = {
     sellerSku, asin: clean(summary.asin, 20)?.toUpperCase() ?? null,
     title, brand: clean(summary.brand, 160),
@@ -268,11 +293,190 @@ export function parseAmazonListingItemV1(value: unknown): AmazonListingReadV1 | 
     priceUsd: price === null ? null : Number(price.toFixed(2)),
     availableQuantity: quantities.length
       ? quantities.reduce((total, entry) => total + entry, 0) : null,
+    fulfillmentChannel,
     createdAt: iso(summary.createdDate),
     lastUpdatedAt: iso(summary.lastUpdatedDate),
   }
   return Object.freeze({ ...normalized, digest: `sha256:${createHash("sha256")
     .update(JSON.stringify(normalized)).digest("hex")}` })
+}
+
+export type AmazonCompetitiveSummaryV1 = Readonly<{
+  asin: string
+  state: "AVAILABLE" | "NO_FEATURED_OFFER" | "UNAVAILABLE"
+  featuredOfferPriceUsd: number | null
+  featuredOfferPriceMaximumUsd: number | null
+  featuredOfferListingPriceUsd: number | null
+  featuredOfferShippingUsd: number | null
+  featuredOfferFulfillmentChannel: "FBA" | "FBM" | null
+  featuredOfferCount: number
+  observedAt: string
+}>
+
+export function parseAmazonCompetitiveSummaryBatchV1(value: unknown,
+  options: { now?: Date } = {}) {
+  const observedAt = (options.now ?? new Date()).toISOString()
+  const summaries = new Map<string, AmazonCompetitiveSummaryV1>()
+  for (const response of array(record(value).responses).map(record)) {
+    const body = record(response.body)
+    const asin = clean(body.asin, 20)?.toUpperCase()
+    if (!asin || !/^[A-Z0-9]{10}$/.test(asin)) continue
+    const statusCode = numeric(record(response.status).statusCode)
+    const newOption = array(body.featuredBuyingOptions).map(record)
+      .find((entry) => clean(entry.buyingOptionType, 40)?.toUpperCase() === "NEW")
+    const offers = array(newOption?.segmentedFeaturedOffers).map(record)
+      .flatMap((offer) => {
+        const listingPriceUsd = amount(offer.listingPrice)
+        const defaultShipping = array(offer.shippingOptions).map(record)
+          .find((entry) => clean(entry.shippingOptionType, 40)?.toUpperCase() ===
+            "DEFAULT")
+        const shippingUsd = amount(defaultShipping?.price) ?? 0
+        if (listingPriceUsd === null || listingPriceUsd < 0 || shippingUsd < 0) {
+          return []
+        }
+        const channel = clean(offer.fulfillmentType, 40)?.toUpperCase()
+        return [{ listingPriceUsd, shippingUsd,
+          totalUsd: Number((listingPriceUsd + shippingUsd).toFixed(2)),
+          fulfillmentChannel: channel === "AFN" ? "FBA" as const
+            : channel === "MFN" ? "FBM" as const : null }]
+      }).sort((left, right) => left.totalUsd - right.totalUsd)
+    const selected = offers[0]
+    summaries.set(asin, Object.freeze({ asin,
+      state: statusCode === 200 && selected ? "AVAILABLE" as const
+        : statusCode === 200 ? "NO_FEATURED_OFFER" as const
+          : "UNAVAILABLE" as const,
+      featuredOfferPriceUsd: selected?.totalUsd ?? null,
+      featuredOfferPriceMaximumUsd: offers.length
+        ? offers[offers.length - 1]?.totalUsd ?? null : null,
+      featuredOfferListingPriceUsd: selected?.listingPriceUsd ?? null,
+      featuredOfferShippingUsd: selected?.shippingUsd ?? null,
+      featuredOfferFulfillmentChannel: selected?.fulfillmentChannel ?? null,
+      featuredOfferCount: offers.length, observedAt }))
+  }
+  return summaries
+}
+
+export async function readAmazonCompetitiveSummariesV1(
+  client: AmazonSpApiReadOnlyClientV1, asins: readonly string[],
+  options: { now?: Date } = {},
+) {
+  const uniqueAsins = [...new Set(asins.map((asin) => asin.toUpperCase()))]
+    .filter((asin) => /^[A-Z0-9]{10}$/.test(asin)).slice(0, 20)
+  if (!uniqueAsins.length) return new Map<string, AmazonCompetitiveSummaryV1>()
+  const response = await client.requestValue(
+    "/batches/products/pricing/2022-05-01/items/competitiveSummary", {
+      method: "POST", body: { requests: uniqueAsins.map((asin) => ({ asin,
+        marketplaceId: client.configuration.marketplaceId,
+        includedData: ["featuredBuyingOptions"],
+        method: "GET",
+        uri: "/products/pricing/2022-05-01/items/competitiveSummary",
+      })) },
+    })
+  return parseAmazonCompetitiveSummaryBatchV1(response, options)
+}
+
+export type AmazonCatalogDemandSignalV1 = Readonly<{
+  asin: string
+  displayGroupRank: number | null
+  displayGroupTitle: string | null
+  classificationRank: number | null
+  classificationTitle: string | null
+  signalState: "SUPPORTED" | "UNAVAILABLE"
+  observedAt: string
+}>
+
+export function parseAmazonCatalogDemandSignalV1(value: unknown,
+  options: { now?: Date } = {}): AmazonCatalogDemandSignalV1 | null {
+  const item = record(value)
+  const asin = clean(item.asin, 20)?.toUpperCase()
+  if (!asin || !/^[A-Z0-9]{10}$/.test(asin)) return null
+  const salesRanks = record(array(item.salesRanks)[0])
+  const displayRanks = array(salesRanks.displayGroupRanks).map(record)
+    .filter((entry) => numeric(entry.rank) !== null)
+    .sort((left, right) => Number(left.rank) - Number(right.rank))
+  const classificationRanks = array(salesRanks.classificationRanks).map(record)
+    .filter((entry) => numeric(entry.rank) !== null)
+    .sort((left, right) => Number(left.rank) - Number(right.rank))
+  const display = displayRanks[0]
+  const classification = classificationRanks[0]
+  const hasRank = Boolean(display || classification)
+  return Object.freeze({ asin,
+    displayGroupRank: numeric(display?.rank),
+    displayGroupTitle: clean(display?.title, 200),
+    classificationRank: numeric(classification?.rank),
+    classificationTitle: clean(classification?.title, 200),
+    signalState: hasRank ? "SUPPORTED" as const : "UNAVAILABLE" as const,
+    observedAt: (options.now ?? new Date()).toISOString() })
+}
+
+export async function readAmazonCatalogDemandSignalsV1(
+  client: AmazonSpApiReadOnlyClientV1, asins: readonly string[],
+  options: { now?: Date } = {},
+) {
+  const signals = new Map<string, AmazonCatalogDemandSignalV1>()
+  const uniqueAsins = [...new Set(asins.map((asin) => asin.toUpperCase()))]
+    .filter((asin) => /^[A-Z0-9]{10}$/.test(asin)).slice(0, 20)
+  for (const asin of uniqueAsins) {
+    const response = await client.requestJson(
+      `/catalog/2022-04-01/items/${encodeURIComponent(asin)}`, { query: {
+        marketplaceIds: client.configuration.marketplaceId,
+        includedData: "salesRanks",
+      } })
+    const signal = parseAmazonCatalogDemandSignalV1(response, options)
+    if (signal) signals.set(asin, signal)
+  }
+  return signals
+}
+
+export type AmazonFeeEstimateV1 = Readonly<{
+  identifier: string
+  asin: string
+  status: "AVAILABLE" | "UNAVAILABLE"
+  totalFeesUsd: number | null
+  estimatedAt: string | null
+}>
+
+export function parseAmazonFeeEstimateBatchV1(value: unknown) {
+  const estimates = new Map<string, AmazonFeeEstimateV1>()
+  for (const entry of array(value).map(record)) {
+    const identifier = clean(record(entry.FeesEstimateIdentifier)
+      .SellerInputIdentifier, 160)
+    const asin = clean(record(entry.FeesEstimateIdentifier).IdValue, 20)
+      ?.toUpperCase()
+    if (!identifier || !asin || !/^[A-Z0-9]{10}$/.test(asin)) continue
+    const estimate = record(entry.FeesEstimate)
+    const totalFeesUsd = amount(estimate.TotalFeesEstimate)
+    const available = clean(entry.Status, 40)?.toUpperCase() === "SUCCESS" &&
+      totalFeesUsd !== null && totalFeesUsd >= 0
+    estimates.set(identifier, Object.freeze({ identifier, asin,
+      status: available ? "AVAILABLE" as const : "UNAVAILABLE" as const,
+      totalFeesUsd: available ? Number(totalFeesUsd.toFixed(2)) : null,
+      estimatedAt: iso(estimate.TimeOfFeesEstimation) }))
+  }
+  return estimates
+}
+
+export async function readAmazonFeeEstimatesV1(
+  client: AmazonSpApiReadOnlyClientV1,
+  inputs: readonly { identifier: string; asin: string; priceUsd: number;
+    fulfillmentChannel: "FBA" | "FBM" }[],
+) {
+  const bounded = inputs.filter((entry) => /^[A-Z0-9]{10}$/.test(entry.asin) &&
+    Number.isFinite(entry.priceUsd) && entry.priceUsd > 0).slice(0, 20)
+  if (!bounded.length) return new Map<string, AmazonFeeEstimateV1>()
+  const response = await client.requestValue("/products/fees/v0/feesEstimate", {
+    method: "POST", body: bounded.map((entry) => ({
+      FeesEstimateRequest: {
+        MarketplaceId: client.configuration.marketplaceId,
+        IsAmazonFulfilled: entry.fulfillmentChannel === "FBA",
+        PriceToEstimateFees: { ListingPrice: { CurrencyCode: "USD",
+          Amount: Number(entry.priceUsd.toFixed(2)) } },
+        Identifier: entry.identifier,
+      },
+      IdType: "ASIN", IdValue: entry.asin,
+    })),
+  })
+  return parseAmazonFeeEstimateBatchV1(response)
 }
 
 export async function searchAmazonListingsReadOnlyV1(

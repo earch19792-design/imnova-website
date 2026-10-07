@@ -5,10 +5,16 @@ import {
   createAmazonSpApiReadOnlyClientV1,
   getAmazonSpApiReadOnlyConfigurationV1,
   parseAmazonSalesTrafficReportV1,
+  readAmazonCatalogDemandSignalsV1,
+  readAmazonCompetitiveSummariesV1,
+  readAmazonFeeEstimatesV1,
   readAmazonFinancesV1,
   readAmazonSalesTrafficReportStatusV1,
   searchAmazonListingsReadOnlyV1,
   type AmazonFinanceMetricV1,
+  type AmazonCatalogDemandSignalV1,
+  type AmazonCompetitiveSummaryV1,
+  type AmazonFeeEstimateV1,
   type AmazonSalesTrafficMetricV1,
 } from "@/lib/marketplace/amazon-sp-api-readonly-v1"
 import {
@@ -99,7 +105,9 @@ function sourceFromExisting(existing: Json, sellerSku: string, asin: string | nu
   }
 }
 
-function economicsFromExisting(existing: Json, priceUsd: number | null) {
+function economicsFromExisting(existing: Json, priceUsd: number | null,
+  feeEstimate: AmazonFeeEstimateV1 | undefined,
+  fulfillmentChannel: "FBA" | "FBM" | null) {
   const economics = record(existing.economics)
   return {
     unitCostUsd: numberOrNull(economics.unitCostUsd),
@@ -112,7 +120,46 @@ function economicsFromExisting(existing: Json, priceUsd: number | null) {
     fbaFeePerUnitUsd: numberOrNull(economics.fbaFeePerUnitUsd),
     otherVariableCostPerUnitUsd:
       numberOrNull(economics.otherVariableCostPerUnitUsd),
+    estimatedAmazonFeesPerUnitUsd: feeEstimate?.status === "AVAILABLE"
+      ? feeEstimate.totalFeesUsd
+      : numberOrNull(economics.estimatedAmazonFeesPerUnitUsd),
+    feeEstimateState: feeEstimate?.status ??
+      stringOrNull(economics.feeEstimateState) ?? "UNAVAILABLE",
+    feeEstimateObservedAt: feeEstimate?.estimatedAt ??
+      stringOrNull(economics.feeEstimateObservedAt),
+    feeEstimatePriceUsd: feeEstimate?.status === "AVAILABLE"
+      ? priceUsd : numberOrNull(economics.feeEstimatePriceUsd),
+    feeEstimateFulfillmentChannel: feeEstimate?.status === "AVAILABLE"
+      ? fulfillmentChannel
+      : stringOrNull(economics.feeEstimateFulfillmentChannel),
+    feeEstimateAuthority: feeEstimate?.status === "AVAILABLE"
+      ? "AMAZON_PRODUCT_FEES_API_V0"
+      : stringOrNull(economics.feeEstimateAuthority),
   }
+}
+
+function marketFromEvidence(existing: Json,
+  market: AmazonCompetitiveSummaryV1 | undefined) {
+  const prior = record(existing.amazonMarket)
+  if (!market) return prior
+  return { featuredOfferState: market.state,
+    featuredOfferPriceUsd: market.featuredOfferPriceUsd,
+    featuredOfferPriceMaximumUsd: market.featuredOfferPriceMaximumUsd,
+    featuredOfferListingPriceUsd: market.featuredOfferListingPriceUsd,
+    featuredOfferShippingUsd: market.featuredOfferShippingUsd,
+    featuredOfferFulfillmentChannel: market.featuredOfferFulfillmentChannel,
+    featuredOfferCount: market.featuredOfferCount,
+    observedAt: market.observedAt,
+    authority: "AMAZON_PRODUCT_PRICING_GET_COMPETITIVE_SUMMARY_V2022_05_01" }
+}
+
+function isRecentProposalCandidate(listing: {
+  createdAt: string | null
+  sellerSku: string
+}, now: Date) {
+  const createdAt = listing.createdAt ? Date.parse(listing.createdAt) : Number.NaN
+  return Number.isFinite(createdAt) && createdAt <= now.getTime() + 5 * 60_000 &&
+    createdAt >= now.getTime() - 14 * 86_400_000
 }
 
 function financeForResult(metric: AmazonSalesTrafficMetricV1 | undefined,
@@ -188,17 +235,82 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       .select("seller_sku,attribution_basis,status")
       .eq("collaborator_id", contributorId)
       .eq("marketplace_id", config.marketplaceId)
-      .eq("status", "ACTIVE")
     if (existingAttribution.error) {
       throw new Error("AMAZON_SP_API_ATTRIBUTION_READ_FAILED")
     }
-    const explicitlyAttributed = new Set((existingAttribution.data ?? [])
+    const activeAttribution = (existingAttribution.data ?? [])
+      .filter((row) => row.status === "ACTIVE")
+    const activeSellerSkus = new Set(activeAttribution.map((row) =>
+      String(row.seller_sku).toUpperCase()))
+    const ignoredSellerSkus = new Set((existingAttribution.data ?? [])
+      .filter((row) => row.status === "IGNORED")
+      .map((row) => String(row.seller_sku).toUpperCase()))
+    const explicitlyAttributed = new Set(activeAttribution
       .filter((row) => row.attribution_basis === "OWNER_CONFIRMED")
       .map((row) => String(row.seller_sku).toUpperCase()))
     const prefix = config.skuPrefix.toUpperCase()
     const attributed = listings.filter((listing) =>
       listing.sellerSku.toUpperCase().startsWith(prefix) ||
-      explicitlyAttributed.has(listing.sellerSku.toUpperCase()))
+      explicitlyAttributed.has(listing.sellerSku.toUpperCase()) ||
+      activeSellerSkus.has(listing.sellerSku.toUpperCase()))
+    const attributedSellerSkus = new Set(attributed.map((listing) =>
+      listing.sellerSku.toUpperCase()))
+    const pendingCandidates = listings.filter((listing) =>
+      !attributedSellerSkus.has(listing.sellerSku.toUpperCase()) &&
+      !ignoredSellerSkus.has(listing.sellerSku.toUpperCase()) &&
+      isRecentProposalCandidate(listing, now)).slice(0, 50)
+    for (const listing of pendingCandidates) {
+      const pending = await input.supabase
+        .from("seller_os_amazon_contributor_sku_attribution_v1")
+        .upsert({ collaborator_id: contributorId,
+          marketplace_id: config.marketplaceId,
+          seller_sku: listing.sellerSku, asin: listing.asin,
+          attribution_basis: "RECENT_LISTING_CANDIDATE",
+          status: "PENDING_REVIEW", title: listing.title,
+          listing_state: listing.state,
+          first_observed_at: listing.createdAt ?? nowIso,
+          last_observed_at: listing.lastUpdatedAt ?? nowIso,
+          listing_digest: listing.digest },
+        { onConflict: "marketplace_id,seller_sku" })
+      if (pending.error) {
+        throw new Error("AMAZON_SP_API_CANDIDATE_INBOX_WRITE_FAILED")
+      }
+    }
+
+    const asins = attributed.flatMap((listing) => listing.asin
+      ? [listing.asin] : [])
+    let competitive = new Map<string, AmazonCompetitiveSummaryV1>()
+    let pricingStatus = "AVAILABLE"
+    try {
+      competitive = await readAmazonCompetitiveSummariesV1(client, asins,
+        { now })
+    } catch (error) {
+      pricingStatus = safeCode(error, "AMAZON_SP_API_PRICING_UNAVAILABLE")
+    }
+    let catalogSignals = new Map<string, AmazonCatalogDemandSignalV1>()
+    let catalogStatus = "AVAILABLE"
+    try {
+      catalogSignals = await readAmazonCatalogDemandSignalsV1(client, asins,
+        { now })
+    } catch (error) {
+      catalogStatus = safeCode(error, "AMAZON_SP_API_CATALOG_UNAVAILABLE")
+    }
+    const feeInputs = attributed.flatMap((listing) => {
+      const market = listing.asin ? competitive.get(listing.asin) : undefined
+      const priceUsd = market?.featuredOfferPriceUsd ?? null
+      return listing.asin && priceUsd !== null && listing.fulfillmentChannel
+        ? [{ identifier: listing.sellerSku, asin: listing.asin, priceUsd,
+          fulfillmentChannel: listing.fulfillmentChannel }] : []
+    })
+    let feeEstimates = new Map<string, AmazonFeeEstimateV1>()
+    let feeEstimateStatus = feeInputs.length ? "AVAILABLE" :
+      "NO_ELIGIBLE_PRICE_AND_FULFILLMENT_INPUT"
+    try {
+      feeEstimates = await readAmazonFeeEstimatesV1(client, feeInputs)
+    } catch (error) {
+      feeEstimateStatus = safeCode(error,
+        "AMAZON_SP_API_FEE_ESTIMATE_UNAVAILABLE")
+    }
 
     const window = reportWindow(now)
     let sales = new Map<string, AmazonSalesTrafficMetricV1>()
@@ -258,6 +370,11 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       const salesMetric = listing.asin ? sales.get(listing.asin) : undefined
       const financeMetric = finances.get(listing.sellerSku)
       const finance = financeForResult(salesMetric, financeMetric)
+      const market = listing.asin ? competitive.get(listing.asin) : undefined
+      const catalog = listing.asin ? catalogSignals.get(listing.asin) : undefined
+      const feeEstimate = feeEstimates.get(listing.sellerSku)
+      const expectedSalePriceUsd = market?.featuredOfferPriceUsd ??
+        listing.priceUsd
       const observedAt = salesMetric && salesWindowEnd
         ? salesWindowEnd : listing.lastUpdatedAt ?? nowIso
       const existingPerformance = record(existing.performance)
@@ -268,7 +385,11 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
           listingApi: "Listings Items API v2021-08-01",
           demandReport: "GET_SALES_AND_TRAFFIC_REPORT",
           financeApi: "Finances API v2024-06-19",
-          reportStatus, financeStatus,
+          pricingApi: "Product Pricing API v2022-05-01 getCompetitiveSummary",
+          catalogApi: "Catalog Items API v2022-04-01 salesRanks",
+          feeEstimateApi: "Product Fees API v0 getMyFeesEstimates",
+          reportStatus, financeStatus, pricingStatus, catalogStatus,
+          feeEstimateStatus,
           reportWindowStart: salesWindowStart ?? window.start,
           reportWindowEnd: salesWindowEnd ?? window.end,
           amazonDoesNotExposeListingCreator: true,
@@ -282,18 +403,32 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
         demand: { claim: salesMetric && salesMetric.unitsOrdered > 0
             ? "HIGH" : "UNKNOWN",
           evidenceState: salesMetric && salesMetric.unitsOrdered > 0
-            ? "CONFIRMED" : salesMetric ? "UNPROVEN" : "UNAVAILABLE",
-          source: "Amazon SP-API GET_SALES_AND_TRAFFIC_REPORT",
-          observedAt: salesMetric ? salesWindowEnd : null,
+            ? "CONFIRMED" : catalog?.signalState === "SUPPORTED"
+              ? "SUPPORTED" : salesMetric ? "UNPROVEN" : "UNAVAILABLE",
+          source: salesMetric && salesMetric.unitsOrdered > 0
+            ? "Amazon SP-API GET_SALES_AND_TRAFFIC_REPORT"
+            : catalog?.signalState === "SUPPORTED"
+              ? "Amazon Catalog Items salesRanks" : null,
+          observedAt: salesMetric && salesMetric.unitsOrdered > 0
+            ? salesWindowEnd : catalog?.observedAt ?? null,
           notes: salesMetric && salesMetric.unitsOrdered === 0
-            ? "AUTHORITATIVE_ZERO_IN_REPORT_WINDOW" : null },
-        eligibility: { state: listing.state === "ACTIVE"
+            ? "AUTHORITATIVE_ZERO_IN_REPORT_WINDOW"
+            : catalog?.signalState === "SUPPORTED"
+              ? "CURRENT_SALES_RANK_IS_A_SIGNAL_NOT_EXACT_UNITS" : null,
+          displayGroupRank: catalog?.displayGroupRank ?? null,
+          displayGroupTitle: catalog?.displayGroupTitle ?? null,
+          classificationRank: catalog?.classificationRank ?? null,
+          classificationTitle: catalog?.classificationTitle ?? null },
+        eligibility: { state: listing.state !== "SUPPRESSED" && listing.asin
             ? "CONFIRMED" : "UNPROVEN",
           observedAt: listing.lastUpdatedAt ?? nowIso },
-        economics: economicsFromExisting(existing, listing.priceUsd),
+        amazonMarket: marketFromEvidence(existing, market),
+        economics: economicsFromExisting(existing, expectedSalePriceUsd,
+          feeEstimate, listing.fulfillmentChannel),
         amazonListing: { state: listing.state,
           sellerSku: listing.sellerSku, listingPriceUsd: listing.priceUsd,
           availableQuantity: listing.availableQuantity,
+          fulfillmentChannel: listing.fulfillmentChannel,
           listedAt: listing.createdAt, lastUpdatedAt: listing.lastUpdatedAt },
         performance: { authority: salesMetric
             ? "SELLER_CENTRAL_REPORT" : "UNPROVEN",
@@ -337,7 +472,10 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
     }
 
     const partial = reportStatus !== "DONE_AND_REFRESH_REQUESTED" ||
-      financeStatus !== "AVAILABLE"
+      financeStatus !== "AVAILABLE" || pricingStatus !== "AVAILABLE" ||
+      catalogStatus !== "AVAILABLE" ||
+      !["AVAILABLE", "NO_ELIGIBLE_PRICE_AND_FULFILLMENT_INPUT"]
+        .includes(feeEstimateStatus)
     await writeSyncState(input.supabase, { ...baseState,
       connection_status: partial ? "DEGRADED" : "READY",
       run_status: reportCompleted ? partial ? "PARTIAL" : "SUCCESS"
@@ -354,7 +492,9 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       observations_written: observationsWritten,
       metadata: { contractVersion:
         SELLER_OS_AMAZON_CONNIE_AUTOMATIC_CAPTURE_V1,
-        reportStatus, financeStatus, idempotentReplays,
+        reportStatus, financeStatus, pricingStatus, catalogStatus,
+        feeEstimateStatus, pendingProposalCandidates: pendingCandidates.length,
+        idempotentReplays,
         credentialsStored: false, buyerPersonalDataStored: false,
         marketplaceWrites: 0 } })
 
@@ -367,7 +507,9 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
         : "AMAZON_SALES_REPORT_PENDING",
       connection: config, listingsSeen: listings.length,
       listingsAttributed: attributed.length, observationsWritten,
-      idempotentReplays, reportStatus, financeStatus,
+      idempotentReplays, reportStatus, financeStatus, pricingStatus,
+      catalogStatus, feeEstimateStatus,
+      pendingProposalCandidates: pendingCandidates.length,
       safety: { amazonReadOnly: true, amazonWrites: 0,
         reportRequests: 1, listingMutations: 0, priceChanges: 0,
         publications: 0, supplierPurchases: 0, credentialsStored: false,

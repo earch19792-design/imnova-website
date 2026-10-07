@@ -6,6 +6,7 @@ import { NextResponse } from "next/server"
 
 import {
   buildAmazonContributorObservationV1,
+  linkAmazonContributorCostAndQuantityV1,
   linkAmazonContributorSupplierCostV1,
   persistAmazonContributorObservationV1,
   readAmazonContributorPerformanceV1,
@@ -21,6 +22,13 @@ import { getSupabaseAdminClient, validateAdminApiRequest } from
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : {}
+}
+
+function positiveNumber(value: unknown, integer = false) {
+  const parsed = typeof value === "number" ? value
+    : typeof value === "string" && value.trim() ? Number(value) : Number.NaN
+  return Number.isFinite(parsed) && parsed > 0 &&
+      (!integer || Number.isInteger(parsed)) ? parsed : null
 }
 
 function json(body: unknown, status = 200) {
@@ -81,6 +89,72 @@ export async function POST(req: Request) {
         safety: { internalDatabaseWrites: true, amazonReadOnly: true,
           amazonWrites: 0, supplierPurchases: 0, publications: 0,
         repricing: 0 } })
+    }
+    if (body.action === "CONFIRM_COST_AND_QUANTITY") {
+      const supabase = getSupabaseAdminClient()
+      const sellerSku = typeof body.sellerSku === "string"
+        ? body.sellerSku.trim() : ""
+      if (!sellerSku || sellerSku.length > 160) {
+        return json({ success: false,
+          error: "SELLER_OS_AMAZON_SELLER_SKU_REQUIRED" }, 400)
+      }
+      const unitCostUsd = positiveNumber(body.unitCostUsd)
+      const supplierInventoryQuantity = positiveNumber(
+        body.supplierInventoryQuantity, true)
+      if (unitCostUsd === null || supplierInventoryQuantity === null) {
+        return json({ success: false,
+          error: unitCostUsd === null
+            ? "SELLER_OS_AMAZON_UNIT_COST_REQUIRED"
+            : "SELLER_OS_AMAZON_SUPPLIER_QUANTITY_REQUIRED" }, 400)
+      }
+      let before = await readAmazonContributorPerformanceV1({
+        supabase, limit: 100,
+      })
+      let card = before.cards.find((candidate) =>
+        record(record(candidate.observation).amazonListing).sellerSku === sellerSku)
+      if (!card) {
+        const candidate = before.proposalInbox.find((row) =>
+          row.seller_sku === sellerSku)
+        if (!candidate) {
+          return json({ success: false,
+            error: "SELLER_OS_AMAZON_PROPOSAL_NOT_FOUND" }, 404)
+        }
+        const confirmed = await supabase
+          .from("seller_os_amazon_contributor_sku_attribution_v1")
+          .update({ attribution_basis: "OWNER_CONFIRMED", status: "ACTIVE" })
+          .eq("id", candidate.id).eq("status", "PENDING_REVIEW")
+          .select("id,seller_sku,attribution_basis,status").maybeSingle()
+        if (confirmed.error || confirmed.data?.status !== "ACTIVE" ||
+            confirmed.data?.attribution_basis !== "OWNER_CONFIRMED") {
+          throw new Error("SELLER_OS_AMAZON_PROPOSAL_CONFIRMATION_FAILED")
+        }
+        await runSellerOsAmazonConnieAutomaticCaptureV1({ supabase })
+        before = await readAmazonContributorPerformanceV1({
+          supabase, limit: 100,
+        })
+        card = before.cards.find((candidateCard) =>
+          record(record(candidateCard.observation).amazonListing).sellerSku ===
+            sellerSku)
+      }
+      if (!card) {
+        throw new Error("SELLER_OS_AMAZON_CONFIRMED_PROPOSAL_READBACK_FAILED")
+      }
+      const observation = linkAmazonContributorCostAndQuantityV1({
+        existingObservation: card.observation,
+        unitCostUsd, supplierInventoryQuantity,
+        now: new Date(),
+      })
+      const persistence = await persistAmazonContributorObservationV1({
+        supabase, recordedByUserId: auth.userId, observation,
+      })
+      const monitor = await readAmazonContributorPerformanceV1({
+        supabase, limit: 100,
+      })
+      return json({ success: true, observation, persistence, monitor,
+        connection: getAmazonSpApiReadOnlyConfigurationV1(),
+        safety: { internalDatabaseWrites: true, amazonReadOnly: true,
+          amazonWrites: 0, supplierPurchases: 0, publications: 0,
+          repricing: 0 } })
     }
     if (body.action === "LINK_SUPPLIER_AND_COST") {
       const supabase = getSupabaseAdminClient()

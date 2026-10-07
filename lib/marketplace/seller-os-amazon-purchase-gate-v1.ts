@@ -65,7 +65,6 @@ function unique(values: string[]) {
 
 function isPlaceholderSupplier(supplier: Json) {
   return supplier.evidenceState !== "CONFIRMED" ||
-    supplier.sourceKey === "amazon-connie-products" ||
     /pendiente de vincular/i.test(String(supplier.name ?? ""))
 }
 
@@ -85,6 +84,7 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
   const demand = record(observation.demand)
   const eligibility = record(observation.eligibility)
   const economics = record(observation.economics)
+  const market = record(observation.amazonMarket)
   const listing = record(observation.amazonListing)
   const performance = record(observation.performance)
   const outcome = record(observation.outcome)
@@ -116,7 +116,11 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
   const inboundShippingPerUnitUsd = numberOrNull(
     economics.inboundShippingPerUnitUsd)
   const prepCostPerUnitUsd = numberOrNull(economics.prepCostPerUnitUsd)
-  const expectedSalePriceUsd = numberOrNull(economics.expectedSalePriceUsd) ??
+  const featuredOfferPriceUsd = market.featuredOfferState === "AVAILABLE" &&
+      market.freshness === "CURRENT"
+    ? numberOrNull(market.featuredOfferPriceUsd) : null
+  const expectedSalePriceUsd = featuredOfferPriceUsd ??
+    numberOrNull(economics.expectedSalePriceUsd) ??
     numberOrNull(listing.listingPriceUsd)
   const projectedReferralFeePerUnitUsd = numberOrNull(
     economics.referralFeePerUnitUsd)
@@ -141,25 +145,42 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
       authoritativeUnitsSold) : null
   const otherVariableCostPerUnitUsd = projectedOtherVariableCostPerUnitUsd ??
     actualOtherVariableCostPerUnitUsd
+  const estimatedAmazonFeesPerUnitUsd =
+    economics.feeEstimateState === "AVAILABLE" &&
+      economics.feeEstimateFreshness === "CURRENT" &&
+      numberOrNull(economics.feeEstimatePriceUsd) === expectedSalePriceUsd
+      ? numberOrNull(economics.estimatedAmazonFeesPerUnitUsd) : null
+  const projectedAmazonFeesPerUnitUsd = estimatedAmazonFeesPerUnitUsd ??
+    (referralFeePerUnitUsd !== null && fbaFeePerUnitUsd !== null
+      ? money(referralFeePerUnitUsd + fbaFeePerUnitUsd) : null)
   const deliveredCostComplete = unitCostUsd !== null &&
     inboundShippingPerUnitUsd !== null && prepCostPerUnitUsd !== null
-  const feeEvidenceComplete = referralFeePerUnitUsd !== null &&
-    fbaFeePerUnitUsd !== null && otherVariableCostPerUnitUsd !== null
-  const economicsComplete = deliveredCostComplete &&
+  const externalCostEvidenceComplete = deliveredCostComplete &&
+    otherVariableCostPerUnitUsd !== null
+  const feeEvidenceComplete = projectedAmazonFeesPerUnitUsd !== null
+  const economicsComplete = externalCostEvidenceComplete &&
     expectedSalePriceUsd !== null && feeEvidenceComplete
   const maximumSupplierUnitCostUsd = expectedSalePriceUsd !== null &&
       inboundShippingPerUnitUsd !== null && prepCostPerUnitUsd !== null &&
-      referralFeePerUnitUsd !== null && fbaFeePerUnitUsd !== null &&
+      projectedAmazonFeesPerUnitUsd !== null &&
       otherVariableCostPerUnitUsd !== null
     ? money(expectedSalePriceUsd - inboundShippingPerUnitUsd -
-      prepCostPerUnitUsd - referralFeePerUnitUsd - fbaFeePerUnitUsd -
+      prepCostPerUnitUsd - projectedAmazonFeesPerUnitUsd -
       otherVariableCostPerUnitUsd - SELLER_OS_MINIMUM_NET_PROFIT_USD_V1)
     : null
   const projectedNetProfitPerUnitUsd = economicsComplete
     ? money((expectedSalePriceUsd ?? 0) - (unitCostUsd ?? 0) -
       (inboundShippingPerUnitUsd ?? 0) - (prepCostPerUnitUsd ?? 0) -
-      (referralFeePerUnitUsd ?? 0) - (fbaFeePerUnitUsd ?? 0) -
+      (projectedAmazonFeesPerUnitUsd ?? 0) -
       (otherVariableCostPerUnitUsd ?? 0)) : null
+  const contributionAfterAmazonFeesPerUnitUsd = expectedSalePriceUsd !== null &&
+      unitCostUsd !== null && projectedAmazonFeesPerUnitUsd !== null
+    ? money(expectedSalePriceUsd - unitCostUsd -
+      projectedAmazonFeesPerUnitUsd) : null
+  const maximumAdditionalCostForMinimumProfitUsd =
+    contributionAfterAmazonFeesPerUnitUsd === null ? null
+      : money(contributionAfterAmazonFeesPerUnitUsd -
+        SELLER_OS_MINIMUM_NET_PROFIT_USD_V1)
   const minimumProfitMet = projectedNetProfitPerUnitUsd === null ? null
     : projectedNetProfitPerUnitUsd >= SELLER_OS_MINIMUM_NET_PROFIT_USD_V1
   const currentCostWithinCeiling = unitCostUsd !== null &&
@@ -180,7 +201,11 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
       ? ["SUPPLIER_AND_UNIT_COST_UNPROVEN"] : []),
     ...(supplierConfirmed && unitCostUsd !== null && !deliveredCostComplete
       ? ["DELIVERED_UNIT_COST_UNPROVEN"] : []),
+    ...(deliveredCostComplete && otherVariableCostPerUnitUsd === null
+      ? ["OTHER_VARIABLE_COST_UNPROVEN"] : []),
     ...(expectedSalePriceUsd === null ? ["AMAZON_PRICE_UNPROVEN"] : []),
+    ...(featuredOfferPriceUsd === null
+      ? ["AMAZON_FEATURED_OFFER_UNPROVEN"] : []),
     ...(!feeEvidenceComplete ? ["AMAZON_FEES_UNPROVEN"] : []),
     ...(minimumProfitMet === false ? ["MINIMUM_4_USD_NET_NOT_MET"] : []),
     ...(currentCostWithinCeiling === false
@@ -190,7 +215,8 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
   const rejected = eligibilityRestricted || authoritativeZeroDemand ||
     minimumProfitMet === false || currentCostWithinCeiling === false
   const ready = asinConfirmed && eligibilityConfirmed && demandConfirmed &&
-    supplierConfirmed && economicsComplete && minimumProfitMet === true &&
+    supplierConfirmed && featuredOfferPriceUsd !== null && economicsComplete &&
+    minimumProfitMet === true &&
     currentCostWithinCeiling === true
   const decision: SellerOsAmazonPurchaseDecisionV1 = rejected ? "REJECT"
     : !ready ? "WAIT" : winnerReorderReady ? "BUY" : "SMALL_TEST"
@@ -220,10 +246,10 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
   } else if (!supplierConfirmed || unitCostUsd === null) {
     nextAction = "CAPTURE_SUPPLIER_AND_COST"
     reasonCode = "SUPPLIER_AND_UNIT_COST_REQUIRED"
-  } else if (!deliveredCostComplete) {
+  } else if (!externalCostEvidenceComplete) {
     nextAction = "COMPLETE_DELIVERED_COST"
-    reasonCode = "INBOUND_AND_PREP_COST_REQUIRED"
-  } else if (expectedSalePriceUsd === null) {
+    reasonCode = "INBOUND_PREP_AND_OTHER_COST_REQUIRED"
+  } else if (featuredOfferPriceUsd === null || expectedSalePriceUsd === null) {
     nextAction = "CAPTURE_AMAZON_PRICE"
     reasonCode = "CURRENT_AMAZON_PRICE_REQUIRED"
   } else if (!feeEvidenceComplete) {
@@ -265,26 +291,40 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
       inventoryQuantity: supplierAvailableQuantity,
       identityConfirmed: supplierConfirmed },
     market: { currentAmazonPriceUsd: expectedSalePriceUsd,
-      priceAuthority: listing.listingPriceUsd !== null &&
-        listing.listingPriceUsd !== undefined
-        ? "AMAZON_LISTINGS_ITEMS_READONLY" as const
-        : expectedSalePriceUsd !== null
-          ? "SELLER_OS_PROJECTED_ECONOMICS" as const : null,
-      competitionState: "UNAVAILABLE_NOT_CAPTURED" as const,
+      featuredOfferPriceUsd,
+      featuredOfferPriceMaximumUsd:
+        numberOrNull(market.featuredOfferPriceMaximumUsd),
+      featuredOfferState: text(market.featuredOfferState),
+      featuredOfferFreshness: text(market.freshness),
+      priceAuthority: featuredOfferPriceUsd !== null
+        ? "AMAZON_PRODUCT_PRICING_COMPETITIVE_SUMMARY" as const
+        : listing.listingPriceUsd !== null && listing.listingPriceUsd !== undefined
+          ? "AMAZON_LISTINGS_ITEMS_READONLY" as const
+          : expectedSalePriceUsd !== null
+            ? "SELLER_OS_PROJECTED_ECONOMICS" as const : null,
+      competitionState: featuredOfferPriceUsd !== null
+        ? "FEATURED_OFFER_CAPTURED" as const : "UNAVAILABLE" as const,
       competitionUsedForRepricing: false as const },
     evidence: { asinConfirmed, eligibilityConfirmed, demandConfirmed,
       authoritativeZeroDemand, supplierConfirmed, deliveredCostComplete,
+      externalCostEvidenceComplete,
+      featuredOfferConfirmed: featuredOfferPriceUsd !== null,
       feeEvidenceComplete, economicsComplete,
       upstreamState: upstreamUnavailable(capture)
         ? "UNAVAILABLE" as const : "AVAILABLE_OR_UNPROVEN" as const },
     economics: { unitCostUsd, inboundShippingPerUnitUsd, prepCostPerUnitUsd,
       referralFeePerUnitUsd, fbaFeePerUnitUsd, otherVariableCostPerUnitUsd,
-      feeAuthority: projectedReferralFeePerUnitUsd !== null &&
+      estimatedAmazonFeesPerUnitUsd, projectedAmazonFeesPerUnitUsd,
+      feeAuthority: estimatedAmazonFeesPerUnitUsd !== null
+        ? "AMAZON_PRODUCT_FEES_ESTIMATE" as const
+        : projectedReferralFeePerUnitUsd !== null &&
           projectedFbaFeePerUnitUsd !== null
         ? "PROJECTED_UNIT_ECONOMICS" as const
         : actualReferralFeePerUnitUsd !== null &&
             actualFbaFeePerUnitUsd !== null
           ? "AMAZON_FINANCES_ACTUAL_PER_UNIT" as const : "UNPROVEN" as const,
+      contributionAfterAmazonFeesPerUnitUsd,
+      maximumAdditionalCostForMinimumProfitUsd,
       projectedNetProfitPerUnitUsd, minimumNetProfitUsd:
         SELLER_OS_MINIMUM_NET_PROFIT_USD_V1,
       minimumProfitMet, maximumSupplierUnitCostUsd,
