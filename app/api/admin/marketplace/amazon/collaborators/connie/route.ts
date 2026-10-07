@@ -29,6 +29,12 @@ function json(body: unknown, status = 200) {
   } })
 }
 
+function publicAmazonErrorCode(error: unknown, fallback: string) {
+  const code = error instanceof Error ? error.message : ""
+  return /^(?:SELLER_OS_AMAZON_|AMAZON_SP_API_)[A-Z0-9_]{2,119}$/.test(code)
+    ? code : fallback
+}
+
 async function owner(req: Request) {
   const auth = await validateAdminApiRequest(req)
   return auth.ok && auth.authenticationMode === "admin_user" && auth.userId
@@ -51,9 +57,8 @@ export async function GET(req: Request) {
       safety: { readOnly: true, amazonWrites: 0, supplierPurchases: 0,
         publications: 0, repricing: 0 } })
   } catch (error) {
-    const code = error instanceof Error ? error.message : ""
-    return json({ success: false, error: code.startsWith("SELLER_OS_AMAZON_")
-      ? code : "SELLER_OS_AMAZON_CONTRIBUTOR_MONITOR_READ_FAILED" }, 503)
+    return json({ success: false, error: publicAmazonErrorCode(error,
+      "SELLER_OS_AMAZON_CONTRIBUTOR_MONITOR_READ_FAILED") }, 503)
   }
 }
 
@@ -128,8 +133,7 @@ export async function POST(req: Request) {
       safety: { internalDatabaseWrites: true, amazonWrites: 0,
         supplierPurchases: 0, publications: 0, repricing: 0 } })
   } catch (error) {
-    const code = error instanceof Error ? error.message : ""
-    return json({ success: false, error: code.startsWith("SELLER_OS_AMAZON_")
-      ? code : "SELLER_OS_AMAZON_CONTRIBUTOR_CAPTURE_FAILED" }, 409)
+    return json({ success: false, error: publicAmazonErrorCode(error,
+      "SELLER_OS_AMAZON_CONTRIBUTOR_CAPTURE_FAILED") }, 409)
   }
 }

@@ -205,6 +205,7 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
     let salesWindowStart: string | null = null
     let salesWindowEnd: string | null = null
     let reportStatus = "NOT_REQUESTED"
+    let reportCompleted = false
     let pendingReportId = stringOrNull(state.pending_report_id)
     if (pendingReportId) {
       const report = await readAmazonSalesTrafficReportStatusV1(client,
@@ -214,6 +215,7 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
         const parsed = parseAmazonSalesTrafficReportV1(
           await client.downloadReportDocument(report.reportDocumentId))
         sales = parsed.metrics
+        reportCompleted = true
         salesWindowStart = parsed.dataStartTime ?? report.dataStartTime
         salesWindowEnd = parsed.dataEndTime ?? report.dataEndTime
         pendingReportId = null
@@ -226,7 +228,7 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       pendingReportId = await createAmazonSalesTrafficReportV1(client, {
         dataStartTime: window.start, dataEndTime: window.end,
       })
-      reportStatus = sales.size > 0 ? "DONE_AND_REFRESH_REQUESTED"
+      reportStatus = reportCompleted ? "DONE_AND_REFRESH_REQUESTED"
         : "IN_QUEUE"
     }
 
@@ -338,12 +340,12 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
       financeStatus !== "AVAILABLE"
     await writeSyncState(input.supabase, { ...baseState,
       connection_status: partial ? "DEGRADED" : "READY",
-      run_status: sales.size > 0 ? partial ? "PARTIAL" : "SUCCESS"
+      run_status: reportCompleted ? partial ? "PARTIAL" : "SUCCESS"
         : "WAITING_REPORT",
       last_success_at: nowIso, last_listing_sync_at: nowIso,
       last_finance_sync_at: financeStatus === "AVAILABLE" ? nowIso : null,
       last_report_requested_at: nowIso,
-      last_report_completed_at: sales.size > 0 ? nowIso : null,
+      last_report_completed_at: reportCompleted ? nowIso : null,
       pending_report_id: pendingReportId,
       pending_report_created_at: nowIso,
       report_window_start: window.start, report_window_end: window.end,
@@ -358,9 +360,9 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
 
     return Object.freeze({
       contractVersion: SELLER_OS_AMAZON_CONNIE_AUTOMATIC_CAPTURE_V1,
-      status: sales.size > 0 ? partial ? "PARTIAL" as const
+      status: reportCompleted ? partial ? "PARTIAL" as const
         : "SUCCESS" as const : "WAITING_REPORT" as const,
-      reasonCode: sales.size > 0 ? partial
+      reasonCode: reportCompleted ? partial
         ? "AMAZON_CAPTURE_PARTIAL_EVIDENCE" : "AMAZON_CAPTURE_COMPLETE"
         : "AMAZON_SALES_REPORT_PENDING",
       connection: config, listingsSeen: listings.length,
@@ -373,6 +375,31 @@ export async function runSellerOsAmazonConnieAutomaticCaptureV1(input: {
     })
   } catch (error) {
     const reasonCode = safeCode(error, "AMAZON_SP_API_AUTOMATIC_CAPTURE_FAILED")
+    if (reasonCode === "AMAZON_SP_API_UPSTREAM_RETRYABLE") {
+      await writeSyncState(input.supabase, { ...baseState,
+        connection_status: "DEGRADED",
+        run_status: state.pending_report_id ? "WAITING_REPORT" : "PARTIAL",
+        last_error_code: reasonCode,
+        metadata: { ...record(state.metadata), contractVersion:
+          SELLER_OS_AMAZON_CONNIE_AUTOMATIC_CAPTURE_V1,
+          upstreamState: "WAIT_UPSTREAM", credentialsStored: false,
+          buyerPersonalDataStored: false, marketplaceWrites: 0 } })
+      return Object.freeze({
+        contractVersion: SELLER_OS_AMAZON_CONNIE_AUTOMATIC_CAPTURE_V1,
+        status: "WAITING_UPSTREAM" as const, reasonCode,
+        connection: config,
+        listingsSeen: numberOrNull(state.listings_seen) ?? 0,
+        listingsAttributed: numberOrNull(state.listings_attributed) ?? 0,
+        observationsWritten: 0,
+        reportStatus: "WAIT_UPSTREAM",
+        financeStatus: "UNAVAILABLE",
+        safety: { amazonReadOnly: true, amazonWrites: 0,
+          reportRequests: 0, listingMutations: 0, priceChanges: 0,
+          publications: 0, supplierPurchases: 0, credentialsStored: false,
+          buyerPersonalDataStored: false, pendingReportPreserved:
+            Boolean(state.pending_report_id) },
+      })
+    }
     await writeSyncState(input.supabase, { ...baseState,
       connection_status: reasonCode === "AMAZON_SP_API_AUTHORIZATION_REQUIRED"
         ? "NOT_CONFIGURED" : "UNAVAILABLE",

@@ -7,6 +7,7 @@ export const AMAZON_US_MARKETPLACE_ID_V1 = "ATVPDKIKX0DER" as const
 
 type Json = Record<string, unknown>
 type FetchLike = typeof fetch
+type SleepLike = (milliseconds: number) => Promise<void>
 
 function record(value: unknown): Json {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -142,11 +143,17 @@ export function createAmazonSpApiReadOnlyClientV1(options: {
   environment?: NodeJS.ProcessEnv
   fetcher?: FetchLike
   now?: () => Date
+  sleep?: SleepLike
+  maximumAttempts?: number
 } = {}): AmazonSpApiReadOnlyClientV1 {
   const environment = options.environment ?? process.env
   const config = runtimeConfig(environment)
   const fetcher = options.fetcher ?? fetch
   const now = options.now ?? (() => new Date())
+  const sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) =>
+    setTimeout(resolve, milliseconds)))
+  const maximumAttempts = Math.min(5, Math.max(1,
+    Math.trunc(options.maximumAttempts ?? 3)))
 
   async function requestJson(path: string, request: Readonly<{
     method?: "GET" | "POST"
@@ -161,23 +168,36 @@ export function createAmazonSpApiReadOnlyClientV1(options: {
       if (value !== undefined) url.searchParams.set(key, String(value))
     }
     const token = await accessToken(config, fetcher, now().getTime())
-    const response = await fetcher(url, {
-      method: request.method ?? "GET",
-      headers: { Accept: "application/json", "x-amz-access-token": token,
-        "x-amz-date": now().toISOString().replace(/[-:]|\.\d{3}/g, ""),
-        "User-Agent": "IMNOVA-Seller-OS/1.0 (Language=TypeScript)",
-        ...(request.body ? { "Content-Type": "application/json" } : {}) },
-      ...(request.body ? { body: JSON.stringify(request.body) } : {}),
-      cache: "no-store",
-    })
-    if (!response.ok) {
+    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+      const response = await fetcher(url, {
+        method: request.method ?? "GET",
+        headers: { Accept: "application/json", "x-amz-access-token": token,
+          "x-amz-date": now().toISOString().replace(/[-:]|\.\d{3}/g, ""),
+          "User-Agent": "IMNOVA-Seller-OS/1.0 (Language=TypeScript)",
+          ...(request.body ? { "Content-Type": "application/json" } : {}) },
+        ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+        cache: "no-store",
+      })
+      if (response.ok) return record(await response.json())
       const retryable = response.status === 429 || response.status >= 500
+      if (retryable && attempt + 1 < maximumAttempts) {
+        const retryAfter = response.headers.get("retry-after")
+        const seconds = retryAfter === null ? null : Number(retryAfter)
+        const retryAt = retryAfter === null ? Number.NaN : Date.parse(retryAfter)
+        const delay = seconds !== null && Number.isFinite(seconds) && seconds >= 0
+          ? seconds * 1_000
+          : Number.isFinite(retryAt)
+            ? Math.max(0, retryAt - now().getTime())
+            : 1_500 * (2 ** attempt)
+        await sleep(Math.min(30_000, Math.ceil(delay)))
+        continue
+      }
       throw new Error(retryable ? "AMAZON_SP_API_UPSTREAM_RETRYABLE"
         : response.status === 401 || response.status === 403
           ? "AMAZON_SP_API_AUTHORIZATION_REQUIRED"
           : "AMAZON_SP_API_REQUEST_FAILED")
     }
-    return record(await response.json())
+    throw new Error("AMAZON_SP_API_UPSTREAM_RETRYABLE")
   }
 
   async function downloadReportDocument(reportDocumentId: string) {

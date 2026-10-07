@@ -127,7 +127,9 @@ export default function ConnieAmazonPerformancePage() {
       const result = object(payload.sync)
       setMessage(result.status === "WAITING_REPORT"
         ? "Listings capturados. Amazon está preparando ventas y tráfico; Seller OS los recogerá automáticamente en la siguiente pasada."
-        : `Sincronización terminada: ${Number(result.listingsAttributed ?? 0)} SKU de Connie detectados.`)
+        : result.status === "WAITING_UPSTREAM"
+          ? "Amazon pidió una pausa temporal. Seller OS conservó el reporte pendiente y volverá a leerlo sin convertir la espera en cero."
+          : `Sincronización terminada: ${Number(result.listingsAttributed ?? 0)} SKU de Connie detectados.`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo sincronizar.")
     } finally { setSyncing(false) }
@@ -226,6 +228,9 @@ export default function ConnieAmazonPerformancePage() {
         <div className="rounded-xl bg-black/15 p-3"><dt className="text-white/40">SKU atribuidos</dt><dd className="mt-1 font-bold">{Number(automation.attributedSellerSkus ?? 0)}</dd></div>
         <div className="rounded-xl bg-black/15 p-3"><dt className="text-white/40">Próxima acción técnica</dt><dd className="mt-1 font-bold">{syncState.pending_report_id ? "Recoger reporte Amazon" : ready ? "Leer Seller Central" : "Autorizar conexión"}</dd></div>
       </dl>
+      {Boolean(syncState.last_error_code) && <p className="mt-3 rounded-xl bg-amber-200/10 p-3 text-xs font-bold text-amber-50">
+        Diagnóstico: {String(syncState.last_error_code)}
+      </p>}
     </section>
 
     <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
