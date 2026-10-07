@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+export { SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 } from
+  "./seller-os-commercial-policy-v1"
+import { SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 } from
+  "./seller-os-commercial-policy-v1"
+import { buildSellerOsAmazonPurchaseGateV1,
+  SELLER_OS_AMAZON_PURCHASE_GATE_V1 } from
+  "./seller-os-amazon-purchase-gate-v1"
+
 export const SELLER_OS_AMAZON_CONTRIBUTOR_PERFORMANCE_V1 =
   "SELLER_OS_AMAZON_CONTRIBUTOR_PERFORMANCE_MONITOR_V1" as const
 export const SELLER_OS_CONNIE_COLLABORATOR_KEY_V1 =
   "connie-g-yape" as const
-export const SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 = 4 as const
 
 type Json = Record<string, unknown>
 
@@ -500,6 +507,7 @@ export async function persistAmazonContributorObservationV1(input: {
 export async function readAmazonContributorPerformanceV1(input: {
   supabase: SupabaseClient
   limit?: number
+  now?: Date
 }) {
   const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)))
   const collaborator = await input.supabase
@@ -558,7 +566,9 @@ export async function readAmazonContributorPerformanceV1(input: {
       supplier: sourceById.get(String(product.source_id)) ?? null,
       snapshotId: snapshot?.id ?? null,
       capturedAt: snapshot?.captured_at ?? product.last_snapshot_at,
-      observation }]
+      observation, purchaseGate: buildSellerOsAmazonPurchaseGateV1({
+        observation, now: input.now,
+      }) }]
   })
   const outcome = (card: (typeof cards)[number]) => record(card.observation.outcome)
   const performance = (card: (typeof cards)[number]) =>
@@ -566,6 +576,8 @@ export async function readAmazonContributorPerformanceV1(input: {
   const demand = (card: (typeof cards)[number]) => record(card.observation.demand)
   const listing = (card: (typeof cards)[number]) =>
     record(card.observation.amazonListing)
+  const purchaseDecision = (card: (typeof cards)[number]) =>
+    card.purchaseGate.decision
   const evaluated = cards.filter((card) => performance(card).authoritative === true &&
     performance(card).actualNetProfitUsd !== null &&
     performance(card).actualNetProfitUsd !== undefined)
@@ -596,6 +608,14 @@ export async function readAmazonContributorPerformanceV1(input: {
         ? Number(knownProfit.toFixed(2)) : null,
       reorderReviewReady: cards.filter((card) =>
         outcome(card).reorderDecision === "REVIEW_REORDER").length,
+      purchaseGate: {
+        buy: cards.filter((card) => purchaseDecision(card) === "BUY").length,
+        smallTest: cards.filter((card) =>
+          purchaseDecision(card) === "SMALL_TEST").length,
+        wait: cards.filter((card) => purchaseDecision(card) === "WAIT").length,
+        reject: cards.filter((card) =>
+          purchaseDecision(card) === "REJECT").length,
+      },
       evidenceCoverage: cards.length > 0
         ? Number((evaluated.length / cards.length).toFixed(4)) : null,
     },
@@ -607,6 +627,8 @@ export async function readAmazonContributorPerformanceV1(input: {
       minimumNetProfitUsd: SELLER_OS_MINIMUM_NET_PROFIT_USD_V1,
       zeroWithoutAuthorityRemainsUnknown: true,
       reorderIsReviewOnly: true,
+      purchaseGateContractVersion: SELLER_OS_AMAZON_PURCHASE_GATE_V1,
+      purchaseGateNeverBuysAutomatically: true,
     },
     safety: { readOnly: true, marketplaceWrites: 0, supplierPurchases: 0,
       publications: 0, repricing: 0, credentialsIncluded: false,

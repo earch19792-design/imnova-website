@@ -13,6 +13,7 @@ export const SELLER_OS_888LOTS_AMAZON_STAR_READ_V1 =
   "SELLER_OS_888LOTS_AMAZON_STAR_READ_V1" as const
 export const SELLER_OS_888LOTS_PRESEARCH_MAX_BATCH_V1 = 5 as const
 export const SELLER_OS_888LOTS_STAR_LIMITS_V1 = [10, 20] as const
+export const SELLER_OS_888LOTS_RETIRED_V1 = true as const
 
 const PRESEARCH_REPLAY_WINDOW_MS = 6 * 60 * 60 * 1000
 const PRESEARCH_FRESH_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -508,6 +509,30 @@ export async function get888LotsAmazonStarCandidatesV1(input: {
 }) {
   const now = input.now ?? new Date()
   const limit = assert888LotsAmazonStarLimitV1(input.limit)
+  if (SELLER_OS_888LOTS_RETIRED_V1) {
+    return Object.freeze({
+      contractVersion: SELLER_OS_888LOTS_AMAZON_STAR_READ_V1,
+      sourceKey: "888lots" as const,
+      marketplace: "AMAZON_US" as const,
+      supplierStatus: "RETIRED" as const,
+      retirementReason: "SUPPLIER_CLOSING" as const,
+      requestedLimit: limit, returnedCount: 0,
+      observedAt: now.toISOString(), candidates: [],
+      interpretation: {
+        starMeansResearchPriorityNotPublicationAuthorization: true as const,
+        publicationReadyCount: 0 as const,
+        supplierExcludedFromNewRecommendations: true as const,
+        historicalEvidencePreserved: true as const,
+      },
+      policy: { minimumNetProfitUsd: 4 as const,
+        clickOnlyMaximumTestUnits: 3 as const,
+        exactVelocityCoverageDays: 14 as const },
+      safety: { readOnly: true as const, supplierReads: 0 as const,
+        supplierPurchases: 0 as const, marketplaceWrites: 0 as const,
+        publications: 0 as const, repricing: 0 as const,
+        buyerPiiIncluded: false as const, credentialsIncluded: false as const },
+    })
+  }
   const dashboard = await get888LotsRadarDashboardV1({
     supabase: input.supabase, accountKey: input.accountKey, limit: 100,
   })

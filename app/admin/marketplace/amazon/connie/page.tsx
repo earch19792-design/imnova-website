@@ -24,11 +24,24 @@ const actionLabels: Record<string, string> = {
   MEASURE_RESULT: "Esperar el siguiente resultado automático",
   REVIEW_REORDER: "Revisar recompra con el owner",
   REVIEW_REJECTION: "Revisar descarte o aprendizaje",
+  CAPTURE_SUPPLIER_AND_COST: "Agregar proveedor y costo unitario",
+  COMPLETE_DELIVERED_COST: "Completar envío inbound y preparación",
+  CAPTURE_AMAZON_PRICE: "Capturar precio actual de Amazon",
+  COMPLETE_AMAZON_FEES: "Completar tarifas de Amazon",
+  WAIT_UPSTREAM: "Esperar evidencia de Amazon",
+  READY_FOR_OWNER_BUY_REVIEW: "Revisar prueba pequeña con el owner",
 }
 
 const outcomeLabels: Record<string, string> = {
   WINNER: "Ganador confirmado", NOT_WINNER: "No ganador",
   PENDING_RESULT: "Esperando resultado", PENDING_EVIDENCE: "Falta evidencia",
+}
+
+const purchaseDecisionLabels: Record<string, string> = {
+  BUY: "RECOMPRA PARA REVISAR",
+  SMALL_TEST: "PRUEBA PEQUEÑA",
+  WAIT: "ESPERAR EVIDENCIA",
+  REJECT: "DESCARTAR",
 }
 
 function object(value: unknown): Json {
@@ -163,6 +176,7 @@ export default function ConnieAmazonPerformancePage() {
   }
 
   const summary = object(monitor.summary)
+  const purchaseGateSummary = object(summary.purchaseGate)
   const automation = object(monitor.automation)
   const syncState = object(automation.sync)
   const cards = list(monitor.cards)
@@ -171,13 +185,14 @@ export default function ConnieAmazonPerformancePage() {
   return <main className="mx-auto max-w-7xl space-y-5 p-4 text-white sm:p-6">
     <header className="rounded-3xl border border-cyan-200/20 bg-gradient-to-br from-cyan-200/[0.12] to-transparent p-6">
       <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-100/65">
-        Amazon · captura automática de Connie
+        Amazon · abastecimiento y seguimiento de Connie
       </p>
-      <h1 className="mt-2 text-3xl font-black">Seller OS observa; tú no llenas resultados</h1>
+      <h1 className="mt-2 text-3xl font-black">De producto propuesto a decisión de compra</h1>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">
-        Seller OS lee Seller Central en modo seguro: detecta los SKU de Connie,
-        ASIN, precio, inventario, estado del listing, ventas, tráfico y cargos.
-        Nunca publica, cambia precios ni compra inventario.
+        Seller OS conecta el producto de Connie con Amazon, el proveedor, el
+        costo, la demanda y la utilidad. Te muestra una sola decisión:
+        prueba pequeña, esperar, descartar o revisar recompra. Nunca compra,
+        publica ni cambia precios automáticamente.
       </p>
       <div className="mt-5 flex flex-wrap gap-3 text-sm font-bold">
         <Link href="/admin" className="min-h-11 rounded-xl border border-white/15 px-4 py-3">
@@ -242,6 +257,21 @@ export default function ConnieAmazonPerformancePage() {
       <Metric title="Utilidad neta realizada" value={loading ? "…" : money(summary.realizedNetProfitUsd)} />
       <Metric title="Revisar recompra" value={loading ? "…" : Number(summary.reorderReviewReady ?? 0)} />
       <Metric title="Cobertura real" value={loading ? "…" : percent(summary.evidenceCoverage)} note="Sin convertir faltantes en cero" />
+    </section>
+
+    <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.06] p-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div><p className="text-xs font-black uppercase tracking-[0.15em] text-emerald-100/60">
+          Purchase Gate · mínimo $4 netos
+        </p><h2 className="mt-2 text-xl font-black">Qué conviene comprar</h2></div>
+        <p className="text-xs text-white/45">Siempre requiere revisión del owner</p>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric title="Recompra" value={loading ? "…" : Number(purchaseGateSummary.buy ?? 0)} />
+        <Metric title="Prueba pequeña" value={loading ? "…" : Number(purchaseGateSummary.smallTest ?? 0)} note="Máximo 3 sin historial propio" />
+        <Metric title="Esperar" value={loading ? "…" : Number(purchaseGateSummary.wait ?? 0)} note="Nunca convierte faltantes en cero" />
+        <Metric title="Descartar" value={loading ? "…" : Number(purchaseGateSummary.reject ?? 0)} />
+      </div>
     </section>
 
     <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
@@ -315,6 +345,9 @@ export default function ConnieAmazonPerformancePage() {
         </p>}
         {cards.map((card) => {
           const observation = object(card.observation)
+          const purchaseGate = object(card.purchaseGate)
+          const purchaseEconomics = object(purchaseGate.economics)
+          const purchaseNext = object(purchaseGate.nextBestEvidence)
           const outcome = object(observation.outcome)
           const performance = object(observation.performance)
           const economics = object(observation.economics)
@@ -325,7 +358,8 @@ export default function ConnieAmazonPerformancePage() {
               <div><h3 className="font-black">{String(card.title ?? "Producto")}</h3>
                 <p className="mt-1 text-xs text-white/45">Seller SKU {String(listing.sellerSku ?? "—")} · ASIN {String(object(observation.product).asin ?? "—")}</p></div>
               <span className="rounded-full bg-cyan-200/10 px-3 py-1 text-xs font-bold text-cyan-100">
-                {outcomeLabels[String(outcome.skillOutcome)] ?? String(outcome.skillOutcome ?? "Pendiente")}
+                {purchaseDecisionLabels[String(purchaseGate.decision)] ??
+                  outcomeLabels[String(outcome.skillOutcome)] ?? "Pendiente"}
               </span>
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
@@ -335,9 +369,13 @@ export default function ConnieAmazonPerformancePage() {
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Neto real / unidad</dt><dd className="mt-1 font-bold">{money(performance.actualNetProfitPerUnitUsd)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Sesiones</dt><dd className="mt-1 font-bold">{performance.sessions == null ? "Sin evidencia" : String(performance.sessions)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Neto proyectado</dt><dd className="mt-1 font-bold">{money(economics.projectedNetProfitPerUnitUsd)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Máximo a pagar</dt><dd className="mt-1 font-bold">{money(purchaseEconomics.maximumSupplierUnitCostUsd)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Cantidad sugerida</dt><dd className="mt-1 font-bold">{purchaseGate.recommendedPurchaseQuantity == null ? "Sin autorizar" : `${String(purchaseGate.recommendedPurchaseQuantity)} unidades`}</dd></div>
             </dl>
             <p className="mt-3 rounded-xl bg-amber-200/10 p-3 text-xs font-bold text-amber-50">
-              Siguiente: {actionLabels[String(next.action)] ?? String(next.action ?? "Revisar evidencia")}
+              Siguiente: {actionLabels[String(purchaseNext.action)] ??
+                actionLabels[String(next.action)] ??
+                String(purchaseNext.action ?? next.action ?? "Revisar evidencia")}
             </p>
           </article>
         })}
