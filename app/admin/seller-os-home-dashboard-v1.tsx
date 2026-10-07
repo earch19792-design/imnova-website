@@ -51,6 +51,7 @@ type HomeAuthority = Readonly<{
   mayelOwnerExceptions: number | null
   mayelRecentResults: number | null
   ownerInsights: Record<string, unknown> | null
+  commercialPortfolio: Record<string, unknown> | null
 }>
 
 const EMPTY_AUTHORITY: HomeAuthority = Object.freeze({
@@ -90,6 +91,7 @@ const EMPTY_AUTHORITY: HomeAuthority = Object.freeze({
   mayelOwnerExceptions: null,
   mayelRecentResults: null,
   ownerInsights: null,
+  commercialPortfolio: null,
 })
 
 function record(value: unknown): Record<string, unknown> {
@@ -235,6 +237,9 @@ export function SellerOsHomeDashboardV1() {
         ownerInsights: snapshot.ownerInsights &&
           typeof snapshot.ownerInsights === "object"
           ? record(snapshot.ownerInsights) : null,
+        commercialPortfolio: snapshot.commercialPortfolio &&
+          typeof snapshot.commercialPortfolio === "object"
+          ? record(snapshot.commercialPortfolio) : null,
       }))
       setReadState(Array.isArray(snapshot.authorityFailures) &&
         snapshot.authorityFailures.length > 0 ? "PARTIAL" : "STABLE")
@@ -279,6 +284,15 @@ export function SellerOsHomeDashboardV1() {
       label: "Revisar resultados de Mayel",
       detail: "Hay resultados visuales listos para una decisión owner.",
       href: "/admin/ebay/mayel?view=results",
+    }
+    const commercialQueue = record(authority.commercialPortfolio).actionQueue
+    const commercialAction = Array.isArray(commercialQueue)
+      ? record(commercialQueue[0]) : null
+    if (commercialAction) return {
+      label: String(commercialAction.label ?? "Revisar oportunidad comercial"),
+      detail: String(commercialAction.detail ??
+        "Existe una acción comercial sustentada por evidencia."),
+      href: String(commercialAction.href ?? "/admin"),
     }
     return null
   }, [authority, facts])
@@ -456,7 +470,9 @@ export function SellerOsHomeDashboardV1() {
         </a>
       </section>
     </div>
-    <SalesRevenueVisual insights={insights} />
+    <CommercialActionQueue portfolio={record(authority.commercialPortfolio)} />
+    <SalesRevenueVisual insights={insights}
+      portfolio={record(authority.commercialPortfolio)} />
     <div className="grid gap-4 lg:grid-cols-2">
       <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
         <h2 className="text-lg font-black">Actividad reciente</h2>
@@ -503,8 +519,44 @@ function ExtensionCapability(props: Readonly<{ label: string;
   </div>
 }
 
-function SalesRevenueVisual({ insights }: Readonly<{
-  insights: Record<string, unknown> }>) {
+function CommercialActionQueue({ portfolio }: Readonly<{
+  portfolio: Record<string, unknown> }>) {
+  const actions = Array.isArray(portfolio.actionQueue)
+    ? portfolio.actionQueue.map(record) : []
+  const cross = record(portfolio.crossMarketplace)
+  return <section data-commercial-action-queue-v1
+    className="rounded-3xl border border-amber-200/20 bg-gradient-to-br from-amber-200/[0.08] to-transparent p-5 sm:p-6">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-100/70">Cola inteligente</p>
+        <h2 className="mt-1 text-xl font-black">Recompra y expansión entre marketplaces</h2>
+        <p className="mt-1 text-xs text-white/45">Una sola acción prioritaria por producto. Nada compra, publica o cambia precios automáticamente.</p>
+      </div>
+      <span className="rounded-full border border-white/10 px-3 py-1 text-[10px] font-black text-white/55">Piso neto ${String(portfolio.minimumNetProfitUsd ?? 4)}</span>
+    </div>
+    <div className="mt-4 grid gap-2 lg:grid-cols-2">
+      {actions.length ? actions.slice(0, 8).map((item) => <a
+        key={String(item.key)} href={String(item.href ?? "/admin")}
+        className="rounded-2xl bg-black/20 p-3 transition hover:bg-black/30">
+        <div className="flex items-start justify-between gap-3">
+          <div><p className="text-[10px] font-black tracking-wide text-amber-100/70">{String(item.marketplace ?? "MARKETPLACE")} · {String(item.action ?? "REVIEW")}</p><h3 className="mt-1 text-sm font-black">{String(item.title ?? "Producto")}</h3></div>
+          <ArrowRight size={15} className="mt-1 shrink-0 text-white/45" />
+        </div>
+        <p className="mt-1 text-xs leading-5 text-white/50">{String(item.detail ?? "Evidencia pendiente.")}</p>
+        {(typeof item.recommendedPurchaseQuantity === "number" ||
+          typeof item.maximumSupplierUnitCostUsd === "number") &&
+          <p className="mt-2 text-xs font-black text-emerald-100">Cantidad sugerida: {count(item.recommendedPurchaseQuantity) ?? "—"} · costo máximo/u: {usd(item.maximumSupplierUnitCostUsd)}</p>}
+      </a>) : <p className="text-sm text-white/45">No hay acciones comerciales comprobadas todavía.</p>}
+    </div>
+    <p className="mt-3 text-[10px] text-white/35">Cruce entre marketplaces: sólo UPC exacto; coincidencias por título no se usan · oportunidades verificadas: {count(cross.verifiedOpportunityCount) ?? "—"}.</p>
+  </section>
+}
+
+function SalesRevenueVisual({ insights, portfolio }: Readonly<{
+  insights: Record<string, unknown>
+  portfolio: Record<string, unknown> }>) {
+  const [marketplace, setMarketplace] = useState<"EBAY_US" | "AMAZON_US">(
+    "EBAY_US")
   const [days, setDays] = useState(30)
   const [categoryDays, setCategoryDays] = useState(7)
   const sales = record(insights.sales)
@@ -526,10 +578,36 @@ function SalesRevenueVisual({ insights }: Readonly<{
   const opportunity = record(insights.marketOpportunity)
   const opportunities = Array.isArray(opportunity.opportunities)
     ? opportunity.opportunities.map(record) : []
+  const ebayPortfolio = record(portfolio.ebay)
+  const productWindows = Array.isArray(ebayPortfolio.productWindows)
+    ? ebayPortfolio.productWindows.map(record) : []
+  const productWindow = productWindows.find((item) =>
+    Number(item.days) === days) ?? {}
+  const ebayProducts = Array.isArray(productWindow.products)
+    ? productWindow.products.map(record) : []
+  const amazonPortfolio = record(portfolio.amazon)
+  const amazonProducts = Array.isArray(amazonPortfolio.products)
+    ? amazonPortfolio.products.map(record) : []
+  const amazonCategories = Array.isArray(amazonPortfolio.categories)
+    ? amazonPortfolio.categories.map(record) : []
+  if (marketplace === "AMAZON_US") return <section data-marketplace-ranking="AMAZON_US"
+    className="rounded-3xl border border-white/10 bg-gradient-to-br from-orange-300/[0.08] to-transparent p-5 sm:p-6">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><div className="flex items-center gap-2"><TrendingUp size={19} className="text-orange-200" /><h2 className="text-xl font-black">Rendimiento comercial</h2></div><p className="mt-1 text-xs text-white/45">Resultados capturados automáticamente desde Amazon Seller Central.</p></div>
+      <div className="flex rounded-xl bg-black/20 p-1">{(["EBAY_US", "AMAZON_US"] as const).map((value) => <button key={value} type="button" onClick={() => setMarketplace(value)} className={`rounded-lg px-3 py-2 text-[10px] font-black ${marketplace === value ? "bg-white text-slate-950" : "text-white/50"}`}>{value === "EBAY_US" ? "eBay" : "Amazon"}</button>)}</div>
+    </div>
+    <p className="mt-4 text-[10px] text-white/35">Estado: {String(amazonPortfolio.status ?? "UNAVAILABLE")} · cada producto conserva su propia ventana de observación · faltantes permanecen sin evidencia.</p>
+    <div className="mt-5 grid gap-5 lg:grid-cols-2">
+      <RankingList title="Productos que más se mueven" items={amazonProducts}
+        marketplace="AMAZON_US" />
+      <CategoryRanking title="Categorías con más movimiento"
+        items={amazonCategories} marketplace="AMAZON_US" />
+    </div>
+  </section>
   return <section className="rounded-3xl border border-white/10 bg-gradient-to-br from-emerald-300/[0.08] to-transparent p-5 sm:p-6">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><div className="flex items-center gap-2"><TrendingUp size={19} className="text-emerald-200" /><h2 className="text-xl font-black">Ventas</h2></div><p className="mt-1 text-xs text-white/45">Ingresos confirmados por órdenes oficiales de eBay · America/Managua.</p></div>
-      <div className="flex flex-wrap gap-1">{[1, 7, 30, 90, 365].map((value) => <button key={value} type="button" onClick={() => setDays(value)} className={`rounded-lg px-2.5 py-1.5 text-[10px] font-black ${days === value ? "bg-emerald-200 text-emerald-950" : "bg-white/[0.06] text-white/55"}`}>{value === 1 ? "HOY" : value === 365 ? "12 MESES" : `${value} DÍAS`}</button>)}</div>
+      <div><div className="flex items-center gap-2"><TrendingUp size={19} className="text-emerald-200" /><h2 className="text-xl font-black">Rendimiento comercial</h2></div><p className="mt-1 text-xs text-white/45">Ingresos confirmados por órdenes oficiales de eBay · America/Managua.</p></div>
+      <div className="flex flex-wrap items-center gap-2"><div className="flex rounded-xl bg-black/20 p-1">{(["EBAY_US", "AMAZON_US"] as const).map((value) => <button key={value} type="button" onClick={() => setMarketplace(value)} className={`rounded-lg px-3 py-2 text-[10px] font-black ${marketplace === value ? "bg-white text-slate-950" : "text-white/50"}`}>{value === "EBAY_US" ? "eBay" : "Amazon"}</button>)}</div><div className="flex flex-wrap gap-1">{[1, 7, 30, 90, 365].map((value) => <button key={value} type="button" onClick={() => setDays(value)} className={`rounded-lg px-2.5 py-1.5 text-[10px] font-black ${days === value ? "bg-emerald-200 text-emerald-950" : "bg-white/[0.06] text-white/55"}`}>{value === 1 ? "HOY" : value === 365 ? "12 MESES" : `${value} DÍAS`}</button>)}</div></div>
     </div>
     <div className="mt-5" aria-label={`Ventas de los últimos ${days} días`}>
       <p className="text-3xl font-black tabular-nums">{usd(selected.grossSalesUsd)}</p>
@@ -537,9 +615,46 @@ function SalesRevenueVisual({ insights }: Readonly<{
       <p className="mt-2 text-sm text-white/60">{usd(selected.grossSalesUsd)} vendidos · {count(selected.officialOrderCount) ?? "—"} órdenes · {count(selected.unitsSold) ?? "—"} unidades</p>
       <p className="mt-1 text-[10px] text-white/35">Estado: {String(sales.status ?? "UNKNOWN")} · actualizado: {ownerTime(sales.sourceUpdatedAt)} · profit: UNKNOWN</p>
     </div>
-    <div className="mt-6 grid gap-5 lg:grid-cols-2">
+    <div className="mt-6 grid gap-5 lg:grid-cols-3">
+      <RankingList title="Productos que más se venden" items={ebayProducts}
+        marketplace="EBAY_US" />
       <div><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-black">Categorías con más ventas</h3><div className="flex gap-1">{[1, 7, 30, 90].map((value) => <button key={value} type="button" onClick={() => setCategoryDays(value)} className={`rounded-md px-2 py-1 text-[9px] font-black ${categoryDays === value ? "bg-white/20" : "text-white/40"}`}>{value === 1 ? "AYER" : `${value}D`}</button>)}</div></div><p className="mt-1 text-[10px] text-white/35">Órdenes oficiales + categoría canónica · no se omiten ventas sin mapear.</p><div className="mt-3 space-y-2">{top.length ? top.map((item, index) => <a key={`${item.categoryId}:${index}`} href={`/admin/ebay/sales?category=${encodeURIComponent(String(item.categoryId ?? "UNMAPPED"))}`} className="flex min-h-11 items-center justify-between rounded-xl bg-black/20 px-3 text-sm"><span>{index + 1}. {String(item.categoryName ?? "Sin mapear")}</span><strong>{usd(item.grossSalesUsd)}</strong></a>) : <p className="text-sm text-white/45">No hay ventas confirmadas en este período.</p>}</div><p className="mt-2 text-[10px] text-white/35">Estado: {String(categories.status ?? "UNKNOWN")} · reconciliación: {categories.totalReconciles === true ? "PASS" : "UNKNOWN"}</p></div>
       <div><h3 className="text-sm font-black">Categorías con oportunidad de mercado</h3><p className="mt-1 text-[10px] text-white/35">Radar separado de nuestras ventas · nunca autoriza publicación.</p><div className="mt-3 space-y-2">{opportunities.length ? opportunities.map((item, index) => <a key={`${item.family}:${index}`} href="/admin/ebay/mobile-review" className="flex min-h-11 items-center justify-between rounded-xl bg-black/20 px-3 text-sm"><span>{String(item.family ?? "Familia por determinar")}</span><strong>{count(item.opportunityCount) ?? "—"}</strong></a>) : <p className="text-sm text-white/45">Sin autoridad suficiente.</p>}</div><p className="mt-2 text-[10px] text-white/35">Estado: {String(opportunity.status ?? "UNKNOWN")}</p></div>
     </div>
   </section>
+}
+
+function RankingList({ title, items, marketplace }: Readonly<{
+  title: string; items: Record<string, unknown>[]
+  marketplace: "EBAY_US" | "AMAZON_US" }>) {
+  return <div data-product-ranking={marketplace}>
+    <h3 className="text-sm font-black">{title}</h3>
+    <p className="mt-1 text-[10px] text-white/35">Unidades, ingresos y utilidad sólo cuando existe autoridad.</p>
+    <div className="mt-3 space-y-2">{items.length ? items.slice(0, 5).map(
+      (item, index) => <a key={`${String(item.productKey)}:${index}`}
+        href={marketplace === "AMAZON_US"
+          ? "/admin/marketplace/amazon/connie" : "/admin/ebay/sales"}
+        className="block min-h-14 rounded-xl bg-black/20 px-3 py-2 text-sm">
+        <div className="flex items-start justify-between gap-3">
+          <span className="min-w-0 truncate"><strong>{index + 1}.</strong> {String(item.title ?? "Producto sin título")}</span>
+          <strong className="shrink-0">{count(item.unitsSold) ?? "—"} u.</strong>
+        </div>
+        <p className="mt-1 text-[10px] text-white/40">{String(item.categoryName ?? "Sin mapear")} · ventas {usd(item.grossSalesUsd)} · utilidad {usd(item.actualNetProfitUsd)}</p>
+      </a>) : <p className="text-sm text-white/45">Sin evidencia suficiente para ordenar productos.</p>}</div>
+  </div>
+}
+
+function CategoryRanking({ title, items, marketplace }: Readonly<{
+  title: string; items: Record<string, unknown>[]
+  marketplace: "EBAY_US" | "AMAZON_US" }>) {
+  return <div data-category-ranking={marketplace}>
+    <h3 className="text-sm font-black">{title}</h3>
+    <p className="mt-1 text-[10px] text-white/35">Agrupación canónica; “Sin mapear” permanece visible.</p>
+    <div className="mt-3 space-y-2">{items.length ? items.slice(0, 5).map(
+      (item, index) => <div key={`${String(item.categoryId)}:${index}`}
+        className="min-h-14 rounded-xl bg-black/20 px-3 py-2 text-sm">
+        <div className="flex items-center justify-between gap-3"><span>{index + 1}. {String(item.categoryName ?? "Sin mapear")}</span><strong>{count(item.unitsSold) ?? "—"} u.</strong></div>
+        <p className="mt-1 text-[10px] text-white/40">ventas {usd(item.grossSalesUsd)} · utilidad {usd(item.actualNetProfitUsd)} · productos medidos {count(item.measuredProductCount) ?? "—"}</p>
+      </div>) : <p className="text-sm text-white/45">Sin evidencia suficiente para ordenar categorías.</p>}</div>
+  </div>
 }

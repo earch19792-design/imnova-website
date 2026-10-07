@@ -17,6 +17,8 @@ import { readLatestLunaShippingRuntimeTraceV1,
   "../ebay/ebay-luna-chrome-shipping-capture-server-v1"
 import { getMarketplaceFulfillmentDashboard } from
   "../marketplace/fulfillment-v1a-service"
+import { readAmazonContributorPerformanceV1 } from
+  "../marketplace/seller-os-amazon-contributor-performance-v1"
 import { auditSellerOsOperationalIntegrityV1,
   type SellerOsOperationalIntegrityInputV1 } from
   "./operational-integrity-auditor-v1"
@@ -28,6 +30,8 @@ import { readSellerOsBrowserWorkerCapabilitiesV1 } from
 import { readSellerOsOwnerOperationalInsightsV1,
   SELLER_OS_OWNER_OPERATIONAL_INSIGHTS_V1 } from
   "./owner-operational-insights-v1"
+import { buildSellerOsMarketplaceCommercialPortfolioV1 } from
+  "./marketplace-commercial-portfolio-v1"
 
 export const SELLER_OS_OPERATIONAL_SNAPSHOT_V1 =
   "SELLER_OS_OPERATIONAL_SNAPSHOT_V1" as const
@@ -336,8 +340,19 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
   const insightsRaw = await Promise.allSettled([
     readSellerOsOwnerOperationalInsightsV1({ supabase: input.supabase,
       accountKey: input.accountKey, now }),
+    readAmazonContributorPerformanceV1({ supabase: input.supabase,
+      limit: 100, now }),
   ])
   const insights = settled(insightsRaw[0])
+  const amazonPerformance = settled(insightsRaw[1])
+  const commercialPortfolio = buildSellerOsMarketplaceCommercialPortfolioV1({
+    ebayInsights: insights.available ? insights.value : null,
+    amazonPerformance: amazonPerformance.available
+      ? amazonPerformance.value : null,
+    amazonAuthorityAvailable: amazonPerformance.available,
+    amazonUnavailableReason: amazonPerformance.available ? null
+      : "AMAZON_CONTRIBUTOR_PERFORMANCE_UNAVAILABLE",
+  })
   const latestLunaEvent = lunaEvents.at(-1)
   const radar = record(insights.available ? insights.value.radar : null)
   const radarOutputAt = radarOutputObservedAt(radar)
@@ -505,6 +520,7 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
           "MAYEL_PLUS_SELLER_OS_COMMERCIAL_REVENUE_PATH" }),
     }),
     ownerInsights: insights.available ? insights.value : null,
+    commercialPortfolio,
     authorityFailures: Object.freeze([
       !quickPick.available ? "QUICK_PICK_AUTHORITY_UNAVAILABLE" : null,
       !commercial.available ? "COMMERCIAL_AUTHORITY_UNAVAILABLE" : null,
@@ -517,10 +533,13 @@ export async function readSellerOsOperationalSnapshotV1(input: Readonly<{
       !browserWorkers.available ? "BROWSER_WORKER_LIVENESS_AUTHORITY_UNAVAILABLE"
         : null,
       !insights.available ? "OWNER_OPERATIONAL_INSIGHTS_UNAVAILABLE" : null,
+      !amazonPerformance.available
+        ? "AMAZON_CONTRIBUTOR_PERFORMANCE_UNAVAILABLE" : null,
     ].filter((value): value is string => Boolean(value))),
     safety: Object.freeze({ readOnlyAuthorityAcquisition: true as const,
       marketplaceWrites: 0 as const, productDecisions: 0 as const,
-      publisherDispatches: 0 as const }),
+      publisherDispatches: 0 as const, supplierPurchases: 0 as const,
+      automaticReorders: 0 as const }),
   })
 }
 

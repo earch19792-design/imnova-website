@@ -68,6 +68,47 @@ function category(value: unknown): { id: string; name: string } | null {
   return null
 }
 
+function recursiveText(value: unknown, keys: readonly string[], depth = 0):
+  string | null {
+  if (!value || typeof value !== "object" || depth > 5) return null
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = recursiveText(item, keys, depth + 1)
+      if (found) return found
+    }
+    return null
+  }
+  const source = record(value)
+  for (const key of keys) {
+    const found = text(source[key], 500)
+    if (found) return found
+  }
+  for (const nested of Object.values(source)) {
+    const found = recursiveText(nested, keys, depth + 1)
+    if (found) return found
+  }
+  return null
+}
+
+function exactIdentityKeys(value: unknown) {
+  const source = record(value)
+  const values = [
+    recursiveText(source, ["upc", "UPC", "upcCode"]),
+    recursiveText(source, ["ean", "EAN", "eanCode"]),
+    recursiveText(source, ["gtin", "GTIN", "gtinCode"]),
+  ] as const
+  return [...new Set(values.flatMap((candidate) => {
+    const digits = candidate?.replace(/\D/g, "") ?? ""
+    return [8, 12, 13, 14].includes(digits.length)
+      ? [`GTIN:${digits}`] : []
+  }))]
+}
+
+function lineTitle(value: unknown) {
+  return recursiveText(value, ["title", "itemTitle", "listingTitle",
+    "productTitle"])
+}
+
 function confirmedOrder(row: Row) {
   const payment = String(row.payment_status ?? "").toUpperCase()
   const fulfillment = String(row.fulfillment_status ?? "").toUpperCase()
@@ -87,7 +128,7 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
       .order("order_modified_at", { ascending: false }).limit(1_000),
     input.supabase.from("marketplace_order_line_items")
-      .select("marketplace_order_id,marketplace_line_item_id,listing_id,sku,quantity,line_item_amount,currency,last_observed_at")
+      .select("marketplace_order_id,marketplace_line_item_id,listing_id,sku,product_title,quantity,line_item_amount,currency,last_observed_at")
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
       .order("last_observed_at", { ascending: false }).limit(2_000),
   ])
@@ -223,11 +264,84 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
       mappingStatus: item.id === "UNMAPPED" ? "UNMAPPED" as const
         : "MAPPED" as const })).sort((left, right) =>
       (right.grossSalesUsd ?? -1) - (left.grossSalesUsd ?? -1)).slice(0, 5)
+    const unmappedCount = new Set(scopedLines.flatMap((line) => {
+      const itemId = text(line.listing_id, 30) ??
+        text(line.sku, 160) ?? text(line.marketplace_line_item_id, 160)
+      return itemId && !categoryByItem.get(text(line.listing_id, 30) ?? "")
+        ? [itemId] : []
+    })).size
     return Object.freeze({ days, top: Object.freeze(top), total,
-      unmappedCount: top.filter((item) => item.mappingStatus === "UNMAPPED").length })
+      unmappedCount })
   }
   const categoryWindows = [1, 7, 30, 90].map(buildCategoryWindow)
   const allCategoryWindow = buildCategoryWindow(3650)
+
+  const buildProductWindow = (days: number) => {
+    const keys = new Set(dateKeys(now, days))
+    const scopedLines = confirmedLines.filter((line) => {
+      const order = orderById.get(String(line.marketplace_order_id))
+      const createdAt = iso(order?.order_created_at)
+      return createdAt && keys.has(localDateKey(createdAt))
+    })
+    const groups = new Map<string, { listingId: string | null; sku: string | null;
+      title: string; gross: number; units: number; orders: Set<string>;
+      lastSaleAt: string | null }>()
+    for (const line of scopedLines) {
+      const listingId = text(line.listing_id, 30)
+      const sku = text(line.sku, 160)
+      const key = listingId ?? sku ?? text(line.marketplace_line_item_id, 160)
+        ?? "UNIDENTIFIED"
+      const current = groups.get(key) ?? { listingId, sku,
+        title: text(line.product_title, 500) ?? `Listing ${key}`,
+        gross: 0, units: 0, orders: new Set<string>(), lastSaleAt: null }
+      const order = orderById.get(String(line.marketplace_order_id))
+      const createdAt = iso(order?.order_created_at)
+      current.gross += nonnegative(line.line_item_amount) ?? 0
+      current.units += nonnegative(line.quantity) ?? 0
+      current.orders.add(String(line.marketplace_order_id))
+      if (createdAt && (!current.lastSaleAt || createdAt > current.lastSaleAt))
+        current.lastSaleAt = createdAt
+      groups.set(key, current)
+    }
+    const products = [...groups].map(([productKey, item]) => {
+      const registry = item.listingId
+        ? registryByItem.get(item.listingId) ?? null : null
+      const mapped = item.listingId
+        ? categoryByItem.get(item.listingId) ?? null : null
+      const raw = registry?.raw_payload
+      return Object.freeze({ productKey, listingId: item.listingId,
+        sellerSku: item.sku ?? text(registry?.supplier_sku, 160),
+        title: text(lineTitle(raw), 500) ?? item.title,
+        categoryId: mapped?.id ?? "UNMAPPED",
+        categoryName: mapped?.name ?? "Sin mapear",
+        mappingStatus: mapped ? "MAPPED" as const : "UNMAPPED" as const,
+        listingStatus: text(registry?.listing_status, 40)?.toUpperCase()
+          ?? "UNKNOWN",
+        supplierVariantId: text(registry?.supplier_variant_id, 160),
+        supplierSku: text(registry?.supplier_sku, 160),
+        supplierLinkStatus: text(registry?.supplier_variant_id, 160) ||
+          text(registry?.supplier_sku, 160) ? "LINKED" as const
+          : "MISSING" as const,
+        identityKeys: Object.freeze(exactIdentityKeys(raw)),
+        grossSalesUsd: lineAmountComplete ? item.gross : null,
+        officialOrderCount: item.orders.size,
+        unitsSold: lineAmountComplete ? item.units : null,
+        velocityUnitsPerDay: lineAmountComplete ? item.units / days : null,
+        lastSaleAt: item.lastSaleAt,
+        actualNetProfitUsd: null, actualNetProfitPerUnitUsd: null,
+        profitEvidenceState: "UNAVAILABLE" as const,
+      })
+    }).sort((left, right) => (right.unitsSold ?? -1) -
+      (left.unitsSold ?? -1) || (right.grossSalesUsd ?? -1) -
+      (left.grossSalesUsd ?? -1))
+    return Object.freeze({ days, products: Object.freeze(products.slice(0, 20)),
+      productCount: products.length,
+      mappingRepairQueue: Object.freeze(products.filter((product) =>
+        product.mappingStatus === "UNMAPPED").slice(0, 10)) })
+  }
+  const productWindows = [1, 7, 30, 90, 365].map(buildProductWindow)
+  const mappingRepairQueue = productWindows.find((window) =>
+    window.days === 365)?.mappingRepairQueue ?? []
 
   // These SECURITY DEFINER read RPCs are the supported service-role boundary;
   // the underlying durable tables deliberately deny direct Data API reads.
@@ -306,6 +420,14 @@ export async function readSellerOsOwnerOperationalInsightsV1(input: Readonly<{
       totalReconciles: lineAmountComplete && Math.abs(allCategoryWindow.total -
         confirmedLines.reduce((sum, row) => sum +
           (nonnegative(row.line_item_amount) ?? 0), 0)) < 0.005 }),
+    products: Object.freeze({ status: !orderSourceAvailable ||
+      registryRead.error ? "UNAVAILABLE" as const
+      : freshness === "STALE" ? "STALE" as const : "AVAILABLE" as const,
+      source: "OFFICIAL_EBAY_ORDER_LINES_PLUS_LISTING_REGISTRY" as const,
+      windows: Object.freeze(productWindows),
+      mappingRepairQueue: Object.freeze(mappingRepairQueue),
+      rankingBasis: "UNITS_THEN_GROSS_SALES" as const,
+      profitEvidenceState: "UNAVAILABLE" as const }),
     radar: Object.freeze({ status: radarStatus, cause: radarCause,
       lastCompletedRunAt: radarLastCompletedAt,
       lastCompletedRunDate: text(radarQueue.logicalRunDate, 20),
