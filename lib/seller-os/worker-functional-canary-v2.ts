@@ -96,6 +96,26 @@ export async function ensureSellerOsWorkerFunctionalCanaryV2(input: Readonly<{
     planId: String(activePlan.id), candidateSku: ITEM6127.sku,
     marketplaceWrites: 0 })
 
+  const windowStartMs = Math.floor(now /
+    SELLER_OS_WORKER_FUNCTIONAL_CANARY_INTERVAL_MS_V2) *
+    SELLER_OS_WORKER_FUNCTIONAL_CANARY_INTERVAL_MS_V2
+  const schedule = await input.supabase.rpc(
+    "claim_seller_os_worker_functional_canary_v2", {
+      p_marketplace_account_key: input.accountKey,
+      p_owner_user_id: input.ownerUserId,
+      p_window_start_ms: windowStartMs,
+      p_code_version: SELLER_OS_WORKER_RESILIENCE_VERSION_V2,
+    })
+  if (schedule.error) {
+    throw new Error("PRODUCT_RESEARCH_FUNCTIONAL_CANARY_CLAIM_FAILED")
+  }
+  const claim = record(Array.isArray(schedule.data)
+    ? schedule.data[0] : schedule.data)
+  if (claim.claimed !== true) {
+    return Object.freeze({ status: "SCHEDULED_ELSEWHERE" as const,
+      planId: null, candidateSku: ITEM6127.sku, marketplaceWrites: 0 })
+  }
+
   const snapshot = await input.supabase
     .from("luna_catalog_snapshot_variants_v1")
     .select("snapshot_id,product_id,variant_id,sku,observed_at,preflight_status")
