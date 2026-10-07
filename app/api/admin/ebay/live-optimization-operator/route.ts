@@ -89,6 +89,8 @@ import {
   reconcileSellerOsWorkerStuckWorkV2,
   recordSellerOsWorkerProgressV2,
 } from "@/lib/seller-os/worker-self-healing-v2"
+import { ensureSellerOsWorkerFunctionalCanaryV2 } from
+  "@/lib/seller-os/worker-functional-canary-v2"
 
 const VISUAL_CACHE_TTL_MS = 15 * 60_000
 let visualCache: Readonly<{
@@ -452,6 +454,7 @@ export async function POST(request: Request) {
         ? await reconcileSellerOsWorkerStuckWorkV2({ supabase,
           accountKey: account.accountKey, workerId }) : null
       let planAttachmentRepair: Readonly<Record<string, unknown>> | null = null
+      let functionalCanary: Readonly<Record<string, unknown>> | null = null
       if (result.claimAuthorityGranted === true) {
         try {
           planAttachmentRepair =
@@ -461,15 +464,29 @@ export async function POST(request: Request) {
           planAttachmentRepair = Object.freeze({ status: "FAILED_CLOSED",
             errorCode: safeCode(error), marketplaceWrites: 0 })
         }
+        if (auth.validation.accessRole === SELLER_OS_ACCESS_ROLES.owner) {
+          try {
+            functionalCanary = await ensureSellerOsWorkerFunctionalCanaryV2({
+              supabase, accountKey: account.accountKey,
+              ownerUserId: auth.validation.userId,
+              ownerAccessRole: auth.validation.accessRole,
+            })
+          } catch (error) {
+            functionalCanary = Object.freeze({ status: "FAILED_CLOSED",
+              errorCode: safeCode(error), marketplaceWrites: 0 })
+          }
+        }
       }
       console.info("PRODUCT_RESEARCH_PLAN_ATTACHMENT_REPAIR_V2", {
         observedAt: new Date().toISOString(),
         claimAuthorityGranted: result.claimAuthorityGranted,
         planAttachmentRepair,
+        functionalCanary,
         marketplaceWrites: 0,
       })
       return NextResponse.json({ success: true,
-        result: { ...result, reconciliation, planAttachmentRepair },
+        result: { ...result, reconciliation, planAttachmentRepair,
+          functionalCanary },
         safety: { businessOutputWrites: 0, marketplaceWrites: 0 } },
       { headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {
