@@ -303,11 +303,11 @@ export default function ConnieAmazonPerformancePage() {
         cantidad disponible del proveedor. Esto también confirma que es una
         propuesta de Connie.
       </p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <label className="grid gap-1 text-xs font-bold text-white/65">Seller SKU
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+        <label className="grid min-w-0 gap-1 text-xs font-bold text-white/65">Seller SKU
           <select value={cost.sellerSku} onChange={(event) =>
             setCost((current) => ({ ...current, sellerSku: event.target.value }))}
-            className="min-h-11 rounded-xl border border-white/15 bg-slate-950 px-3">
+            className="min-h-11 w-full min-w-0 max-w-full truncate rounded-xl border border-white/15 bg-slate-950 px-3">
             <option value="">Seleccionar producto</option>
             {proposalOptions.map((candidate) => <option
               key={candidate.sellerSku} value={candidate.sellerSku}>
@@ -319,14 +319,14 @@ export default function ConnieAmazonPerformancePage() {
           ["unitCostUsd", "Costo del producto / unidad", "0.00", "number"],
           ["supplierInventoryQuantity", "Cantidad disponible del proveedor", "0", "number"],
         ].map(([name, label, placeholder, type]) =>
-          <label key={name} className="grid gap-1 text-xs font-bold text-white/65">
+          <label key={name} className="grid min-w-0 gap-1 text-xs font-bold text-white/65">
             {label}
             <input type={type} min={type === "number" ? "0" : undefined}
               step={type === "number" ? "0.01" : undefined}
               value={cost[name] ?? ""} placeholder={placeholder}
               onChange={(event) => setCost((current) => ({ ...current,
                 [name]: event.target.value }))}
-              className="min-h-11 rounded-xl border border-white/15 bg-black/20 px-3" />
+              className="min-h-11 w-full min-w-0 rounded-xl border border-white/15 bg-black/20 px-3" />
           </label>)}
       </div>
       <button type="button" onClick={() => void linkCost()}
