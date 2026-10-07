@@ -243,10 +243,20 @@ Readonly<{
   supabase: SupabaseClient
   accountKey: string
 }>) {
+  const missingRead = await input.supabase.from(
+    "seller_os_pre_research_batch_members_v1")
+    .select("batch_id").is("plan_id", null)
+    .order("created_at", { ascending: true }).limit(1000)
+  if (missingRead.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READ_FAILED")
+  const missingBatchIds = [...new Set((missingRead.data ?? []).flatMap(
+    (member) => uuid(member.batch_id) ? [String(member.batch_id)] : []))]
+  if (!missingBatchIds.length) return Object.freeze({ batchesScanned: 0,
+    batchesSealed: 0, plansAttached: 0, marketplaceWrites: 0 as const })
   const batchRead = await input.supabase.from(
     "seller_os_pre_research_batches_v1")
     .select("batch_id,source_snapshot_id,owner_user_id,command_client_id,batch_state")
     .eq("marketplace_account_key", input.accountKey)
+    .in("batch_id", missingBatchIds)
     .eq("batch_state", "REQUESTED")
     .order("created_at", { ascending: true }).limit(1).maybeSingle()
   if (batchRead.error) fail("TEO_PRE_RESEARCH_ATTACHMENT_REPAIR_READ_FAILED")
