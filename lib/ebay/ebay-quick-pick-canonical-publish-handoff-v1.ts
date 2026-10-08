@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+import { SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 } from
+  "../marketplace/seller-os-commercial-policy-v1"
+
 import {
   evaluatePublishWithStockguardContractV1,
 } from "./ebay-current-future-listing-stockguard-wiring-v1"
@@ -238,14 +241,15 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
   const economicsReady = input.card.stages.ECONOMICS === "PASS" &&
     factoryStages.ECONOMICS_READY === "READY" && dollarCheck.ready === true &&
     [targetPrice, supplierCost, shipping, ebayFees, profit, margin, roi]
-      .every((value) => value !== null) &&
+    .every((value) => value !== null) &&
     exactMoney(pricing.targetPrice, targetPrice) &&
     exactMoney(pricing.supplierCost, supplierCost) &&
     exactMoney(pricing.estimatedOutboundShipping, shipping) &&
     exactMoney(pricing.estimatedEbayFees, ebayFees) &&
     exactMoney(pricing.estimatedNetProfit, profit) &&
     exactMoney(pricing.estimatedNetMarginPercent, margin) &&
-    exactMoney(pricing.estimatedRoiPercent, roi) && Number(profit) >= 0 &&
+    exactMoney(pricing.estimatedRoiPercent, roi) &&
+    Number(profit) >= SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 &&
     Number(margin) >= 20
   const requiredSpecificsReady =
     input.card.requiredItemSpecificsReady === true &&

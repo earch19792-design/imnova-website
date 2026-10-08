@@ -142,6 +142,15 @@ import {
   resolveQuickPickCanonicalPublishHandoffV1,
 } from
   "@/lib/ebay/ebay-quick-pick-canonical-publish-handoff-v1"
+import { ensureAutomaticLunaSupplierImagesV1 } from
+  "@/lib/ebay/luna-supplier-image-auto-runtime-v1"
+import {
+  SELLER_OS_ONE_BUTTON_PUBLICATION_CONFIRMATION,
+  SELLER_OS_ONE_BUTTON_PUBLICATION_V1,
+  sellerOsOneButtonNextActionV1,
+} from "@/lib/ebay/seller-os-one-button-publication-v1"
+import { buildSellerOsPublisherHygieneV1 } from
+  "@/lib/ebay/seller-os-publisher-hygiene-v1"
 import {
   bindCanonicalPublicationImageSet,
   loadFinalListingReviewPublicationGate,
@@ -2299,6 +2308,43 @@ export async function GET(req: Request) {
   if (auth.response) return auth.response
   if (!auth.actor) return jsonError(new Error("EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403)
   const url = new URL(req.url)
+  if (url.searchParams.get("publicationHygiene") === "1") {
+    if (auth.accessRole !== SELLER_OS_ACCESS_ROLES.owner) {
+      return jsonError(new Error("SELLER_OS_OWNER_REQUIRED"), 403)
+    }
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) return jsonError(new Error(
+      "CURRENT_ONE_BUTTON_ACCOUNT_SCOPE_REQUIRED"), 409)
+    const supabase = getSupabaseAdminClient()
+    const publicationRead = await supabase.from(
+      "ebay_authorized_listing_publications")
+      .select("id,listing_package_id,sku,offer_id,phase,publish_attempt_count,publication_idempotency_key,claim_token,listing_id,last_error_code,updated_at")
+      .eq("marketplace_account_key", accountKey)
+      .eq("actor_user_id", auth.actor)
+      .order("updated_at", { ascending: false }).limit(500)
+    if (publicationRead.error) return jsonError(new Error(
+      "SELLER_OS_PUBLICATION_HYGIENE_READ_FAILED"), 503)
+    const publicationRows = rows(publicationRead.data)
+    const packageIds = [...new Set(publicationRows.map((row) =>
+      uuid(row.listing_package_id)).filter(Boolean))] as string[]
+    const packageRead = packageIds.length ? await supabase.from(
+      "ebay_listing_packages").select("id,package_data")
+      .eq("account_key", accountKey).eq("created_by", auth.actor)
+      .in("id", packageIds) : { data: [], error: null }
+    if (packageRead.error) return jsonError(new Error(
+      "SELLER_OS_PUBLICATION_HYGIENE_PACKAGE_READ_FAILED"), 503)
+    const titles = new Map(rows(packageRead.data).map((row) => [
+      text(row.id), text(record(row.package_data).title),
+    ]))
+    const hygiene = buildSellerOsPublisherHygieneV1({
+      rows: publicationRows.map((row) => ({ ...row,
+        title: titles.get(text(row.listing_package_id)) ?? null })),
+    })
+    return NextResponse.json({ success: true, publicationHygiene: hygiene,
+      safety: { marketplaceWrites: 0, marketplaceDeletes: 0 } }, {
+      headers: { "Cache-Control": "private, no-store, no-cache, max-age=0" },
+    })
+  }
   const packageId = uuid(url.searchParams.get("packageId"))
   const expectedOpportunityId = uuid(url.searchParams.get("opportunityId"))
   const expectedCandidateKey = text(url.searchParams.get("candidateKey"))
@@ -3435,16 +3481,19 @@ async function prepareCurrentPrepublicationIntentV1(input: Readonly<{
 async function materializeCurrentPrepublicationArtifactsV1(
   req: Request,
   body: JsonRecord,
+  authority?: Readonly<{ ownerActor: string }>,
 ) {
   const supabase = getSupabaseAdminClient()
-  const runtimeAuthorized = await sellerOsPostRuntimeAuthorizedV1({
-    request: req,
-    supabase,
-    environmentSecrets: [process.env.CRON_SECRET,
-      process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET],
-  })
-  if (!runtimeAuthorized) return jsonError(new Error(
-    "CURRENT_PREPUBLICATION_RUNTIME_UNAUTHORIZED"), 401)
+  if (!authority?.ownerActor) {
+    const runtimeAuthorized = await sellerOsPostRuntimeAuthorizedV1({
+      request: req,
+      supabase,
+      environmentSecrets: [process.env.CRON_SECRET,
+        process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET],
+    })
+    if (!runtimeAuthorized) return jsonError(new Error(
+      "CURRENT_PREPUBLICATION_RUNTIME_UNAUTHORIZED"), 401)
+  }
   const boundary = getEbayDraftWriteEnvironmentBoundary()
   if (!boundary.productionDedicatedPreprodBound || !boundary.writeAllowed) {
     return jsonError(new Error("CERTIFIED_PREPROD_ONLY"), 403)
@@ -3509,6 +3558,10 @@ async function materializeCurrentPrepublicationArtifactsV1(
       "CURRENT_DELEGATED_ACTOR_READBACK_FAILED"), 409)
   }
   const actor = policy.authority.actorUserId
+  if (authority?.ownerActor && actor !== authority.ownerActor) {
+    return jsonError(new Error(
+      "CURRENT_ONE_BUTTON_OWNER_BINDING_MISMATCH"), 403)
+  }
   const sku = expectedEbayDraftOnlySku(listingPackage)
   const existingPublications = await supabase.from(
     "ebay_authorized_listing_publications")
@@ -3694,6 +3747,135 @@ async function materializeCurrentPrepublicationArtifactsV1(
   }, { status: pass ? 200 : 409 })
 }
 
+async function publishCurrentOneButtonV1(req: Request, body: JsonRecord) {
+  const auth = await validateAdminApiRequest(req)
+  if (!auth.ok || auth.authenticationMode !== "admin_user"
+      || auth.accessRole !== SELLER_OS_ACCESS_ROLES.owner || !auth.userId) {
+    return jsonError(new Error(
+      "CURRENT_ONE_BUTTON_HUMAN_OWNER_REQUIRED"), 403)
+  }
+  const allowedKeys = new Set([
+    "action", "candidateKey", "packageId", "packageDigest",
+    "confirmation", "confirmExactPackage", "confirmProductionAccount",
+  ])
+  const packageId = uuid(body.packageId)
+  const candidateKey = text(body.candidateKey)
+  const packageDigest = text(body.packageDigest)
+  if (!packageId || !/^sha256:[0-9a-f]{64}$/.test(candidateKey)
+      || !/^sha256:[0-9a-f]{64}$/.test(packageDigest)
+      || text(body.confirmation) !==
+        SELLER_OS_ONE_BUTTON_PUBLICATION_CONFIRMATION
+      || body.confirmExactPackage !== true
+      || body.confirmProductionAccount !== true
+      || Object.keys(body).some((key) => !allowedKeys.has(key))) {
+    return jsonError(new Error(
+      "CURRENT_ONE_BUTTON_EXACT_AUTHORIZATION_REQUIRED"), 409)
+  }
+  const boundary = getEbayDraftWriteEnvironmentBoundary()
+  if (!boundary.productionDedicatedPreprodBound || !boundary.writeAllowed) {
+    return jsonError(new Error(
+      "CURRENT_ONE_BUTTON_CERTIFIED_RUNTIME_REQUIRED"), 403)
+  }
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) return jsonError(new Error(
+    "CURRENT_ONE_BUTTON_ACCOUNT_SCOPE_REQUIRED"), 409)
+  const supabase = getSupabaseAdminClient()
+  let writeBoundaryReached = false
+  let failureStage = "CANONICAL_PREFLIGHT"
+  try {
+    let canonical = await resolveQuickPickCanonicalPublishHandoffV1({
+      supabase, accountKey, actorUserId: auth.userId, candidateKey,
+      listingPackageId: packageId,
+    })
+    let visualGate = await loadFinalListingReviewPublicationGate({
+      supabase, listingPackageId: packageId, actorId: auth.userId,
+    })
+    if (!visualGate.allowed) {
+      await ensureAutomaticLunaSupplierImagesV1({ supabase, accountKey,
+        actor: auth.userId, packageRow: canonical.listingPackage })
+      canonical = await resolveQuickPickCanonicalPublishHandoffV1({
+        supabase, accountKey, actorUserId: auth.userId, candidateKey,
+        listingPackageId: packageId,
+      })
+      visualGate = await loadFinalListingReviewPublicationGate({
+        supabase, listingPackageId: packageId, actorId: auth.userId,
+      })
+    }
+    const authorization = record(canonical.handoff.authorization)
+    if (!visualGate.allowed
+        || canonical.handoff.publishAuthorizationReady !== true
+        || authorization.packageDigest !== packageDigest
+        || authorization.candidateKey !== candidateKey
+        || authorization.listingPackageId !== packageId) {
+      throw new Error(visualGate.reason
+        ?? "CURRENT_ONE_BUTTON_CANONICAL_BINDING_CHANGED")
+    }
+    failureStage = "PREPUBLICATION"
+    writeBoundaryReached = true
+    const materializedResponse =
+      await materializeCurrentPrepublicationArtifactsV1(req, {
+        action: "materialize_current_prepublication_artifacts", packageId,
+      }, { ownerActor: auth.userId })
+    const materialized = await responseBody(materializedResponse)
+    if (!materializedResponse.ok || materialized.success !== true) {
+      const blockers = Array.isArray(materialized.blockers)
+        ? materialized.blockers : []
+      const error = text(materialized.error)
+        || "CURRENT_ONE_BUTTON_PREPUBLICATION_FAILED"
+      const nextBestAction = sellerOsOneButtonNextActionV1(error, blockers)
+      return NextResponse.json({ success: false, error,
+        contractVersion: SELLER_OS_ONE_BUTTON_PUBLICATION_V1,
+        stage: "PREPUBLICATION", blockers, nextBestAction,
+        prepublication: materialized,
+        safety: { marketplaceWrites: Number(record(materialized.safety)
+          .marketplaceWrites ?? 0), publishOfferCalled: false,
+          blindRetryAllowed: false } },
+      { status: materializedResponse.status })
+    }
+    const publicationId = uuid(materialized.publicationIntentId)
+    if (!publicationId) throw new Error(
+      "CURRENT_ONE_BUTTON_PUBLICATION_INTENT_READBACK_REQUIRED")
+    failureStage = "PUBLICATION_READBACK"
+    const publishResponse = await publishFinalPublication({
+      publicationId,
+      idempotencyKey: `publish:${publicationId}`,
+      confirmPublish: EBAY_FINAL_PUBLISH_CONFIRMATION,
+      confirmFinalPreview: true,
+      confirmProductionAccount: true,
+      authorizationSurface: SELLER_OS_ONE_BUTTON_PUBLICATION_V1,
+    }, auth.userId)
+    const published = await responseBody(publishResponse)
+    const error = text(published.error)
+    const blockers = Array.isArray(published.blockers)
+      ? published.blockers : []
+    return NextResponse.json({ ...published,
+      contractVersion: SELLER_OS_ONE_BUTTON_PUBLICATION_V1,
+      stage: published.success === true ? "PUBLISHED_CONFIRMED"
+        : "PUBLICATION_READBACK",
+      ...(published.success === true ? { nextBestAction: null }
+        : { nextBestAction: sellerOsOneButtonNextActionV1(error, blockers) }),
+      prepublication: {
+        contractVersion: materialized.contractVersion,
+        publicationIntentId: publicationId,
+        artifactReplay: record(materialized.idempotency).artifactReplay,
+        offerUnpublished: record(materialized.durableReadback)
+          .offerUnpublished,
+      },
+    }, { status: publishResponse.status })
+  } catch (error) {
+    const code = errorCode(error)
+    return NextResponse.json({ success: false, error: code,
+      contractVersion: SELLER_OS_ONE_BUTTON_PUBLICATION_V1,
+      stage: failureStage,
+      nextBestAction: sellerOsOneButtonNextActionV1(code),
+      safety: { marketplaceWrites: writeBoundaryReached ? null : 0,
+        publishOfferCalled: writeBoundaryReached ? null : false,
+        outcome: writeBoundaryReached
+          ? "UNKNOWN_FAIL_CLOSED_READBACK_REQUIRED" : "NOT_ATTEMPTED",
+        blindRetryAllowed: false } }, { status: 409 })
+  }
+}
+
 async function handlePost(req: Request) {
   let body: JsonRecord
   try {
@@ -3702,6 +3884,9 @@ async function handlePost(req: Request) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
   }
   const action = text(body.action)
+  if (action === "publish_current_one_click") {
+    return publishCurrentOneButtonV1(req, body)
+  }
   if (action === "materialize_current_prepublication_artifacts") {
     try {
       return await materializeCurrentPrepublicationArtifactsV1(req, body)
@@ -6873,7 +7058,36 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
       publicationId,packageId:current.listing_package_id,offerId:current.offer_id,sku:current.sku,
       packageHash:text(currentRevision.packageHash),packageGeneration:text(currentRevision.packageGeneration),previewHash:text(currentRevision.previewHash),
       idempotencyKey:executionKey,confirmation:EBAY_FINAL_PUBLISH_CONFIRMATION})
-    return NextResponse.json(result,{status:result.pass?200:409})
+    const publicationResult = record(result)
+    const readback = await supabase.from(
+      "ebay_authorized_listing_publications").select("*")
+      .eq("id", publicationId).eq("actor_user_id", actor)
+      .eq("marketplace_account_key", current.marketplace_account_key)
+      .maybeSingle()
+    if (readback.error || !readback.data) return jsonError(new Error(
+      "CURRENT_PUBLICATION_RESULT_READBACK_REQUIRED"), 503)
+    const publication = readback.data as JsonRecord
+    const listingId = text(publicationResult.listingId)
+      || text(publication.listing_id)
+    const registered = publication.phase === "monitor_registered"
+      && Boolean(listingId)
+    const success = publicationResult.pass === true && registered
+    return NextResponse.json({ success,
+      ...(!success ? { error: text(publicationResult.blocker)
+        || "CURRENT_PUBLICATION_NOT_CONFIRMED" } : {}),
+      result, publication,
+      listing: listingId ? { listingId,
+        url: `https://www.ebay.com/itm/${listingId}`,
+        status: registered ? "ACTIVE" : "PENDING_READBACK" } : null,
+      monitoring: { registered,
+        activeListingId: publication.active_listing_id ?? null },
+      safety: { publishOfferCalledAgain:
+          Number(publicationResult.publicationWrites ?? 0) === 0,
+        publicationWrites: Number(publicationResult.publicationWrites ?? 0),
+        blindRetryAllowed: false,
+        exactActiveReadbackMatched:
+          publicationResult.OFFICIAL_READBACK_PASS === true },
+    }, { status: success ? 200 : 409 })
   }
   const visualPublicationGate = await loadFinalListingReviewPublicationGate({
     supabase,

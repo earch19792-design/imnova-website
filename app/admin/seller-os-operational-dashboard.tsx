@@ -87,6 +87,10 @@ type CommercialMemoryItem = Readonly<{ opportunityId: string;
   evidenceFreshness: string; blockers: readonly string[];
   updatedAt: string | null }>
 
+type PublisherHygieneRecord = Readonly<{ publicationId: string | null;
+  sku: string | null; title: string | null; classification: string;
+  nextAction: string; updatedAt: string | null }>
+
 type DashboardSnapshot = Readonly<{
   readyForOwnerReviewCount: number
   readyForOwnerReviewCandidateKeys: readonly string[]
@@ -100,6 +104,13 @@ type DashboardSnapshot = Readonly<{
   commercialMemoryCount: number
   commercialMemoryRecords: readonly CommercialMemoryItem[]
   commercialMemoryAvailable: boolean
+  publisherHygieneAvailable: boolean
+  publisherHygieneStatus: "CLEAN" | "RECONCILIATION_REQUIRED" | "UNPROVEN"
+  publisherNewLaneAvailable: boolean
+  publisherInFlightCount: number | null
+  publisherHistoricalUnpublishedCount: number | null
+  publisherQuarantinedFailureCount: number | null
+  publisherHygieneRecords: readonly PublisherHygieneRecord[]
   liveAttention: number
   liveAttentionAvailable: boolean
   stockGuard: CompactStatus
@@ -161,6 +172,13 @@ const emptySnapshot: DashboardSnapshot = {
   commercialMemoryCount: 0,
   commercialMemoryRecords: [],
   commercialMemoryAvailable: false,
+  publisherHygieneAvailable: false,
+  publisherHygieneStatus: "UNPROVEN",
+  publisherNewLaneAvailable: false,
+  publisherInFlightCount: null,
+  publisherHistoricalUnpublishedCount: null,
+  publisherQuarantinedFailureCount: null,
+  publisherHygieneRecords: [],
   liveAttention: 0,
   liveAttentionAvailable: false,
   stockGuard: "WAITING",
@@ -291,6 +309,19 @@ function parseCommercialMemory(value: unknown) {
         }).slice(0, 20),
       updatedAt: nullableText(item.updatedAt, 48) }]
   })
+}
+
+function parsePublisherHygieneRecords(value: unknown) {
+  return (Array.isArray(value) ? value : []).flatMap((entry) => {
+    const item = record(entry)
+    const classification = nullableText(item.classification, 80)
+    const nextAction = nullableText(item.nextAction, 120)
+    if (!classification || !nextAction) return []
+    return [{ publicationId: nullableText(item.publicationId, 80),
+      sku: nullableText(item.sku, 100),
+      title: nullableText(item.title, 160), classification, nextAction,
+      updatedAt: nullableText(item.updatedAt, 80) }]
+  }).slice(0, 25)
 }
 
 function availableMetric(value: unknown) {
@@ -680,6 +711,8 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated,
   const [feedback, setFeedback] = useState("")
   const [canonicalPublishAuthorization, setCanonicalPublishAuthorization] =
     useState<Record<string, unknown> | null>(null)
+  const [publishedListingId, setPublishedListingId] = useState("")
+  const [needsEbayConnection, setNeedsEbayConnection] = useState(false)
   const [publicationOauthStarting, setPublicationOauthStarting] =
     useState(false)
   const [publicationOauthFeedback, setPublicationOauthFeedback] =
@@ -688,9 +721,6 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated,
   const marketTest = publishHandoff.publishableAsMarketTest === true
   const confirmed = ownerReview.ownerReviewConfirmed === true &&
     ownerReview.packageMatch === true
-  const publishAuthorizationReady = confirmed &&
-    publishHandoff.readyForOwnerPublishAuthorization === true &&
-    publishHandoff.publishCtaEnabled === true
   const ownerPublicationDecisionReady =
     publishHandoff.ownerPublicationDecisionReady === true && ready
   const canonicalHandoff = record(canonicalPublishAuthorization?.handoff)
@@ -698,18 +728,12 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated,
   const visualPublicationGate = record(
     canonicalPublishAuthorization?.visualPublicationGate,
   )
-  const canonicalPublishReady =
+  const canonicalPublishReady = Boolean(
     canonicalHandoff.publishAuthorizationReady === true &&
     canonicalHandoff.policiesBound === true &&
     canonicalHandoff.legacyFalseGuardCount === 0 &&
-    visualPublicationGate.allowed === true
-  const publishAuthorizationUrl = canonicalPublishReady &&
-    card.opportunityId && card.candidateKey && card.listingPackageId
-    ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(
-      card.opportunityId)}&candidate=${encodeURIComponent(
-      card.candidateKey)}&package=${encodeURIComponent(
-      card.listingPackageId)}&source=quick-pick-canonical&intent=publish#seller-os-final-publication`
-    : null
+    visualPublicationGate.allowed === true,
+  )
 
   useEffect(() => {
     if (editing) return
@@ -751,22 +775,76 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated,
     }
   }
 
-  async function authorizeCanonicalPublishHandoff() {
+  async function publishWithOneButton() {
     if (!card.candidateKey || !card.listingPackageId || busy) return
     setBusy(true)
-    setFeedback("Validando paquete, policies e imágenes canónicas…")
+    setNeedsEbayConnection(false)
+    setFeedback("1/3 · Confirmando el paquete exacto que estás viendo…")
     try {
-      const payload = await request("/api/admin/ebay/luna-quick-pick", {
+      if (!confirmed) {
+        await request("/api/admin/ebay/luna-quick-pick", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "OWNER_REVIEW", intent: "CONFIRM",
+            candidateKey: card.candidateKey,
+            listingPackageId: card.listingPackageId }),
+        })
+      }
+      setFeedback("2/3 · Revalidando stock, economics, policies e imágenes…")
+      const handoffPayload = await request(
+        "/api/admin/ebay/luna-quick-pick", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "PUBLISH_HANDOFF",
           candidateKey: card.candidateKey,
           listingPackageId: card.listingPackageId }),
       })
-      setCanonicalPublishAuthorization(payload)
-      setFeedback("Handoff canónico listo · ninguna guarda legacy bloquea el paquete")
-    } catch {
+      setCanonicalPublishAuthorization(handoffPayload)
+      const handoff = record(handoffPayload.handoff)
+      const authorization = record(handoff.authorization)
+      const exactPackageDigest = String(authorization.packageDigest ?? "")
+      if (!/^sha256:[0-9a-f]{64}$/.test(exactPackageDigest)) {
+        throw new Error("CURRENT_ONE_BUTTON_PACKAGE_DIGEST_REQUIRED")
+      }
+      setFeedback("3/3 · Publicando una sola vez y verificando ACTIVE…")
+      const published = await request("/api/admin/ebay/draft-only", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "publish_current_one_click",
+          candidateKey: card.candidateKey,
+          packageId: card.listingPackageId,
+          packageDigest: exactPackageDigest,
+          confirmation: "PUBLICAR ESTE LISTING EN EBAY",
+          confirmExactPackage: true,
+          confirmProductionAccount: true }),
+      })
+      const listing = record(published.listing)
+      const listingId = String(listing.listingId ?? "")
+      if (!/^\d{9,20}$/.test(listingId)) {
+        throw new Error("CURRENT_ONE_BUTTON_ACTIVE_READBACK_REQUIRED")
+      }
+      setPublishedListingId(listingId)
+      setFeedback(`Publicado y verificado ACTIVE · Item ${listingId} ✓`)
+      await onUpdated()
+    } catch (error) {
       setCanonicalPublishAuthorization(null)
-      setFeedback("El handoff canónico encontró un requisito actual · no se autorizó ningún write")
+      const code = error instanceof Error ? error.message
+        : "CURRENT_ONE_BUTTON_PUBLICATION_FAILED"
+      setNeedsEbayConnection(
+        /OAUTH|TOKEN|ACCOUNT_AUTH|IDENTITY_UNBOUND|AUTH_OR_PREPROD|POLICY|MERCHANT_LOCATION|ACCOUNT_PROFILE/.test(
+          code,
+        ),
+      )
+      setFeedback(/OAUTH|TOKEN|ACCOUNT_AUTH|IDENTITY_UNBOUND/.test(code)
+        ? "Conecta eBay Production una vez. Después usa este mismo botón."
+        : /POLICY|MERCHANT_LOCATION|ACCOUNT_PROFILE/.test(code)
+          ? "Renueva la conexión y las políticas de eBay. Después usa este mismo botón."
+        : /SHIPPING|QTY1/.test(code)
+          ? "Falta el shipping real de una unidad; no se publicó."
+          : /FEE|ECONOMICS|PROFIT|MARKET_PRICE/.test(code)
+            ? "Falta confirmar fees o la ganancia mínima de $4; no se publicó."
+            : /DUPLICATE|COLLISION|ANOTHER_OFFER/.test(code)
+              ? "Se detectó riesgo de duplicado; Seller OS se detuvo."
+              : /OUTCOME_UNKNOWN|READBACK|RECONCILIATION|IN_FLIGHT/.test(code)
+                ? "El intento quedó en verificación. El mismo botón no volverá a publicar."
+                : `No se publicó · ${code}`)
     } finally {
       setBusy(false)
     }
@@ -920,29 +998,23 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated,
         MANTENER EN ESPERA / NO PUBLICAR TODAVÍA
       </button>}
       {!editing && <button type="button"
-        onClick={() => void persist("CONFIRM")}
-        disabled={busy || !ownerPublicationDecisionReady || confirmed}
-        data-owner-publication-authorization-cta
+        onClick={() => void publishWithOneButton()}
+        disabled={busy || !ownerPublicationDecisionReady
+          || Boolean(publishedListingId)}
+        data-seller-os-one-button-publication
         data-package-digest-bound={authorizationBinding.packageDigest ===
           review.packageDigest ? "true" : "false"}
-        className="min-h-11 rounded-xl bg-emerald-200 px-5 text-sm font-black text-emerald-950 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">
-        {confirmed ? "PUBLICACIÓN AUTORIZADA ✓" : "AUTORIZAR PUBLICACIÓN"}
+        data-publishable-as-market-test={marketTest ? "true" : "false"}
+        className="min-h-12 rounded-xl bg-rose-200 px-6 text-sm font-black text-rose-950 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200">
+        {publishedListingId ? `PUBLICADO · ${publishedListingId}`
+          : busy ? "PUBLICANDO Y VERIFICANDO…" : "PUBLICAR EN EBAY"}
       </button>}
-      {!editing && publishAuthorizationReady &&
-        <button type="button" onClick={() => void authorizeCanonicalPublishHandoff()}
-          disabled={busy || canonicalPublishReady}
-          data-quick-pick-publish-authorization-cta
-          data-publishable-as-market-test={marketTest ? "true" : "false"}
-          className="inline-flex min-h-11 items-center justify-center rounded-xl bg-rose-200 px-5 text-sm font-black text-rose-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200">
-          {canonicalPublishReady ? "PUBLISHER LISTO" :
-            "CONTINUAR AL PUBLISHER"}
-        </button>}
     </div>
-    {canonicalPublishReady && publishAuthorizationUrl && <div
-      data-quick-pick-canonical-publish-summary
+    {(canonicalPublishReady || publishedListingId) && <div
+      data-seller-os-one-button-publication-summary
       className="mt-3 rounded-2xl border border-rose-200/30 bg-rose-200/[0.07] p-3">
       <p className="text-xs font-black uppercase tracking-widest text-rose-100/70">
-        Listo para publicar en eBay
+        {publishedListingId ? "Publicación confirmada" : "Paquete revalidado"}
       </p>
       <p className="mt-1 text-sm font-black">{String(
         canonicalSummary.title ?? review.title ?? "Producto Luna")}</p>
@@ -959,16 +1031,18 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated,
           BOUND</dd></div>
       </dl>
       <p className="mt-2 text-[11px] text-white/55">
-        Paquete Quick Pick confirmado · guardas legacy falsas: 0 · el próximo
-        clic abre el publisher existente y es la autorización comercial final.
+        {publishedListingId
+          ? `eBay confirmó el Item ${publishedListingId} ACTIVE y Seller OS lo dejó monitoreado.`
+          : "Seller OS usó el paquete actual, sin guardas legacy ni segundo publicador."}
       </p>
-      <div className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3">
+    </div>}
+    {needsEbayConnection && <div
+      className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3">
         <p className="text-xs font-black text-cyan-100">
           Conexión eBay Production
         </p>
         <p className="mt-1 text-[11px] leading-4 text-white/55">
-          Inicia y termina OAuth desde este mismo Chrome owner. Seller OS
-          emitirá la cookie protegida antes de enviarte a eBay.
+          Este permiso se completa una vez desde este mismo navegador.
         </p>
         <form method="post"
           action="/api/admin/ebay/publication-oauth/start"
@@ -984,12 +1058,6 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated,
           className="mt-2 text-xs font-bold text-white/60">
           {publicationOauthFeedback}
         </p>}
-      </div>
-      <a href={publishAuthorizationUrl}
-        data-quick-pick-final-publish-cta
-        className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-rose-200 px-5 text-sm font-black text-rose-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200">
-        PUBLICAR EN EBAY
-      </a>
     </div>}
     {feedback && <p aria-live="polite"
       className="mt-2 text-right text-xs font-bold text-white/60">{feedback}</p>}
@@ -1043,13 +1111,16 @@ export function SellerOsOperationalDashboard() {
   const load = useCallback(async () => {
     setCommercialReadState("REFRESHING")
     setRadarReadState("REFRESHING")
-    const [commercialResult, radarResult] =
+    const [commercialResult, radarResult, hygieneResult] =
       await Promise.allSettled([
         adminRequest(
           "/api/admin/ebay/commercial-monitor?dashboardHealthOnly=1",
         ),
         adminRequest(
           "/api/admin/ebay/luna-opportunity-queue",
+        ),
+        adminRequest(
+          "/api/admin/ebay/draft-only?publicationHygiene=1",
         ),
       ])
 
@@ -1093,6 +1164,12 @@ export function SellerOsOperationalDashboard() {
       opportunityAuthority.commercialMemory)
     const runs = Array.isArray(radar.runs) ? radar.runs : []
     const latestRadarRun = record(runs[0])
+    const hygienePayload = hygieneResult.status === "fulfilled"
+      ? record(hygieneResult.value) : {}
+    const publisherHygiene = record(hygienePayload.publicationHygiene)
+    const publisherHygieneAuthoritative =
+      hygieneResult.status === "fulfilled" &&
+      publisherHygiene.contractVersion === "SELLER_OS_PUBLISHER_HYGIENE_V1"
     for (const item of Array.isArray(radar.activeListingRisks)
       ? radar.activeListingRisks : []) {
       const risk = record(item)
@@ -1149,6 +1226,23 @@ export function SellerOsOperationalDashboard() {
             : previous.commercialMemoryRecords,
           commercialMemoryAvailable: commercialMemoryAvailable ||
             previous.commercialMemoryAvailable,
+        }
+      }
+      if (publisherHygieneAuthoritative) {
+        const status = publisherHygiene.status === "CLEAN"
+          ? "CLEAN" : "RECONCILIATION_REQUIRED"
+        next = { ...next,
+          publisherHygieneAvailable: true,
+          publisherHygieneStatus: status,
+          publisherNewLaneAvailable:
+            publisherHygiene.newPublicationLaneAvailable === true,
+          publisherInFlightCount: safeCount(publisherHygiene.inFlightCount),
+          publisherHistoricalUnpublishedCount: safeCount(
+            publisherHygiene.historicalUnpublishedCount),
+          publisherQuarantinedFailureCount: safeCount(
+            publisherHygiene.quarantinedFailureCount),
+          publisherHygieneRecords: parsePublisherHygieneRecords(
+            publisherHygiene.records),
         }
       }
       if (commercialAuthoritative) {
@@ -1328,6 +1422,34 @@ export function SellerOsOperationalDashboard() {
               {" "}paquete durable con la vista owner.
             </p>}
         </div>}
+        <details data-publisher-hygiene
+          className="mt-3 rounded-2xl border border-cyan-100/15 bg-cyan-100/[0.04] p-3">
+          <summary className="min-h-11 cursor-pointer list-none py-2 text-sm font-black text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+            Publicador de un botón · {snapshot.publisherHygieneAvailable
+              ? snapshot.publisherNewLaneAvailable
+                ? "LIMPIO PARA PUBLICAR" : "RECONCILIAR ANTES DE PUBLICAR"
+              : "VERIFICANDO"}
+          </summary>
+          <p className="mt-1 text-xs leading-5 text-white/55">
+            {snapshot.publisherHygieneAvailable
+              ? `${snapshot.publisherInFlightCount} en vuelo · ${
+                snapshot.publisherHistoricalUnpublishedCount
+              } ofertas antiguas no públicas · ${
+                snapshot.publisherQuarantinedFailureCount
+              } fallos aislados`
+              : "Leyendo el historial durable sin asumir ceros."}
+          </p>
+          {snapshot.publisherHygieneRecords.length > 0 && <ul
+            className="mt-2 space-y-2">
+            {snapshot.publisherHygieneRecords.slice(0, 8).map((item) => <li
+              key={item.publicationId ?? `${item.sku}-${item.updatedAt}`}
+              className="rounded-xl bg-black/20 p-2.5 text-xs text-white/60">
+              <strong className="block text-white/80">{item.title ??
+                item.sku ?? "Intento histórico"}</strong>
+              <span>{item.classification.replaceAll("_", " ")}</span>
+            </li>)}
+          </ul>}
+        </details>
         <details className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3"
           data-dashboard-radar-signals>
           <summary className="min-h-11 cursor-pointer list-none py-2 text-sm font-black text-violet-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-200">
