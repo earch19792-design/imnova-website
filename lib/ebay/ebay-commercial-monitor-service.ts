@@ -1290,6 +1290,8 @@ function safeHttpsUrl(value: string | undefined) {
 function sellerCommandCenterBaseUrl() {
   const configured = safeHttpsUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
   if (configured) return configured
+  const selfhostOrigin = safeHttpsUrl(process.env.SELLER_OS_PUBLIC_ORIGIN)
+  if (selfhostOrigin) return `${selfhostOrigin}/admin/ebay/mobile-review`
   const vercelHost = process.env.VERCEL_BRANCH_URL ?? process.env.VERCEL_URL
   return safeHttpsUrl(vercelHost
     ? `${vercelHost.startsWith("https://") ? "" : "https://"}${vercelHost}`

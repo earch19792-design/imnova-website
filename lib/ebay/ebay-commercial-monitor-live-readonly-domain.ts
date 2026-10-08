@@ -1284,6 +1284,7 @@ export function parseEbayTradingGetUser(xml: string) {
   return {
     accepted: responses.length === 1 && ack === "SUCCESS" &&
       users.length === 1 && Boolean(userId) && siteValid,
+    ack,
     userId,
     site,
   }

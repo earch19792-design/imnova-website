@@ -1,0 +1,5 @@
+tools/browser-extensions/ebay-product-research-capture/** text eol=lf
+tools/browser-extensions/luna-owner-session-handoff/** text eol=lf
+tools/browser-extensions/luna-shipping-capture/** text eol=lf
+ops/seller-os-runtime-recovery/seller-os-runtime-recovery text eol=lf
+*.zip binary

@@ -26,7 +26,7 @@ export const EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES = Object.freeze([
 ] as const)
 
 export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
-  version: "1.2.40",
+  version: "1.2.41",
   buildId:
     "9a4d67ffe9729b737340c21ee2b450d692c63ca68d6bb79666cd132f79b39e43",
   artifactSha256:
@@ -36,7 +36,7 @@ export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
   extensionId: "llngdlffmjbnbmbffkfbknkkddjoknka",
   expectedCapabilities: EBAY_ONE_CLICK_RESEARCH_EXPECTED_CAPABILITIES,
   archivePath:
-    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.40.zip",
+    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.41.zip",
 })
 
 export const EBAY_ONE_CLICK_RESEARCH_CAPTURE_COMPATIBILITY = Object.freeze([

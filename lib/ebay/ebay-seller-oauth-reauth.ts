@@ -2,10 +2,6 @@ import {
   ebayProductionAccountFingerprint,
 } from "./ebay-seller-account-scope"
 import {
-  assertEbayMonitorReadonlyRequest,
-  parseEbayTradingGetUser,
-} from "./ebay-commercial-monitor-live-readonly-domain"
-import {
   buildEbaySellerTrafficReportUrl,
   EBAY_SELLER_TRAFFIC_METRICS,
 } from "./ebay-seller-traffic-report"
@@ -37,13 +33,12 @@ import type {
 
 const EBAY_API_ORIGIN = "https://api.ebay.com"
 const EBAY_TOKEN_ENDPOINT = `${EBAY_API_ORIGIN}/identity/v1/oauth2/token`
-const EBAY_TRADING_ENDPOINT = `${EBAY_API_ORIGIN}/ws/api.dll`
+const EBAY_TOKEN_INTROSPECTION_ENDPOINT = `${EBAY_TOKEN_ENDPOINT}/introspect`
 const EBAY_INVENTORY_LOCATION_ENDPOINT =
   `${EBAY_API_ORIGIN}/sell/inventory/v1/location?limit=1&offset=0`
 const EBAY_ACCOUNT_PRIVILEGE_ENDPOINT =
   `${EBAY_API_ORIGIN}/sell/account/v1/privilege`
 const EBAY_MARKETPLACE_ID = "EBAY_US"
-const TRADING_COMPATIBILITY_LEVEL = "1423"
 const SEQUENTIAL_REQUEST_TIMEOUT_MS = 5_000
 const PARALLEL_PROBE_TIMEOUT_MS = 6_000
 const AUTHORIZATION_PREFLIGHT_TIMEOUT_MS = 3_000
@@ -58,19 +53,13 @@ const EXACT_REAUTHORIZATION_SCOPE_UNION = [
   "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
 ] as const
 
-const GET_USER_BODY = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
-  "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
-  "<OutputSelector>User.UserID</OutputSelector>" +
-  "<OutputSelector>User.Site</OutputSelector>" +
-  "</GetUserRequest>"
-
 type Clock = () => number
 type FetchLike = typeof fetch
 
 export type EbaySellerOAuthReauthCallOperation =
   | "OAUTH_AUTHORIZATION_CODE_EXCHANGE"
   | "OAUTH_EXACT_UNION_REFRESH"
-  | "TRADING_GET_USER"
+  | "OAUTH_TOKEN_INTROSPECTION"
   | "INVENTORY_GET_LOCATIONS_SCOPE_PROBE"
   | "ANALYTICS_TRAFFIC_REPORT_SCOPE_PROBE"
   | "ACCOUNT_PRIVILEGE_SCOPE_PROBE"
@@ -761,19 +750,11 @@ function assertAllowedRequest(input: {
   const tokenHeaders = headerKeys === "authorization,content-type" &&
     input.headers.Authorization?.startsWith("Basic ") &&
     input.headers["Content-Type"] === "application/x-www-form-urlencoded"
-  const tradingHeaders = headerKeys === [
-    "content-type",
-    "x-ebay-api-call-name",
-    "x-ebay-api-compatibility-level",
-    "x-ebay-api-iaf-token",
-    "x-ebay-api-siteid",
-  ].join(",") &&
-    input.headers["Content-Type"] === "text/xml" &&
-    input.headers["X-EBAY-API-CALL-NAME"] === "GetUser" &&
-    input.headers["X-EBAY-API-COMPATIBILITY-LEVEL"] ===
-      TRADING_COMPATIBILITY_LEVEL &&
-    input.headers["X-EBAY-API-SITEID"] === "0" &&
-    Boolean(input.headers["X-EBAY-API-IAF-TOKEN"])
+  const introspectionHeaders = headerKeys ===
+      "accept,authorization,content-type" &&
+    input.headers.Accept === "application/json" &&
+    input.headers.Authorization?.startsWith("Basic ") &&
+    input.headers["Content-Type"] === "application/x-www-form-urlencoded"
   const restHeaders = headerKeys ===
     "accept,authorization,x-ebay-c-marketplace-id" &&
     input.headers.Accept === "application/json" &&
@@ -788,9 +769,10 @@ function assertAllowedRequest(input: {
       "OAUTH_AUTHORIZATION_CODE_EXCHANGE",
       "OAUTH_EXACT_UNION_REFRESH",
     ].includes(input.operation)
-  const trading = input.operation === "TRADING_GET_USER" &&
-    input.method === "POST" && input.url.toString() === EBAY_TRADING_ENDPOINT &&
-    input.body === GET_USER_BODY && tradingHeaders
+  const introspection = input.operation === "OAUTH_TOKEN_INTROSPECTION" &&
+    input.method === "POST" &&
+    input.url.toString() === EBAY_TOKEN_INTROSPECTION_ENDPOINT &&
+    noSearch && introspectionHeaders
   const inventory = input.operation === "INVENTORY_GET_LOCATIONS_SCOPE_PROBE" &&
     input.method === "GET" &&
     input.url.origin === EBAY_API_ORIGIN &&
@@ -814,7 +796,7 @@ function assertAllowedRequest(input: {
     input.url.searchParams.get("filter")?.includes(
       "marketplace_ids:{EBAY_US}",
     ) === true && restHeaders
-  if (!token && !trading && !inventory && !account && !analytics) {
+  if (!token && !introspection && !inventory && !account && !analytics) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_REQUEST_BLOCKED",
     )
@@ -843,6 +825,15 @@ function assertAllowedRequest(input: {
         "EBAY_SELLER_OAUTH_REAUTH_REQUEST_BLOCKED",
       )
     }
+  }
+  if (introspection &&
+      (!(input.body instanceof URLSearchParams) ||
+       [...input.body.keys()].sort().join(",") !== "token,token_type_hint" ||
+       input.body.get("token_type_hint") !== "access_token" ||
+       !credential(input.body.get("token")))) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_REQUEST_BLOCKED",
+    )
   }
 }
 
@@ -1088,25 +1079,19 @@ async function verifyRefreshTokenCapabilities(input: {
     })
     accessToken = refreshed.accessToken
 
-    assertEbayMonitorReadonlyRequest({
-      operation: "TRADING_GET_USER",
-      method: "POST",
-      url: EBAY_TRADING_ENDPOINT,
-      tradingCallName: "GetUser",
-      tradingHeaderCallName: "GetUser",
-      tradingBody: GET_USER_BODY,
+    const introspectionBody = new URLSearchParams({
+      token: accessToken,
+      token_type_hint: "access_token",
     })
     const getUserResponse = await boundedFetch({
-      operation: "TRADING_GET_USER",
+      operation: "OAUTH_TOKEN_INTROSPECTION",
       method: "POST",
-      url: new URL(EBAY_TRADING_ENDPOINT),
-      body: GET_USER_BODY,
+      url: new URL(EBAY_TOKEN_INTROSPECTION_ENDPOINT),
+      body: introspectionBody,
       headers: {
-        "Content-Type": "text/xml",
-        "X-EBAY-API-CALL-NAME": "GetUser",
-        "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
-        "X-EBAY-API-SITEID": "0",
-        "X-EBAY-API-IAF-TOKEN": accessToken,
+        Accept: "application/json",
+        Authorization: `Basic ${basic}`,
+        "Content-Type": "application/x-www-form-urlencoded",
       },
       fetchImpl: input.fetchImpl,
       calls: input.calls,
@@ -1114,27 +1099,41 @@ async function verifyRefreshTokenCapabilities(input: {
       externalDeadlineAt: input.externalDeadlineAt,
       requestedTimeoutMs: SEQUENTIAL_REQUEST_TIMEOUT_MS,
     })
-    let getUserXml = ""
-    try {
-      getUserXml = await getUserResponse.text()
-    } catch {
+    const identityPayload = record(
+      await getUserResponse.json().catch(() => ({})),
+    )
+    const accountUserId = credential(identityPayload.username, 200)
+    const introspectedClientId = credential(identityPayload.client_id, 512)
+    const introspectedScopes = exactEbaySellerOAuthReauthReturnedScopes(
+      identityPayload.scope,
+    )
+    const fingerprintMatch = accountUserId
+      ? ebayProductionAccountFingerprint(accountUserId) ===
+        input.configuration.expectedAccountFingerprint
+      : false
+    const expectedUserMatch = !input.configuration.expectedUserId ||
+      accountUserId.toLocaleLowerCase("en-US") ===
+        input.configuration.expectedUserId.toLocaleLowerCase("en-US")
+    if (!getUserResponse.ok || identityPayload.active !== true ||
+        introspectedClientId !== input.configuration.clientId ||
+        introspectedScopes !== true) {
       throw new EbaySellerOAuthReauthError(
         "EBAY_SELLER_OAUTH_REAUTH_GET_USER_FAILED",
       )
     }
-    const account = parseEbayTradingGetUser(getUserXml)
-    getUserXml = ""
-    const fingerprintMatch = account.userId
-      ? ebayProductionAccountFingerprint(account.userId) ===
-        input.configuration.expectedAccountFingerprint
-      : false
-    const expectedUserMatch = !input.configuration.expectedUserId ||
-      account.userId?.toLocaleLowerCase("en-US") ===
-        input.configuration.expectedUserId.toLocaleLowerCase("en-US")
-    if (!getUserResponse.ok || !account.accepted || !account.userId ||
-        account.site !== "US" || !fingerprintMatch || !expectedUserMatch) {
+    if (!accountUserId) {
       throw new EbaySellerOAuthReauthError(
-        "EBAY_SELLER_OAUTH_REAUTH_ACCOUNT_BINDING_MISMATCH",
+        "EBAY_SELLER_OAUTH_REAUTH_GET_USER_RESPONSE_INVALID",
+      )
+    }
+    if (!expectedUserMatch) {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_EXPECTED_USER_MISMATCH",
+      )
+    }
+    if (!fingerprintMatch) {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_ACCOUNT_FINGERPRINT_MISMATCH",
       )
     }
 

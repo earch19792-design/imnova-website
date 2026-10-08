@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 
 const MCP_URL = "http://127.0.0.1:3000/api/seller-os/assistant/mcp"
-const ATTESTATION_URL =
-  "https://imnova-seller-os-preprod.vercel.app/api/runtime/health-attestation"
-const secret = process.env.SELLER_OS_CLOUD_READ_RELAY_SECRET?.trim()
+const publicOrigin = process.env.SELLER_OS_PUBLIC_ORIGIN?.trim() ||
+  "https://selleros.sunshineecommerce-llc.com"
+const ATTESTATION_URL = new URL(
+  "/api/runtime/health-attestation",
+  publicOrigin,
+).toString()
+const secret = process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET?.trim()
 const protectionBypass =
   process.env.SELLER_OS_CLOUD_READ_RELAY_PROTECTION_BYPASS?.trim()
 

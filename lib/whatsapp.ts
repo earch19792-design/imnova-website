@@ -1,5 +1,5 @@
 const fallbackLaunchImageUrl =
-  "https://imnova-website-z1qh.vercel.app/images/mash-coffee.png"
+  "https://selleros.sunshineecommerce-llc.com/images/mash-coffee.png"
 
 const fallbackRecipientPhones = [
   "50558199840",

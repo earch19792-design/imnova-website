@@ -11,6 +11,8 @@ const SELLER_OS_DEDICATED_PREPROD_PRODUCTION_URL =
   "imnova-seller-os-preprod.vercel.app"
 const SELLER_OS_DEDICATED_PREPROD_SUPABASE_REF =
   "vsfthqydfrdzulldbfbe"
+export const SELLER_OS_SELFHOST_PRODUCTION_ORIGIN =
+  "https://selleros.sunshineecommerce-llc.com"
 
 export const EBAY_SELLER_OS_UI_PATHS = [
   "/admin/ebay-seller-os",
@@ -92,6 +94,8 @@ type EbayProBoundaryInput = {
   method?: string | null
   vercelGitCommitRef?: string | null
   deploymentAttestedGitRef?: string | null
+  sellerOsDeploymentMode?: string | null
+  sellerOsPublicOrigin?: string | null
   allowedProductionBranch?: string | null
   draftTarget?: string | null
   draftMasterEnabled?: boolean
@@ -110,6 +114,8 @@ type DraftWriteBoundaryInput = Pick<
   | "supabaseUrl"
   | "vercelGitCommitRef"
   | "deploymentAttestedGitRef"
+  | "sellerOsDeploymentMode"
+  | "sellerOsPublicOrigin"
   | "allowedProductionBranch"
   | "draftTarget"
   | "draftMasterEnabled"
@@ -168,7 +174,19 @@ function dedicatedPreprodState(input: EbayProBoundaryInput) {
   const configuredSupabaseRef = supabaseProjectRef(
     input.supabaseUrl ?? process.env.NEXT_PUBLIC_SUPABASE_URL,
   )
-  const signals = {
+  const sellerOsDeploymentMode = normalizeValue(
+    input.sellerOsDeploymentMode
+      ?? process.env.SELLER_OS_DEPLOYMENT_MODE,
+  )
+  const sellerOsPublicOrigin = normalizeValue(
+    input.sellerOsPublicOrigin ?? process.env.SELLER_OS_PUBLIC_ORIGIN,
+  )
+  const sharedSignals = {
+    stagingRuntimeIntent: ebayProRuntime === "staging",
+    stagingSupabaseProject:
+      configuredSupabaseRef === SELLER_OS_DEDICATED_PREPROD_SUPABASE_REF,
+  }
+  const vercelSignals = {
     vercelSystem: vercelSystem === "1",
     vercelEnvironment: vercelEnv === "production",
     vercelTargetEnvironment: vercelTargetEnv === "production",
@@ -177,10 +195,20 @@ function dedicatedPreprodState(input: EbayProBoundaryInput) {
     vercelProjectProductionUrl:
       vercelProjectProductionUrl ===
         SELLER_OS_DEDICATED_PREPROD_PRODUCTION_URL,
-    stagingRuntimeIntent: ebayProRuntime === "staging",
-    stagingSupabaseProject:
-      configuredSupabaseRef === SELLER_OS_DEDICATED_PREPROD_SUPABASE_REF,
+    ...sharedSignals,
   }
+  const selfhostSignals = {
+    selfhostDeploymentMode: sellerOsDeploymentMode === "selfhost",
+    selfhostPublicOrigin:
+      sellerOsPublicOrigin === SELLER_OS_SELFHOST_PRODUCTION_ORIGIN,
+    vercelIdentityAbsent: !vercelSystem && !vercelEnv && !vercelTargetEnv &&
+      !vercelProjectId && !vercelProjectProductionUrl,
+    ...sharedSignals,
+  }
+  const selfhostIntent = Boolean(
+    sellerOsDeploymentMode || sellerOsPublicOrigin,
+  )
+  const signals = selfhostIntent ? selfhostSignals : vercelSignals
   const certified = Object.values(signals).every(Boolean)
   const failedSignal = Object.entries(signals)
     .find(([, matched]) => !matched)?.[0] ?? null
@@ -190,7 +218,10 @@ function dedicatedPreprodState(input: EbayProBoundaryInput) {
       : null,
     certified,
     failedSignal,
+    profile: selfhostIntent ? "selfhost" as const : "vercel" as const,
     signals,
+    vercelSignals,
+    selfhostSignals,
   }
 }
 
@@ -230,6 +261,8 @@ function runtimeState(input: EbayProBoundaryInput) {
     .includes(ebayProRuntime)
   const dedicatedPreprod = dedicatedPreprodState(input)
   const isProductionRuntime = runtimeBlocksEbayPro
+    || (dedicatedPreprod.profile === "selfhost" &&
+      !dedicatedPreprod.certified)
     || (vercelEnv === "production" && !dedicatedPreprod.certified)
     || (!vercelEnv && !runtimeAllowsEbayPro && nodeEnv === "production")
   return {
@@ -345,7 +378,15 @@ export function getEbayPublicationOAuthEnvironmentBoundary(
   const gitRef = rawValue(
     input.vercelGitCommitRef ?? process.env.VERCEL_GIT_COMMIT_REF,
   )
-  const branchMatch = Boolean(allowedBranch) && gitRef === allowedBranch
+  const deploymentAttestedGitRef = rawValue(
+    input.deploymentAttestedGitRef
+      ?? process.env.SELLER_OS_DEPLOYMENT_ATTESTED_GIT_REF,
+  )
+  const branchMatch = Boolean(allowedBranch) && (
+    gitRef === allowedBranch ||
+    (!gitRef && dedicatedPreprod &&
+      deploymentAttestedGitRef === allowedBranch)
+  )
   return {
     preview,
     dedicatedPreprod,

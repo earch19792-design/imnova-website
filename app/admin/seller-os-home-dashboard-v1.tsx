@@ -356,6 +356,18 @@ export function SellerOsHomeDashboardV1() {
           className="mt-3 inline-flex min-h-11 items-center text-sm font-black text-emerald-100">
           Abrir Publicar <ArrowRight className="ml-2" size={15} />
         </a>
+        <form method="post"
+          action="/api/admin/ebay/publication-oauth/start"
+          className="mt-3 border-t border-white/10 pt-3">
+          <p className="text-xs leading-5 text-white/50">
+            Conecta la autorización de publicación desde este mismo navegador.
+            Autorizar no publica ni cambia listings por sí solo.
+          </p>
+          <button type="submit" data-ebay-production-oauth-browser-start
+            className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-100">
+            Conectar eBay Production
+          </button>
+        </form>
       </section>
 
       <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"

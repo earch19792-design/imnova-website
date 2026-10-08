@@ -1,9 +1,9 @@
 export const BUILD_ID = "LUNA_OWNER_SESSION_HANDOFF_EXTENSION_V1"
-export const BUILD_VERSION = "1.1.0"
+export const BUILD_VERSION = "1.1.1"
 export const HANDOFF_VERSION = "SELLER_OS_LUNA_OWNER_REAUTH_HANDOFF_V1"
 export const SESSION_VERSION = "SELLER_OS_LUNA_PROTECTED_SESSION_V1"
 export const SESSION_COOKIE_JAR_VERSION = "SELLER_OS_LUNA_PROTECTED_SESSION_V2"
-export const PREPROD_ORIGIN = "https://imnova-seller-os-preprod.vercel.app"
+export const PREPROD_ORIGIN = "https://selleros.sunshineecommerce-llc.com"
 export const UPLOAD_PATH = "/api/admin/ebay/luna-protected-session"
 export const LUNA_SESSION_CONSUMER_URL =
   "https://www.lunaportex.com/account"

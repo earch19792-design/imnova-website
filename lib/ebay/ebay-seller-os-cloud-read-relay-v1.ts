@@ -441,9 +441,24 @@ export function getSellerOsCloudReadRelayConfigurationV1(
   let endpointUrl: string | null = null
   try {
     const parsed = new URL(endpointValue)
+    let selfhostOrigin: URL | null = null
+    try {
+      const candidate = new URL(
+        normalize(environment.SELLER_OS_PUBLIC_ORIGIN),
+      )
+      selfhostOrigin = candidate.protocol === "https:" &&
+          !candidate.username && !candidate.password && !candidate.port &&
+          candidate.pathname === "/" && !candidate.search && !candidate.hash
+        ? candidate
+        : null
+    } catch {
+      selfhostOrigin = null
+    }
+    const trustedRelayOrigin = parsed.hostname.endsWith(".vercel.app") ||
+      Boolean(selfhostOrigin && parsed.origin === selfhostOrigin.origin)
     if (parsed.protocol !== "https:" || parsed.username || parsed.password ||
       parsed.pathname !== SELLER_OS_CLOUD_READ_RELAY_PATH || parsed.search ||
-      parsed.hash || !parsed.hostname.endsWith(".vercel.app")) {
+      parsed.hash || !trustedRelayOrigin) {
       reasonCodes.push("RELAY_ENDPOINT_NOT_CANONICAL_PREVIEW_HTTPS")
     } else {
       endpointUrl = parsed.toString()

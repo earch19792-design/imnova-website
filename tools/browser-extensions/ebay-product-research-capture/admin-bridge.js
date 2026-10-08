@@ -2,9 +2,7 @@
   "use strict"
 
   const ADMIN_ORIGINS = new Set([
-    "https://imnova-website-z1qh-canonical-preview.vercel.app",
-    "https://imnova-seller-os-preprod.vercel.app",
-    "https://imnova-ebay-mobile-preprod.vercel.app",
+    "https://selleros.sunshineecommerce-llc.com",
   ])
   const ADMIN_SCOPE_PATH = /^\/admin\/(?:ebay(?:\/|$)|ebay-seller-os(?:\/|$))/
   const OPERATIONAL_PATH = /^\/admin\/(?:ebay\/(?:mobile-review|opportunity-queue\/research|commercial-trace)|ebay-seller-os)\/?$/

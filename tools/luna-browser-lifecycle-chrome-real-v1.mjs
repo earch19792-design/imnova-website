@@ -1,7 +1,7 @@
 const port = Number(process.env.LUNA_CHROME_CDP_PORT ?? 9334)
 const expectedExtensionId = "mhpkojahbbfdgodeaecggpjaplllgclk"
-const expectedVersion = "1.0.57"
-const sellerOsOrigin = "https://imnova-seller-os-preprod.vercel.app"
+const expectedVersion = "1.0.58"
+const sellerOsOrigin = "https://selleros.sunshineecommerce-llc.com"
 const controlPrefix =
   `${sellerOsOrigin}/admin/ebay/luna-shipping-capture`
 

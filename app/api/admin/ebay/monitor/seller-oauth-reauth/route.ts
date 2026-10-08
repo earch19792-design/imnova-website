@@ -35,6 +35,7 @@ import {
   EBAY_SELLER_OAUTH_REAUTH_COOKIE,
   EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
   EBAY_SELLER_OAUTH_REAUTH_INTERNAL_HARD_BUDGET_MS,
+  EBAY_SELLER_OAUTH_REAUTH_SCOPES,
   EBAY_SELLER_OAUTH_REAUTH_RESPONSE_HEADERS,
   EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
   EbaySellerOAuthReauthError,
@@ -91,7 +92,7 @@ function publicationRedirect(
   outcome: "ready" | "error",
   reason?: string,
 ) {
-  const target = new URL("/admin", request.url)
+  const target = new URL("/admin", publicationRedirectOrigin(request))
   target.searchParams.set("ebayPublicationOAuth", outcome)
   if (reason) target.searchParams.set("reason", reason)
   const response = NextResponse.redirect(target, {
@@ -205,6 +206,26 @@ function runtimeAllowed(request: NextRequest) {
   }).blocked
 }
 
+function publicRequestHost(request: NextRequest) {
+  return (request.headers.get("host") || request.nextUrl.host)
+    .trim().toLowerCase()
+}
+
+function publicationRedirectOrigin(request: NextRequest) {
+  const configured = process.env.SELLER_OS_PUBLIC_ORIGIN?.trim() ?? ""
+  try {
+    const origin = new URL(configured)
+    if (origin.protocol === "https:" && !origin.username &&
+        !origin.password && !origin.port && origin.pathname === "/" &&
+        !origin.search && !origin.hash) {
+      return origin.origin
+    }
+  } catch {
+    // Fall back to the request URL outside the explicit self-host deployment.
+  }
+  return request.url
+}
+
 export async function POST(request: NextRequest) {
   const requestStartedAt = Date.now()
   const fetchImpl = fetch
@@ -220,7 +241,7 @@ export async function POST(request: NextRequest) {
     const validation = await validateAdminApiRequest(request)
     const actorUserId = assertEbaySellerOAuthReauthAdmin(validation)
     const configuration = getEbaySellerOAuthReauthConfiguration({
-      requestHost: request.nextUrl.host,
+      requestHost: publicRequestHost(request),
     })
     let payload: unknown
     try {
@@ -600,7 +621,7 @@ export async function POST(request: NextRequest) {
       success: true,
       authorizationUrl: prepared.authorizationUrl,
       callbackPath: EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
-      scopeCount: 4,
+      scopeCount: EBAY_SELLER_OAUTH_REAUTH_SCOPES.length,
       expiresAt: new Date(prepared.expiresAt).toISOString(),
       stateHashPersisted: true,
       rawStatePersisted: false,
@@ -742,7 +763,7 @@ export async function GET(request: NextRequest) {
       return callbackHtml("EBAY_SELLER_OAUTH_REAUTH_RUNTIME_DENIED", 403)
     }
     const configuration = getEbaySellerOAuthReauthConfiguration({
-      requestHost: request.nextUrl.host,
+      requestHost: publicRequestHost(request),
     })
     if (!configuration.ready) {
       return callbackHtml(
@@ -877,7 +898,7 @@ export async function GET(request: NextRequest) {
       const completed = await completeEbayCommercialOrdersAuthorization(supabase, {
         state: callback.state,
         code: callback.code,
-        requestHost: request.nextUrl.host,
+        requestHost: publicRequestHost(request),
       })
       if (completed.handoffMode === "ONE_TIME_OPERATOR") {
         commercialOrdersRefreshToken = completed.refreshToken

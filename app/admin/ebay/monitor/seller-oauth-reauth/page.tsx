@@ -162,6 +162,19 @@ type InstalledRuntimeCertification = {
     analyticsReadonly: "AVAILABLE"
     accountReadonly: "AVAILABLE"
   }
+  endpointHealth: {
+    analytics: {
+      status:
+        | "HEALTHY"
+        | "RATE_LIMITED"
+        | "SERVER_UNAVAILABLE"
+        | "TRANSPORT_DEGRADED"
+        | "ACCESS_DENIED"
+        | "RESPONSE_INVALID"
+        | "REJECTED"
+      httpStatus: number | null
+    }
+  }
   calls: Array<{
     operation: string
     method: "GET" | "POST"
@@ -1609,6 +1622,7 @@ function validInstalledRuntimeCertification(
     "calls",
     "capabilities",
     "credentialSource",
+    "endpointHealth",
     "genericEnvironmentTokenFallback",
     "oauthRefreshExchange",
     "refreshTokenPresent",
@@ -1625,6 +1639,30 @@ function validInstalledRuntimeCertification(
       [...INSTALLED_CAPABILITY_KEYS].sort().join(",") ||
       INSTALLED_CAPABILITY_KEYS.some((key) =>
         capabilities[key] !== "AVAILABLE")) return false
+  if (!record.endpointHealth || typeof record.endpointHealth !== "object" ||
+      Array.isArray(record.endpointHealth)) return false
+  const endpointHealth = record.endpointHealth as Record<string, unknown>
+  if (Object.keys(endpointHealth).join(",") !== "analytics" ||
+      !endpointHealth.analytics ||
+      typeof endpointHealth.analytics !== "object" ||
+      Array.isArray(endpointHealth.analytics)) return false
+  const analyticsHealth = endpointHealth.analytics as Record<string, unknown>
+  if (Object.keys(analyticsHealth).sort().join(",") !==
+      ["httpStatus", "status"].join(",") ||
+      !new Set([
+        "HEALTHY",
+        "RATE_LIMITED",
+        "SERVER_UNAVAILABLE",
+        "TRANSPORT_DEGRADED",
+        "ACCESS_DENIED",
+        "RESPONSE_INVALID",
+        "REJECTED",
+      ]).has(String(analyticsHealth.status)) ||
+      !(analyticsHealth.httpStatus === null ||
+        (typeof analyticsHealth.httpStatus === "number" &&
+          Number.isSafeInteger(analyticsHealth.httpStatus) &&
+          analyticsHealth.httpStatus >= 100 &&
+          analyticsHealth.httpStatus <= 599))) return false
   if (!record.safety || typeof record.safety !== "object" ||
       Array.isArray(record.safety)) return false
   const safety = record.safety as Record<string, unknown>
@@ -1637,7 +1675,7 @@ function validInstalledRuntimeCertification(
   if (!Array.isArray(record.calls) || record.calls.length !== 5) return false
   const operations = new Set([
     "OAUTH_EXACT_UNION_REFRESH",
-    "TRADING_GET_USER",
+    "OAUTH_TOKEN_INTROSPECTION",
     "INVENTORY_GET_LOCATIONS_SCOPE_PROBE",
     "ANALYTICS_TRAFFIC_REPORT_SCOPE_PROBE",
     "ACCOUNT_PRIVILEGE_SCOPE_PROBE",

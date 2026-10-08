@@ -17,9 +17,7 @@ const PRODUCT_RESEARCH_DIAGNOSTIC_PING = "IMNOVA_PRODUCT_RESEARCH_DIAGNOSTIC_PIN
 const MAIN_SEARCH_SOLD_CAPTURE = "IMNOVA_AUTOMATED_MAIN_SEARCH_SOLD_CAPTURE_V1"
 const ENDED_ITEM_DETAIL_CAPTURE = "IMNOVA_AUTOMATED_ENDED_ITEM_DETAIL_CAPTURE_V1"
 const ADMIN_ORIGINS = new Set([
-  "https://imnova-website-z1qh-canonical-preview.vercel.app",
-  "https://imnova-seller-os-preprod.vercel.app",
-  "https://imnova-ebay-mobile-preprod.vercel.app",
+  "https://selleros.sunshineecommerce-llc.com",
 ])
 const ADMIN_SCOPE_MATCHES = [...ADMIN_ORIGINS].flatMap((origin) => [
   `${origin}/admin/ebay/*`, `${origin}/admin/ebay-seller-os*`,
@@ -30,7 +28,7 @@ const ADMIN_CONTROL_SCOPE_MATCHES = [...ADMIN_ORIGINS].map(
 const ADMIN_SCOPE_PATH = /^\/admin\/(?:ebay(?:\/|$)|ebay-seller-os(?:\/|$))/
 const ADMIN_PATH = /^\/admin\/(?:ebay\/(?:mobile-review|opportunity-queue\/research|commercial-trace)|ebay-seller-os)\/?$/
 const WORKER_CONTROL_URL =
-  "https://imnova-seller-os-preprod.vercel.app/admin/ebay/opportunity-queue/research?mayelResearchWorker=auto&browserWorkerControl=1"
+  "https://selleros.sunshineecommerce-llc.com/admin/ebay/opportunity-queue/research?mayelResearchWorker=auto&browserWorkerControl=1"
 const WORKER_CONTROL_ALARM = "seller-os-product-research-worker-control-v1"
 const WORKER_CONTROL_RECOVERY =
   globalThis.SELLER_OS_PRODUCT_RESEARCH_CONTROL_RECOVERY_V1

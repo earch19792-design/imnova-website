@@ -5,10 +5,12 @@ import { NextResponse } from "next/server"
 
 import {
   getEbayCommercialOrdersAuthorizationConfiguration,
+  getEbayCommercialOrdersBrowserRequestHost,
   startEbayCommercialOrdersBrowserAuthorization,
 } from "@/lib/ebay/ebay-commercial-orders-oauth-authorization"
 import {
   assertEbaySellerOAuthReauthAdmin,
+  assertEbaySellerOAuthReauthSameOrigin,
 } from "@/lib/ebay/ebay-seller-oauth-reauth-domain"
 import {
   getSupabaseAdminClient,
@@ -23,8 +25,31 @@ function safeCode(error: unknown) {
 }
 
 export async function POST(req: Request) {
-  const requestHost = new URL(req.url).host
-  const validation = await validateAdminApiRequest(req)
+  try {
+    assertEbaySellerOAuthReauthSameOrigin(req)
+  } catch (error) {
+    return NextResponse.json(
+      { success: false, error: safeCode(error) },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+  const requestHost = getEbayCommercialOrdersBrowserRequestHost(
+    process.env,
+    new URL(req.url).host,
+  )
+  const validation = await validateAdminApiRequest(req).catch(() => null)
+  if (!validation) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "EBAY_COMMERCIAL_ORDERS_ADMIN_VALIDATION_UNAVAILABLE",
+      },
+      {
+        status: 503,
+        headers: { "Cache-Control": "no-store" },
+      },
+    )
+  }
   if (!validation.ok) {
     return NextResponse.json(
       { success: false, error: validation.error ?? "admin_forbidden" },
@@ -77,7 +102,7 @@ export async function POST(req: Request) {
         requestHost,
       ),
     }, {
-      status: 502,
+      status: 422,
       headers: { "Cache-Control": "no-store" },
     })
   }

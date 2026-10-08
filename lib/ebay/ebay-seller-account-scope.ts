@@ -8,8 +8,9 @@ function normalizedFingerprint(value: unknown) {
 }
 
 export function ebayProductionAccountFingerprint(userId: string) {
+  const normalizedUserId = userId.trim().toLocaleLowerCase("en-US")
   return createHash("sha256")
-    .update(`PRODUCTION:${userId}`)
+    .update(`PRODUCTION:${normalizedUserId}`)
     .digest("hex")
 }
 

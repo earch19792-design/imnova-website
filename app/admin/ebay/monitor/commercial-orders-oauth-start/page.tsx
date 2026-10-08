@@ -191,11 +191,26 @@ export default function CommercialOrdersOAuthStartPage() {
         },
         body: JSON.stringify({ publicKeyPem }),
       })
-      const payload = await response.json() as {
+      const responseText = await response.text()
+      if (!response.headers.get("content-type")?.toLowerCase().includes(
+        "application/json",
+      )) {
+        throw new Error(
+          `COMMERCIAL_ORDERS_START_NON_JSON_HTTP_${response.status}`,
+        )
+      }
+      let payload: {
         success?: boolean
         startUrl?: unknown
         error?: string
         ceremony?: { requestedScopes?: unknown; scopeProfile?: unknown }
+      }
+      try {
+        payload = JSON.parse(responseText) as typeof payload
+      } catch {
+        throw new Error(
+          `COMMERCIAL_ORDERS_START_INVALID_JSON_HTTP_${response.status}`,
+        )
       }
       if (!response.ok || payload.success !== true ||
           !validStartUrl(payload.startUrl) ||

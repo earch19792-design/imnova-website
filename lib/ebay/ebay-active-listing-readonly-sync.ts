@@ -11,7 +11,7 @@ import {
 } from "@/lib/ebay/ebay-seller-account-scope"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
-const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
+const TOKEN_INTROSPECTION_ENDPOINT = `${TOKEN_ENDPOINT}/introspect`
 const INVENTORY_API_ORIGIN = "https://api.ebay.com"
 const INVENTORY_ITEMS_ENDPOINT =
   `${INVENTORY_API_ORIGIN}/sell/inventory/v1/inventory_item?limit=100&offset=0`
@@ -26,7 +26,6 @@ const MAX_RETRIES = 3
 const OFFER_READ_CONCURRENCY = 6
 const CONNECTOR_SOURCE = "EBAY_SELL_INVENTORY_READONLY"
 const MARKETPLACE_ID = "EBAY_US"
-const TRADING_COMPATIBILITY_LEVEL = "1423"
 
 type JsonRecord = Record<string, unknown>
 
@@ -100,6 +99,7 @@ async function ebayFetch(url: string, accessToken: string) {
         method: "GET",
         headers: {
           Authorization: `Bearer ${accessToken}`,
+          "Accept-Language": "en-US",
           "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
         },
         cache: "no-store",
@@ -167,23 +167,6 @@ async function getSellerInventoryToken() {
   throw new Error("EBAY_SELLER_INVENTORY_OAUTH_FAILED")
 }
 
-function tradingXmlValue(xml: string, tag: string) {
-  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const match = xml.match(new RegExp(
-    `<(?:[A-Za-z0-9_-]+:)?${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?${escaped}>`,
-    "i",
-  ))
-  return match?.[1]
-    ?.replace(/<[^>]*>/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim() || null
-}
-
 async function assertAuthenticatedSellerAccount(
   accessToken: string,
 ) {
@@ -191,31 +174,40 @@ async function assertAuthenticatedSellerAccount(
   if (!identity.bound) {
     throw new Error("EBAY_ACTIVE_LISTING_ACCOUNT_SCOPE_REQUIRED")
   }
-  const response = await fetch(TRADING_ENDPOINT, {
+  const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
+  const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
+  if (!clientId || !clientSecret) {
+    throw new Error("EBAY_READONLY_ENV_MISSING")
+  }
+  const response = await fetch(TOKEN_INTROSPECTION_ENDPOINT, {
     method: "POST",
     headers: {
-      "Content-Type": "text/xml",
-      "X-EBAY-API-CALL-NAME": "GetUser",
-      "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
-      "X-EBAY-API-SITEID": "0",
-      "X-EBAY-API-IAF-TOKEN": accessToken,
+      Accept: "application/json",
+      Authorization: `Basic ${Buffer.from(
+        `${clientId}:${clientSecret}`,
+        "utf8",
+      ).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
     },
-    body: "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
-      "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
-      "<OutputSelector>User.UserID</OutputSelector>" +
-      "</GetUserRequest>",
+    body: new URLSearchParams({
+      token: accessToken,
+      token_type_hint: "access_token",
+    }),
     cache: "no-store",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
-  const xml = await response.text()
   if (response.status === 401) {
     throw new Error("EBAY_ACTIVE_LISTING_READ_401")
   }
-  const ack = tradingXmlValue(xml, "Ack")?.toLowerCase()
-  const authenticatedUserId = tradingXmlValue(xml, "UserID")
+  const payload = record(await response.json().catch(() => ({})))
+  const authenticatedUserId = text(payload.username)
+  const authenticatedClientId = text(payload.client_id)
+  const scopes = new Set((text(payload.scope) ?? "").split(/\s+/).filter(Boolean))
   if (
     !response.ok ||
-    !["success", "warning"].includes(ack ?? "") ||
+    payload.active !== true ||
+    authenticatedClientId !== clientId ||
+    !scopes.has("https://api.ebay.com/oauth/api_scope/sell.inventory.readonly") ||
     !authenticatedUserId
   ) {
     throw new Error("EBAY_ACTIVE_LISTING_ACCOUNT_IDENTITY_UNAVAILABLE")
@@ -614,6 +606,14 @@ async function syncEbayActiveListingsWithToken(
       stale_listings_ended?: number
     } | null
     if (commitError || !commit || typeof commit.applied !== "boolean") {
+      const databaseMessage = text(record(commitError).message)
+      if (databaseMessage && /^[A-Z0-9_]{3,160}$/.test(databaseMessage)) {
+        throw new Error(databaseMessage)
+      }
+      const databaseCode = text(record(commitError).code)
+      if (databaseCode && /^[A-Z0-9]{5}$/.test(databaseCode)) {
+        throw new Error(`EBAY_ACTIVE_LISTING_SYNC_COMMIT_FAILED_${databaseCode}`)
+      }
       throw new Error("EBAY_ACTIVE_LISTING_SYNC_COMMIT_FAILED")
     }
 

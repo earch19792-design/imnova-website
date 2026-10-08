@@ -41,14 +41,17 @@ import {
 import type {
   EbaySellerOAuthReauthStateLedger,
 } from "./ebay-seller-oauth-reauth-ledger"
-import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
-import { getEbayProductionIdentityBindingConfiguration } from "./ebay-seller-account-scope"
+import {
+  ebayProductionAccountFingerprint,
+  getEbayProductionIdentityBindingConfiguration,
+} from "./ebay-seller-account-scope"
 import {
   getEbayProRuntimeBoundary,
   SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION,
 } from "./environment-boundaries"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
+const TOKEN_INTROSPECTION_ENDPOINT = `${TOKEN_ENDPOINT}/introspect`
 // The eBay RuName is registered to a certified Seller OS callback. Preview keeps
 // its historical exact host; dedicated preprod uses its canonical boundary host
 // so the host-only state cookie returns to the code-exchange boundary.
@@ -260,7 +263,8 @@ export function getEbayCommercialOrdersAuthorizationConfiguration(
   const scopeProfile: EbayCommercialOrdersScopeProfile =
     "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE"
   const scopes = [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES]
-  const dedicatedHost = normalizedHost(
+  const dedicatedHost = getEbayCommercialOrdersBrowserRequestHost(
+    environment,
     environment.VERCEL_PROJECT_PRODUCTION_URL ?? "",
   )
   const normalizedRequestHost = normalizedHost(requestHost ?? "")
@@ -336,13 +340,62 @@ function normalizedHost(value: string) {
     .replace(/\/+$/, "")
 }
 
+export function getEbayCommercialOrdersBrowserDeploymentIdentity(
+  environment: NodeJS.ProcessEnv,
+  requestHost: string,
+) {
+  const vercelIdentity = normalizedHost(environment.VERCEL_URL ?? "")
+  if (vercelIdentity && /^[a-z0-9.-]+$/.test(vercelIdentity)) {
+    return vercelIdentity
+  }
+  if (environment.SELLER_OS_DEPLOYMENT_MODE?.trim().toLowerCase() !==
+      "selfhost") return ""
+  try {
+    const publicOrigin = new URL(
+      environment.SELLER_OS_PUBLIC_ORIGIN?.trim() ?? "",
+    )
+    if (publicOrigin.protocol !== "https:" || publicOrigin.username ||
+        publicOrigin.password || publicOrigin.pathname !== "/" ||
+        publicOrigin.search || publicOrigin.hash) return ""
+    const configuredHost = normalizedHost(publicOrigin.host)
+    const normalizedRequestHost = normalizedHost(requestHost)
+    return configuredHost === normalizedRequestHost &&
+        /^[a-z0-9.-]+$/.test(configuredHost)
+      ? configuredHost
+      : ""
+  } catch {
+    return ""
+  }
+}
+
+export function getEbayCommercialOrdersBrowserRequestHost(
+  environment: NodeJS.ProcessEnv,
+  observedRequestHost: string,
+) {
+  if (environment.SELLER_OS_DEPLOYMENT_MODE?.trim().toLowerCase() !==
+      "selfhost") return normalizedHost(observedRequestHost)
+  try {
+    const publicOrigin = new URL(
+      environment.SELLER_OS_PUBLIC_ORIGIN?.trim() ?? "",
+    )
+    return publicOrigin.protocol === "https:" && !publicOrigin.username &&
+        !publicOrigin.password && publicOrigin.pathname === "/" &&
+        !publicOrigin.search && !publicOrigin.hash
+      ? normalizedHost(publicOrigin.host)
+      : ""
+  } catch {
+    return ""
+  }
+}
+
 function assertBrowserCeremonyBinding(
   requestHost: string,
   environment: NodeJS.ProcessEnv,
 ) {
   const credentials = assertAuthorizationConfiguration(environment, requestHost)
   const host = normalizedHost(requestHost)
-  const deploymentIdentity = normalizedHost(environment.VERCEL_URL ?? "")
+  const deploymentIdentity =
+    getEbayCommercialOrdersBrowserDeploymentIdentity(environment, host)
   if (!deploymentIdentity || !/^[a-z0-9.-]+$/.test(deploymentIdentity)) {
     throw new Error(
       "EBAY_COMMERCIAL_ORDERS_BROWSER_CEREMONY_DEPLOYMENT_UNAVAILABLE",
@@ -771,6 +824,72 @@ async function tokenExchange(input: {
   return payload
 }
 
+function exactIntrospectedScopes(
+  value: unknown,
+  expected: readonly string[],
+) {
+  const actual = (Array.isArray(value)
+    ? value.map(text)
+    : text(value).split(/\s+/))
+    .filter(Boolean)
+    .sort()
+  const normalizedExpected = [...expected].sort()
+  return actual.length === normalizedExpected.length &&
+    actual.every((scope, index) => scope === normalizedExpected[index])
+}
+
+async function verifyEbayCommercialOrdersOfficialAccount(input: {
+  accessToken: string
+  credentials: OAuthCredentials & { scopes: readonly string[] }
+  fetchImpl: FetchLike
+}) {
+  const identity = getEbayProductionIdentityBindingConfiguration()
+  if (!identity.bound) {
+    throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_REQUIRED")
+  }
+  const basic = Buffer.from(
+    `${input.credentials.clientId}:${input.credentials.clientSecret}`,
+    "utf8",
+  ).toString("base64")
+  let response: Response
+  try {
+    response = await input.fetchImpl(TOKEN_INTROSPECTION_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Basic ${basic}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        token: input.accessToken,
+        token_type_hint: "access_token",
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+  } catch {
+    throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_UNAVAILABLE")
+  }
+  const payload = record(await response.json().catch(() => ({})))
+  const userId = text(payload.username)
+  const clientId = text(payload.client_id)
+  if (!response.ok || payload.active !== true ||
+      clientId !== input.credentials.clientId || !userId ||
+      !exactIntrospectedScopes(payload.scope, input.credentials.scopes)) {
+    throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_UNAVAILABLE")
+  }
+  const userMatches = !identity.expectedUserId ||
+    identity.expectedUserId.toLocaleLowerCase("en-US") ===
+      userId.toLocaleLowerCase("en-US")
+  if (!userMatches) {
+    throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_MISMATCH")
+  }
+  if (ebayProductionAccountFingerprint(userId) !==
+      identity.expectedAccountFingerprint) {
+    throw new Error("EBAY_COMMERCIAL_ACCOUNT_FINGERPRINT_MISMATCH")
+  }
+}
+
 async function failHandoff(
   supabase: SupabaseClient,
   handoffId: string,
@@ -845,7 +964,11 @@ export async function completeEbayCommercialOrdersAuthorization(
     accessToken = text(scopeProof.access_token)
     if (!accessToken) throw authorizationError("MALFORMED_REQUEST")
 
-    await verifyEbayCommercialOfficialAccount(accessToken, fetchImpl)
+    await verifyEbayCommercialOrdersOfficialAccount({
+      accessToken,
+      credentials,
+      fetchImpl,
+    })
     if (credentials.dedicatedPreprod) {
       const consumedAt = new Date().toISOString()
       const { error: consumedError } = await supabase

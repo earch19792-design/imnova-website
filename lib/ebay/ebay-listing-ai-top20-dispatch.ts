@@ -14,7 +14,7 @@ export const TOP20_DISPATCH_ERROR_CLASSES = [
 ] as const
 
 export type Top20DispatchErrorClass = typeof TOP20_DISPATCH_ERROR_CLASSES[number]
-export type Top20DispatchTransport = "VERCEL_QUEUE" | "HTTP_FALLBACK"
+export type Top20DispatchTransport = "SUPABASE_QUEUE" | "HTTP_FALLBACK"
 
 export type Top20DispatchDiagnostic = {
   attemptNumber: number
@@ -248,7 +248,7 @@ export async function publishTop20ContinuationQueue(input: QueueDispatchInput) {
         ? sha256Truncated(result.messageId)
         : null
       last = {
-        attemptNumber, transport: "VERCEL_QUEUE", outcome: "ACCEPTED",
+        attemptNumber, transport: "SUPABASE_QUEUE", outcome: "ACCEPTED",
         httpStatus: null, errorClass: null,
         elapsedMs: Math.min(300_000, Date.now() - startedAt), hostFingerprint,
         bypassConfigured: false, protectionCookiePresent: false, xVercelId: null,
@@ -259,7 +259,7 @@ export async function publishTop20ContinuationQueue(input: QueueDispatchInput) {
     } catch (error) {
       const errorClass = classifyTop20DispatchError(error)
       last = {
-        attemptNumber, transport: "VERCEL_QUEUE",
+        attemptNumber, transport: "SUPABASE_QUEUE",
         outcome: isRetryableTop20DispatchClass(errorClass) ? "RETRYABLE_ERROR" : "PERMANENT_ERROR",
         httpStatus: null, errorClass,
         elapsedMs: Math.min(300_000, Date.now() - startedAt), hostFingerprint,

@@ -2,7 +2,7 @@ export const SELLER_OS_CONTROL_OAUTH_BINDINGS_V1 = Object.freeze({
   clientId: "9ab58207-f8b2-4c8a-9f10-047efc97b325",
   redirectUri: "https://chatgpt.com/connector/oauth/YZ_2z2gp8NQJ",
   resource:
-    "https://imnova-seller-os-preprod.vercel.app/api/seller-os/control/mcp",
+    "https://selleros.sunshineecommerce-llc.com/api/seller-os/control/mcp",
 })
 
 const REQUIRED_SCOPES = new Set(["openid", "profile"])

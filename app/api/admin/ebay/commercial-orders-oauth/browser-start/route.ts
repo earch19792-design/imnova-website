@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import {
   activateEbayCommercialOrdersBrowserAuthorization,
+  getEbayCommercialOrdersBrowserRequestHost,
 } from "@/lib/ebay/ebay-commercial-orders-oauth-authorization"
 import {
   assertEbaySellerOAuthReauthAdmin,
@@ -47,12 +48,16 @@ export async function POST(request: NextRequest) {
       throw new Error("EBAY_COMMERCIAL_ORDERS_BROWSER_START_INVALID")
     }
     const supabase = getSupabaseAdminClient()
+    const requestHost = getEbayCommercialOrdersBrowserRequestHost(
+      process.env,
+      request.nextUrl.host,
+    )
     const activated = await activateEbayCommercialOrdersBrowserAuthorization(
       supabase,
       {
         startTicket: (payload as { startTicket: string }).startTicket,
         actorUserId,
-        requestHost: request.nextUrl.host,
+        requestHost,
         ledger: createSupabaseEbaySellerOAuthReauthStateLedger(supabase),
       },
     )

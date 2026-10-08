@@ -25,18 +25,12 @@ import type {
 import {
   ebayProductionAccountFingerprint,
 } from "./ebay-seller-account-scope"
-import {
-  assertEbayMonitorReadonlyRequest,
-  parseEbayTradingGetUser,
-} from "./ebay-commercial-monitor-live-readonly-domain"
-
 const API_ORIGIN = "https://api.ebay.com"
 const TOKEN_ENDPOINT = `${API_ORIGIN}/identity/v1/oauth2/token`
-const TRADING_ENDPOINT = `${API_ORIGIN}/ws/api.dll`
+const TOKEN_INTROSPECTION_ENDPOINT = `${TOKEN_ENDPOINT}/introspect`
 const MARKETING_SMOKE_ENDPOINT =
   `${API_ORIGIN}/sell/marketing/v1/ad_campaign/find_campaign_by_ad_reference`
 const MARKETPLACE_ID = "EBAY_US"
-const TRADING_COMPATIBILITY_LEVEL = "1423"
 const REQUEST_TIMEOUT_MS = 6_000
 const TARGET_ITEM_ID = "366582586826"
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
@@ -46,12 +40,6 @@ const MARKETING_WRITE_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.marketing"
 const MARKETING_TARGET_SECRET_SLOT =
   "EBAY_MARKETING_READONLY_REFRESH_TOKEN" as const
-
-const GET_USER_BODY = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
-  "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
-  "<OutputSelector>User.UserID</OutputSelector>" +
-  "<OutputSelector>User.Site</OutputSelector>" +
-  "</GetUserRequest>"
 
 type JsonRecord = Record<string, unknown>
 type FetchLike = typeof fetch
@@ -305,39 +293,41 @@ export async function verifyEbayMarketingReadonlyOAuthCandidate(input: {
     }), false)
     accessToken = refreshed.accessToken
 
-    assertEbayMonitorReadonlyRequest({
-      operation: "TRADING_GET_USER",
-      method: "POST",
-      url: TRADING_ENDPOINT,
-      tradingCallName: "GetUser",
-      tradingHeaderCallName: "GetUser",
-      tradingBody: GET_USER_BODY,
+    const introspectionBody = new URLSearchParams({
+      token: accessToken,
+      token_type_hint: "access_token",
     })
-    const getUserResponse = await fetchImpl(TRADING_ENDPOINT, {
+    const getUserResponse = await fetchImpl(TOKEN_INTROSPECTION_ENDPOINT, {
       method: "POST",
       headers: {
-        "Content-Type": "text/xml",
-        "X-EBAY-API-CALL-NAME": "GetUser",
-        "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
-        "X-EBAY-API-SITEID": "0",
-        "X-EBAY-API-IAF-TOKEN": accessToken,
+        Accept: "application/json",
+        Authorization: `Basic ${basic}`,
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: GET_USER_BODY,
+      body: introspectionBody,
       cache: "no-store",
       redirect: "error",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
-    let userXml = await getUserResponse.text()
-    const account = parseEbayTradingGetUser(userXml)
-    userXml = ""
-    const fingerprintMatch = account.userId
-      ? ebayProductionAccountFingerprint(account.userId) ===
+    const identityPayload = record(
+      await getUserResponse.json().catch(() => ({})),
+    )
+    const accountUserId = credential(identityPayload.username, 200)
+    const introspectedClientId = credential(identityPayload.client_id, 512)
+    const introspectedScopes = exactEbaySellerOAuthReauthReturnedScopes(
+      identityPayload.scope,
+      "MARKETING_READONLY",
+    )
+    const fingerprintMatch = accountUserId
+      ? ebayProductionAccountFingerprint(accountUserId) ===
         input.configuration.expectedAccountFingerprint
       : false
     const expectedUserMatch = !input.configuration.expectedUserId ||
-      account.userId?.toLocaleLowerCase("en-US") ===
+      accountUserId.toLocaleLowerCase("en-US") ===
         input.configuration.expectedUserId.toLocaleLowerCase("en-US")
-    if (!getUserResponse.ok || !account.accepted || account.site !== "US" ||
+    if (!getUserResponse.ok || identityPayload.active !== true ||
+        introspectedClientId !== input.configuration.clientId ||
+        introspectedScopes !== true || !accountUserId ||
         !fingerprintMatch || !expectedUserMatch) {
       throw new EbaySellerOAuthReauthError(
         "EBAY_MARKETING_READONLY_OAUTH_ACCOUNT_BINDING_MISMATCH",

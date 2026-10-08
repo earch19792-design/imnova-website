@@ -35,7 +35,6 @@ import {
 import type {
   EbaySellerOAuthReauthStateLedger,
 } from "./ebay-seller-oauth-reauth-ledger"
-import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
 import {
   getEbayPublicationOAuthEnvironmentBoundary,
 } from "./environment-boundaries"
@@ -46,6 +45,7 @@ import {
 const AUTHORIZED_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
+const TOKEN_INTROSPECTION_ENDPOINT = `${TOKEN_ENDPOINT}/introspect`
 const IDENTITY_ENDPOINT = "https://apiz.ebay.com/commerce/identity/v1/user/"
 const HANDOFF_TTL_MS = 30 * 60 * 1_000
 const REQUEST_TIMEOUT_MS = 12_000
@@ -520,28 +520,52 @@ async function verifyOfficialIdentity(
     throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_UNAVAILABLE")
   }
   const expectedUserId = binding.expectedUserId.toLocaleLowerCase("en-US")
-  const restUserMatches = !expectedUserId ||
-    expectedUserId === userId.toLocaleLowerCase("en-US")
-  const restFingerprintMatches = ebayProductionAccountFingerprint(userId) ===
-    binding.expectedAccountFingerprint
-  if (!restUserMatches || !restFingerprintMatches) {
-    let tradingUserId = ""
-    try {
-      tradingUserId = await readEbayTradingUserIdWithAccessToken(
-        accessToken,
-        fetchImpl,
-      )
-    } catch {
-      throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_MISMATCH")
-    }
-    if (
-      (expectedUserId && expectedUserId !==
-        tradingUserId.toLocaleLowerCase("en-US")) ||
-      ebayProductionAccountFingerprint(tradingUserId) !==
-        binding.expectedAccountFingerprint
-    ) {
-      throw new Error("EBAY_PUBLICATION_OAUTH_FINGERPRINT_MISMATCH")
-    }
+  const identityMatches = (candidate: string) => Boolean(candidate) &&
+    (!expectedUserId || expectedUserId ===
+      candidate.toLocaleLowerCase("en-US")) &&
+    ebayProductionAccountFingerprint(candidate) ===
+      binding.expectedAccountFingerprint
+  const commerceUsername = text(payload.username)
+  if (identityMatches(commerceUsername) || identityMatches(userId)) {
+    return true
+  }
+
+  const credentials = oauthCredentials(environment)
+  let introspectionResponse: Response
+  try {
+    introspectionResponse = await fetchImpl(TOKEN_INTROSPECTION_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Basic ${Buffer.from(
+          `${credentials.clientId}:${credentials.clientSecret}`,
+          "utf8",
+        ).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        token: accessToken,
+        token_type_hint: "access_token",
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+  } catch {
+    throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_MISMATCH")
+  }
+  const introspection = record(
+    await introspectionResponse.json().catch(() => ({})),
+  )
+  const introspectedUsername = text(introspection.username)
+  const introspectedClientId = text(introspection.client_id)
+  if (!introspectionResponse.ok || introspection.active !== true ||
+      introspectedClientId !== credentials.clientId ||
+      publicationScopesConfirmed(introspection.scope) !== true ||
+      !introspectedUsername) {
+    throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_MISMATCH")
+  }
+  if (!identityMatches(introspectedUsername)) {
+    throw new Error("EBAY_PUBLICATION_OAUTH_FINGERPRINT_MISMATCH")
   }
   return true
 }

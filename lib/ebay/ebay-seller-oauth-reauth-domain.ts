@@ -6,12 +6,15 @@ import {
   timingSafeEqual,
 } from "node:crypto"
 
+import { getSellerOsAdminOriginBindingV1 } from "../admin-session-origin-v1"
+
 import {
   getEbaySellerAccountScopeConfiguration,
 } from "./ebay-seller-account-scope"
 import {
   getEbayProRuntimeBoundary,
   SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION,
+  SELLER_OS_SELFHOST_PRODUCTION_ORIGIN,
 } from "./environment-boundaries"
 import { EBAY_PUBLICATION_OAUTH_SCOPES } from "./ebay-publication-oauth-domain"
 
@@ -343,7 +346,7 @@ export function getEbaySellerOAuthReauthConfiguration(input: {
   const clientId = boundedCredential(environment.EBAY_CLIENT_ID, 512)
   const clientSecret = boundedCredential(environment.EBAY_CLIENT_SECRET, 2_048)
   const runame = boundedCredential(environment.EBAY_RuName, 512)
-  const requestHost = normalizedHost(input.requestHost)
+  const observedRequestHost = normalizedHost(input.requestHost)
   const deployedBranchHost = normalizedHost(environment.VERCEL_BRANCH_URL)
   const scope = getEbaySellerAccountScopeConfiguration(environment)
   const preview = environment.VERCEL_ENV?.trim().toLowerCase() === "preview"
@@ -357,6 +360,8 @@ export function getEbaySellerOAuthReauthConfiguration(input: {
     nodeEnv: environment.NODE_ENV,
     ebayProRuntime: environment.EBAY_PRO_RUNTIME,
     supabaseUrl: environment.NEXT_PUBLIC_SUPABASE_URL,
+    sellerOsDeploymentMode: environment.SELLER_OS_DEPLOYMENT_MODE,
+    sellerOsPublicOrigin: environment.SELLER_OS_PUBLIC_ORIGIN,
     pathname: EBAY_SELLER_OAUTH_REAUTH_PAGE_PATH,
     method: "GET",
   })
@@ -368,10 +373,18 @@ export function getEbaySellerOAuthReauthConfiguration(input: {
   const branchMatch = environment.VERCEL_GIT_COMMIT_REF?.trim() ===
     EBAY_SELLER_OAUTH_REAUTH_BRANCH
   const exactCanonicalHostFallback = branchMatch &&
-    requestHost === EBAY_SELLER_OAUTH_REAUTH_PREVIEW_BRANCH_HOST
-  const dedicatedPreprodHost = normalizedHost(
-    environment.VERCEL_PROJECT_PRODUCTION_URL,
-  )
+    observedRequestHost === EBAY_SELLER_OAUTH_REAUTH_PREVIEW_BRANCH_HOST
+  const dedicatedPreprodHost = runtimeBoundary.dedicatedPreprod.profile ===
+      "selfhost"
+    ? normalizedHost(
+      environment.SELLER_OS_PUBLIC_ORIGIN ||
+        SELLER_OS_SELFHOST_PRODUCTION_ORIGIN,
+    )
+    : normalizedHost(environment.VERCEL_PROJECT_PRODUCTION_URL)
+  const requestHost = runtimeBoundary.dedicatedPreprod.profile === "selfhost" &&
+      dedicatedPreprod
+    ? dedicatedPreprodHost
+    : observedRequestHost
   const branchHost = dedicatedPreprod
     ? dedicatedPreprodHost
     : deployedBranchHost || (
@@ -425,10 +438,13 @@ export function assertEbaySellerOAuthReauthAdmin(validation: {
 }
 
 export function assertEbaySellerOAuthReauthSameOrigin(request: Request) {
-  const origin = request.headers.get("origin")
-  const fetchSite = request.headers.get("sec-fetch-site")
-  const expected = new URL(request.url).origin
-  if (fetchSite !== "same-origin" || origin !== expected) {
+  const binding = getSellerOsAdminOriginBindingV1({
+    requestUrl: request.url,
+    origin: request.headers.get("origin"),
+    secFetchSite: request.headers.get("sec-fetch-site"),
+    requireOrigin: true,
+  })
+  if (!binding) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_SAME_ORIGIN_REQUIRED",
     )

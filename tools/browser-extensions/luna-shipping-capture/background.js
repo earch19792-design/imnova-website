@@ -1,7 +1,7 @@
 "use strict"
 
 const SELLER_OS_ORIGIN =
-  "https://imnova-seller-os-preprod.vercel.app"
+  "https://selleros.sunshineecommerce-llc.com"
 const CONTROL_PAGE = `${SELLER_OS_ORIGIN}/admin/ebay/luna-shipping-capture`
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const JOB_RESULT = "LUNA_SHIPPING_JOB_RESULT"
@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.57"
+const EXTENSION_BUILD_VERSION = "1.0.58"
 const WORKER_CONTROL_ALARM = "seller-os-luna-shipping-worker-control-v1"
 const JOB_TIMEOUT_ALARM = "seller-os-luna-shipping-job-timeout-v1"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"

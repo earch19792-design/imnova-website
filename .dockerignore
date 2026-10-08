@@ -1,0 +1,16 @@
+.git
+.github
+.codex
+.next
+.seller-os
+.tmp
+.tmp-*
+.vercel
+.env
+.env.*
+!.env.selfhost.example
+artifacts
+node_modules
+reports
+*.log
+tsconfig.tsbuildinfo

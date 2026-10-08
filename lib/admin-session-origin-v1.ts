@@ -35,6 +35,8 @@ export function getSellerOsAdminOriginBindingV1(input: Readonly<{
   origin: string | null
   secFetchSite: string | null
   requireOrigin?: boolean
+  publicOrigin?: string | null
+  allowHttpsTermination?: boolean
 }>) {
   const fetchSite = input.secFetchSite?.trim().toLowerCase() ?? ""
   if (fetchSite && fetchSite !== "same-origin") return null
@@ -52,6 +54,24 @@ export function getSellerOsAdminOriginBindingV1(input: Readonly<{
   if (!source) return null
   if (source.origin === target.origin) return originBinding(target)
 
+  // TLS is terminated by Cloudflare before the request reaches the local
+  // container, so Next.js can observe an internal http: URL while the
+  // browser's genuine Origin is the configured https: Seller OS origin. Only
+  // accept that mismatch in the explicit self-hosted deployment mode and
+  // when the browser origin exactly matches the public deployment origin.
+  const publicOrigin = parseBrowserOrigin(
+    input.publicOrigin?.trim() ||
+      process.env.SELLER_OS_PUBLIC_ORIGIN?.trim() ||
+      "",
+  )
+  const allowHttpsTermination = input.allowHttpsTermination ??
+    process.env.SELLER_OS_DEPLOYMENT_MODE?.trim().toLowerCase() === "selfhost"
+  if (allowHttpsTermination && publicOrigin &&
+      source.origin === publicOrigin.origin &&
+      publicOrigin.protocol === "https:") {
+    return publicOrigin.origin
+  }
+
   if (source.protocol !== target.protocol ||
       effectivePort(source) !== effectivePort(target) ||
       !SELLER_OS_LOOPBACK_HOSTS.has(source.hostname) ||
@@ -64,6 +84,8 @@ export function isSameSellerOsAdminOriginV1(input: Readonly<{
   requestUrl: string
   origin: string | null
   secFetchSite: string | null
+  publicOrigin?: string | null
+  allowHttpsTermination?: boolean
 }>) {
   return getSellerOsAdminOriginBindingV1({
     ...input,

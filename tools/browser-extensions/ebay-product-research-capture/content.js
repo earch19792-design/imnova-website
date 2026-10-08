@@ -1,7 +1,7 @@
 (() => {
   "use strict"
 
-  const SELLER_OS_ORIGIN = "https://imnova-ebay-mobile-preprod.vercel.app"
+  const SELLER_OS_ORIGIN = "https://selleros.sunshineecommerce-llc.com"
   const RECEIVER_URL = `${SELLER_OS_ORIGIN}/admin/ebay/mobile-review/product-research-capture`
   const SELLER_OS_HOME_URL = `${SELLER_OS_ORIGIN}/admin#today-launch`
   const RECEIVER_WINDOW_NAME = "sellerOsProductResearchBatchReceiver"

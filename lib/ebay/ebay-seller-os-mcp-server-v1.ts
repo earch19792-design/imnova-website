@@ -678,7 +678,8 @@ export function createSellerOsMcpServerV1(options: {
     createSellerOsCloudReadRelayExecutorV1({ environment: {
       ...process.env,
       SELLER_OS_CLOUD_READ_RELAY_URL:
-        `https://imnova-seller-os-preprod.vercel.app${SELLER_OS_CLOUD_READ_RELAY_PATH}`,
+        `${process.env.SELLER_OS_PUBLIC_ORIGIN?.trim() ||
+          "https://selleros.sunshineecommerce-llc.com"}${SELLER_OS_CLOUD_READ_RELAY_PATH}`,
     } })
   const replacementForConfig = {
     title: REPLACEMENT_FOR_TOOL_V1.title,

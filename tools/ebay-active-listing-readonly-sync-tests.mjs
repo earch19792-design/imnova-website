@@ -14,15 +14,23 @@ const generationMigration = readFileSync(
   new URL("../supabase/migrations/20260713074000_harden_ebay_active_listing_sync.sql", import.meta.url),
   "utf8",
 )
+const syncValidationRepairMigration = readFileSync(
+  new URL("../supabase/migrations/20261008010000_fix_ebay_active_listing_sync_key_validation.sql", import.meta.url),
+  "utf8",
+)
 
 test("active listing sync is restricted to official eBay read-only GET endpoints", () => {
   assert.match(service, /sell\.inventory\.readonly/)
   assert.match(service, /method: "GET"/)
+  assert.match(service, /"Accept-Language": "en-US"/)
   assert.match(service, /BLOCKED_NON_READONLY_EBAY_INVENTORY_REQUEST/)
   assert.doesNotMatch(service, /method: "(?:POST|PUT|PATCH|DELETE)"[\s\S]*sell\/inventory/)
   assert.match(service, /ebayWriteUsed: false/)
   assert.match(service, /tokensReturned: false/)
-  assert.match(service, /X-EBAY-API-CALL-NAME": "GetUser"/)
+  assert.match(service, /TOKEN_INTROSPECTION_ENDPOINT/)
+  assert.match(service, /token_type_hint: "access_token"/)
+  assert.match(service, /payload\.active !== true/)
+  assert.doesNotMatch(service, /api\.ebay\.com\/ws\/api\.dll/)
   assert.match(service, /ebayProductionAccountFingerprint/)
   assert.match(service, /EBAY_ACTIVE_LISTING_ACCOUNT_IDENTITY_MISMATCH/)
   assert.ok(
@@ -44,6 +52,8 @@ test("active listing reads offers per SKU and preserves multi-variation identity
   assert.match(service, /searchParams\.set\("sku", sku\)/)
   assert.match(service, /begin_ebay_active_listing_sync_generation/)
   assert.match(service, /commit_ebay_active_listing_sync_generation/)
+  assert.match(service, /databaseMessage/)
+  assert.match(service, /\^\[A-Z0-9_\]\{3,160\}\$/)
   assert.doesNotMatch(service, /\.upsert\(rows, \{ onConflict: "sync_key" \}\)/)
   assert.match(service, /supplier_cost_at_linking/)
   assert.match(service, /previous\?\.market_radar_product_id/)
@@ -77,6 +87,12 @@ test("database generations make stale sync commits harmless and writes server-on
   assert.match(generationMigration, /EBAY_ACTIVE_LISTING_SYNC_KEY_SCOPE_CONFLICT/)
   assert.match(generationMigration, /revoke insert, update, delete on/)
   assert.match(generationMigration, /to service_role/)
+  assert.match(syncValidationRepairMigration,
+    /length\(item\.value ->> 'sync_key'\) > 500/)
+  assert.match(syncValidationRepairMigration,
+    /item\.value ->> 'sync_key' ~ '\[\[:cntrl:\]\]'/)
+  assert.doesNotMatch(syncValidationRepairMigration,
+    /\[\^\[\[:cntrl:\]\]\]\{1,500\}/)
 })
 
 test("active listing status recognizes official Inventory API lifecycle states", () => {

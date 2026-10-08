@@ -46,13 +46,35 @@ const responseHeaders = {
   "X-Content-Type-Options": "nosniff",
 } as const
 
-const EXPECTED_HOST = "imnova-seller-os-preprod.vercel.app"
+const SELFHOST_FALLBACK_ORIGIN =
+  "https://selleros.sunshineecommerce-llc.com"
 
-function callbackConfigured(callbackUrl: string) {
+function expectedHost() {
+  try {
+    const origin = new URL(
+      process.env.SELLER_OS_PUBLIC_ORIGIN?.trim() ||
+        SELFHOST_FALLBACK_ORIGIN,
+    )
+    return origin.protocol === "https:" && !origin.username &&
+      !origin.password && !origin.port && origin.pathname === "/" &&
+      !origin.search && !origin.hash
+      ? origin.host.toLowerCase()
+      : new URL(SELFHOST_FALLBACK_ORIGIN).host
+  } catch {
+    return new URL(SELFHOST_FALLBACK_ORIGIN).host
+  }
+}
+
+function publicRequestHost(request: NextRequest) {
+  return (request.headers.get("host") || request.nextUrl.host)
+    .trim().toLowerCase()
+}
+
+function callbackConfigured(callbackUrl: string, host: string) {
   try {
     const parsed = new URL(callbackUrl)
     return parsed.protocol === "https:" &&
-      parsed.host === EXPECTED_HOST &&
+      parsed.host === host &&
       parsed.pathname === "/api/admin/ebay/monitor/seller-oauth-reauth"
   } catch {
     return false
@@ -60,7 +82,8 @@ function callbackConfigured(callbackUrl: string) {
 }
 
 export async function POST(request: NextRequest) {
-  const requestHost = request.nextUrl.host.trim().toLowerCase()
+  const expectedRequestHost = expectedHost()
+  const requestHost = publicRequestHost(request)
   const headerAuthorization =
     request.headers.get("authorization")?.trim() ?? ""
   const scopedAdminSession = request.cookies.get(
@@ -123,7 +146,7 @@ export async function POST(request: NextRequest) {
       OWNER_AUTHORITY_MATCH: ownerAuthorityMatch,
       REQUEST_HOST_CLASS: ebayPublicationOAuthHostClass(
         requestHost,
-        EXPECTED_HOST,
+        expectedRequestHost,
       ),
       HOST_MATCH: hostMatch,
       DEPLOYMENT_ENVIRONMENT: deploymentEnvironment,
@@ -165,9 +188,10 @@ export async function POST(request: NextRequest) {
     const credentialMatch =
       getEbaySellerOAuthReauthRuntimeCredentialMatch(sellerConfiguration)
     hostMatch = requestHost === sellerConfiguration.branchHost &&
-      requestHost === EXPECTED_HOST
+      requestHost === expectedRequestHost
     callbackConfigPresent = callbackConfigured(
       sellerConfiguration.callbackUrl,
+      expectedRequestHost,
     )
     deploymentEnvironment = publicationConfiguration.environmentClass
     environmentMatch = publicationConfiguration.environmentClass ===
@@ -222,7 +246,7 @@ export async function POST(request: NextRequest) {
       supabase,
       {
         actorUserId,
-        requestHost: request.nextUrl.host,
+        requestHost,
         ledger: createSupabaseEbaySellerOAuthReauthStateLedger(supabase),
         onBoundaryMarker(marker) {
           if (marker === "STATE_CREATED") stateCreated = true

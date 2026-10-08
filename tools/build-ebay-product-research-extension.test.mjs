@@ -12,7 +12,7 @@ import {
 
 const root = resolve("tools/browser-extensions/ebay-product-research-capture")
 const archivePath = resolve(
-  "public/seller-os-tools/ebay-product-research-capture-extension-v1.2.40.zip",
+  "public/seller-os-tools/ebay-product-research-capture-extension-v1.2.41.zip",
 )
 
 function sha256(value) {
@@ -28,7 +28,7 @@ test("build identity is derived from the exact archive and its manifest version"
   assert.equal(artifact.artifactSha256, sha256(artifact.archive))
   assert.equal(artifact.buildId, artifact.artifactSha256)
   assert.equal(artifact.artifactSha256, sha256(archive))
-  assert.equal(artifact.version, "1.2.40")
+  assert.equal(artifact.version, "1.2.41")
   assert.equal(artifact.extensionId,
     "llngdlffmjbnbmbffkfbknkkddjoknka")
   assert.equal(extensionIdFromManifestKey(manifest.key), artifact.extensionId)

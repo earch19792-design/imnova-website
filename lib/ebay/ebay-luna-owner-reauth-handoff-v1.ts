@@ -33,7 +33,7 @@ export const SELLER_OS_LUNA_OWNER_HANDOFF_VERSION =
   "SELLER_OS_LUNA_OWNER_REAUTH_HANDOFF_V1" as const
 export const SELLER_OS_LUNA_OWNER_HANDOFF_TTL_MS = 8 * 60 * 1_000
 export const SELLER_OS_LUNA_OWNER_HANDOFF_ORIGIN =
-  "https://imnova-seller-os-preprod.vercel.app" as const
+  "https://selleros.sunshineecommerce-llc.com" as const
 export const SELLER_OS_LUNA_OWNER_HANDOFF_PATH =
   "/api/admin/ebay/luna-protected-session" as const
 export const SELLER_OS_LUNA_OWNER_HANDOFF_ENVIRONMENT =

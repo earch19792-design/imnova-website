@@ -79,6 +79,10 @@ function safeUrl(value: unknown) {
 function runtimeSellerCommandCenterUrl() {
   const configured = safeUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
   if (configured) return configured
+  const selfhostOrigin = safeUrl(process.env.SELLER_OS_PUBLIC_ORIGIN)
+  if (selfhostOrigin) {
+    return new URL("/admin/ebay/mobile-review", selfhostOrigin).toString()
+  }
   const vercelHost = process.env.VERCEL_BRANCH_URL ?? process.env.VERCEL_URL
   return safeUrl(vercelHost
     ? `${String(vercelHost).startsWith("https://") ? "" : "https://"}${vercelHost}`

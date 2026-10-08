@@ -5,7 +5,7 @@ Extensión MV3 separada y limitada exclusivamente a cotizaciones de envío de Lu
 ## Instalación única
 
 Descarga pública del artefacto actual:
-`https://imnova-seller-os-preprod.vercel.app/seller-os-tools/luna-shipping-capture-extension-v1.0.57.zip`.
+`https://selleros.sunshineecommerce-llc.com/seller-os-tools/luna-shipping-capture-extension-v1.0.58.zip`.
 
 1. Abre `chrome://extensions` o `edge://extensions`.
 2. Activa **Developer mode**.
@@ -15,8 +15,8 @@ Descarga pública del artefacto actual:
 4. La extensión abre automáticamente la página canónica de captura de Seller OS.
 
 El ID estable de la extensión es `mhpkojahbbfdgodeaecggpjaplllgclk`.
-El artefacto canónico actual es `1.0.57` y su único origen Seller OS externo es
-`https://imnova-seller-os-preprod.vercel.app`.
+El artefacto canónico actual es `1.0.58` y su único origen Seller OS externo es
+`https://selleros.sunshineecommerce-llc.com`.
 Después de instalarla, Seller OS entrega lotes acotados y la extensión procesa los
 candidatos secuencialmente. También puede recibir un único job transitorio de
 un listing CURRENT LIVE con identidad exacta; ese job no crea un candidate,
@@ -51,7 +51,7 @@ no adquiere jobs si el service worker cargado todavía no anuncia esa capacidad.
 - Cada paso tiene como máximo dos intentos. Un cambio del DOM devuelve
   `LUNA_SHIPPING_DOM_CONTRACT_CHANGED`.
 
-La versión 1.0.57 mantiene separadas conexión y capacidad de captura y permite
+La versión 1.0.58 mantiene separadas conexión y capacidad de captura y permite
 jobs de cotización previos a Pricing sin fabricar un precio de venta. La reanudación automática
 requiere el probe de sólo lectura de un checkout existente y el permiso durable
 del líder. Un heartbeat no crea claims. Los 429 y las ventanas vacías conservan

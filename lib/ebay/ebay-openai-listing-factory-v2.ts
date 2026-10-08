@@ -8,6 +8,8 @@ import { buildListingAiEvidenceDistillation, listingAiEvidenceDistillationSchema
 import { buildListingAiPackStrategy } from "./ebay-openai-listing-pack-strategy.ts"
 // @ts-expect-error Node test runtime imports the TypeScript source directly.
 import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness.ts"
+// @ts-expect-error Node test runtime imports the TypeScript source directly.
+import { getSellerOsOperationalRuntimeBoundary } from "./environment-boundaries.ts"
 
 export const LISTING_AI_SCHEMA_VERSION = "EBAY_LISTING_AI_OUTPUT_V2_1"
 export const LISTING_AI_ENGINE_VERSION = "EBAY_LISTING_AI_ENGINE_V2_1"
@@ -578,7 +580,19 @@ export function getListingAiConfiguration(environment: NodeJS.ProcessEnv = proce
   } catch {
     detectedRef = null
   }
-  const preview = environment.VERCEL_ENV === "preview"
+  const runtimeBoundary = getSellerOsOperationalRuntimeBoundary({
+    vercelEnv: environment.VERCEL_ENV,
+    vercelTargetEnv: environment.VERCEL_TARGET_ENV,
+    vercelSystem: environment.VERCEL,
+    vercelProjectId: environment.VERCEL_PROJECT_ID,
+    vercelProjectProductionUrl: environment.VERCEL_PROJECT_PRODUCTION_URL,
+    ebayProRuntime: environment.EBAY_PRO_RUNTIME,
+    supabaseUrl: environment.NEXT_PUBLIC_SUPABASE_URL,
+    sellerOsDeploymentMode: environment.SELLER_OS_DEPLOYMENT_MODE,
+    sellerOsPublicOrigin: environment.SELLER_OS_PUBLIC_ORIGIN,
+  })
+  const preview = environment.VERCEL_ENV === "preview" ||
+    runtimeBoundary.dedicatedPreprodAllowed
   const staging = detectedRef === LISTING_AI_STAGING_REF
   const enabled = environment.OPENAI_LISTING_FACTORY_ENABLED?.trim() === "true"
   const apiKeyPresent = Boolean(environment.OPENAI_API_KEY?.trim())

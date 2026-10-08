@@ -9,9 +9,9 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.40.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.41.
 
-## Identidad estable en cualquier carpeta (v1.2.40)
+## Identidad estable en cualquier carpeta (v1.2.41)
 
 El manifiesto incluye la clave pública canónica de desarrollo. Chrome asigna
 siempre el ID `llngdlffmjbnbmbffkfbknkkddjoknka`, aunque el OWNER extraiga el

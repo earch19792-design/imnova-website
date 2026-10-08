@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — Luna Owner Session Handoff",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Transfiere una sesión Luna ya autenticada al Vault staging mediante el challenge cifrado de Seller OS.",
   "minimum_chrome_version": "120",
   "permissions": ["scripting"],
@@ -21,7 +21,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://imnova-seller-os-preprod.vercel.app/admin/ebay/luna-protected-session*"
+        "https://selleros.sunshineecommerce-llc.com/admin/ebay/luna-protected-session*"
       ],
       "js": ["admin-content.js"],
       "run_at": "document_start",

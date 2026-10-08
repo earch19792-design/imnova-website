@@ -26,7 +26,7 @@ export function qualityUploadCodeV1(value: unknown, fallback: string) {
 
 export function qualityUploadFailureMessageV1(code: string) {
   if (code === "QUALITY_REPORT_OWNER_AUTH_REQUIRED") return "La carga requiere una sesión OWNER_ADMIN vigente. Inicia sesión como owner."
-  if (code === "QUALITY_REPORT_DEDICATED_PREPROD_ONLY") return "Esta pantalla no pertenece al preprod dedicado habilitado para importar reportes. Abre imnova-seller-os-preprod.vercel.app."
+  if (code === "QUALITY_REPORT_DEDICATED_PREPROD_ONLY") return "Esta pantalla no pertenece al entorno dedicado habilitado para importar reportes. Abre selleros.sunshineecommerce-llc.com."
   if (code === "QUALITY_REPORT_FILE_TOO_LARGE" || code === "QUALITY_REPORT_HTTP_413") return "El archivo supera el límite de carga de 3 MB. No llegó al parser."
   if (code === "QUALITY_REPORT_CONTENT_TYPE_INVALID") return "El transporte del reporte no coincide con el contrato JSON/base64 de esta pantalla."
   if (code === "QUALITY_REPORT_INPUT_INVALID") return "La solicitud no contiene el archivo y formato requeridos. No llegó al parser."
