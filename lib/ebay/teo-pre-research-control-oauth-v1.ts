@@ -59,7 +59,7 @@ function unauthorized(config: NonNullable<ReturnType<
     headers: { "Cache-Control": "private, no-store, max-age=0",
       "WWW-Authenticate": `Bearer resource_metadata="${config.metadataUrl}", scope="openid profile"`,
       "X-Seller-OS-Control-Mode":
-        "BOUNDED_PRE_RESEARCH_AND_COMMERCIAL_TRACE_V1" },
+        "BOUNDED_OWNER_CONTROL_V1" },
   })
 }
 

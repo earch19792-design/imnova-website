@@ -81,6 +81,21 @@ export async function POST(req: Request) {
     error: "QUICK_PICK_RECOVERY_ACCOUNT_SCOPE_REQUIRED" }, { status: 500 })
   try {
     if (req.headers.get("x-seller-os-runtime-lane") ===
+        "FAST_LUNA_TEST_BATCH_V1") {
+      const stockingBatch = await runAutonomousEbayStockingBatchV1({
+        supabase, accountKey, request: req,
+      })
+      if (!stockingBatch) return new NextResponse(null, { status: 204,
+        headers: { "Cache-Control": "private, no-store, max-age=0",
+          "X-Seller-OS-Runtime-Outcome": "NO_ACTIVE_FAST_LUNA_BATCH" } })
+      return NextResponse.json(stockingBatch.body, {
+        status: stockingBatch.status,
+        headers: { "Cache-Control": "private, no-store, max-age=0",
+          "X-Seller-OS-Runtime-Outcome": String(
+            stockingBatch.body.status ?? "FAST_LUNA_BATCH_STEP") },
+      })
+    }
+    if (req.headers.get("x-seller-os-runtime-lane") ===
         "AUTONOMOUS_GREENFIELD_END_TO_END_PUBLICATION_CANARY") {
       const forbiddenIdentityFields = ["productId", "variantId", "supplierSku",
         "packageId", "opportunityId", "candidateId"]

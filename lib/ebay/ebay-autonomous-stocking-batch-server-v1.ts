@@ -11,7 +11,7 @@ import { evaluateCurrentPrepublicationArtifactPolicyV1 } from
   "@/lib/ebay/ebay-current-prepublication-artifact-policy-v1"
 import { autonomousGreenfieldCurrentPreparationReadyV1 } from
   "@/lib/ebay/ebay-autonomous-greenfield-current-certification-v1"
-import { collectRadarRevenueFactoryCandidateBatchV1,
+import { collectLunaCatalogControlledTestCandidateBatchV1,
   ensureRadarCandidateEconomicsPreflightsV1,
   materializeRadarRevenueFactoryCandidateBatchV1,
   resumeRadarFactoryCandidateAfterShippingV1 } from
@@ -49,6 +49,9 @@ type Row = Record<string, unknown>
 type RuntimeResult = Readonly<{ body: Row; status: number }>
 
 const CONTRACT = "AUTONOMOUS_EBAY_STOCKING_BATCH_V1"
+export const FAST_LUNA_TEST_BATCH_CONTRACT_V1 =
+  "FAST_LUNA_TEST_BATCH_CONTROL_V1" as const
+export const FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1 = 4
 const RECOVERABLE_SHIPPING_BLOCKERS = Object.freeze([
   "AUTONOMOUS_STOCKING_SHIPPING_SLOT_BINDING_CONTRADICTION",
   "AUTONOMOUS_STOCKING_SHIPPING_SLOT_ROLLOVER_READBACK_INVALID",
@@ -65,6 +68,7 @@ function text(value: unknown): string {
 }
 
 function numeric(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null
   const result = Number(value)
   return Number.isFinite(result) ? result : null
 }
@@ -199,11 +203,139 @@ async function activeCount(input: Readonly<{
     "get_autonomous_stocking_active_listing_count_v1", {
       p_account_key: input.accountKey,
     })
-  const count = Number(result.data)
-  if (result.error || !Number.isSafeInteger(count) || count < 0) {
+  const count = numeric(result.data)
+  if (result.error || count === null || !Number.isSafeInteger(count) || count < 0) {
     throw new Error("AUTONOMOUS_STOCKING_BATCH_ACTIVE_COUNT_READ_FAILED")
   }
   return count
+}
+
+function fastLunaConfirmation(targetCount: number) {
+  return `PUBLICAR ${targetCount} LISTINGS DE LUNA`
+}
+
+export async function readFastLunaTestBatchV1(input: Readonly<{
+  supabase: SupabaseAdmin
+  accountKey: string
+  ownerUserId: string
+  batchId?: string
+}>) {
+  let query = input.supabase.from(
+    "seller_os_autonomous_stocking_batches_v1").select("*")
+    .eq("account_key", input.accountKey)
+    .eq("owner_user_id", input.ownerUserId)
+    .eq("authorization_mode", "OWNER_FAST_LUNA_TEST_BATCH_V1")
+    .order("started_at", { ascending: false }).limit(1)
+  if (input.batchId) query = query.eq("id", input.batchId)
+  const batchRead = await query.maybeSingle()
+  if (batchRead.error) throw new Error("FAST_LUNA_TEST_BATCH_READ_FAILED")
+  if (!batchRead.data) return Object.freeze({
+    contractVersion: FAST_LUNA_TEST_BATCH_CONTRACT_V1,
+    status: "NOT_FOUND" as const,
+    batch: null,
+    children: Object.freeze([]),
+    marketplaceWrites: 0 as const,
+  })
+  const batch = record(batchRead.data)
+  const childrenRead = await input.supabase.from(
+    "seller_os_autonomous_stocking_batch_children_v1")
+    .select("id,batch_id,sequence_no,status,candidate_id,product_id,variant_id,supplier_sku,listing_package_id,listing_id,title,price,quantity,decision_profit,decision_margin,publication_write_count,official_readback_pass,idempotent_replay_confirmed,evidence,selected_at,published_confirmed_at,replay_confirmed_at,updated_at,created_at")
+    .eq("batch_id", text(batch.id)).eq("account_key", input.accountKey)
+    .order("sequence_no", { ascending: true })
+  if (childrenRead.error) {
+    throw new Error("FAST_LUNA_TEST_BATCH_CHILDREN_READ_FAILED")
+  }
+  return Object.freeze({
+    contractVersion: FAST_LUNA_TEST_BATCH_CONTRACT_V1,
+    status: text(batch.status),
+    batch: Object.freeze(batch),
+    children: Object.freeze(rows(childrenRead.data)),
+    selectionPolicy: Object.freeze({
+      source: "LUNA_CATALOG_PRODUCT_TRUTH" as const,
+      marketLookupPerformed: false as const,
+      marketDemandGateRequired: false as const,
+      exactProductDemandClaimed: false as const,
+      unknownCostEqualsZero: false as const,
+      canonicalEconomicsPolicyRequired: true as const,
+    }),
+    marketplaceWrites: Number(batch.publication_write_count ?? 0),
+  })
+}
+
+export async function startFastLunaTestBatchV1(input: Readonly<{
+  supabase: SupabaseAdmin
+  accountKey: string
+  ownerUserId: string
+  commandClientId: string
+  targetCount: number
+  clientIdempotencyKey: string
+  confirmation: string
+}>) {
+  if (!Number.isInteger(input.targetCount) || input.targetCount < 1 ||
+      input.targetCount > FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1 ||
+      !/^[A-Za-z0-9._:-]{8,160}$/.test(input.clientIdempotencyKey) ||
+      !/^[A-Za-z0-9._:-]{1,200}$/.test(input.commandClientId) ||
+      input.confirmation !== fastLunaConfirmation(input.targetCount)) {
+    throw new Error("FAST_LUNA_TEST_BATCH_REQUEST_INVALID")
+  }
+  const replayRead = await input.supabase.from(
+    "seller_os_autonomous_stocking_batches_v1").select("*")
+    .eq("account_key", input.accountKey)
+    .eq("idempotency_key", input.clientIdempotencyKey).maybeSingle()
+  if (replayRead.error) {
+    throw new Error("FAST_LUNA_TEST_BATCH_IDEMPOTENCY_READ_FAILED")
+  }
+  if (replayRead.data) {
+    const replay = record(replayRead.data)
+    if (replay.owner_user_id !== input.ownerUserId ||
+        replay.command_client_id !== input.commandClientId ||
+        replay.authorization_mode !== "OWNER_FAST_LUNA_TEST_BATCH_V1" ||
+        Number(replay.target_published_count) !== input.targetCount) {
+      throw new Error("FAST_LUNA_TEST_BATCH_IDEMPOTENCY_CONFLICT")
+    }
+    return readFastLunaTestBatchV1({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      ownerUserId: input.ownerUserId,
+      batchId: text(replay.id),
+    })
+  }
+  const baselineActiveCount = await activeCount(input)
+  const write = await input.supabase.rpc("start_fast_luna_test_batch_v1", {
+    p_account_key: input.accountKey,
+    p_owner_user_id: input.ownerUserId,
+    p_command_client_id: input.commandClientId,
+    p_target_published_count: input.targetCount,
+    p_baseline_active_count: baselineActiveCount,
+    p_idempotency_key: input.clientIdempotencyKey,
+    p_confirmation: input.confirmation,
+  })
+  if (write.error || !write.data) {
+    const message = text(record(write.error).message)
+    if (message.includes("AUTONOMOUS_STOCKING_BATCH_ALREADY_ACTIVE")) {
+      throw new Error("FAST_LUNA_TEST_BATCH_ALREADY_ACTIVE")
+    }
+    if (message.includes("IDEMPOTENCY_CONFLICT")) {
+      throw new Error("FAST_LUNA_TEST_BATCH_IDEMPOTENCY_CONFLICT")
+    }
+    throw new Error("FAST_LUNA_TEST_BATCH_DURABLE_WRITE_FAILED")
+  }
+  const written = record(write.data)
+  if (written.account_key !== input.accountKey ||
+      written.owner_user_id !== input.ownerUserId ||
+      written.command_client_id !== input.commandClientId ||
+      written.authorization_mode !== "OWNER_FAST_LUNA_TEST_BATCH_V1" ||
+      Number(written.target_published_count) !== input.targetCount ||
+      written.idempotency_key !== input.clientIdempotencyKey ||
+      Number(written.baseline_active_count) !== baselineActiveCount) {
+    throw new Error("FAST_LUNA_TEST_BATCH_DURABLE_READBACK_FAILED")
+  }
+  return readFastLunaTestBatchV1({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    ownerUserId: input.ownerUserId,
+    batchId: text(written.id),
+  })
 }
 
 function publicationInput(input: Readonly<{
@@ -379,8 +511,12 @@ async function finishBatchIfReady(input: Readonly<{
       publication_write_count: target, ads_write_count: 0,
       completed_at: new Date().toISOString(),
       evidence: { ...record(input.batch.evidence),
-        allThreeOfficialReadbackPass: true,
-        allThreeIdempotentReplayPass: true,
+        allChildrenOfficialReadbackPass: true,
+        allChildrenIdempotentReplayPass: true,
+        ...(target === 3 ? {
+          allThreeOfficialReadbackPass: true,
+          allThreeIdempotentReplayPass: true,
+        } : {}),
         duplicateListingCount: 0, duplicateOfferCount: 0 },
       updated_at: new Date().toISOString(),
     }).eq("id", text(input.batch.id)).eq("status", "ACTIVE")
@@ -584,7 +720,7 @@ async function executeBatch(input: Readonly<{
           "AUTONOMOUS_STOCKING_EXACT_SHIPPING_CONTINUATION_INVALID")
       }
     }
-    let batch = await collectRadarRevenueFactoryCandidateBatchV1({
+    let batch = await collectLunaCatalogControlledTestCandidateBatchV1({
       supabase: input.supabase, accountKey: input.accountKey,
       targetCandidates: 100,
     })
@@ -592,7 +728,7 @@ async function executeBatch(input: Readonly<{
       supabase: input.supabase, accountKey: input.accountKey, batch,
     })
     if (economics.attempted > 0) {
-      batch = await collectRadarRevenueFactoryCandidateBatchV1({
+      batch = await collectLunaCatalogControlledTestCandidateBatchV1({
         supabase: input.supabase, accountKey: input.accountKey,
         targetCandidates: 100,
       })
@@ -768,6 +904,24 @@ async function executeBatch(input: Readonly<{
       break
     }
     selectionEvidence = { automaticCandidateBatch: {
+      selectionMode: "LUNA_CATALOG_CONTROLLED_TEST",
+      marketLookupPerformed: false,
+      marketDemandGateRequired: false,
+      demandStatus: "NOT_EVALUATED",
+      exactProductDemandClaimed: false,
+      source: "LUNA_CATALOG_PRODUCT_TRUTH",
+      catalogRowsRead: batch.catalogRowsRead,
+      catalogUniqueIdentities: batch.catalogUniqueIdentities,
+      catalogEligibleCount: batch.catalogEligibleCount,
+      catalogRowsRejectedUnknownCost:
+        batch.catalogRowsRejectedUnknownCost,
+      catalogRowsRejectedUnavailable:
+        batch.catalogRowsRejectedUnavailable,
+      catalogRowsRejectedStale: batch.catalogRowsRejectedStale,
+      catalogRowsRejectedIncompleteIdentity:
+        batch.catalogRowsRejectedIncompleteIdentity,
+      catalogEligibleMissingImagesCount:
+        batch.catalogEligibleMissingImagesCount,
       evaluated: factory.lunaProductsEvaluated,
       listingReady: factory.listingReady, parked: factory.parked,
       exceptions: factory.exceptions,

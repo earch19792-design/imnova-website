@@ -104,7 +104,7 @@ export type RadarRevenueFactoryCandidateV1 = Readonly<{
   familyId: string
   familyName: string
   source: "RADAR_FRONTIER_LUNA_IDENTITY" | "PRODUCT_RESEARCH_EXACT_IDENTITY" |
-    "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY"
+    "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" | "LUNA_CATALOG_CONTROLLED_TEST"
   disposition: "PASS_TO_LUNA" | "REJECT"
   dispositionReason: string
   exactCandidateIdentity: boolean
@@ -994,6 +994,296 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
   })
 }
 
+export const LUNA_CATALOG_CONTROLLED_TEST_MAXIMUM_AGE_SECONDS = 86_400
+
+/**
+ * Product-first entry into the existing durable CURRENT factory. This builder
+ * deliberately consumes only Luna Product Truth. It does not query or infer
+ * eBay demand, sold history, market price, or competition. Those facts remain
+ * explicitly unproven while the normal identity, stock, shipping, economics,
+ * duplicate, compliance, image and account-policy gates stay authoritative.
+ */
+export function buildLunaCatalogControlledTestCandidateBatchV1(input: Readonly<{
+  accountKey: string
+  lunaCatalogRows: readonly unknown[]
+  catalogReadMetadata?: RadarLunaCatalogReadMetadataV1
+  frontierPayload?: unknown
+  targetCandidates?: number
+  now?: Date
+}>): ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1> & Readonly<{
+  selectionMode: "LUNA_CATALOG_CONTROLLED_TEST"
+  marketLookupPerformed: false
+  marketDemandGateRequired: false
+  catalogRowsRejectedUnknownCost: number
+  catalogRowsRejectedUnavailable: number
+  catalogRowsRejectedStale: number
+  catalogRowsRejectedIncompleteIdentity: number
+  catalogEligibleCount: number
+  catalogEligibleMissingImagesCount: number
+}> {
+  const now = input.now ?? new Date()
+  const maximum = Math.max(1, Math.min(MAXIMUM_CANDIDATES,
+    Number.isInteger(input.targetCandidates) ? Number(input.targetCandidates) : 30))
+  const unique = new Map<string, JsonRecord>()
+  let unknownCost = 0
+  let unavailable = 0
+  let stale = 0
+  let incompleteIdentity = 0
+  let eligibleCount = 0
+  let eligibleMissingImages = 0
+  for (const row of rows(input.lunaCatalogRows)) {
+    const productId = text(row.supplier_product_id) ?? text(row.product_id)
+    const variantId = text(row.supplier_variant_id)
+    const sku = text(row.sku)
+    if (!productId || !variantId || !sku) {
+      incompleteIdentity += 1
+      continue
+    }
+    const key = catalogKey(productId, variantId, sku)
+    if (!unique.has(key)) unique.set(key, row)
+  }
+  const candidates: RadarRevenueFactoryCandidateV1[] = []
+  const seeds: RadarRevenueFactoryFamilySeedV1[] = []
+  const frontierRows = rows(record(input.frontierPayload).frontiers)
+  let economicsPreflightCount = 0
+  const structurallyRanked = [...unique.entries()].sort(([leftKey, left],
+    [rightKey, right]) => {
+    const leftImages = Array.isArray(left.image_urls) ? left.image_urls.length : 0
+    const rightImages = Array.isArray(right.image_urls) ? right.image_urls.length : 0
+    return Number(rightImages > 0) - Number(leftImages > 0) ||
+      (number(right.inventory_quantity) ?? -1) -
+        (number(left.inventory_quantity) ?? -1) ||
+      (Date.parse(iso(right.captured_at) ?? "") || 0) -
+        (Date.parse(iso(left.captured_at) ?? "") || 0) ||
+      leftKey.localeCompare(rightKey)
+  })
+  for (const [, row] of structurallyRanked) {
+    const productId = text(row.supplier_product_id) ?? text(row.product_id)
+    const variantId = text(row.supplier_variant_id)
+    const sku = text(row.sku)
+    if (!productId || !variantId || !sku) continue
+    const cost = number(row.price)
+    if (cost === null || cost <= 0) {
+      unknownCost += 1
+      continue
+    }
+    const stockQuantity = number(row.inventory_quantity)
+    if (row.available !== true || stockQuantity !== null && stockQuantity <= 0) {
+      unavailable += 1
+      continue
+    }
+    const observedAt = iso(row.captured_at)
+    const ageSeconds = observedAt
+      ? Math.max(0, Math.floor((now.getTime() - Date.parse(observedAt)) / 1_000))
+      : Number.POSITIVE_INFINITY
+    if (!observedAt || ageSeconds > LUNA_CATALOG_CONTROLLED_TEST_MAXIMUM_AGE_SECONDS) {
+      stale += 1
+      continue
+    }
+    const productTitle = text(row.title, 350)
+    if (!productTitle) {
+      incompleteIdentity += 1
+      continue
+    }
+    eligibleCount += 1
+    if (!Array.isArray(row.image_urls) || row.image_urls.length === 0) {
+      eligibleMissingImages += 1
+    }
+    if (candidates.length >= maximum) continue
+    const lineageIdentity = { accountKey: input.accountKey, productId,
+      variantId, supplierSku: sku }
+    const familyId = `market-family-v1:${digest({
+      authority: "LUNA_CATALOG_CONTROLLED_TEST", ...lineageIdentity,
+    })}`
+    const opportunityCaseId = `opportunity-case-v1:${digest({
+      authority: "LUNA_CATALOG_CONTROLLED_TEST", ...lineageIdentity,
+    })}`
+    const familyName = text(row.product_type, 160) ?? productTitle
+    const seed: RadarRevenueFactoryFamilySeedV1 = Object.freeze({
+      familyId, familyName, opportunityCaseId,
+      demandEvidenceDigest: digest({
+        authority: "LUNA_CATALOG_PRODUCT_TRUTH_ONLY",
+        marketLookupPerformed: false,
+        marketDemandGateRequired: false,
+        exactProductDemandClaimed: false,
+        ...lineageIdentity,
+      }),
+      familyDemandStatus: "FAMILY_DEMAND_UNPROVEN" as const,
+      soldComparableCount: 0,
+      soldQuantityEvidence: 0,
+      priceBand: Object.freeze({ currency: null, minimum: null,
+        maximum: null, median: null }),
+      priceDistributionEvidence: Object.freeze([]),
+      evidenceObservedAt: observedAt,
+      sourceUpdatedAt: observedAt,
+      maximumAgeSeconds: LUNA_CATALOG_CONTROLLED_TEST_MAXIMUM_AGE_SECONDS,
+      fresh: true as const,
+      limitations: Object.freeze([
+        "DEMAND_EVIDENCE_ABSENT_NOT_NEGATIVE",
+        "EBAY_MARKET_NOT_EVALUATED_BY_OWNER_POLICY",
+        "NO_MARKET_PRICE_INFERRED",
+      ]),
+      evidenceScope: "FAMILY_DISCOVERY_SEED_ONLY" as const,
+      demandEvidenceGrain: "FAMILY" as const,
+      exactProductDemandClaimed: false as const,
+      familyProductFunction: productTitle,
+      familyCategoryId: null,
+      exactSupplierIdentity: Object.freeze({ lunaProductId: productId,
+        lunaVariantId: variantId, supplierSku: sku }),
+      demandTerms: Object.freeze([]),
+    })
+    const exactFrontiers = frontierRows.filter((outer) => {
+      const frontier = record(outer.frontier)
+      return text(frontier.familyId, 120) === familyId &&
+        text(outer.opportunityCaseId, 120) === opportunityCaseId &&
+        frontier.lunaProductId === productId &&
+        frontier.lunaVariantId === variantId && frontier.lunaSku === sku
+    })
+    const exactFrontier = exactFrontiers.length === 1
+      ? record(exactFrontiers[0].frontier) : null
+    const exactTarget = exactFrontier
+      ? getSellerOsRadarPriceDistributionEconomicsV1(exactFrontier) ??
+        getSellerOsQuickPickMarketTestEconomicsV1(exactFrontier) : null
+    if (exactFrontier) economicsPreflightCount += 1
+    seeds.push(seed)
+    candidates.push(Object.freeze({
+      candidateId: deriveCurrentCommercialCandidateIdentityV1({
+        accountKey: input.accountKey, productId, variantId, supplierSku: sku,
+      }).canonicalCandidateId,
+      accountKey: input.accountKey,
+      familyId, familyName,
+      source: "LUNA_CATALOG_CONTROLLED_TEST" as const,
+      disposition: "PASS_TO_LUNA" as const,
+      dispositionReason: "EXACT_FRESH_LUNA_PRODUCT_TRUTH_CONTROLLED_TEST",
+      exactCandidateIdentity: true,
+      lunaMatch: true,
+      stockReady: true,
+      readyForEconomics: exactFrontier
+        ? frontierEconomicsReady(exactFrontier) : false,
+      economicsProfit: exactFrontier
+        ? exactTarget?.profit ??
+          number(exactFrontier.contributionProfitAtMarketMedian) : null,
+      economicsMargin: exactFrontier
+        ? exactTarget?.margin ??
+          number(exactFrontier.contributionMarginAtMarketMedian) : null,
+      economicsNextEvidence: exactFrontier
+        ? text(exactFrontier.nextBestEvidence, 80) : null,
+      supplierCostUsd: cost,
+      supplierCostObservedAt: observedAt,
+      productTitle,
+      variantTitle: text(row.variant_title, 200),
+      gtin: text(row.barcode, 120),
+      canonicalProductUrl: text(row.product_url, 500),
+      imageUrls: Object.freeze((Array.isArray(row.image_urls)
+        ? row.image_urls : []).flatMap((entry) => {
+          const url = text(entry, 500)
+          return url ? [url] : []
+        }).slice(0, 24)),
+      supplierInventoryQuantity: stockQuantity,
+      familyAssignmentConfidence: "PROVEN" as const,
+      demandEvidenceGrain: "FAMILY" as const,
+      exactProductDemandClaimed: false as const,
+      marketRadarProductId: text(row.product_id),
+      lunaProductId: productId,
+      lunaVariantId: variantId,
+      supplierSku: sku,
+      productResearchIdentityHash: null,
+      marketTestPath: true,
+      lineage: seed,
+    }))
+  }
+  const bounded = Object.freeze(candidates)
+  return Object.freeze({
+    adapterVersion: OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION,
+    selectionMode: "LUNA_CATALOG_CONTROLLED_TEST" as const,
+    marketLookupPerformed: false as const,
+    marketDemandGateRequired: false as const,
+    seeds: Object.freeze(seeds),
+    candidates: bounded,
+    familySeedCount: seeds.length,
+    familyDiversityCount: seeds.length,
+    radarSeedAccepted: false,
+    radarSeedsUsed: 0,
+    candidatesGenerated: bounded.length,
+    exactProductFitCount: bounded.length,
+    lunaMatchCount: bounded.length,
+    stockReadyCount: bounded.length,
+    readyForEconomicsCount: bounded.filter((candidate) =>
+      candidate.readyForEconomics).length,
+    freshFamiliesEvaluated: seeds.length,
+    catalogPageCount: input.catalogReadMetadata?.pageCount ??
+      (input.lunaCatalogRows.length > 0 ? 1 : 0),
+    catalogRowsRead: input.catalogReadMetadata?.rowsRead ??
+      input.lunaCatalogRows.length,
+    catalogUniqueIdentities: input.catalogReadMetadata?.uniqueIdentities ??
+      unique.size,
+    catalogTruncated: input.catalogReadMetadata?.truncated ?? false,
+    lunaProductsScanned: unique.size,
+    familyToLunaCompatibleCount: bounded.length,
+    uniqueLunaCandidates: bounded.length,
+    ambiguousFamilyAssignments: 0,
+    stockSafeCount: bounded.length,
+    economicsPreflightCount,
+    economicsReadyCount: bounded.filter((candidate) =>
+      candidate.readyForEconomics).length,
+    rejectedCount: 0,
+    inputProducts: 0,
+    uniqueInputProducts: 0,
+    duplicateCount: 0,
+    ambiguousCount: 0,
+    differentVariantCount: 0,
+    noLunaMatchCount: 0,
+    conflictingIdentityGroups: 0,
+    familiesWithInput: 0,
+    allFamiliesWithInputReceiveBoundedCoverage: true,
+    evidenceLineagePreserved: bounded.length > 0,
+    catalogRowsRejectedUnknownCost: unknownCost,
+    catalogRowsRejectedUnavailable: unavailable,
+    catalogRowsRejectedStale: stale,
+    catalogRowsRejectedIncompleteIdentity: incompleteIdentity,
+    catalogEligibleCount: eligibleCount,
+    catalogEligibleMissingImagesCount: eligibleMissingImages,
+    marketplaceWrites: 0 as const,
+  })
+}
+
+export async function collectLunaCatalogControlledTestCandidateBatchV1(
+  input: Readonly<{
+    supabase: RadarRevenueFactoryReadClientV1
+    accountKey: string
+    targetCandidates?: number
+    now?: Date
+  }>,
+) {
+  const catalog = await readRadarRevenueFactoryLunaCatalogV1(input.supabase)
+  const initial = buildLunaCatalogControlledTestCandidateBatchV1({
+    accountKey: input.accountKey,
+    lunaCatalogRows: catalog.rows,
+    catalogReadMetadata: catalog,
+    targetCandidates: input.targetCandidates,
+    now: input.now,
+  })
+  if (!initial.seeds.length) return initial
+  const frontierResult = await input.supabase.rpc(
+    "get_seller_os_latest_profitability_frontiers_v1", {
+      p_account_key: input.accountKey,
+      p_marketplace_id: "EBAY_US",
+      p_family_ids: initial.seeds.map((seed) => seed.familyId),
+      p_limit: MAXIMUM_CANDIDATES,
+    })
+  if (frontierResult.error) {
+    throw new Error("LUNA_CATALOG_CONTROLLED_TEST_ECONOMICS_READ_FAILED")
+  }
+  return buildLunaCatalogControlledTestCandidateBatchV1({
+    accountKey: input.accountKey,
+    lunaCatalogRows: catalog.rows,
+    catalogReadMetadata: catalog,
+    frontierPayload: frontierResult.data,
+    targetCandidates: input.targetCandidates,
+    now: input.now,
+  })
+}
+
 function normalizedWords(value: unknown) {
   return new Set((text(value, 300) ?? "").normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "").toLowerCase()
@@ -1120,7 +1410,8 @@ export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
   candidate: RadarRevenueFactoryCandidateV1
 }>) {
   const candidate = input.candidate
-  if (candidate.source !== "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" ||
+  if (!["RADAR_FAMILY_LUNA_SUPPLY_IDENTITY",
+      "LUNA_CATALOG_CONTROLLED_TEST"].includes(candidate.source) ||
       candidate.disposition !== "PASS_TO_LUNA" ||
       !candidate.exactCandidateIdentity || !candidate.lunaMatch ||
       !candidate.stockReady || !candidate.lunaProductId ||
@@ -1165,7 +1456,9 @@ export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
   }
   const evaluatedAt = laterInstant(candidate.lineage.sourceUpdatedAt,
     candidate.supplierCostObservedAt)
-  const marketReference = `radar-family-demand:${candidate.lineage.familyId}`
+  const marketReference = candidate.source === "LUNA_CATALOG_CONTROLLED_TEST"
+    ? `luna-catalog-no-market-evidence:${candidate.candidateId}`
+    : `radar-family-demand:${candidate.lineage.familyId}`
   const marketEvidence = Object.freeze({
     authorityClass: marketTestPath ? "UNPROVEN" as const :
       "OFFICIAL_EXTERNAL_FACT" as const,
@@ -1293,7 +1586,8 @@ export async function ensureRadarCandidateEconomicsPreflightsV1(input: Readonly<
 }>) {
   const outcomes: JsonRecord[] = []
   for (const candidate of input.batch.candidates) {
-    if (candidate.source !== "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" ||
+    if (!["RADAR_FAMILY_LUNA_SUPPLY_IDENTITY",
+        "LUNA_CATALOG_CONTROLLED_TEST"].includes(candidate.source) ||
         candidate.disposition !== "PASS_TO_LUNA" || !candidate.stockReady ||
         candidate.economicsNextEvidence !== null || candidate.readyForEconomics) {
       continue
@@ -1646,6 +1940,12 @@ function buildRadarSmartStockingQueueRowV1(
       familyDemandStatus: candidate.lineage.familyDemandStatus,
       demandEvidenceGrain: "FAMILY",
       exactProductDemandClaimed: false,
+      marketLookupPerformed:
+        candidate.source !== "LUNA_CATALOG_CONTROLLED_TEST",
+      marketDemandGateRequired:
+        candidate.source !== "LUNA_CATALOG_CONTROLLED_TEST",
+      unqueriedMarketSignalsPreservedAsNull:
+        candidate.source === "LUNA_CATALOG_CONTROLLED_TEST",
     },
     canonicalReadiness: { blockers: canonicalReadinessBlockers },
     listingIntelligencePackage: {
@@ -1655,7 +1955,9 @@ function buildRadarSmartStockingQueueRowV1(
         primarySearchPhrase: candidate.lineage.familyName,
         secondarySearchTerms: [],
         confirmedAttributes: [],
-        strategyConfidence: "PRODUCT_TRUTH_AND_FAMILY_MARKET_SUPPORTED",
+        strategyConfidence: candidate.source === "LUNA_CATALOG_CONTROLLED_TEST"
+          ? "PRODUCT_TRUTH_ONLY_MARKET_UNPROVEN"
+          : "PRODUCT_TRUTH_AND_FAMILY_MARKET_SUPPORTED",
       },
       categoryRecommendation: {
         categoryId: candidate.lineage.familyCategoryId,
@@ -1682,16 +1984,23 @@ function buildRadarSmartStockingQueueRowV1(
     queue_status: "review",
     decision: shippingRequired
       ? "WAITING_BROWSER_WORKER" : "FACTORY_PREPARED",
-    opportunity_score: 0,
-    demand_score: candidate.lineage.familyDemandStatus ===
-      "FAMILY_DEMAND_PROVEN" ? 100 : 75,
-    economics_score: candidate.readyForEconomics ? 100 : 0,
+    opportunity_score: candidate.source === "LUNA_CATALOG_CONTROLLED_TEST"
+      ? null : 0,
+    demand_score: candidate.source === "LUNA_CATALOG_CONTROLLED_TEST"
+      ? null : candidate.lineage.familyDemandStatus ===
+        "FAMILY_DEMAND_PROVEN" ? 100 : 75,
+    economics_score: candidate.source === "LUNA_CATALOG_CONTROLLED_TEST" &&
+      !candidate.readyForEconomics ? null
+      : candidate.readyForEconomics ? 100 : 0,
     identity_score: 100,
-    competition_score: 0,
+    competition_score: candidate.source === "LUNA_CATALOG_CONTROLLED_TEST"
+      ? null : 0,
     supply_score: 100,
     listing_readiness_score: 0,
-    active_comparables: candidate.lineage.soldComparableCount,
-    sellers_with_movement: 0,
+    active_comparables: candidate.source === "LUNA_CATALOG_CONTROLLED_TEST"
+      ? null : candidate.lineage.soldComparableCount,
+    sellers_with_movement: candidate.source === "LUNA_CATALOG_CONTROLLED_TEST"
+      ? null : 0,
     estimated_weekly_velocity: null,
     median_total_buyer_price: candidate.lineage.priceBand.median,
     estimated_net_profit: candidate.economicsProfit,
@@ -2285,7 +2594,8 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   const marketTestReady = outcomes.filter((outcome) =>
     outcome.status === "MARKET_TEST_READY")
   const topCandidate = candidates.filter((candidate) =>
-    candidate.source === "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" &&
+    ["RADAR_FAMILY_LUNA_SUPPLY_IDENTITY",
+      "LUNA_CATALOG_CONTROLLED_TEST"].includes(candidate.source) &&
     candidate.stockReady).sort((left, right) =>
       Number(right.readyForEconomics) - Number(left.readyForEconomics) ||
       Number(right.familyAssignmentConfidence === "PROVEN") -
