@@ -1273,9 +1273,14 @@ export async function runAutonomousEbayStockingBatchV1(input: Readonly<{
   if (!boundary.productionDedicatedPreprodBound || !boundary.writeAllowed) {
     throw new Error("CERTIFIED_PREPROD_ONLY")
   }
+  const authorizationMode = input.request.headers.get(
+    "x-seller-os-runtime-lane") === "FAST_LUNA_TEST_BATCH_V1"
+    ? "OWNER_FAST_LUNA_TEST_BATCH_V1"
+    : "LEGACY_AUTONOMOUS"
   const read = await input.supabase.from(
     "seller_os_autonomous_stocking_batches_v1").select("*")
     .eq("account_key", input.accountKey).eq("status", "ACTIVE")
+    .eq("authorization_mode", authorizationMode)
     .order("started_at", { ascending: true }).limit(1).maybeSingle()
   if (read.error) {
     const missing = read.error.code === "42P01"
@@ -1283,8 +1288,9 @@ export async function runAutonomousEbayStockingBatchV1(input: Readonly<{
     if (missing) return null
     throw new Error("AUTONOMOUS_STOCKING_BATCH_READ_FAILED")
   }
-  const activeBatch = read.data ??
-    await resumeBatchAfterRecoveredShippingClaimV1(input)
+  const activeBatch = read.data ?? (authorizationMode === "LEGACY_AUTONOMOUS"
+    ? await resumeBatchAfterRecoveredShippingClaimV1(input)
+    : null)
   if (!activeBatch) return null
   const batch = record(activeBatch)
   try {
