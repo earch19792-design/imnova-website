@@ -155,7 +155,7 @@ export function getSellerOsRadarPriceDistributionEconomicsV1(value: unknown) {
     && continuation.economicsReady === true
     && continuation.finalDisposition === "ECONOMICS_READY"
     && targetPrice !== null && targetPrice > 0
-    && profit !== null && profit > 0 && margin !== null && margin >= 20
+    && profit !== null && profit > 0 && margin !== null && margin >= 15
     && roi !== null && roi >= 30 && estimatedEbayFees !== null
   return valid ? Object.freeze({ economicsReady: true as const,
     targetPrice, profit, margin, roi, estimatedEbayFees }) : null
@@ -181,7 +181,7 @@ export function getSellerOsQuickPickMarketTestEconomicsV1(value: unknown) {
     && frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED"
     && frontier.nextBestEvidence === "NONE"
     && targetPrice !== null && targetPrice > 0 && profit !== null && profit > 0
-    && margin !== null && margin >= 20 && roi !== null && roi >= 30
+    && margin !== null && margin >= 15 && roi !== null && roi >= 30
     && estimatedEbayFees !== null && estimatedEbayFees >= 0
   return valid ? Object.freeze({ economicsReady: true as const, targetPrice,
     profit, margin, roi, estimatedEbayFees }) : null
@@ -464,7 +464,7 @@ export function buildSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
     && /^sha256:[0-9a-f]{64}$/.test(String(frontier.snapshot_digest ?? ""))
     && text(frontier.market_price_evidence_reference) !== null
   const economicsExact = targetPrice !== null && targetPrice > 0
-    && profit !== null && profit > 0 && margin !== null && margin >= 20
+    && profit !== null && profit > 0 && margin !== null && margin >= 15
     && roi !== null && roi >= 30 && supplierCost !== null && supplierCost >= 0
     && shipping !== null && shipping >= 0 && ebayFees !== null && ebayFees >= 0
     && frontier.shipping_status === "SHIPPING_DURABLY_PERSISTED"
@@ -1013,18 +1013,13 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
   const targetEconomics = record(frontier.radar_price_distribution_target)
   const distributionReady = targetEconomics.economicsReady === true
     && (number(targetEconomics.profit) ?? 0) > 0
-    && (number(targetEconomics.margin) ?? 0) >= 20
+    && (number(targetEconomics.margin) ?? 0) >= 15
     && (number(targetEconomics.roi) ?? 0) >= 30
-  const legacyEconomicsReady = frontier.economic_classification
-      === "ECONOMICALLY_PROMISING"
-    && frontier.shipping_status === "SHIPPING_DURABLY_PERSISTED"
-    && frontier.next_best_evidence === "NONE"
-    && (number(frontier.contribution_profit_median) ?? 0) > 0
-    && (number(frontier.contribution_margin_median) ?? 0) > 0
-    && hardBlockers.length === 0
+  // Legacy frontiers do not carry a provable ROI base and cannot satisfy V2.
+  const legacyEconomicsReady = false
   const marketTestEconomicsReady = marketTestPath &&
     (number(marketTestTarget.profit) ?? 0) > 0 &&
-    (number(marketTestTarget.margin) ?? 0) >= 20 &&
+    (number(marketTestTarget.margin) ?? 0) >= 15 &&
     (number(marketTestTarget.roi) ?? 0) >= 30
   const economicsReady = (legacyEconomicsReady || distributionReady ||
     marketTestEconomicsReady)

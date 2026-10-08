@@ -24,7 +24,7 @@ export const DEFAULT_COMMERCIAL_THRESHOLDS: CommercialThresholds = {
   acceleratedUnits24h: 2,
   lowStockMinimum: 1,
   lowStockMaximum: 3,
-  marginRiskPercent: 20,
+  marginRiskPercent: 15,
   marginCriticalPercent: 10,
 }
 

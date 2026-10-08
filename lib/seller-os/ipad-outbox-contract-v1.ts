@@ -73,8 +73,9 @@ export function parseOutboxChangesV1(value: unknown): OutboxChanges {
   if (r.policy !== undefined) {
     const p = exact(r.policy, ["minRate", "maxRate", "minProfit", "minMargin", "mode", "window", "timeZone", "startsAt", "endsAt"])
     for (const k of ["minRate", "maxRate", "minProfit", "minMargin"]) if (typeof p[k] !== "number" || !Number.isFinite(p[k]) || Number(p[k]) < 0) throw Error("OUTBOX_POLICY_INVALID")
-    if (Number(p.minRate) > Number(p.maxRate) || Number(p.maxRate) > 100 || Number(p.minMargin) > 100) throw Error("OUTBOX_POLICY_INVALID")
-    out.policy = { minRate: Number(p.minRate), maxRate: Number(p.maxRate), minProfit: Number(p.minProfit), minMargin: Number(p.minMargin),
+    if (Number(p.minRate) > Number(p.maxRate) || Number(p.maxRate) > 100 ||
+        Number(p.minMargin) > 100) throw Error("OUTBOX_POLICY_INVALID")
+    out.policy = { minRate: Number(p.minRate), maxRate: Number(p.maxRate), minProfit: 0, minMargin: 15,
       mode: safeText(p.mode, 20), window: safeText(p.window, 20), timeZone: safeText(p.timeZone, 100),
       startsAt: timestamp(p.startsAt, true), endsAt: timestamp(p.endsAt, true) }
   }

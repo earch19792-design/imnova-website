@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto"
 
-import { SELLER_OS_MINIMUM_NET_PROFIT_USD_V1,
-  SELLER_OS_REORDER_COVERAGE_DAYS_V1,
+import { SELLER_OS_REORDER_COVERAGE_DAYS_V1,
   SELLER_OS_REORDER_MAX_UNITS_V1,
   SELLER_OS_SMALL_TEST_MAX_UNITS_V1 } from
   "./seller-os-commercial-policy-v1"
+import { calculateSellerOsPolicyLimitsV2,
+  evaluateSellerOsRoiMarginPolicyV2 } from
+  "./seller-os-roi-margin-policy-v2"
 
 export const SELLER_OS_AMAZON_PURCHASE_GATE_V1 =
   "SELLER_OS_AMAZON_PURCHASE_GATE_V1" as const
@@ -160,29 +162,58 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
   const feeEvidenceComplete = projectedAmazonFeesPerUnitUsd !== null
   const economicsComplete = externalCostEvidenceComplete &&
     expectedSalePriceUsd !== null && feeEvidenceComplete
-  const maximumSupplierUnitCostUsd = expectedSalePriceUsd !== null &&
-      inboundShippingPerUnitUsd !== null && prepCostPerUnitUsd !== null &&
-      projectedAmazonFeesPerUnitUsd !== null &&
-      otherVariableCostPerUnitUsd !== null
-    ? money(expectedSalePriceUsd - inboundShippingPerUnitUsd -
-      prepCostPerUnitUsd - projectedAmazonFeesPerUnitUsd -
-      otherVariableCostPerUnitUsd - SELLER_OS_MINIMUM_NET_PROFIT_USD_V1)
-    : null
-  const projectedNetProfitPerUnitUsd = economicsComplete
-    ? money((expectedSalePriceUsd ?? 0) - (unitCostUsd ?? 0) -
-      (inboundShippingPerUnitUsd ?? 0) - (prepCostPerUnitUsd ?? 0) -
-      (projectedAmazonFeesPerUnitUsd ?? 0) -
-      (otherVariableCostPerUnitUsd ?? 0)) : null
+  const policyEvaluation = evaluateSellerOsRoiMarginPolicyV2({
+    revenueUsd: expectedSalePriceUsd,
+    investmentBase: "AMAZON_INVENTORY_INVESTMENT",
+    investmentBaseUsd: unitCostUsd === null ||
+        inboundShippingPerUnitUsd === null || prepCostPerUnitUsd === null
+      ? null : unitCostUsd + inboundShippingPerUnitUsd + prepCostPerUnitUsd,
+    costs: [
+      { key: "supplier_unit_cost", amountUsd: unitCostUsd,
+        authority: "CONFIRMED_SUPPLIER_OR_OWNER_COST",
+        state: unitCostUsd === null ? "UNKNOWN" : "KNOWN" },
+      { key: "inbound_shipping", amountUsd: inboundShippingPerUnitUsd,
+        authority: "CONFIRMED_DELIVERED_COST",
+        state: inboundShippingPerUnitUsd === null ? "UNKNOWN" : "KNOWN" },
+      { key: "prep", amountUsd: prepCostPerUnitUsd,
+        authority: "CONFIRMED_LUNA_OR_PREP_COST",
+        state: prepCostPerUnitUsd === null ? "UNKNOWN" : "KNOWN" },
+      { key: "amazon_fees", amountUsd: projectedAmazonFeesPerUnitUsd,
+        authority: estimatedAmazonFeesPerUnitUsd !== null
+          ? "AMAZON_PRODUCT_FEES_ESTIMATE" : "PROJECTED_OR_ACTUAL_FEES",
+        state: projectedAmazonFeesPerUnitUsd === null
+          ? "UNKNOWN" : "ESTIMATED" },
+      { key: "other_variable_cost", amountUsd: otherVariableCostPerUnitUsd,
+        authority: "CONFIRMED_RESERVES_AND_OTHER_COSTS",
+        state: otherVariableCostPerUnitUsd === null ? "UNKNOWN" : "KNOWN" },
+    ],
+  })
+  const limits = calculateSellerOsPolicyLimitsV2({
+    revenueUsd: expectedSalePriceUsd,
+    purchaseCostUsd: unitCostUsd,
+    otherFixedCostUsd: [inboundShippingPerUnitUsd, prepCostPerUnitUsd,
+      projectedAmazonFeesPerUnitUsd, otherVariableCostPerUnitUsd]
+      .every((entry) => entry !== null)
+      ? Number(inboundShippingPerUnitUsd) + Number(prepCostPerUnitUsd) +
+        Number(projectedAmazonFeesPerUnitUsd) +
+        Number(otherVariableCostPerUnitUsd) : null,
+    variableCostRate: 0,
+    investmentBaseAdditionalUsd: inboundShippingPerUnitUsd === null ||
+        prepCostPerUnitUsd === null ? null
+      : inboundShippingPerUnitUsd + prepCostPerUnitUsd,
+  })
+  const maximumSupplierUnitCostUsd = limits.maximumPurchasePriceUsd
+  const minimumViablePriceUsd = limits.minimumViablePriceUsd
+  const projectedNetProfitPerUnitUsd = policyEvaluation.contributionUsd
   const contributionAfterAmazonFeesPerUnitUsd = expectedSalePriceUsd !== null &&
       unitCostUsd !== null && projectedAmazonFeesPerUnitUsd !== null
     ? money(expectedSalePriceUsd - unitCostUsd -
       projectedAmazonFeesPerUnitUsd) : null
-  const maximumAdditionalCostForMinimumProfitUsd =
-    contributionAfterAmazonFeesPerUnitUsd === null ? null
-      : money(contributionAfterAmazonFeesPerUnitUsd -
-        SELLER_OS_MINIMUM_NET_PROFIT_USD_V1)
-  const minimumProfitMet = projectedNetProfitPerUnitUsd === null ? null
-    : projectedNetProfitPerUnitUsd >= SELLER_OS_MINIMUM_NET_PROFIT_USD_V1
+  const roiPolicyMet = policyEvaluation.roiGateMet
+  const contributionMarginPolicyMet =
+    policyEvaluation.contributionMarginGateMet
+  const policyMet = policyEvaluation.evidenceComplete
+    ? policyEvaluation.passesPolicy : null
   const currentCostWithinCeiling = unitCostUsd !== null &&
       maximumSupplierUnitCostUsd !== null
     ? unitCostUsd <= maximumSupplierUnitCostUsd : null
@@ -207,16 +238,16 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
     ...(featuredOfferPriceUsd === null
       ? ["AMAZON_FEATURED_OFFER_UNPROVEN"] : []),
     ...(!feeEvidenceComplete ? ["AMAZON_FEES_UNPROVEN"] : []),
-    ...(minimumProfitMet === false ? ["MINIMUM_4_USD_NET_NOT_MET"] : []),
+    ...policyEvaluation.blockerCodes,
     ...(currentCostWithinCeiling === false
       ? ["SUPPLIER_COST_ABOVE_MAXIMUM"] : []),
   ])
 
   const rejected = eligibilityRestricted || authoritativeZeroDemand ||
-    minimumProfitMet === false || currentCostWithinCeiling === false
+    policyMet === false || currentCostWithinCeiling === false
   const ready = asinConfirmed && eligibilityConfirmed && demandConfirmed &&
     supplierConfirmed && featuredOfferPriceUsd !== null && economicsComplete &&
-    minimumProfitMet === true &&
+    policyMet === true &&
     currentCostWithinCeiling === true
   const decision: SellerOsAmazonPurchaseDecisionV1 = rejected ? "REJECT"
     : !ready ? "WAIT" : winnerReorderReady ? "BUY" : "SMALL_TEST"
@@ -228,7 +259,8 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
     reasonCode = eligibilityRestricted ? "AMAZON_SELLING_RESTRICTED"
       : authoritativeZeroDemand ? "AMAZON_AUTHORITATIVE_ZERO_DEMAND"
         : currentCostWithinCeiling === false
-          ? "SUPPLIER_COST_ABOVE_MAXIMUM" : "MINIMUM_4_USD_NET_NOT_MET"
+          ? "SUPPLIER_COST_ABOVE_MAXIMUM"
+          : policyEvaluation.blockerCodes[0] ?? "ROI_MARGIN_POLICY_NOT_MET"
   } else if (!asinConfirmed) {
     nextAction = "VERIFY_AMAZON_ASIN"; reasonCode = "EXACT_ASIN_REQUIRED"
   } else if (!eligibilityConfirmed) {
@@ -324,10 +356,15 @@ export function buildSellerOsAmazonPurchaseGateV1(input: {
             actualFbaFeePerUnitUsd !== null
           ? "AMAZON_FINANCES_ACTUAL_PER_UNIT" as const : "UNPROVEN" as const,
       contributionAfterAmazonFeesPerUnitUsd,
-      maximumAdditionalCostForMinimumProfitUsd,
-      projectedNetProfitPerUnitUsd, minimumNetProfitUsd:
-        SELLER_OS_MINIMUM_NET_PROFIT_USD_V1,
-      minimumProfitMet, maximumSupplierUnitCostUsd,
+      projectedNetProfitPerUnitUsd,
+      contributionMarginPercent:
+        policyEvaluation.contributionMarginPercent,
+      estimatedRoiPercent: policyEvaluation.estimatedRoiPercent,
+      investmentBase: policyEvaluation.investmentBase,
+      investmentBaseUsd: policyEvaluation.investmentBaseUsd,
+      policy: policyEvaluation.policy,
+      roiPolicyMet, contributionMarginPolicyMet, policyMet,
+      minimumViablePriceUsd, maximumSupplierUnitCostUsd,
       currentCostWithinCeiling },
     decision,
     recommendedPurchaseQuantity,

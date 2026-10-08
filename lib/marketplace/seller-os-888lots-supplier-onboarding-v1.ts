@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto"
+import { calculateSellerOsPolicyLimitsV2,
+  evaluateSellerOsRoiMarginPolicyV2 } from
+  "./seller-os-roi-margin-policy-v2"
 
 export const SELLER_OS_888LOTS_SOURCE_KEY = "888lots" as const
 export const SELLER_OS_888LOTS_IMPORT_CONTRACT_V1 =
@@ -386,7 +389,7 @@ export function normalize888LotsCatalogRowV1(value: unknown, options: {
     nextBestEvidence,
     goldenPath: { demand: "UNPROVEN", duplicateGate: "UNPROVEN",
       shipping: "UNPROVEN", fee: "UNPROVEN", economics: "UNPROVEN",
-      decision: "UNPROVEN", minimumNetProfitUsd: 4, failClosed: true },
+      decision: "UNPROVEN", minimumNetProfitUsd: 0, failClosed: true },
     safety: { scrapeRequests: 0, databaseWrites: 0, supplierPurchases: 0,
       marketplaceWrites: 0, publications: 0, repricing: 0, canPublish: false },
   }
@@ -494,7 +497,7 @@ type DualMarketEvidenceRowV1 = {
 }
 
 const DUAL_MARKET_EVIDENCE_FRESHNESS_MINUTES = 1_440
-const MINIMUM_NET_PROFIT_USD = 4
+const MINIMUM_NET_PROFIT_USD = 0
 const INITIAL_BUY_COVERAGE_DAYS = 14
 const INITIAL_BUY_CAPTURE_RATE = 0.1
 const INITIAL_BUY_MAX_UNITS = 12
@@ -653,10 +656,13 @@ function evaluateDualMarketChannelV1(
     (evidence?.demand.searchClicks30Days ?? 0) > 0 ||
     (evidence?.demand.searchClicks90Days ?? 0) > 0)
   const knownIneligible = eligibilityReady && evidence?.eligibility.eligibleToSell === false
-  const maxDeliveredUnitCostUsd = economicsReady
-    ? Number(((evidence?.economics.buyerLandedSalePriceUsd ?? 0) -
-      (evidence?.economics.variableCostUsd ?? 0) - MINIMUM_NET_PROFIT_USD).toFixed(2))
-    : null
+  const limits = economicsReady ? calculateSellerOsPolicyLimitsV2({
+    revenueUsd: evidence?.economics.buyerLandedSalePriceUsd ?? null,
+    otherFixedCostUsd: evidence?.economics.variableCostUsd ?? null,
+    variableCostRate: 0,
+    investmentBaseAdditionalUsd: 0,
+  }) : null
+  const maxDeliveredUnitCostUsd = limits?.maximumPurchasePriceUsd ?? null
   const maxSupplierUnitCostUsd = maxDeliveredUnitCostUsd !== null &&
     inboundCostPerUnitUsd !== null
     ? Number((maxDeliveredUnitCostUsd - inboundCostPerUnitUsd).toFixed(2))
@@ -665,8 +671,24 @@ function evaluateDualMarketChannelV1(
     ? Number(((evidence?.economics.buyerLandedSalePriceUsd ?? 0) -
       (evidence?.economics.variableCostUsd ?? 0) - deliveredUnitCostUsd).toFixed(2))
     : null
-  const economicsPass = expectedNetProfitUsd !== null &&
-    expectedNetProfitUsd >= MINIMUM_NET_PROFIT_USD &&
+  const policyEvaluation = evaluateSellerOsRoiMarginPolicyV2({
+    revenueUsd: economicsReady
+      ? evidence?.economics.buyerLandedSalePriceUsd ?? null : null,
+    investmentBase: evidence?.marketplace === "AMAZON_US"
+      ? "AMAZON_INVENTORY_INVESTMENT" : "EBAY_LUNA_ORDER_INVESTMENT",
+    investmentBaseUsd: deliveredUnitCostUsd,
+    costs: [
+      { key: "delivered_inventory_cost", amountUsd: deliveredUnitCostUsd,
+        authority: "AUTHORIZED_SUPPLIER_EXPORT",
+        state: deliveredUnitCostUsd === null ? "UNKNOWN" : "KNOWN" },
+      { key: "marketplace_and_fulfillment_costs",
+        amountUsd: economicsReady
+          ? evidence?.economics.variableCostUsd ?? null : null,
+        authority: "MARKETPLACE_EVIDENCE",
+        state: economicsReady ? "KNOWN" : "UNKNOWN" },
+    ],
+  })
+  const economicsPass = policyEvaluation.passesPolicy &&
     maxDeliveredUnitCostUsd !== null && maxDeliveredUnitCostUsd >= 0
   const decision = provenZeroDemand || knownIneligible ||
     (economicsReady && deliveredUnitCostUsd !== null && !economicsPass)
@@ -676,6 +698,7 @@ function evaluateDualMarketChannelV1(
       ? "GO" as const : "UNPROVEN" as const
   return { evidence, decision, expectedNetProfitUsd, maxDeliveredUnitCostUsd,
     maxSupplierUnitCostUsd, minimumNetProfitUsd: MINIMUM_NET_PROFIT_USD,
+    economicPolicyEvaluation: policyEvaluation,
     evidenceComplete: identityReady && demandReady && economicsReady && eligibilityReady }
 }
 

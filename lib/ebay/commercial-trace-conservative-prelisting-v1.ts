@@ -40,8 +40,7 @@ export function evaluateCommercialTraceConservativePrelistingV1(input: Readonly<
     [promotion, returns, other].every((part) =>
       ["CONFIGURED", "NOT_APPLICABLE"].includes(String(part.state)) &&
       nonNegative(part.amountUsd)) &&
-    gates.state === "CONFIGURED" && nonNegative(gates.minNetProfit) &&
-    nonNegative(gates.minNetMarginPercent) && nonNegative(gates.minRoiPercent)
+    gates.state === "CONFIGURED"
   const marketReady = market.sufficient === true &&
     final.marketSupportedTargetPrice === price
   const blockers = [
@@ -54,7 +53,7 @@ export function evaluateCommercialTraceConservativePrelistingV1(input: Readonly<
   const base = { status: "INCOMPLETE" as const,
     feeAmountAuthority: feeReady ? "CONSERVATIVE_BOUND" as const : "UNKNOWN" as const,
     realizedFeeExact: false as const,
-    roiBasis: "PRODUCT_COST_ONLY" as const,
+    roiBasis: "EBAY_LUNA_ORDER_INVESTMENT" as const,
     formula: "salePrice-productCost-shippingQty1-conservativeEbayFees-promotedListings-returnsReserve-otherExplicitCosts-fulfillmentCost" as const,
     salePrice: nonNegative(price) ? price : null,
     productCost: costReady ? cost.amountUsd : null,
@@ -93,11 +92,13 @@ export function evaluateCommercialTraceConservativePrelistingV1(input: Readonly<
       Number(candidateFee.totalConservativeFee))
     const profit = cents(candidatePrice - total)
     const margin = profit / candidatePrice * 100
-    const roi = profit / Number(cost.amountUsd) * 100
+    const investment = Number(cost.amountUsd) + Number(shipping.amountUsd) +
+      Number(fulfillment.amountUsd)
+    const roi = profit / investment * 100
     return { total, profit, margin, roi, promotionCost, returnsCost,
-      pass: profit + 1e-9 >= Number(gates.minNetProfit) &&
-        margin + 1e-9 >= Number(gates.minNetMarginPercent) &&
-        roi + 1e-9 >= Number(gates.minRoiPercent) }
+      pass: margin + 1e-9 >=
+          SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 &&
+        roi + 1e-9 >= SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 }
   }
   const current = at(Number(price), fee)
   // Deliberately bounded. Every cent is re-evaluated, so $10 order-fee and
@@ -134,10 +135,15 @@ export function evaluateCommercialTraceConservativePrelistingV1(input: Readonly<
     economicFloor: floor,
     profitabilityGate: { status: "PROVEN" as const,
       gatePass: current.pass,
-      minNetProfit: gates.minNetProfit,
-      minNetMarginPercent: gates.minNetMarginPercent,
-      minRoiPercent: gates.minRoiPercent },
+      minNetProfit: null,
+      minNetMarginPercent:
+        SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+      minRoiPercent: SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 },
     prelistingPriceSafe: current.pass && floor !== null,
     prelistingSafePrice: current.pass && floor !== null ? Number(price) : null,
     blockers: current.pass && floor !== null ? [] : ["PROFITABILITY_GATE_FAILED"] }
 }
+import {
+  SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
+} from "@/lib/marketplace/seller-os-roi-margin-policy-v2"

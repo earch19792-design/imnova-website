@@ -153,7 +153,7 @@ export function simulatePackProfit(
   const targetSellPrice =
     toNumber(pack.targetSellPrice)
   const minNetMarginPercent =
-    toNumber(pack.minNetMarginPercent) ?? 10
+    toNumber(pack.minNetMarginPercent) ?? 15
   const returnsReserve =
     toNumber(pack.returnsReserve) ?? 0
   const stockQuantity =

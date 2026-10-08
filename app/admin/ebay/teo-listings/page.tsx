@@ -145,6 +145,10 @@ function PriceDecision({ value, compact = false }: {
   const action = text(value.action)
   const evidence = text(value.competitiveEvidence)
   const expectedProfit = numeric(value.expectedNetProfitAtRecommended)
+  const expectedMargin = numeric(value.expectedMarginPercentAtRecommended)
+  const expectedRoi = numeric(value.expectedRoiPercentAtRecommended)
+  const passesEconomicPolicy = expectedMargin !== null && expectedMargin >= 15 &&
+    expectedRoi !== null && expectedRoi >= 30
   const status = text(value.status)
   return <div className={`rounded-2xl border ${safe ? "border-emerald-200/25 bg-emerald-200/[0.06]" : status === "READY" ? "border-cyan-200/20 bg-cyan-200/[0.045]" : "border-amber-200/20 bg-amber-200/[0.045]"} ${compact ? "mt-4 p-4" : "p-5"}`}>
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -157,7 +161,8 @@ function PriceDecision({ value, compact = false }: {
       <p>Precio actual: <strong className="text-white/90">{usd(value.currentItemPrice)}</strong></p>
       <p>Piso seguro: <strong className="text-white/90">{usd(value.minimumSafeItemPrice)}</strong></p>
       <p>Descuento sugerido: <strong className="text-white/90">{usd(value.suggestedDiscountUsd)}</strong></p>
-      <p>Utilidad estimada: <strong className={expectedProfit !== null && expectedProfit >= 4 ? "text-emerald-100" : "text-amber-100"}>{usd(value.expectedNetProfitAtRecommended)}</strong></p>
+      <p>Utilidad estimada: <strong className={passesEconomicPolicy ? "text-emerald-100" : "text-amber-100"}>{usd(expectedProfit)}</strong></p>
+      <p>ROI / margen: <strong className={passesEconomicPolicy ? "text-emerald-100" : "text-amber-100"}>{expectedRoi === null ? "pendiente" : `${expectedRoi.toFixed(2)}%`} / {expectedMargin === null ? "pendiente" : `${expectedMargin.toFixed(2)}%`}</strong></p>
     </div>
     {!compact && <p className="mt-3 text-[11px] leading-5 text-white/45">
       Competencia: {evidence === "CONFIRMED_SOLD" ? "ventas confirmadas" : evidence === "ACTIVE_MARKET" ? "ofertas activas, no ventas" : "sin referencia suficiente"} · Referencia total con envío: {usd(value.competitiveLandedPrice)}
@@ -313,7 +318,7 @@ export default function TeoListingsPage() {
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
           <SummaryCard label="Acciones hoy" value={summary.actionsToday ?? 0} detail="En orden de prioridad." />
-          <SummaryCard label="Descuentos seguros" value={summary.discountOpportunities ?? 0} detail="Con utilidad neta mínima de US$4 y guardas de margen." />
+          <SummaryCard label="Descuentos seguros" value={summary.discountOpportunities ?? 0} detail="Con ROI estimado ≥30% y margen de contribución ≥15%." />
           <SummaryCard label="No tocar" value={summary.protectedListings ?? 0} detail="Protegidos para no contaminar evidencia." />
           <SummaryCard label="Experimentos" value={summary.activeExperiments ?? 0} detail="Mejoras bajo seguimiento." />
           <SummaryCard label="Reemplazos preparados" value={summary.preparedReplacements ?? 0} detail={`De ${summary.replacementCandidates ?? 0} listings que podrían requerir sustitución.`} />
@@ -371,7 +376,7 @@ export default function TeoListingsPage() {
               <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/55">Control de rentabilidad</p>
               <h2 className="mt-2 text-2xl font-black">Precio final y margen para descuento</h2>
               <p className="mt-2 max-w-4xl text-sm leading-6 text-white/55">
-                TEO compara el precio total del mercado, pero te propone el precio del artículo que debes colocar en eBay. Nunca baja del piso que conserva al menos US$4 netos, 20% de margen, 30% de ROI y reservas conservadoras.
+                TEO compara el precio total del mercado, pero te propone el precio del artículo que debes colocar en eBay. Nunca baja del precio viable que conserva simultáneamente ROI estimado ≥30%, margen de contribución ≥15% y reservas conservadoras.
               </p>
             </div>
             <Status tone="green">Owner ejecuta · TEO verifica</Status>
@@ -414,7 +419,7 @@ export default function TeoListingsPage() {
                     <td className="px-4 py-4 text-base font-black text-cyan-100">{usd(entry.recommendedFinalItemPrice)}</td>
                     <td className="px-4 py-4 font-bold text-emerald-100">{usd(entry.suggestedDiscountUsd)}{numeric(entry.suggestedDiscountPercent) !== null && <p className="mt-1 text-[11px] text-white/40">{numeric(entry.suggestedDiscountPercent)?.toFixed(2)}%</p>}</td>
                     <td className="px-4 py-4 text-white/70">{usd(entry.maximumSafeDiscountUsd)}</td>
-                    <td className="px-4 py-4 font-bold text-emerald-100">{usd(entry.expectedNetProfitAtRecommended)}<p className="mt-1 text-[11px] text-white/40">{numeric(entry.expectedMarginPercentAtRecommended) === null ? "margen pendiente" : `${numeric(entry.expectedMarginPercentAtRecommended)?.toFixed(2)}% margen`} · mínimo US$4</p></td>
+                    <td className="px-4 py-4 font-bold text-emerald-100">{usd(entry.expectedNetProfitAtRecommended)}<p className="mt-1 text-[11px] text-white/40">ROI {numeric(entry.expectedRoiPercentAtRecommended) === null ? "pendiente" : `${numeric(entry.expectedRoiPercentAtRecommended)?.toFixed(2)}%`} · margen {numeric(entry.expectedMarginPercentAtRecommended) === null ? "pendiente" : `${numeric(entry.expectedMarginPercentAtRecommended)?.toFixed(2)}%`} · política 30% / 15%</p></td>
                     <td className="px-4 py-4"><Status tone={safe ? "green" : ready ? "cyan" : "amber"}>{safe ? "Bajar" : text(entry.action) === "RAISE_TO_SAFE_FLOOR" ? "Subir" : ready ? "Mantener" : "Completar datos"}</Status></td>
                   </tr>
                 })}
@@ -448,7 +453,7 @@ export default function TeoListingsPage() {
         {tab === "REEMPLAZO" && <section className="rounded-3xl border border-white/10 bg-black/20 p-5 md:p-7">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div><h2 className="text-2xl font-black">Reemplazos preparados 1:1</h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">TEO enlaza cada listing débil con un solo candidato de la misma familia, con demanda, Product Truth, shipping, fees y utilidad neta mínima de US$4.</p></div>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">TEO enlaza cada listing débil con un solo candidato de la misma familia, con demanda, Product Truth, shipping, fees y la política simultánea de ROI/margen.</p></div>
             <Status tone={replacementReadiness.currentLiveValidation === "CURRENT_FRESH" ? "green" : "amber"}>{replacementReadiness.currentLiveValidation === "CURRENT_FRESH" ? "LIVE comprobado" : "Falta validación LIVE"}</Status>
           </div>
           {replacementReadiness.currentLiveValidation !== "CURRENT_FRESH" && <p className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-200/[0.06] p-4 text-sm font-bold text-amber-50">Los pares pueden quedar preparados, pero permanecen UNPROVEN hasta confirmar Duplicate Gate y estado LIVE cuando eBay vuelva. No se termina ni publica ningún listing.</p>}
@@ -500,7 +505,7 @@ export default function TeoListingsPage() {
       </>}
 
       <footer className="rounded-3xl border border-cyan-200/15 bg-cyan-200/[0.045] p-5 text-sm leading-7 text-white/60">
-        <strong className="text-cyan-100">Regla de TEO:</strong> una sola variable, una lectura oficial y una ventana comparable. En precio, nunca recomendar bajar sin preservar como mínimo US$4 netos y las guardas de margen/ROI. Si cambian varias cosas, el resultado queda inconcluso y no alimenta recomendaciones futuras.
+        <strong className="text-cyan-100">Regla de TEO:</strong> una sola variable, una lectura oficial y una ventana comparable. En precio, nunca recomendar bajar sin preservar simultáneamente ROI estimado ≥30% y margen de contribución ≥15%. Si cambian varias cosas, el resultado queda inconcluso y no alimenta recomendaciones futuras.
       </footer>
     </section>
   </main>

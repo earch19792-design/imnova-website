@@ -1,6 +1,10 @@
 import adsContract from "../../docs/ebay-ads-revenue-official-contract-v1.json" with { type: "json" }
 import { safeAdCapacityV1 } from "./ad-rate-economics-v1"
 import type { CommercialListingReadModel, Observation } from "../ebay/commercial-monitor-readonly-contract"
+import {
+  SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
+} from "../marketplace/seller-os-roi-margin-policy-v2"
 
 export const LISTING_TREATMENT_ENGINE_V1 = "SELLER_OS_ASSISTANT_LISTING_TREATMENT_ENGINE_V1"
 export const PROMOTION_PROFIT_GUARD_V1 = "SELLER_OS_PROMOTION_PROFIT_GUARD_V1"
@@ -57,19 +61,25 @@ export function validatePromotionPolicyV1(p: PromotionPolicy) {
           Date.parse(p.endsAt) - Date.parse(p.startsAt) > 4 * 86400000) throw Error("PROMOTION_WEEKEND_WINDOW_INVALID")
     }
   }
-  return p
+  return { ...p, minProfit: 0,
+    minMargin: SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 }
 }
 
 export function listingEconomicsV1(e: Economics) {
   const keys = ["salePrice", "productCost", "shippingCost", "ebayFees", "otherCosts"] as const
   const missing = keys.filter(key => !proven(e[key]))
   const profitBeforeAds = missing.length ? null : down(e.salePrice.value! - e.productCost.value! - e.shippingCost.value! - e.ebayFees.value! - e.otherCosts.value!)
+  const investmentBase = missing.length ? null
+    : down(e.productCost.value! + e.shippingCost.value!)
   return { components: e, economicsUnproven: missing.length > 0 || !(e.salePrice.value! > 0), missing,
-    profitBeforeAds, marginBeforeAds: profitBeforeAds !== null && e.salePrice.value! > 0 ? profitBeforeAds / e.salePrice.value! * 100 : null }
+    profitBeforeAds, marginBeforeAds: profitBeforeAds !== null && e.salePrice.value! > 0 ? profitBeforeAds / e.salePrice.value! * 100 : null,
+    investmentBase: investmentBase && investmentBase > 0 ? investmentBase : null,
+    roiBeforeAds: profitBeforeAds !== null && investmentBase && investmentBase > 0
+      ? profitBeforeAds / investmentBase * 100 : null }
 }
 
 export function promotionProfitGuardV1(e: Economics, policy: PromotionPolicy, mayelRecommendedRate = policy.maxRate) {
-  validatePromotionPolicyV1(policy)
+  const normalizedPolicy = validatePromotionPolicyV1(policy)
   const economics = listingEconomicsV1(e)
   const base = { contractVersion: PROMOTION_PROFIT_GUARD_V1, ...economics,
     maxSafeAdRate: null as number | null, recommendedAdRate: null as number | null,
@@ -77,20 +87,24 @@ export function promotionProfitGuardV1(e: Economics, policy: PromotionPolicy, ma
     projectedMarginAfterAds: null as number | null, projectionUnit: "ONE_ATTRIBUTED_SALE" as const }
   if (economics.economicsUnproven || !proven(e.adFeeBasis) || e.adFeeBasis.value! < e.salePrice.value!)
     return { ...base, status: "BLOCKED_EVIDENCE" as const }
-  const floor = Math.max(policy.minProfit, e.salePrice.value! * policy.minMargin / 100)
+  const floor = Math.max(
+    e.salePrice.value! * SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 / 100,
+    economics.investmentBase! * SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 / 100)
   const room = economics.profitBeforeAds! - floor
   const maxSafeAdRate = safeAdCapacityV1(e, policy).maxSafeAdRatePct!
-  const rate = Math.floor(Math.min(mayelRecommendedRate, policy.maxRate, maxSafeAdRate) * 10 + 1e-9) / 10
+  const rate = Math.floor(Math.min(mayelRecommendedRate, normalizedPolicy.maxRate, maxSafeAdRate) * 10 + 1e-9) / 10
   // Round cost upwards and recheck the actual cents charged; never round a rate up.
   const projectedAdCost = Math.ceil((e.adFeeBasis.value! * rate / 100 - 1e-9) * 100) / 100
   const projectedProfitAfterAds = cents(economics.profitBeforeAds! - projectedAdCost)
   const projectedMarginAfterAds = projectedProfitAfterAds / e.salePrice.value! * 100
-  const blocked = !Number.isFinite(rate) || rate < policy.minRate || room < 0 || maxSafeAdRate < policy.minRate || projectedProfitAfterAds + 1e-9 < policy.minProfit || projectedMarginAfterAds + 1e-9 < policy.minMargin
+  const projectedRoiAfterAds = projectedProfitAfterAds / economics.investmentBase! * 100
+  const blocked = !Number.isFinite(rate) || rate < normalizedPolicy.minRate || room < 0 || maxSafeAdRate < normalizedPolicy.minRate || projectedRoiAfterAds + 1e-9 < SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 || projectedMarginAfterAds + 1e-9 < SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2
   return { ...base, maxSafeAdRate, recommendedAdRate: blocked ? null : rate,
     projectedAdCost: blocked ? null : projectedAdCost,
     projectedProfitAfterAds: blocked ? null : projectedProfitAfterAds,
     projectedMarginAfterAds: blocked ? null : projectedMarginAfterAds,
-    status: blocked ? "BLOCKED_MARGIN" as const : policy.mode === "OFF" ? "OFF" as const : "SIMULATION_READY" as const }
+    projectedRoiAfterAds: blocked ? null : projectedRoiAfterAds,
+    status: blocked ? "BLOCKED_MARGIN" as const : normalizedPolicy.mode === "OFF" ? "OFF" as const : "SIMULATION_READY" as const }
 }
 
 export function projectListingMetricsV1(listing: CommercialListingReadModel) {
@@ -141,8 +155,8 @@ export function diagnoseListingTreatmentV1(input: { itemId: string; window: Metr
   let priorities: string[] = []
   if (input.protected) { treatment = "HOLD"; why = "Hay una prueba protegida en curso. Espera su revisión."; primaryMetricSignal = "EXPERIMENT_PROTECTED" }
   else if (input.stock === "LOW" && input.stockReference) { treatment = "RESTOCK"; why = "El stock comprobado no permite impulsar ventas."; primaryMetricSignal = "LOW_INVENTORY" }
-  else if (!e.economicsUnproven && (e.profitBeforeAds! < input.policy.minProfit || e.marginBeforeAds! < input.policy.minMargin || capacity.proven && capacity.maxSafeAdRatePct! < input.policy.minRate)) {
-    treatment = "PROFIT_PROTECT"; why = "El beneficio actual no alcanza los límites de tu política."; primaryMetricSignal = "INSUFFICIENT_MARGIN"
+  else if (!e.economicsUnproven && (e.roiBeforeAds! < SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 || e.marginBeforeAds! < SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 || capacity.proven && capacity.maxSafeAdRatePct! < input.policy.minRate)) {
+    treatment = "PROFIT_PROTECT"; why = "El ROI o margen de contribución no alcanza la política compartida."; primaryMetricSignal = "INSUFFICIENT_MARGIN"
   } else if (input.qualityNeedsImprovement === true && input.qualityReferences.length) {
     treatment = "OPTIMIZE"; why = "Listing Quality tiene una mejora pendiente respaldada por evidencia."; primaryMetricSignal = "QUALITY_IMPROVEMENT_REQUIRED"
   } else if (enough) {

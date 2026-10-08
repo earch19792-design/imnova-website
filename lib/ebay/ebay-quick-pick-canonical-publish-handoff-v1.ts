@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-import { SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 } from
-  "../marketplace/seller-os-commercial-policy-v1"
+import { SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 
 import {
   evaluatePublishWithStockguardContractV1,
@@ -249,8 +250,8 @@ export function buildQuickPickCanonicalPublishHandoffV1(input: Readonly<{
     exactMoney(pricing.estimatedNetProfit, profit) &&
     exactMoney(pricing.estimatedNetMarginPercent, margin) &&
     exactMoney(pricing.estimatedRoiPercent, roi) &&
-    Number(profit) >= SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 &&
-    Number(margin) >= 20
+    Number(margin) >= SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 &&
+    Number(roi) >= SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2
   const requiredSpecificsReady =
     input.card.requiredItemSpecificsReady === true &&
     canonicalReadiness.requiredItemSpecificsReady === true &&

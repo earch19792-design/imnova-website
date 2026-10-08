@@ -1,6 +1,10 @@
+import { sellerOsRoiMarginPolicyContractV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
+
 export const SELLER_OS_UNIT_FIRST_PACK_POLICY_V1 = Object.freeze({
   contractVersion: "SELLER_OS_UNIT_FIRST_MARKET_EVIDENCED_PACK_POLICY_V1",
-  minimumNetProfitUsd: 4,
+  minimumNetProfitUsd: 0,
+  economicPolicy: sellerOsRoiMarginPolicyContractV2(),
   sequence: Object.freeze(["SINGLE_UNIT", "MARKET_EVIDENCED_PACK_FALLBACK"]),
   packCountsSource: "REVIEWED_EBAY_SOLD_EVIDENCE_ONLY",
   maximumPackScenariosPerProduct: 3,
@@ -26,8 +30,8 @@ export type GoldenUnitEvaluationForPackPolicyV1 = Readonly<{
   reasonCodes: ReadonlyArray<string>
   offer: Readonly<{ includedCount: number | null | undefined }>
   economics: Readonly<{
-    targetNetProfit: number
     expectedNetProfit: number | null
+    economicPolicyEvaluation?: Readonly<{ passesPolicy?: boolean }>
   }>
   market: Readonly<{ familyEvidence: ReadonlyArray<FamilyEvidence> }>
 }>

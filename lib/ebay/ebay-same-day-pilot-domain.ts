@@ -443,15 +443,15 @@ export function evaluateReadyForContent(input: {
     !input.requiredAspectsResolved ? "REQUIRED_ASPECTS_NOT_READY" : "",
     !input.regulatoryAcceptable ? "REGULATORY_NOT_READY" : "",
     !input.shippingEstimateAvailable ? "SHIPPING_ESTIMATE_NOT_READY" : "",
-    Number(input.estimatedProfit ?? 0) < 5 ? "PROFIT_BELOW_5_USD" : "",
     Number(input.roiPercent ?? 0) < 30 ? "ROI_BELOW_30_PERCENT" : "",
-    Number(input.netMarginPercent ?? 0) < 20 ? "NET_MARGIN_BELOW_20_PERCENT" : "",
+    Number(input.netMarginPercent ?? 0) < 15 ? "CONTRIBUTION_MARGIN_BELOW_15_PERCENT" : "",
   ].filter(Boolean)
   return {
     ready: blockers.length === 0,
     blockers,
     commercialEvidenceMode,
-    idealProfitReached: Number(input.estimatedProfit ?? 0) >= 7,
+    idealProfitReached: Number(input.roiPercent ?? 0) >= 30 &&
+      Number(input.netMarginPercent ?? 0) >= 15,
     forcedListingQuantity: commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST" ? 1 : null,
     commercialMonitorRequired: commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST",
     automaticPricingAllowed: false,

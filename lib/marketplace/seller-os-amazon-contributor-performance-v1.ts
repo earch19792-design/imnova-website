@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-export { SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 } from
-  "./seller-os-commercial-policy-v1"
-import { SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 } from
-  "./seller-os-commercial-policy-v1"
 import { buildSellerOsAmazonPurchaseGateV1,
   SELLER_OS_AMAZON_PURCHASE_GATE_V1 } from
   "./seller-os-amazon-purchase-gate-v1"
+import { evaluateSellerOsRoiMarginPolicyV2,
+  sellerOsRoiMarginPolicyContractV2 } from
+  "./seller-os-roi-margin-policy-v2"
 
 export const SELLER_OS_AMAZON_CONTRIBUTOR_PERFORMANCE_V1 =
   "SELLER_OS_AMAZON_CONTRIBUTOR_PERFORMANCE_MONITOR_V1" as const
@@ -223,10 +222,24 @@ export function buildAmazonContributorObservationV1(value: unknown,
       unitCostUsd !== null && projectedAmazonFeesPerUnitUsd !== null
     ? Number((expectedSalePriceUsd - unitCostUsd -
       projectedAmazonFeesPerUnitUsd).toFixed(2)) : null
-  const maximumAdditionalCostForMinimumProfitUsd =
-    contributionAfterAmazonFeesPerUnitUsd === null ? null
-      : Number((contributionAfterAmazonFeesPerUnitUsd -
-        SELLER_OS_MINIMUM_NET_PROFIT_USD_V1).toFixed(2))
+  const projectedPolicyEvaluation = evaluateSellerOsRoiMarginPolicyV2({
+    revenueUsd: expectedSalePriceUsd,
+    investmentBase: "AMAZON_INVENTORY_INVESTMENT",
+    investmentBaseUsd: deliveredUnitCostUsd,
+    costs: [
+      { key: "delivered_inventory_cost", amountUsd: deliveredUnitCostUsd,
+        authority: "CONFIRMED_SUPPLIER_INBOUND_AND_PREP_COST",
+        state: deliveredUnitCostUsd === null ? "UNKNOWN" : "KNOWN" },
+      { key: "amazon_fees", amountUsd: projectedAmazonFeesPerUnitUsd,
+        authority: estimatedAmazonFeesPerUnitUsd === null
+          ? "PROJECTED_OR_ACTUAL_FEES" : "AMAZON_PRODUCT_FEES_ESTIMATE",
+        state: projectedAmazonFeesPerUnitUsd === null
+          ? "UNKNOWN" : "ESTIMATED" },
+      { key: "other_variable_cost", amountUsd: otherVariableCostPerUnitUsd,
+        authority: "CONFIRMED_RESERVES_AND_OTHER_COSTS",
+        state: otherVariableCostPerUnitUsd === null ? "UNKNOWN" : "KNOWN" },
+    ],
+  })
 
   const observationWindowDays = integer(performanceInput.observationWindowDays)
   const unitsPurchased = integer(performanceInput.unitsPurchased)
@@ -248,6 +261,28 @@ export function buildAmazonContributorObservationV1(value: unknown,
   const actualNetProfitPerUnitUsd = actualNetProfitUsd !== null &&
       authoritativeUnitsSold !== null && authoritativeUnitsSold > 0
     ? Number((actualNetProfitUsd / authoritativeUnitsSold).toFixed(2)) : null
+  const actualPolicyEvaluation = evaluateSellerOsRoiMarginPolicyV2({
+    revenueUsd: grossSalesUsd,
+    investmentBase: "AMAZON_INVENTORY_INVESTMENT",
+    investmentBaseUsd: soldInventoryCostUsd,
+    costs: [
+      { key: "sold_inventory_cost", amountUsd: soldInventoryCostUsd,
+        authority: "CONFIRMED_SOLD_INVENTORY_COST",
+        state: soldInventoryCostUsd === null ? "UNKNOWN" : "KNOWN" },
+      { key: "amazon_fees", amountUsd: amazonFeesUsd,
+        authority: "AMAZON_FINANCES_ACTUAL", state: amazonFeesUsd === null
+          ? "UNKNOWN" : "KNOWN" },
+      { key: "fulfillment_fees", amountUsd: fulfillmentFeesUsd,
+        authority: "AMAZON_FINANCES_ACTUAL",
+        state: fulfillmentFeesUsd === null ? "UNKNOWN" : "KNOWN" },
+      { key: "refunds", amountUsd: refundsUsd,
+        authority: "AMAZON_FINANCES_ACTUAL", state: refundsUsd === null
+          ? "UNKNOWN" : "KNOWN" },
+      { key: "other_actual_costs", amountUsd: otherActualCostsUsd,
+        authority: "OWNER_OR_FINANCE_ACTUAL",
+        state: otherActualCostsUsd === null ? "UNKNOWN" : "KNOWN" },
+    ],
+  })
   const sellThroughRate = authoritativeUnitsSold !== null &&
       unitsPurchased !== null && unitsPurchased > 0
     ? Number(Math.min(1, authoritativeUnitsSold / unitsPurchased).toFixed(4))
@@ -276,8 +311,7 @@ export function buildAmazonContributorObservationV1(value: unknown,
   const demandConfirmed = demandConfirmedByResearch || demandConfirmedByResult
   const eligibilityConfirmed = eligibilityState === "CONFIRMED" &&
     eligibilityFreshness === "CURRENT"
-  const profitableActual = actualNetProfitPerUnitUsd !== null &&
-    actualNetProfitPerUnitUsd >= SELLER_OS_MINIMUM_NET_PROFIT_USD_V1
+  const profitableActual = actualPolicyEvaluation.passesPolicy
   const movementConfirmed = authoritativeUnitsSold !== null &&
     authoritativeUnitsSold > 0
   const winner = resultAuthoritative && demandConfirmed &&
@@ -312,7 +346,7 @@ export function buildAmazonContributorObservationV1(value: unknown,
   }
   if (resultEvaluated && !movementConfirmed) blockers.push("AMAZON_MOVEMENT_NOT_OBSERVED")
   if (actualNetProfitPerUnitUsd !== null && !profitableActual) {
-    blockers.push("MINIMUM_NET_PROFIT_NOT_MET")
+    blockers.push(...actualPolicyEvaluation.blockerCodes)
   }
 
   let action: AmazonContributorNextActionV1
@@ -355,7 +389,8 @@ export function buildAmazonContributorObservationV1(value: unknown,
   } else {
     action = "REVIEW_REJECTION"
     reasonCode = profitableActual
-      ? "MOVEMENT_OR_DEMAND_NOT_CONFIRMED" : "MINIMUM_NET_PROFIT_NOT_MET"
+      ? "MOVEMENT_OR_DEMAND_NOT_CONFIRMED"
+      : actualPolicyEvaluation.blockerCodes[0] ?? "ROI_MARGIN_POLICY_NOT_MET"
   }
 
   const lifecycleStage = resultEvaluated ? "RESULT"
@@ -463,11 +498,13 @@ export function buildAmazonContributorObservationV1(value: unknown,
         ["FBA", "FBM"] as const),
       feeEstimateAuthority: text(economicsInput.feeEstimateAuthority, 160),
       contributionAfterAmazonFeesPerUnitUsd,
-      maximumAdditionalCostForMinimumProfitUsd,
       projectedNetProfitPerUnitUsd, complete: projectedEconomicsComplete,
-      minimumNetProfitUsd: SELLER_OS_MINIMUM_NET_PROFIT_USD_V1,
-      minimumProfitMet: projectedNetProfitPerUnitUsd === null ? null
-        : projectedNetProfitPerUnitUsd >= SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 },
+      contributionMarginPercent:
+        projectedPolicyEvaluation.contributionMarginPercent,
+      estimatedRoiPercent: projectedPolicyEvaluation.estimatedRoiPercent,
+      investmentBase: projectedPolicyEvaluation.investmentBase,
+      investmentBaseUsd: projectedPolicyEvaluation.investmentBaseUsd,
+      policyEvaluation: projectedPolicyEvaluation },
     amazonListing: { state: listingState,
       sellerSku: text(listingInput.sellerSku, 160),
       listingPriceUsd: money(listingInput.listingPriceUsd),
@@ -483,6 +520,12 @@ export function buildAmazonContributorObservationV1(value: unknown,
       grossSalesUsd, amazonFeesUsd, fulfillmentFeesUsd, refundsUsd,
       otherActualCostsUsd, soldInventoryCostUsd, actualTotalCostsUsd,
       actualNetProfitUsd, actualNetProfitPerUnitUsd, sellThroughRate,
+      contributionMarginPercent:
+        actualPolicyEvaluation.contributionMarginPercent,
+      estimatedRoiPercent: actualPolicyEvaluation.estimatedRoiPercent,
+      investmentBase: actualPolicyEvaluation.investmentBase,
+      investmentBaseUsd: actualPolicyEvaluation.investmentBaseUsd,
+      policyEvaluation: actualPolicyEvaluation,
       velocityUnitsPerDay, firstSaleAt: iso(performanceInput.firstSaleAt),
       daysToFirstSale, observedAt: performanceObservedAt,
       sessions: integer(performanceInput.sessions),
@@ -493,7 +536,8 @@ export function buildAmazonContributorObservationV1(value: unknown,
       falseZeroGuard: reportedUnitsSold === 0 && !resultAuthoritative
         ? "ZERO_NOT_ACCEPTED_WITHOUT_AUTHORITY" : "PASS" },
     outcome: { skillOutcome, reorderDecision,
-      winnerDefinition: "CONFIRMED_DEMAND_AND_MOVEMENT_AND_MINIMUM_4_USD_NET",
+      winnerDefinition:
+        "CONFIRMED_DEMAND_AND_MOVEMENT_AND_ROI_30_AND_CONTRIBUTION_MARGIN_15",
       automaticReorderAllowed: false },
     lifecycleStage,
     nextBestEvidence: { action, priority: 1, reasonCode,
@@ -741,8 +785,8 @@ export async function readAmazonContributorPerformanceV1(input: {
     fastestMovement,
     interpretation: {
       contributorClaimsAreMarketplaceProof: false,
-      winnerRequiresConfirmedDemandMovementAndMinimumNetProfit: true,
-      minimumNetProfitUsd: SELLER_OS_MINIMUM_NET_PROFIT_USD_V1,
+      winnerRequiresConfirmedDemandMovementAndRoiMarginPolicy: true,
+      economicPolicy: sellerOsRoiMarginPolicyContractV2(),
       zeroWithoutAuthorityRemainsUnknown: true,
       reorderIsReviewOnly: true,
       purchaseGateContractVersion: SELLER_OS_AMAZON_PURCHASE_GATE_V1,

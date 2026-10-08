@@ -240,6 +240,16 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
   if (toolName === "seller_os_get_opportunity_case") {
     allowedKeys.add("opportunityCaseId")
   }
+  if (toolName === "seller_os_scout_amazon_wholesale_opportunities") {
+    allowedKeys.add("query")
+    if (args.query !== undefined) {
+      if (typeof args.query !== "string" || args.query.trim().length < 2 ||
+          args.query.length > 120) {
+        throw new Error("SELLER_OS_RELAY_AMAZON_SCOUT_QUERY_INVALID")
+      }
+      normalized.query = args.query.normalize("NFKC").trim()
+    }
+  }
   if (toolName === "seller_os_get_product_case") {
     if (!["PRODUCT_CASE_ID", "LUNA_PRODUCT_ID", "SUPPLIER_SKU",
       "EBAY_ITEM_ID", "LISTING_PACKAGE_ID"].includes(String(args.identityType)) ||
@@ -276,10 +286,12 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
       "seller_os_get_888lots_amazon_star_candidates"
     const analyticalLimit = toolName ===
       "seller_os_get_analytical_sales_advisor"
+    const amazonScoutLimit = toolName ===
+      "seller_os_scout_amazon_wholesale_opportunities"
     if (!Number.isInteger(args.limit) || starLimit &&
         ![10, 20].includes(Number(args.limit)) || !starLimit &&
         (Number(args.limit) < 1 || Number(args.limit) >
-          (analyticalLimit ? 20 : 100))) {
+          (amazonScoutLimit ? 10 : analyticalLimit ? 20 : 100))) {
       throw new Error("SELLER_OS_RELAY_LIMIT_INVALID")
     }
     normalized.limit = Number(args.limit)
@@ -627,6 +639,8 @@ export async function handleSellerOsCloudReadRelayRequestV1(
       args: Record<string, unknown>) => Promise<unknown>
     amazonContributorPerformanceCollector?: (
       args: Record<string, unknown>) => Promise<unknown>
+    amazonWholesaleScoutCollector?: (
+      args: Record<string, unknown>) => Promise<unknown>
     analyticalSalesAdvisorCollector?: (
       args: Record<string, unknown>) => Promise<unknown>
     systemReviewDrilldownEnricher?: (bundle: unknown) => Promise<unknown>
@@ -832,6 +846,22 @@ export async function handleSellerOsCloudReadRelayRequestV1(
             supabase: supabaseModule.getSupabaseAdminClient(),
             monitor: await runtime.loadSellerOsAssistantMonitorSnapshotV1(),
             limit: typeof args.limit === "number" ? args.limit : 10,
+          })
+        })
+      result = await collector(envelope.arguments)
+    } else if (envelope.toolName ===
+        "seller_os_scout_amazon_wholesale_opportunities") {
+      const collector = options.amazonWholesaleScoutCollector ??
+        (async (args: Record<string, unknown>) => {
+          const service = await import(
+            "../marketplace/seller-os-amazon-wholesale-opportunity-scout-v1"
+          )
+          const supabaseModule = await import("../supabase-admin")
+          return service.scoutAmazonWholesaleOpportunitiesV1({
+            supabase: supabaseModule.getSupabaseAdminClient(),
+            limit: service.assertAmazonWholesaleScoutLimitV1(args.limit),
+            query: typeof args.query === "string" ? args.query : null,
+            environment,
           })
         })
       result = await collector(envelope.arguments)

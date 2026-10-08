@@ -8,6 +8,9 @@ import { readProductionStockGuardV1 } from "./ebay-production-stock-read-service
 import { readCurrentLiveAuthorityV1 } from "./ebay-current-live-authority-v1.ts"
 import { getEbayCommercialMonitorLiveReadonly } from
   "./ebay-commercial-monitor-live-readonly"
+import { evaluateSellerOsRoiMarginPolicyV2,
+  sellerOsRoiMarginPolicyContractV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 
 export const SELLER_OS_REVENUE_CONTROL_PLANE_V1 =
   "SELLER_OS_REVENUE_CONTROL_PLANE_V1" as const
@@ -46,15 +49,14 @@ export function readRevenueControlPolicyV1(
     return parsed
   }
   const policy = {
-    targetNetProfitMin: configured("SELLER_OS_REVENUE_TARGET_NET_MIN", 4),
-    targetNetProfitMax: configured("SELLER_OS_REVENUE_TARGET_NET_MAX", 5),
-    absoluteMinimumNetProfit: configured("SELLER_OS_REVENUE_ABSOLUTE_NET_MIN", 4),
+    targetNetProfitMin: 0,
+    targetNetProfitMax: 0,
+    absoluteMinimumNetProfit: 0,
+    economicPolicy: sellerOsRoiMarginPolicyContractV2(),
     promotedListingsRate: configured("SELLER_OS_REVENUE_PROMOTED_RATE", 0),
     returnsReserveRate: configured("SELLER_OS_REVENUE_RETURNS_RESERVE_RATE", 0.04),
   }
-  if (policy.targetNetProfitMax < policy.targetNetProfitMin ||
-      policy.absoluteMinimumNetProfit > policy.targetNetProfitMax ||
-      policy.promotedListingsRate > 1 || policy.returnsReserveRate > 1) {
+  if (policy.promotedListingsRate > 1 || policy.returnsReserveRate > 1) {
     throw Error("REVENUE_CONTROL_POLICY_CONFIGURATION_INVALID")
   }
   return policy
@@ -490,6 +492,32 @@ export async function readSellerOsRevenueControlPlaneV1(input: {
       ? cents(livePrice! - supplierCost! - shippingQty1! -
           estimatedEbayFees! - returnsReserve! - promotedReserve! - otherCosts!)
       : null
+    const economicPolicyEvaluation = evaluateSellerOsRoiMarginPolicyV2({
+      revenueUsd: livePrice,
+      investmentBase: "EBAY_LUNA_ORDER_INVESTMENT",
+      investmentBaseUsd: supplierCost !== null && shippingQty1 !== null
+        ? supplierCost + shippingQty1 : null,
+      costs: [
+        { key: "supplier_cost", amountUsd: supplierCost,
+          authority: costAuthority.sourceAuthority ?? "UNPROVEN",
+          state: costAuthority.status === "AVAILABLE" ? "KNOWN" : "UNKNOWN" },
+        { key: "supplier_shipping", amountUsd: shippingQty1,
+          authority: shippingAuthority.sourceAuthority ?? "UNPROVEN",
+          state: shippingAuthority.status === "AVAILABLE" ? "KNOWN" : "UNKNOWN" },
+        { key: "ebay_fees", amountUsd: estimatedEbayFees,
+          authority: feeAuthority.sourceAuthority ?? "UNPROVEN",
+          state: feeAuthority.status === "AVAILABLE" ? "KNOWN" : "UNKNOWN" },
+        { key: "returns_reserve", amountUsd: returnsReserve,
+          authority: "SELLER_OS_REVENUE_POLICY",
+          state: returnsReserve === null ? "UNKNOWN" : "ESTIMATED" },
+        { key: "promoted_listings_reserve", amountUsd: promotedReserve,
+          authority: "SELLER_OS_REVENUE_POLICY",
+          state: promotedReserve === null ? "UNKNOWN" : "ESTIMATED" },
+        { key: "other_explicit_costs", amountUsd: otherCosts,
+          authority: otherAuthority.sourceAuthority ?? "UNPROVEN",
+          state: otherAuthority.status === "AVAILABLE" ? "KNOWN" : "UNKNOWN" },
+      ],
+    })
     const blockers = [
       linked.supplierLinkage !== "CERTIFIED" ? "SUPPLIER_IDENTITY_UNPROVEN" : null,
       !registryFresh ? "EBAY_LIVE_COMMERCIAL_FACTS_STALE_OR_MISSING" : null,
@@ -538,14 +566,15 @@ export async function readSellerOsRevenueControlPlaneV1(input: {
       otherExplicitCosts: otherAuthority.status === "AVAILABLE" ? otherCosts : null,
       economicsStatus: economicsComplete ? "AVAILABLE" as const :
         "INCOMPLETE" as const,
-      profitabilityGate: estimatedNetProfit === null ? "UNPROVEN" as const :
-        estimatedNetProfit >= policy.absoluteMinimumNetProfit
+      profitabilityGate: !economicPolicyEvaluation.evidenceComplete
+        ? "UNPROVEN" as const : economicPolicyEvaluation.passesPolicy
           ? "PASS" as const : "FAIL" as const,
       estimatedNetProfit,
-      margin: estimatedNetProfit !== null && livePrice && livePrice > 0
-        ? estimatedNetProfit / livePrice : null,
-      roi: estimatedNetProfit !== null && supplierCost && supplierCost > 0
-        ? estimatedNetProfit / supplierCost : null,
+      margin: economicPolicyEvaluation.contributionMarginPercent === null
+        ? null : economicPolicyEvaluation.contributionMarginPercent / 100,
+      roi: economicPolicyEvaluation.estimatedRoiPercent === null
+        ? null : economicPolicyEvaluation.estimatedRoiPercent / 100,
+      economicPolicyEvaluation,
       analyticsStatus: currentAnalyticsStatus,
       currentAnalytics: currentAnalytics ? {
         status: "AVAILABLE" as const,

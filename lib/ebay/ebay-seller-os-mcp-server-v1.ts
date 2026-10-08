@@ -504,7 +504,7 @@ export function createSellerOsMcpServerV1(options: {
   )
   const server = new McpServer({ name: "seller-os-private-readonly",
     version: SELLER_OS_MCP_ENDPOINT_VERSION }, {
-    instructions: "Private Seller OS canonical read-only evidence plus one separately-scoped bounded Luna pre-research command. For broad commercial questions, use seller_os_get_analytical_sales_advisor first and explain the ranked evidence, blockers, and safest next action. Preserve unavailable and unproven states. TEO may analyze and prepare recommendations but cannot publish, buy, reprice, end listings, reorder, spend money, or enable automations. The Luna command only creates or reuses internal Product Research work for exact authoritative Luna candidates; it cannot perform marketplace, inventory, supplier, Registry, Product Case, buyer-message, WhatsApp, OAuth, environment, SQL, publication, purchase, shipping, or arbitrary URL mutations.",
+    instructions: "Private Seller OS canonical read-only evidence plus one separately-scoped bounded Luna pre-research command. For broad commercial questions, use seller_os_get_analytical_sales_advisor first and explain the ranked evidence, blockers, and safest next action. Amazon wholesale discovery accepts no ASIN input, returns at most ten opportunities, and applies simultaneous estimated ROI >=30% and contribution margin >=15% with no monetary profit floor; unknown costs remain unknown. Preserve unavailable and unproven states. TEO may analyze and prepare recommendations but cannot publish, buy, reprice, end listings, reorder, spend money, or enable automations. The Luna command only creates or reuses internal Product Research work for exact authoritative Luna candidates; it cannot perform marketplace, inventory, supplier, Registry, Product Case, buyer-message, WhatsApp, OAuth, environment, SQL, publication, purchase, shipping, or arbitrary URL mutations.",
   })
   if (SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1.length !==
       SELLER_OS_MCP_EXPECTED_CATALOG_COUNT_V1 ||
@@ -517,7 +517,17 @@ export function createSellerOsMcpServerV1(options: {
   const monitorLoader = options.monitorLoader ?? loadSellerOsAssistantMonitorV1
   const monitor = () => (monitorPromise ??= monitorLoader())
   const localToolExecutor: SellerOsAssistantToolExecutorV1 = async (input) =>
-    input.toolName === "seller_os_get_888lots_amazon_star_candidates"
+    input.toolName === "seller_os_scout_amazon_wholesale_opportunities"
+      ? import(
+          "../marketplace/seller-os-amazon-wholesale-opportunity-scout-v1"
+        ).then((service) => service.scoutAmazonWholesaleOpportunitiesV1({
+          supabase: getSupabaseAdminClient(),
+          limit: service.assertAmazonWholesaleScoutLimitV1(
+            input.arguments.limit),
+          query: typeof input.arguments.query === "string"
+            ? input.arguments.query : null,
+        }))
+      : input.toolName === "seller_os_get_888lots_amazon_star_candidates"
       ? (() => {
           const account = getEbaySellerAccountScopeConfiguration()
           if (!account.accountKey) throw new Error(
@@ -631,15 +641,20 @@ export function createSellerOsMcpServerV1(options: {
       "seller_os_get_888lots_amazon_star_candidates"
     const isAnalyticalSalesAdvisor = descriptor.name ===
       "seller_os_get_analytical_sales_advisor"
+    const isAmazonWholesaleScout = descriptor.name ===
+      "seller_os_scout_amazon_wholesale_opportunities"
     const config = { title: descriptor.title,
       description: descriptor.description,
       inputSchema: { ...(needsItem ? { itemId: z.string().regex(/^\d{9,19}$/) } : {}),
         ...(needsCase ? { opportunityCaseId: z.string().regex(
           /^opportunity-case-v1:sha256:[0-9a-f]{64}$/,
         ) } : {}),
+        ...(isAmazonWholesaleScout
+          ? { query: z.string().min(2).max(120).optional() } : {}),
         limit: is888LotsStars
           ? z.union([z.literal(10), z.literal(20)]).optional()
-          : z.number().int().min(1).max(isAnalyticalSalesAdvisor ? 20 : 100)
+          : z.number().int().min(1).max(isAmazonWholesaleScout ? 10
+            : isAnalyticalSalesAdvisor ? 20 : 100)
             .optional() },
       annotations: descriptor.annotations, securitySchemes,
       _meta: { securitySchemes },

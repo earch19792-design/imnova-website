@@ -544,7 +544,7 @@ function CommercialActionQueue({ portfolio }: Readonly<{
         <h2 className="mt-1 text-xl font-black">Recompra y expansión entre marketplaces</h2>
         <p className="mt-1 text-xs text-white/45">Una sola acción prioritaria por producto. Nada compra, publica o cambia precios automáticamente.</p>
       </div>
-      <span className="rounded-full border border-white/10 px-3 py-1 text-[10px] font-black text-white/55">Piso neto ${String(portfolio.minimumNetProfitUsd ?? 4)}</span>
+      <span className="rounded-full border border-white/10 px-3 py-1 text-[10px] font-black text-white/55">Política: ROI ≥30% + margen contribución ≥15%</span>
     </div>
     <div className="mt-4 grid gap-2 lg:grid-cols-2">
       {actions.length ? actions.slice(0, 8).map((item) => <a

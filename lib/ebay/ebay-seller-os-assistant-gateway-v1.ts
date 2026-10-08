@@ -14,6 +14,8 @@ import { buildStrategicReviewQueueV1, buildSystemReviewBundleV1 } from "./ebay-s
 import { currentLiveListingsForMonitorV1, resolveCrossModuleLivePortfolioIntegrityV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
 import { projectListingMetricsV1 } from "../seller-os/listing-treatment-engine-v1"
+import { sellerOsRoiMarginPolicyContractV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 export const SELLER_OS_ASSISTANT_GATEWAY_VERSION = "SELLER_OS_ASSISTANT_GATEWAY_V1_2026_08_12"
 export const SELLER_OS_ASSISTANT_MAX_ITEMS = 100
 
@@ -26,7 +28,7 @@ export const SELLER_OS_ASSISTANT_TOOLS_V1 = Object.freeze([
   ["seller_os_prepare_listing_optimization_preview", "Prepare listing optimization preview",
     "Prepare a draft-only optimization Preview for one exact eBay Item ID using existing verified linkage, durable Quality and Keyword V2.1. Returns NEEDS_EVIDENCE when blocked. No persistence, generation, research, spend or publication."],
   ["seller_os_get_commercial_context", "Get commercial context",
-    "Use this when the user asks what needs attention today or wants a compact Seller OS portfolio summary."],
+    "Use this when the user asks what needs attention today or wants a compact Seller OS portfolio summary. Returns the shared eBay/Amazon ROI 30% and contribution-margin 15% policy with no monetary profit floor."],
   ["seller_os_get_exception_queue", "Get exception queue",
     "Use this when the user asks for prioritized operational, commercial, experiment, stock, or review exceptions."],
   ["seller_os_get_listing_intelligence", "Get listing intelligence",
@@ -41,6 +43,9 @@ export const SELLER_OS_ASSISTANT_TOOLS_V1 = Object.freeze([
   ["seller_os_get_amazon_contributor_performance",
     "Get Connie Amazon performance",
     "Use this when the owner asks how Connie's proposed Amazon products, confirmed demand, listings, sales, realized profit, winner rate, movement or reorder reviews are performing. Returns internal read-only evidence; contributor claims never become Amazon proof and missing results never become false zeros."],
+  ["seller_os_scout_amazon_wholesale_opportunities",
+    "Scout Amazon wholesale opportunities without ASIN input",
+    "Discover up to ten read-only Amazon wholesale opportunities from existing supplier catalogs without requiring ASINs. Cross-checks exact Amazon catalog identity, price, fees, restrictions, demand, duplicate risk and the shared ROI/margin policy. Separates possible supplier, pending offer and verified offer; never buys, publishes, reprices, changes inventory or activates paid services."],
   ["seller_os_get_analytical_sales_advisor",
     "Get TEO's analytical sales priorities",
     "Use this first when the owner asks what to sell, which product or listing has the most potential, what to improve next, or what should be automated. Ranks bounded evidence from the current portfolio, official sales, listing quality, Amazon/Connie, Luna, inventory and workstation automations. It never publishes, buys, reprices, ends listings or enables automations."],
@@ -280,6 +285,9 @@ export function buildAssistantCommercialContextV1(
     liveListings.length === integrity.canonicalCohort.listingCount
   return { contractVersion: SELLER_OS_ASSISTANT_GATEWAY_VERSION,
     generatedFrom: monitor.contractVersion, observedAt: monitor.generatedAt,
+    economicPolicy: { ...sellerOsRoiMarginPolicyContractV2(),
+      ebayInvestmentBase: "EBAY_LUNA_ORDER_INVESTMENT" as const,
+      amazonInvestmentBase: "AMAZON_INVENTORY_INVESTMENT" as const },
     readBudget: (monitor as SellerOsAssistantMonitorWithOfficialOrdersV1).readBudget ?? null,
     sourceReaders: monitor.connection?.readers ?? null,
     accountTraffic: monitor.backend.trafficScopes.accountTraffic,

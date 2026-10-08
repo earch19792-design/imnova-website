@@ -752,6 +752,7 @@ async function processClaimedCandidate(
       confidenceScore: assessment.scores.confidenceScore,
       currentStock: assessment.candidate.inventoryQuantity,
       estimatedMarginPct: assessment.economics.estimatedNetMarginPercent,
+      estimatedRoiPct: assessment.economics.estimatedRoiPercent,
       estimatedNetProfit: assessment.economics.estimatedNetProfit,
       hasExactEvidence: assessment.identity.exactIdentityConfirmed &&
         assessment.canProceedToListingPackage,

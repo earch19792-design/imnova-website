@@ -3,11 +3,14 @@ import {
   calculateEbayUnitEconomics,
   DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,
 } from "./ebay-unit-economics"
+import { sellerOsRoiMarginPolicyContractV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 
 export const TEO_OWNER_LISTING_EXPERIMENT_VERSION =
   "TEO_OWNER_LISTING_EXPERIMENT_V1" as const
 
-export const TEO_MINIMUM_NET_PROFIT_USD = 4 as const
+/** @deprecated Policy V2 has no monetary profit floor. */
+export const TEO_MINIMUM_NET_PROFIT_USD = 0 as const
 
 export const TEO_VERIFIABLE_LISTING_VARIABLES = [
   "TITLE",
@@ -61,8 +64,10 @@ export type TeoListingPriceDecisionV1 = Readonly<{
   maximumSafeDiscountUsd: number | null
   expectedNetProfitAtRecommended: number | null
   expectedMarginPercentAtRecommended: number | null
+  expectedRoiPercentAtRecommended: number | null
   currentExpectedNetProfit: number | null
   minimumNetProfitUsd: typeof TEO_MINIMUM_NET_PROFIT_USD
+  economicPolicy: ReturnType<typeof sellerOsRoiMarginPolicyContractV2>
   safeToDiscount: boolean
   humanApprovalRequired: true
   automaticPriceChangeAllowed: false
@@ -175,8 +180,10 @@ export function buildTeoListingPriceDecisionV1(input: {
       maximumSafeDiscountUsd: null,
       expectedNetProfitAtRecommended: null,
       expectedMarginPercentAtRecommended: null,
+      expectedRoiPercentAtRecommended: null,
       currentExpectedNetProfit,
       minimumNetProfitUsd: TEO_MINIMUM_NET_PROFIT_USD,
+      economicPolicy: sellerOsRoiMarginPolicyContractV2(),
       safeToDiscount: false,
       humanApprovalRequired: true,
       automaticPriceChangeAllowed: false,
@@ -221,9 +228,11 @@ export function buildTeoListingPriceDecisionV1(input: {
   const expectedMargin = expected?.ready
     ? expected.estimatedNetMarginPercent
     : null
+  const expectedRoi = expected?.ready
+    ? expected.estimatedRoiPercent
+    : null
   const safeToDiscount = suggestedDiscountUsd > 0 &&
-    expected?.ready === true && expected.passesProfitGate &&
-    (expectedProfit ?? Number.NEGATIVE_INFINITY) >= TEO_MINIMUM_NET_PROFIT_USD
+    expected?.ready === true && expected.passesProfitGate
   const action = currentLandedPrice < minimumSafeLandedPrice
     ? "RAISE_TO_SAFE_FLOOR" as const
     : safeToDiscount
@@ -251,8 +260,10 @@ export function buildTeoListingPriceDecisionV1(input: {
     maximumSafeDiscountUsd,
     expectedNetProfitAtRecommended: expectedProfit,
     expectedMarginPercentAtRecommended: expectedMargin,
+    expectedRoiPercentAtRecommended: expectedRoi,
     currentExpectedNetProfit,
     minimumNetProfitUsd: TEO_MINIMUM_NET_PROFIT_USD,
+    economicPolicy: sellerOsRoiMarginPolicyContractV2(),
     safeToDiscount,
     humanApprovalRequired: true,
     automaticPriceChangeAllowed: false,

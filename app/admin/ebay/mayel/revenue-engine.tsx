@@ -18,7 +18,7 @@ type Result = Awaited<ReturnType<typeof prepareTreatmentPreviewV1>>
 type ListingChoice = { itemId: string; title: string; sku?: string | null; observedAt?: string | null }
 const money = (n: number | null | undefined) => n === null || n === undefined ? "Por comprobar" : `$${n.toFixed(2)}`
 const button = "min-h-11 rounded-xl border border-[#c7d0c3] bg-white px-4 py-2 text-sm font-semibold disabled:opacity-50"
-const presets = { Conservador: [2, 3, 10, 20], Equilibrado: [3, 5, 8, 15], Acelerar: [3, 7, 8, 15] } as const
+const presets = { Conservador: [2, 3], Equilibrado: [3, 5], Acelerar: [3, 7] } as const
 async function request(body?: unknown, after?: string) {
   const { data } = await supabase.auth.getSession()
   if (!data.session) throw Error("AUTH_REQUIRED")
@@ -41,7 +41,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [pageCursor, setPageCursor] = useState<string | null>(null)
   const [selected, setSelected] = useState<string[]>([])
-  const [policy, setPolicy] = useState<PromotionPolicy>({ mode: "MANUAL", minRate: 3, maxRate: 5, minProfit: 8, minMargin: 15,
+  const [policy, setPolicy] = useState<PromotionPolicy>({ mode: "MANUAL", minRate: 3, maxRate: 5, minProfit: 0, minMargin: 15,
     window: "NOW", timeZone: "", startsAt: null, endsAt: null })
   const [preset, setPreset] = useState("Equilibrado")
   const [window, setWindow] = useState<MetricWindow>("7D")
@@ -57,7 +57,7 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
   const initialListingsRequested = useRef(false)
   const local = useMayelLocalFirstV1({ menu, selected, metricWindow: window, policy, dates, listings, pageCursor }, saved => {
     setMenu(saved.menu); setSelected(saved.selected); setWindow(saved.metricWindow as MetricWindow)
-    setPolicy(saved.policy as PromotionPolicy); setPreset("Personalizado"); setDates(saved.dates)
+    setPolicy({ ...(saved.policy as PromotionPolicy), minProfit: 0, minMargin: 15 }); setPreset("Personalizado"); setDates(saved.dates)
     setListings(saved.listings); setPageCursor(saved.pageCursor)
   })
   const policyDraftSignature = JSON.stringify({ policy, selected, menu, dates })
@@ -173,10 +173,11 @@ export function MayelRevenueEngine({ owner }: { owner: boolean }) {
       {menu === 1 && <section className="space-y-3 rounded-2xl bg-white p-5" aria-label="Política de promoción">
         <label>Política <select className="rounded border p-2" value={preset} onChange={e => {
           setPreset(e.target.value); setResult(null); const values = presets[e.target.value as keyof typeof presets]
-          if (values) setPolicy(old => ({ ...old, minRate: values[0], maxRate: values[1], minProfit: values[2], minMargin: values[3] }))
+          if (values) setPolicy(old => ({ ...old, minRate: values[0], maxRate: values[1], minProfit: 0, minMargin: 15 }))
         }}>{[...Object.keys(presets), "Personalizado"].map(p => <option key={p}>{p}</option>)}</select></label>
-        <div className="grid gap-3 sm:grid-cols-4">{([["minRate", "Mínimo %"], ["maxRate", "Máximo %"], ["minProfit", "Beneficio mínimo $"], ["minMargin", "Margen mínimo %"]] as const).map(([key, label]) =>
+        <div className="grid gap-3 sm:grid-cols-2">{([["minRate", "Mínimo %"], ["maxRate", "Máximo %"]] as const).map(([key, label]) =>
           <label key={key}>{label}<input type="number" min="0" step="0.01" value={policy[key]} className="mt-1 w-full rounded border p-2" onChange={e => changePolicy({ [key]: e.target.value === "" ? NaN : Number(e.target.value) })} /></label>)}</div>
+        <p className="text-sm text-slate-600">Política económica fija: ROI estimado ≥30% y margen de contribución ≥15%, simultáneamente; sin piso monetario.</p>
         <div className="flex flex-wrap gap-4"><label>Modo <select value={policy.mode} onChange={e => changePolicy({ mode: e.target.value as PromotionPolicy["mode"] })}>
           <option value="OFF">Apagado</option><option value="MANUAL">Manual</option><option value="AUTO">Automático · simular</option></select></label>
           <label>Cuándo <select value={policy.window} onChange={e => changePolicy({ window: e.target.value as PromotionPolicy["window"] })}>

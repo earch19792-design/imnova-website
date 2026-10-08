@@ -29,8 +29,9 @@ test("policy executes strict winner and active-listing thresholds without null c
     potentialScore: 75,
     confidenceScore: 70,
     currentStock: 4,
-    estimatedMarginPct: 20,
-    estimatedNetProfit: 5,
+    estimatedMarginPct: 15,
+    estimatedRoiPct: 30,
+    estimatedNetProfit: 1,
     hasExactEvidence: true,
   })
   assert.equal(winner.eligible, true)
@@ -38,8 +39,9 @@ test("policy executes strict winner and active-listing thresholds without null c
     potentialScore: null,
     confidenceScore: 70,
     currentStock: 4,
-    estimatedMarginPct: 20,
-    estimatedNetProfit: 5,
+    estimatedMarginPct: 15,
+    estimatedRoiPct: 30,
+    estimatedNetProfit: 1,
     hasExactEvidence: true,
   }).eligible, false)
   assert.equal(policy.classifySellerWhatsAppAlert("out_of_stock", {
@@ -90,8 +92,9 @@ test("professional policy alerts only on material, actionable seller events", as
   assert.match(policy, /potential < 75/)
   assert.match(policy, /confidence < 70/)
   assert.match(policy, /stock < 4/)
-  assert.match(policy, /margin < 20/)
-  assert.match(policy, /profit < 5/)
+  assert.match(policy, /margin < 15/)
+  assert.match(policy, /roi < 30/)
+  assert.doesNotMatch(policy, /profit < [1-9]/)
   assert.match(policy, /!exactEvidence/)
   assert.match(policy, /priority: "critical"/)
   assert.match(policy, /deliveryClass: "digest"/)

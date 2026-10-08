@@ -150,24 +150,10 @@ export function ebayDraftOnlyEconomicsConfig(
       0,
       0.50,
     ),
-    minimumNetProfit: configuredNumber(
-      "EBAY_DRAFT_ONLY_MIN_NET_PROFIT",
-      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetProfit,
-      0,
-      10_000,
-    ),
-    minimumNetMarginPercent: configuredNumber(
-      "EBAY_DRAFT_ONLY_MIN_MARGIN_PERCENT",
+    minimumNetProfit: 0,
+    minimumNetMarginPercent:
       DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetMarginPercent,
-      0,
-      95,
-    ),
-    minimumRoiPercent: configuredNumber(
-      "EBAY_DRAFT_ONLY_MIN_ROI_PERCENT",
-      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumRoiPercent,
-      0,
-      10_000,
-    ),
+    minimumRoiPercent: DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumRoiPercent,
     ...overrides,
   })
 }

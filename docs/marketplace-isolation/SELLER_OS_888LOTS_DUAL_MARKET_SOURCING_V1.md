@@ -8,8 +8,8 @@ buying, listing, publishing, or repricing:
 
 1. Is the exact supplier product the exact marketplace product on each channel?
 2. Is there fresh, non-zero demand on each channel?
-3. What is the highest supplier unit cost that preserves at least USD 4 net on
-   either channel?
+3. What is the highest supplier unit cost that preserves estimated ROI of at
+   least 30% and contribution margin of at least 15% on either channel?
 
 ## Existing authorities reused
 
@@ -42,7 +42,9 @@ states.
 
 For each marketplace:
 
-`max delivered unit cost = buyer-landed sale price - marketplace fees - fulfillment - promotion - return reserve - other variable costs - USD 4`
+The maximum delivered and supplier-unit costs are the lower ceilings produced
+by the simultaneous 30% ROI and 15% contribution-margin constraints. There is
+no monetary profit floor. Unknown costs keep the ceiling unproven.
 
 The supplier-unit ceiling subtracts the observed inbound cost per unit. The
 shared-inventory ceiling is the lower of the eBay and Amazon ceilings, so a unit

@@ -1,5 +1,9 @@
 import { consumeListingFeeAuthorityV1,
   REQUIRED_FEE_COMPONENTS_V1 } from "../seller-os/listing-fee-authority-v1"
+import {
+  SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
+} from "@/lib/marketplace/seller-os-roi-margin-policy-v2"
 
 export const COMMERCIAL_TRACE_FINAL_PRICE_AUTHORITY_V1 =
   "SELLER_OS_COMMERCIAL_TRACE_FINAL_PRICE_AUTHORITY_V1" as const
@@ -269,11 +273,7 @@ export function evaluateCommercialTraceFinalPriceV1(
     Date.parse(String(owner.effectiveAt)) <= now &&
     (owner.freshUntil === null || owner.freshUntil === undefined ||
       Date.parse(String(owner.freshUntil)) > now) &&
-    gate.state === "CONFIGURED" && text(gate.provenance) &&
-    money(gate.minNetProfit) !== null &&
-    money(gate.minNetMarginPercent) !== null &&
-    money(gate.minRoiPercent) !== null &&
-    Number(gate.minNetMarginPercent) < 100
+    gate.state === "CONFIGURED" && text(gate.provenance)
   const fulfillment = fulfillmentCost(input.fulfillment, input, now)
   const market = record(input.marketPricing)
   const marketReady = market.sufficient === true &&
@@ -339,7 +339,7 @@ export function evaluateCommercialTraceFinalPriceV1(
       pricingMode: market.pricingMode ?? null },
     salePrice: price, marketSupportedTargetPrice:
       positive(market.marketSupportedTargetPrice),
-    roiBasis: "PRODUCT_COST_ONLY" as const,
+    roiBasis: "EBAY_LUNA_ORDER_INVESTMENT" as const,
     formula: "salePrice-productCost-supplierShippingQty1-ebayVariableFee-ebayFixedFee-otherSellerFees-promotedListingsCost-returnsReserve-otherExplicitCosts-fulfillmentCost" as const }
   if (blockers.length) return { ...base, status: "INCOMPLETE" as const,
     economics: null, economicFloor: null,
@@ -356,10 +356,11 @@ export function evaluateCommercialTraceFinalPriceV1(
     promotionCost + returnsCost + otherCost + serviceCost)
   const profit = cents(price! - totalCosts)
   const margin = profit / price! * 100
-  const roi = profit / productCost * 100
-  const gatePass = profit + 1e-9 >= Number(gate.minNetProfit) &&
-    margin + 1e-9 >= Number(gate.minNetMarginPercent) &&
-    roi + 1e-9 >= Number(gate.minRoiPercent)
+  const investmentBase = productCost + shippingCost + serviceCost
+  const roi = profit / investmentBase * 100
+  const gatePass = margin + 1e-9 >=
+      SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 &&
+    roi + 1e-9 >= SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2
   // A quote for one sale price does not bound fees at lower prices when a
   // category schedule has discontinuities. Only an interval maximum does.
   const fixedCosts = productCost + shippingCost + intervalFee! + otherCost + serviceCost +
@@ -368,11 +369,12 @@ export function evaluateCommercialTraceFinalPriceV1(
   const variableReserveRate = Number(promotion.ratePercent ?? 0) / 100 +
     Number(returns.ratePercent ?? 0) / 100
   const retained = 1 - variableReserveRate
-  const marginRetained = retained - Number(gate.minNetMarginPercent) / 100
+  const marginRetained = retained -
+    SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 / 100
   const floor = retained > 0 && marginRetained > 0
-    ? ceilCents(Math.max((fixedCosts + Number(gate.minNetProfit)) / retained,
-        fixedCosts / marginRetained,
-        (fixedCosts + productCost * Number(gate.minRoiPercent) / 100) / retained))
+    ? ceilCents(Math.max(fixedCosts / marginRetained,
+        (fixedCosts + investmentBase *
+          SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 / 100) / retained))
     : null
   const economics = { salePrice: price, productCost,
     supplierShippingQty1: shippingCost, ebayVariableFee: variableFee,
@@ -382,9 +384,10 @@ export function evaluateCommercialTraceFinalPriceV1(
     totalCosts, netProfit: profit,
     netMarginPercent: cents(margin), roiPercent: cents(roi) }
   const profitabilityGate = { status: "PROVEN" as const,
-    minNetProfit: Number(gate.minNetProfit),
-    minNetMarginPercent: Number(gate.minNetMarginPercent),
-    minRoiPercent: Number(gate.minRoiPercent),
+    minNetProfit: null,
+    minNetMarginPercent:
+      SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+    minRoiPercent: SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
     actualNetProfit: profit, actualNetMarginPercent: cents(margin),
     actualRoiPercent: cents(roi), gatePass }
   const authorized = gatePass && floor !== null && price! >= floor

@@ -2207,9 +2207,9 @@ export async function runListingAiApprovalQueueBatch(input: {
             },
           })
           analyzed += 1
-          const preliminarySafe = result.evidence.estimatedProfit !== null && result.evidence.estimatedProfit >= 5 &&
+          const preliminarySafe = result.evidence.estimatedProfit !== null &&
             result.evidence.roiPercent !== null && result.evidence.roiPercent >= 30 &&
-            result.evidence.netMarginPercent !== null && result.evidence.netMarginPercent >= 20
+            result.evidence.netMarginPercent !== null && result.evidence.netMarginPercent >= 15
           const qualification = automaticQualification({ identity: enriched.identity,
             conflicts: enriched.conflicts, exactLunaMapping: result.evidence.exactLunaMapping,
             exactComparableCount: result.evidence.activeExactCount,

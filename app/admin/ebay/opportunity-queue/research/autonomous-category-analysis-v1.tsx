@@ -60,7 +60,6 @@ function decisionTone(value: string | undefined) {
 
 export function AutonomousCategoryAnalysisV1() {
   const [category, setCategory] = useState("Pet Supplies")
-  const [targetNetProfit, setTargetNetProfit] = useState(4)
   const [running, setRunning] = useState(false)
   const [timedOut, setTimedOut] = useState(false)
   const [error, setError] = useState("")
@@ -80,7 +79,7 @@ export function AutonomousCategoryAnalysisV1() {
           signal: controller.signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "RUN_STOCKING_BATCH", category,
-            scanLimit: 100, targetDrafts: 10, targetNetProfit }),
+            scanLimit: 100, targetDrafts: 10 }),
         })
       const payload = await response.json() as {
         success?: boolean; result?: CategoryResult; error?: string }
@@ -121,7 +120,8 @@ export function AutonomousCategoryAnalysisV1() {
           Primeros 10 borradores calificados
         </h2>
         <p className="mt-1 text-xs leading-5 text-slate-400">
-          Seller OS revisa hasta 100 candidatos, exige al menos $4 netos y solo
+          Seller OS revisa hasta 100 candidatos, exige ROI ≥30% y margen de
+          contribución ≥15% simultáneamente, y solo
           prueba packs respaldados por ventas. Si falta evidencia, la solicita
           automáticamente. Crea borradores internos; no publica ni compra.
         </p>
@@ -131,14 +131,8 @@ export function AutonomousCategoryAnalysisV1() {
           maxLength={100}
           className="mt-1.5 block w-56 rounded-lg border border-white/10 bg-[#07111d] px-3 py-2 text-sm text-white" />
       </label>
-      <label className="text-xs text-slate-400">Ganancia mínima
-        <input type="number" min={4} max={10000} step="0.01"
-          value={targetNetProfit}
-          onChange={(event) => setTargetNetProfit(Number(event.target.value))}
-          className="mt-1.5 block w-32 rounded-lg border border-white/10 bg-[#07111d] px-3 py-2 text-sm text-white" />
-      </label>
       <button type="button" onClick={() => void run()}
-        disabled={running || !category.trim() || targetNetProfit < 4}
+        disabled={running || !category.trim()}
         className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
         {running ? "Preparando lote…" : timedOut
           ? "Forzar reintento seguro" : "Buscar 10 borradores"}

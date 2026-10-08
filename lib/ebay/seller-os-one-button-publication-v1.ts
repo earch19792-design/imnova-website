@@ -55,7 +55,7 @@ export function sellerOsOneButtonNextActionV1(
   if (/FEE|ECONOMICS|PROFIT|MARKET_PRICE/.test(evidence)) {
     return Object.freeze({
       action: "COMPLETE_FEE",
-      message: "Falta cerrar fees y confirmar la ganancia mínima de $4.",
+      message: "Falta cerrar costos y confirmar ROI ≥30% y margen de contribución ≥15%.",
     })
   }
   if (/DUPLICATE|COLLISION|ALREADY_PUBLISHED|ANOTHER_OFFER|OFFER_COLLECTION|MULTIPLE.*OFFER/.test(

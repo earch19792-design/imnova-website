@@ -61,9 +61,11 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
   if (!resolved.incrementalAdCostsProven) blockers.push("AD_INCREMENTAL_TAX_OR_CONVERSION_BOUND_REQUIRED")
   blockers.push(...base.missing.map(k => `ECONOMICS_REQUIRED:${k}`))
   if (!feeProven) blockers.push("SELLER_OS_EBAY_FEE_AUTHORITY_REQUIRED", ...fee.blockers)
-  const draft = record(raw.policyDraft), policy = input.policyOverride ?? draft.policy as PromotionPolicy | undefined
+  const draft = record(raw.policyDraft)
+  const rawPolicy = input.policyOverride ?? draft.policy as PromotionPolicy | undefined
+  let policy: PromotionPolicy | undefined
   let policyValid = false
-  try { validatePromotionPolicyV1(policy!); policyValid = true } catch (error) { blockers.push(error instanceof Error ? error.message : "OWNER_POLICY_REQUIRED") }
+  try { policy = validatePromotionPolicyV1(rawPolicy!); policyValid = true } catch (error) { blockers.push(error instanceof Error ? error.message : "OWNER_POLICY_REQUIRED") }
   if (policyValid && policy!.window !== "NOW" && (Date.parse(policy!.startsAt!) > input.now.getTime() || Date.parse(policy!.endsAt!) <= input.now.getTime())) blockers.push("OWNER_POLICY_WINDOW_NOT_ACTIVE")
   const o = input.official
   const officialFresh = !!o && o.accountKey === input.accountKey && o.itemId === itemId && !!o.reference && fresh(o, input.now)
@@ -96,10 +98,12 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
     CURRENT_AD_STATE: officialFresh ? o!.currentAdState : "UNKNOWN", SALE_PRICE: e.salePrice.fresh ? e.salePrice.value : null,
     PRODUCT_COST: e.productCost.fresh ? e.productCost.value : null, SHIPPING: e.shippingCost.fresh ? e.shippingCost.value : null,
     EBAY_FEES: e.ebayFees.value, OTHER_VARIABLE_COSTS: e.otherCosts.fresh ? e.otherCosts.value : null,
-    PROFIT_BEFORE_ADS: base.profitBeforeAds, MARGIN_BEFORE_ADS: base.marginBeforeAds, OWNER_POLICY: policy ?? null,
+    PROFIT_BEFORE_ADS: base.profitBeforeAds, MARGIN_BEFORE_ADS: base.marginBeforeAds,
+    ROI_BEFORE_ADS: base.roiBeforeAds, OWNER_POLICY: policy ?? null,
     MAX_SAFE_AD_RATE_PCT: promotion?.maxSafeAdRatePct ?? null, PROPOSED_AD_RATE_PCT: promotion?.proposedAdRatePct ?? null,
     PROJECTED_AD_COST: promotion?.projectedAdCost ?? null, PROJECTED_PROFIT_AFTER_ADS: promotion?.projectedProfitAfterAds ?? null,
     PROJECTED_MARGIN_AFTER_ADS: promotion?.projectedMarginAfterAds ?? null,
+    PROJECTED_ROI_AFTER_ADS: promotion?.projectedRoiAfterAds ?? null,
     EBAY_AD_FEE_BASIS: e.adFeeBasis.fresh ? e.adFeeBasis.value : null,
     OWNER_MIN_AD_RATE_PCT: policyValid ? policy!.minRate : null, OWNER_MAX_AD_RATE_PCT: policyValid ? policy!.maxRate : null,
     MAYEL_RECOMMENDED_RATE: recommendedRate, WHY_MAYEL_RECOMMENDS_PROMOTION: decision?.why ?? "Esperando evidencia económica.",
@@ -129,7 +133,7 @@ export function buildAdsActivationListingV1(input: { accountKey: string; raw: un
     contingentOrderComponents: authority.contingentOrderComponents ?? null,
     postSaleLearning: adsPostSaleLearningV1({accountKey:input.accountKey,itemId,feeReconciliation:raw.latestFeeReconciliation,report:raw.latestAdsReport}),
     feeEstimateMode: authority.feeEstimateMode ?? null, economicsAutoResolution: true, codexRequiredForListingEconomics: false,
-    ownerPolicyLoaded: !!policy, ownerPolicyValid: policyValid, policySource: input.policyOverride ? "CURRENT_OWNER_PREVIEW_INPUT" : draft.id ?? null,
+    ownerPolicyLoaded: !!rawPolicy, ownerPolicyValid: policyValid, policySource: input.policyOverride ? "CURRENT_OWNER_PREVIEW_INPUT" : draft.id ?? null,
     promotionBlockedMargin: promotion?.promotionBlockedMargin ?? false,
     ebayAdsOfficialContractCertified: contractState.certified, listingEligibleForAds: officialFresh ? o!.listingEligible : null,
     singleListingAdsCanaryReady: ready, approvalDigest: ready ? feeDigestV1({ accountKey: input.accountKey, preview, evidence, authorityId: authority.authorityId, official: o }) : null,
