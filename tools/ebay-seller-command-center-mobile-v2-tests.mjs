@@ -13,6 +13,10 @@ const canonicalNavigation = readFileSync("lib/seller-os/navigation.ts", "utf8")
 const journeyGuide = readFileSync("app/admin/ebay/mobile-review/seller-journey-guide.tsx", "utf8")
 const registration = readFileSync("app/admin/ebay/listings/register/page.tsx", "utf8")
 const registrationApi = readFileSync("app/api/admin/ebay/listings/register/route.ts", "utf8")
+const universalLunaPublisher = readFileSync(
+  "app/admin/ebay/fast-luna-batch/page.tsx", "utf8")
+const universalLunaPublisherApi = readFileSync(
+  "app/api/admin/ebay/fast-luna-batch/route.ts", "utf8")
 const productResearchStepMigration = readFileSync(
   "supabase/migrations/20260717200000_allow_product_research_command_center_step.sql",
   "utf8",
@@ -29,6 +33,20 @@ const normalizeEstimateOnlyShippingMigration = readFileSync(
   "supabase/migrations/20260722002000_normalize_estimate_only_shipping.sql",
   "utf8",
 )
+
+test("universal Luna publisher exposes exact products and real animated progress", () => {
+  assert.match(universalLunaPublisher, /Universal Luna Direct Publisher V1/)
+  assert.match(universalLunaPublisher, /productReferences/)
+  assert.match(universalLunaPublisher, /publication_write_count/)
+  assert.match(universalLunaPublisher, /official_readback_pass/)
+  assert.match(universalLunaPublisher, /prefers-reduced-motion/)
+  assert.match(universalLunaPublisher, /role="dialog"/)
+  assert.match(universalLunaPublisher,
+    /La animación refleja estados durables reales/)
+  assert.doesNotMatch(universalLunaPublisher, /setTimeout\(/)
+  assert.match(universalLunaPublisherApi,
+    /startUniversalLunaDirectBatchV1/)
+})
 
 test("mobile command center uses the canonical Seller OS information architecture", () => {
   for (const label of ["Dashboard", "Opportunities", "Listings", "StockGuard",

@@ -14,7 +14,9 @@ import { autonomousGreenfieldCurrentPreparationReadyV1 } from
 import { collectLunaCatalogControlledTestCandidateBatchV1,
   ensureRadarCandidateEconomicsPreflightsV1,
   materializeRadarRevenueFactoryCandidateBatchV1,
-  resumeRadarFactoryCandidateAfterShippingV1 } from
+  resolveUniversalLunaRequestedProductsV1,
+  resumeRadarFactoryCandidateAfterShippingV1,
+  type UniversalLunaRequestedProductV1 } from
   "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
@@ -52,6 +54,8 @@ const CONTRACT = "AUTONOMOUS_EBAY_STOCKING_BATCH_V1"
 export const FAST_LUNA_TEST_BATCH_CONTRACT_V1 =
   "FAST_LUNA_TEST_BATCH_CONTROL_V1" as const
 export const FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1 = 4
+export const UNIVERSAL_LUNA_DIRECT_PUBLISHER_CONTRACT_V1 =
+  "UNIVERSAL_LUNA_DIRECT_PUBLISHER_V1" as const
 const RECOVERABLE_SHIPPING_BLOCKERS = Object.freeze([
   "AUTONOMOUS_STOCKING_SHIPPING_SLOT_BINDING_CONTRADICTION",
   "AUTONOMOUS_STOCKING_SHIPPING_SLOT_ROLLOVER_READBACK_INVALID",
@@ -214,6 +218,37 @@ function fastLunaConfirmation(targetCount: number) {
   return `PUBLICAR ${targetCount} LISTINGS DE LUNA`
 }
 
+function universalRequestedProducts(value: unknown) {
+  if (!Array.isArray(value)) return Object.freeze([])
+  const products: UniversalLunaRequestedProductV1[] = []
+  for (const entry of value) {
+    const row = record(entry)
+    const requestReference = text(row.requestReference)
+    const productId = text(row.productId)
+    const variantId = text(row.variantId)
+    const supplierSku = text(row.supplierSku)
+    const sourceUrl = text(row.sourceUrl) || null
+    if (!requestReference || !productId || !variantId || !supplierSku) {
+      throw new Error("UNIVERSAL_LUNA_DURABLE_SELECTION_INVALID")
+    }
+    products.push(Object.freeze({ requestReference, productId, variantId,
+      supplierSku, sourceUrl }))
+  }
+  if (products.length > FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1) {
+    throw new Error("UNIVERSAL_LUNA_DURABLE_SELECTION_INVALID")
+  }
+  return Object.freeze(products)
+}
+
+function universalIdentityDigest(products: readonly
+    UniversalLunaRequestedProductV1[]) {
+  return JSON.stringify(products.map((product) => ({
+    productId: product.productId,
+    variantId: product.variantId,
+    supplierSku: product.supplierSku,
+  })))
+}
+
 export async function readFastLunaTestBatchV1(input: Readonly<{
   supabase: SupabaseAdmin
   accountKey: string
@@ -237,6 +272,8 @@ export async function readFastLunaTestBatchV1(input: Readonly<{
     marketplaceWrites: 0 as const,
   })
   const batch = record(batchRead.data)
+  const requestedProducts = universalRequestedProducts(
+    batch.requested_luna_products)
   const childrenRead = await input.supabase.from(
     "seller_os_autonomous_stocking_batch_children_v1")
     .select("id,batch_id,sequence_no,status,candidate_id,product_id,variant_id,supplier_sku,listing_package_id,listing_id,title,price,quantity,decision_profit,decision_margin,publication_write_count,official_readback_pass,idempotent_replay_confirmed,evidence,selected_at,published_confirmed_at,replay_confirmed_at,updated_at,created_at")
@@ -252,6 +289,9 @@ export async function readFastLunaTestBatchV1(input: Readonly<{
     children: Object.freeze(rows(childrenRead.data)),
     selectionPolicy: Object.freeze({
       source: "LUNA_CATALOG_PRODUCT_TRUTH" as const,
+      mode: requestedProducts.length > 0
+        ? "EXACT_OWNER_SELECTION" as const : "AUTOMATIC" as const,
+      requestedProducts,
       marketLookupPerformed: false as const,
       marketDemandGateRequired: false as const,
       exactProductDemandClaimed: false as const,
@@ -336,6 +376,93 @@ export async function startFastLunaTestBatchV1(input: Readonly<{
     ownerUserId: input.ownerUserId,
     batchId: text(written.id),
   })
+}
+
+export async function startUniversalLunaDirectBatchV1(input: Readonly<{
+  supabase: SupabaseAdmin
+  accountKey: string
+  ownerUserId: string
+  commandClientId: string
+  targetCount: number
+  productReferences?: readonly string[]
+  clientIdempotencyKey: string
+}>) {
+  const references = input.productReferences ?? []
+  if (references.length === 0) {
+    return startFastLunaTestBatchV1({ ...input,
+      confirmation: fastLunaConfirmation(input.targetCount) })
+  }
+  if (!Number.isInteger(input.targetCount) || input.targetCount < 1 ||
+      input.targetCount > FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1 ||
+      references.length !== input.targetCount ||
+      !/^[A-Za-z0-9._:-]{8,160}$/.test(input.clientIdempotencyKey) ||
+      !/^[A-Za-z0-9._:-]{1,200}$/.test(input.commandClientId)) {
+    throw new Error("UNIVERSAL_LUNA_DIRECT_REQUEST_INVALID")
+  }
+  const requestedProducts = await resolveUniversalLunaRequestedProductsV1({
+    supabase: input.supabase, references,
+  })
+  const expectedIdentities = universalIdentityDigest(requestedProducts)
+  const replayRead = await input.supabase.from(
+    "seller_os_autonomous_stocking_batches_v1").select("*")
+    .eq("account_key", input.accountKey)
+    .eq("idempotency_key", input.clientIdempotencyKey).maybeSingle()
+  if (replayRead.error) {
+    throw new Error("UNIVERSAL_LUNA_DIRECT_IDEMPOTENCY_READ_FAILED")
+  }
+  if (replayRead.data) {
+    const replay = record(replayRead.data)
+    const replayProducts = universalRequestedProducts(
+      replay.requested_luna_products)
+    if (replay.owner_user_id !== input.ownerUserId ||
+        replay.command_client_id !== input.commandClientId ||
+        replay.authorization_mode !== "OWNER_FAST_LUNA_TEST_BATCH_V1" ||
+        Number(replay.target_published_count) !== input.targetCount ||
+        universalIdentityDigest(replayProducts) !== expectedIdentities) {
+      throw new Error("UNIVERSAL_LUNA_DIRECT_IDEMPOTENCY_CONFLICT")
+    }
+    return readFastLunaTestBatchV1({ supabase: input.supabase,
+      accountKey: input.accountKey, ownerUserId: input.ownerUserId,
+      batchId: text(replay.id) })
+  }
+  const baselineActiveCount = await activeCount(input)
+  const write = await input.supabase.rpc(
+    "start_universal_luna_direct_batch_v1", {
+      p_account_key: input.accountKey,
+      p_owner_user_id: input.ownerUserId,
+      p_command_client_id: input.commandClientId,
+      p_target_published_count: input.targetCount,
+      p_baseline_active_count: baselineActiveCount,
+      p_idempotency_key: input.clientIdempotencyKey,
+      p_confirmation: fastLunaConfirmation(input.targetCount),
+      p_requested_luna_products: requestedProducts,
+    })
+  if (write.error || !write.data) {
+    const message = text(record(write.error).message)
+    if (message.includes("AUTONOMOUS_STOCKING_BATCH_ALREADY_ACTIVE")) {
+      throw new Error("FAST_LUNA_TEST_BATCH_ALREADY_ACTIVE")
+    }
+    if (message.includes("IDEMPOTENCY_CONFLICT")) {
+      throw new Error("UNIVERSAL_LUNA_DIRECT_IDEMPOTENCY_CONFLICT")
+    }
+    throw new Error("UNIVERSAL_LUNA_DIRECT_DURABLE_WRITE_FAILED")
+  }
+  const written = record(write.data)
+  const writtenProducts = universalRequestedProducts(
+    written.requested_luna_products)
+  if (written.account_key !== input.accountKey ||
+      written.owner_user_id !== input.ownerUserId ||
+      written.command_client_id !== input.commandClientId ||
+      written.authorization_mode !== "OWNER_FAST_LUNA_TEST_BATCH_V1" ||
+      Number(written.target_published_count) !== input.targetCount ||
+      written.idempotency_key !== input.clientIdempotencyKey ||
+      Number(written.baseline_active_count) !== baselineActiveCount ||
+      universalIdentityDigest(writtenProducts) !== expectedIdentities) {
+    throw new Error("UNIVERSAL_LUNA_DIRECT_DURABLE_READBACK_FAILED")
+  }
+  return readFastLunaTestBatchV1({ supabase: input.supabase,
+    accountKey: input.accountKey, ownerUserId: input.ownerUserId,
+    batchId: text(written.id) })
 }
 
 function publicationInput(input: Readonly<{
@@ -653,6 +780,9 @@ async function executeBatch(input: Readonly<{
 
   let selectionEvidence: Row = {}
   if (!child.listing_package_id) {
+    const requestedProducts = universalRequestedProducts(
+      input.batch.requested_luna_products)
+    const ownerSelectedExactProducts = requestedProducts.length > 0
     const existingSlot = record(record(child.evidence).currentShippingSlotV1)
     let exactSlot: ReturnType<
       typeof certifyCurrentBatchShippingSlotReadbackV1> | null = null
@@ -722,7 +852,9 @@ async function executeBatch(input: Readonly<{
     }
     let batch = await collectLunaCatalogControlledTestCandidateBatchV1({
       supabase: input.supabase, accountKey: input.accountKey,
-      targetCandidates: 100,
+      targetCandidates: ownerSelectedExactProducts
+        ? requestedProducts.length : 100,
+      requestedProducts,
     })
     const economics = await ensureRadarCandidateEconomicsPreflightsV1({
       supabase: input.supabase, accountKey: input.accountKey, batch,
@@ -730,7 +862,9 @@ async function executeBatch(input: Readonly<{
     if (economics.attempted > 0) {
       batch = await collectLunaCatalogControlledTestCandidateBatchV1({
         supabase: input.supabase, accountKey: input.accountKey,
-        targetCandidates: 100,
+        targetCandidates: ownerSelectedExactProducts
+          ? requestedProducts.length : 100,
+        requestedProducts,
       })
     }
     let factory = await materializeRadarRevenueFactoryCandidateBatchV1({
@@ -904,7 +1038,9 @@ async function executeBatch(input: Readonly<{
       break
     }
     selectionEvidence = { automaticCandidateBatch: {
-      selectionMode: "LUNA_CATALOG_CONTROLLED_TEST",
+      selectionMode: ownerSelectedExactProducts
+        ? "LUNA_CATALOG_DIRECT_OWNER_SELECTION"
+        : "LUNA_CATALOG_CONTROLLED_TEST",
       marketLookupPerformed: false,
       marketDemandGateRequired: false,
       demandStatus: "NOT_EVALUATED",
@@ -928,10 +1064,15 @@ async function executeBatch(input: Readonly<{
       alreadyLiveExcluded: factory.alreadyLiveExcludedCount,
       waitingBrowserWorker: factory.waitingBrowserWorker,
       autonomouslyContinued: true,
+      requestedProductCount: requestedProducts.length,
+      serverResolvedCanonicalIdentities: ownerSelectedExactProducts,
     }, economics, keywordStatus: keyword.status,
       exactShippingContinuation,
       exactPackageResolution,
-      manualProductSelection: false, manualProductIdInjection: false,
+      ownerSelectedExactProducts,
+      manualProductSelection: ownerSelectedExactProducts,
+      manualProductIdInjection: false,
+      untrustedProductIdInjection: false,
       codexRuntimeDependency: false }
     if (!selection) {
       const rollover = exactSlot?.shippingReady
@@ -1056,7 +1197,7 @@ async function executeBatch(input: Readonly<{
         status: "AUTONOMOUS_CANDIDATE_CONTINUATION_PENDING",
         batchId: input.batch.id, sequenceNo: child.sequence_no,
         selectionEvidence, AUTONOMOUS_CANDIDATE_CONTINUATION: true,
-        MANUAL_PRODUCT_SELECTION: false,
+        MANUAL_PRODUCT_SELECTION: ownerSelectedExactProducts,
         MANUAL_PRODUCT_ID_INJECTION: false,
         CODEX_RUNTIME_DEPENDENCY: false, OWNER_ACTION_REQUIRED: false,
         safety: { concurrency: 1, marketplaceWrites: 0,

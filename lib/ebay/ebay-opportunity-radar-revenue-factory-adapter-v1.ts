@@ -470,6 +470,26 @@ type RadarLunaCatalogReadMetadataV1 = Readonly<{
   truncated: boolean
 }>
 
+export type UniversalLunaRequestedProductV1 = Readonly<{
+  requestReference: string
+  productId: string
+  variantId: string
+  supplierSku: string
+  sourceUrl: string | null
+}>
+
+function normalizedCatalogUrl(value: unknown) {
+  const candidate = text(value, 500)
+  if (!candidate) return null
+  try {
+    const parsed = new URL(candidate)
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null
+    return `${parsed.hostname.toLowerCase()}${parsed.pathname.replace(/\/+$/, "")}`
+  } catch {
+    return null
+  }
+}
+
 export async function readRadarRevenueFactoryLunaCatalogV1(
   supabase: RadarRevenueFactoryReadClientV1,
 ) {
@@ -994,6 +1014,83 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
   })
 }
 
+/** Resolve owner-supplied SKU/ITEM, Luna product id, or Luna URL against the
+ * canonical catalog. The returned identities are server-derived and safe to
+ * persist; caller-provided product/variant ids are never trusted. */
+export async function resolveUniversalLunaRequestedProductsV1(input: Readonly<{
+  supabase: RadarRevenueFactoryReadClientV1
+  references: readonly string[]
+  now?: Date
+}>) {
+  if (input.references.length < 1 || input.references.length > 4) {
+    throw new Error("UNIVERSAL_LUNA_PRODUCT_REQUEST_INVALID")
+  }
+  const references = input.references.map((entry) => text(entry, 500))
+  if (references.some((entry) => !entry)) {
+    throw new Error("UNIVERSAL_LUNA_PRODUCT_REQUEST_INVALID")
+  }
+  const normalizedReferences = references.map((entry) =>
+    normalizedCatalogUrl(entry) ?? entry!.toLowerCase())
+  if (new Set(normalizedReferences).size !== normalizedReferences.length) {
+    throw new Error("UNIVERSAL_LUNA_PRODUCT_REQUEST_DUPLICATE")
+  }
+  const catalog = await readRadarRevenueFactoryLunaCatalogV1(input.supabase)
+  const now = input.now ?? new Date()
+  const resolved: UniversalLunaRequestedProductV1[] = []
+  for (let index = 0; index < references.length; index += 1) {
+    const requestReference = references[index]!
+    const requestedUrl = normalizedCatalogUrl(requestReference)
+    const requestedText = requestReference.toLowerCase()
+    const matches = catalog.rows.filter((row) => {
+      const sku = text(row.sku)?.toLowerCase()
+      const productId = (text(row.supplier_product_id) ??
+        text(row.product_id))?.toLowerCase()
+      return requestedUrl
+        ? normalizedCatalogUrl(row.product_url) === requestedUrl
+        : sku === requestedText || productId === requestedText
+    })
+    if (matches.length === 0) {
+      throw new Error("UNIVERSAL_LUNA_PRODUCT_NOT_FOUND")
+    }
+    const identities = new Map<string, JsonRecord>()
+    for (const row of matches) {
+      const productId = text(row.supplier_product_id) ?? text(row.product_id)
+      const variantId = text(row.supplier_variant_id)
+      const sku = text(row.sku)
+      if (productId && variantId && sku) {
+        identities.set(catalogKey(productId, variantId, sku), row)
+      }
+    }
+    if (identities.size !== 1) {
+      throw new Error("UNIVERSAL_LUNA_PRODUCT_AMBIGUOUS")
+    }
+    const [identityKey, row] = [...identities.entries()][0]!
+    const [productId, variantId, supplierSku] = identityKey.split("\n")
+    const stockQuantity = number(row.inventory_quantity)
+    if (row.available !== true || stockQuantity === null || stockQuantity < 1) {
+      throw new Error("UNIVERSAL_LUNA_PRODUCT_OUT_OF_STOCK")
+    }
+    const cost = number(row.price)
+    if (cost === null || cost <= 0) {
+      throw new Error("UNIVERSAL_LUNA_PRODUCT_COST_UNPROVEN")
+    }
+    const observedAt = iso(row.captured_at)
+    const ageSeconds = observedAt
+      ? Math.max(0, Math.floor((now.getTime() - Date.parse(observedAt)) / 1_000))
+      : Number.POSITIVE_INFINITY
+    if (!observedAt || ageSeconds >
+        LUNA_CATALOG_CONTROLLED_TEST_MAXIMUM_AGE_SECONDS) {
+      throw new Error("UNIVERSAL_LUNA_PRODUCT_STALE")
+    }
+    if (!text(row.title, 350)) {
+      throw new Error("UNIVERSAL_LUNA_PRODUCT_IDENTITY_INCOMPLETE")
+    }
+    resolved.push(Object.freeze({ requestReference, productId, variantId,
+      supplierSku, sourceUrl: text(row.product_url, 500) }))
+  }
+  return Object.freeze(resolved)
+}
+
 export const LUNA_CATALOG_CONTROLLED_TEST_MAXIMUM_AGE_SECONDS = 86_400
 
 /**
@@ -1009,6 +1106,7 @@ export function buildLunaCatalogControlledTestCandidateBatchV1(input: Readonly<{
   catalogReadMetadata?: RadarLunaCatalogReadMetadataV1
   frontierPayload?: unknown
   targetCandidates?: number
+  requestedProducts?: readonly UniversalLunaRequestedProductV1[]
   now?: Date
 }>): ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1> & Readonly<{
   selectionMode: "LUNA_CATALOG_CONTROLLED_TEST"
@@ -1046,8 +1144,16 @@ export function buildLunaCatalogControlledTestCandidateBatchV1(input: Readonly<{
   const seeds: RadarRevenueFactoryFamilySeedV1[] = []
   const frontierRows = rows(record(input.frontierPayload).frontiers)
   let economicsPreflightCount = 0
-  const structurallyRanked = [...unique.entries()].sort(([leftKey, left],
+  const requestedOrder = new Map((input.requestedProducts ?? []).map(
+    (entry, index) => [catalogKey(entry.productId, entry.variantId,
+      entry.supplierSku), index]))
+  const structurallyRanked = [...unique.entries()]
+    .filter(([key]) => requestedOrder.size === 0 || requestedOrder.has(key))
+    .sort(([leftKey, left],
     [rightKey, right]) => {
+    if (requestedOrder.size > 0) {
+      return requestedOrder.get(leftKey)! - requestedOrder.get(rightKey)!
+    }
     const leftImages = Array.isArray(left.image_urls) ? left.image_urls.length : 0
     const rightImages = Array.isArray(right.image_urls) ? right.image_urls.length : 0
     return Number(rightImages > 0) - Number(leftImages > 0) ||
@@ -1068,7 +1174,7 @@ export function buildLunaCatalogControlledTestCandidateBatchV1(input: Readonly<{
       continue
     }
     const stockQuantity = number(row.inventory_quantity)
-    if (row.available !== true || stockQuantity !== null && stockQuantity <= 0) {
+    if (row.available !== true || stockQuantity === null || stockQuantity <= 0) {
       unavailable += 1
       continue
     }
@@ -1252,6 +1358,7 @@ export async function collectLunaCatalogControlledTestCandidateBatchV1(
     supabase: RadarRevenueFactoryReadClientV1
     accountKey: string
     targetCandidates?: number
+    requestedProducts?: readonly UniversalLunaRequestedProductV1[]
     now?: Date
   }>,
 ) {
@@ -1261,6 +1368,7 @@ export async function collectLunaCatalogControlledTestCandidateBatchV1(
     lunaCatalogRows: catalog.rows,
     catalogReadMetadata: catalog,
     targetCandidates: input.targetCandidates,
+    requestedProducts: input.requestedProducts,
     now: input.now,
   })
   if (!initial.seeds.length) return initial
@@ -1280,6 +1388,7 @@ export async function collectLunaCatalogControlledTestCandidateBatchV1(
     catalogReadMetadata: catalog,
     frontierPayload: frontierResult.data,
     targetCandidates: input.targetCandidates,
+    requestedProducts: input.requestedProducts,
     now: input.now,
   })
 }

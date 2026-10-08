@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic"
 
 import { NextResponse } from "next/server"
 
-import { readFastLunaTestBatchV1, startFastLunaTestBatchV1 } from
+import { readFastLunaTestBatchV1, startUniversalLunaDirectBatchV1 } from
   "@/lib/ebay/ebay-autonomous-stocking-batch-server-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
@@ -65,14 +65,15 @@ export async function POST(request: Request) {
     const targetCount = Number(body.targetCount)
     const clientIdempotencyKey = typeof body.clientIdempotencyKey === "string"
       ? body.clientIdempotencyKey.trim() : ""
-    const confirmation = typeof body.confirmation === "string"
-      ? body.confirmation.trim() : ""
-    const result = await startFastLunaTestBatchV1({
+    const productReferences = Array.isArray(body.productReferences)
+      ? body.productReferences.map((entry) => typeof entry === "string"
+        ? entry.trim() : "") : []
+    const result = await startUniversalLunaDirectBatchV1({
       ...context,
       commandClientId: OWNER_ADMIN_CLIENT,
       targetCount,
+      productReferences,
       clientIdempotencyKey,
-      confirmation,
     })
     return response({ success: true, result,
       safety: { commandWrites: 1, marketplaceWrites: 0,
@@ -80,7 +81,9 @@ export async function POST(request: Request) {
         execution: "SEQUENTIAL_BACKGROUND_CURRENT_PUBLISHER" } }, 202)
   } catch (error) {
     const code = safeCode(error)
-    const status = code === "FAST_LUNA_TEST_BATCH_REQUEST_INVALID"
+    const status = code === "FAST_LUNA_TEST_BATCH_REQUEST_INVALID" ||
+      code.startsWith("UNIVERSAL_LUNA_PRODUCT_") ||
+      code === "UNIVERSAL_LUNA_DIRECT_REQUEST_INVALID"
       ? 400 : code === "FAST_LUNA_TEST_BATCH_ALREADY_ACTIVE" ? 409 : 409
     return response({ success: false, error: code,
       safety: { commandWrites: 0, marketplaceWrites: 0,

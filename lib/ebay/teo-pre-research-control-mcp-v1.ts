@@ -32,7 +32,8 @@ import { getSupabaseAdminClient } from "../supabase-admin"
 import { readSellerOsRevenueControlPlaneV1 } from
   "./seller-os-revenue-control-plane-v1"
 import { FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1,
-  readFastLunaTestBatchV1, startFastLunaTestBatchV1 } from
+  readFastLunaTestBatchV1, startFastLunaTestBatchV1,
+  startUniversalLunaDirectBatchV1 } from
   "./ebay-autonomous-stocking-batch-server-v1"
 
 export const SELLER_OS_CONTROL_TOOL_NAMES_V1 = Object.freeze([
@@ -45,6 +46,7 @@ export const SELLER_OS_CONTROL_TOOL_NAMES_V1 = Object.freeze([
   "seller_os_get_revenue_control_plane",
   "seller_os_publish_luna_test_batch_v1",
   "seller_os_get_luna_test_batch_v1",
+  "seller_os_publish_luna_products_v1",
 ] as const)
 
 const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
@@ -53,7 +55,7 @@ const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
     "OWNER_AUTHORIZED_FAST_LUNA_TEST_BATCH_ONLY" })
 const securitySchemes = [{ type: "oauth2" as const,
   scopes: ["openid", "profile"] }]
-export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.5.0"
+export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.6.0"
 export function readSellerOsControlRegisteredCatalogV1(server: McpServer, resource: string) {
   // The pinned SDK registry reflects actual successful registration. This is a
   // diagnostic readback, never a substitute for ChatGPT's imported tools/list.
@@ -233,6 +235,33 @@ export function createServer(principal: SellerOsControlPrincipalV1) {
     })
     return toolResult(result,
       "Seller OS returned the durable Luna test batch readback.")
+  })
+  server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[9], {
+    title: "Publish any 1 to 4 Luna products",
+    description: "Use this when the owner says 'TEO publícame N productos de Luna en eBay'. With no productReferences, Seller OS selects N fresh in-stock Luna products. With SKU/ITEM or Luna URLs, it resolves and publishes exactly those products in the requested order. It does not require eBay market or demand evidence. Stock, complete traceable cost, canonical ROI and margin, duplicate, category, compliance, images, eBay permission, official readback and idempotent replay remain fail-closed.",
+    inputSchema: z.object({
+      targetCount: z.number().int().min(1)
+        .max(FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1),
+      productReferences: z.array(z.string().min(1).max(500))
+        .min(1).max(FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1).optional(),
+      clientIdempotencyKey: z.string().regex(/^[A-Za-z0-9._:-]{8,160}$/),
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: true,
+      idempotentHint: true, openWorldHint: true },
+    _meta: { securitySchemes },
+  }, async (args) => {
+    const current = context()
+    const result = await startUniversalLunaDirectBatchV1({
+      supabase: current.supabase,
+      accountKey: current.accountKey,
+      ownerUserId: current.principal.ownerUserId,
+      commandClientId: current.principal.commandClientId,
+      targetCount: args.targetCount,
+      productReferences: args.productReferences,
+      clientIdempotencyKey: args.clientIdempotencyKey,
+    })
+    return toolResult(result,
+      `Seller OS authorized the universal Luna batch for ${args.targetCount} listings.`)
   })
   return server
 }
