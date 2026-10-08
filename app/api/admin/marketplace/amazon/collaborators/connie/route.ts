@@ -16,6 +16,9 @@ import { getAmazonSpApiReadOnlyConfigurationV1 } from
   "@/lib/marketplace/amazon-sp-api-readonly-v1"
 import { runSellerOsAmazonConnieAutomaticCaptureV1 } from
   "@/lib/marketplace/seller-os-amazon-connie-auto-sync-v1"
+import { assertAmazonWholesaleScoutLimitV1,
+  scoutAmazonWholesaleOpportunitiesV1 } from
+  "@/lib/marketplace/seller-os-amazon-wholesale-opportunity-scout-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
@@ -77,6 +80,17 @@ export async function POST(req: Request) {
   }
   try {
     const body = record(await req.json())
+    if (body.action === "SCOUT_AMAZON_WHOLESALE_OPPORTUNITIES") {
+      const scout = await scoutAmazonWholesaleOpportunitiesV1({
+        supabase: getSupabaseAdminClient(),
+        limit: assertAmazonWholesaleScoutLimitV1(body.limit),
+        query: typeof body.query === "string" ? body.query : null,
+      })
+      return json({ success: true, scout,
+        safety: { readOnly: true, internalDatabaseWrites: false,
+          amazonWrites: 0, supplierPurchases: 0, publications: 0,
+          inventoryChanges: 0, repricing: 0, paidServicesActivated: 0 } })
+    }
     if (body.action === "SYNC_FROM_AMAZON_READ_ONLY") {
       const supabase = getSupabaseAdminClient()
       const sync = await runSellerOsAmazonConnieAutomaticCaptureV1({ supabase })

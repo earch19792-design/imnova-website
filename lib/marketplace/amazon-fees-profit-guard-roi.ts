@@ -5,6 +5,9 @@ export const AMAZON_FEES_PROFIT_GUARD_ROI_VERSION =
 import { buildAmazonReferralFeeEstimate as buildResolvedAmazonReferralFeeEstimate } from "./amazon-referral-fee-schedule.ts"
 // @ts-ignore Node dry-runs import TypeScript modules directly.
 import { buildAmazonOperationalCostStack } from "./amazon-luna-fba-prep-packing-costs.ts"
+// @ts-ignore Node dry-runs import TypeScript modules directly.
+import { calculateSellerOsPolicyLimitsV2 } from
+  "./seller-os-roi-margin-policy-v2"
 
 const sourceDataClass =
   "LOOP_149E_AMAZON_FEES_PROFIT_GUARD_ROI"
@@ -13,6 +16,7 @@ type RiskLevel =
   | "LOW"
   | "MEDIUM"
   | "HIGH"
+  | "UNPROVEN"
 
 type FulfillmentRecommendation =
   | "FBA_REVIEW_REQUIRED"
@@ -28,6 +32,7 @@ type ProfitGuardDecision =
   | "REJECT_LOW_ROI"
   | "REJECT_NEGATIVE_PROFIT"
   | "NEED_REAL_AMAZON_FEES"
+  | "NEED_COMPLETE_COSTS"
   | "NEED_FBA_FBM_DECISION"
   | "PRICE_TOO_COMPETITIVE"
   | "BLOCKED_BY_RESTRICTION_GATE"
@@ -154,9 +159,9 @@ function productKeyFromSku(supplierSku: string) {
 function buildConfig(config?: ProfitGuardConfig | null) {
   return {
     minimumNetMarginPercent:
-      normalizeNumber(config?.minimumNetMarginPercent, 18),
+      15,
     minimumRoiPercent:
-      normalizeNumber(config?.minimumRoiPercent, 35),
+      30,
     priceRangeSpreadPercent:
       normalizeNumber(config?.priceRangeSpreadPercent, 8),
     defaultReferralFeeRate:
@@ -229,6 +234,15 @@ export function buildAmazonFeesProfitGuardInput(
       normalizeBoolean(entry.dimensionsKnown),
     fulfillmentPreference:
       normalizeText(entry.fulfillmentPreference)?.toUpperCase() ?? "UNKNOWN",
+    costEvidence: {
+      supplierCostKnown: normalizeNullableNumber(entry.supplierCost) !== null,
+      salePriceKnown:
+        normalizeNullableNumber(entry.amazonSalePriceEstimate) !== null,
+      prepPackagingCostKnown:
+        normalizeNullableNumber(entry.prepPackagingCostEstimate) !== null,
+      shippingCostKnown:
+        normalizeNullableNumber(entry.shippingCostEstimate) !== null,
+    },
     config:
       normalizedConfig,
   }
@@ -475,6 +489,10 @@ export function buildAmazonProfitGuardDecision(values: {
     return "BLOCKED_BY_RESTRICTION_GATE"
   }
 
+  if (!Object.values(values.input.costEvidence).every(Boolean)) {
+    return "NEED_COMPLETE_COSTS"
+  }
+
   if (values.missingDimensionsWeight) {
     return "NEED_FBA_FBM_DECISION"
   }
@@ -528,6 +546,8 @@ export function buildAmazonFeesProfitGuardAssessment(
     buildAmazonReturnReserveEstimate(input)
   const landedCostEstimate =
     buildAmazonLandedCostEstimate(input)
+  const costEvidenceComplete = Object.values(input.costEvidence).every(Boolean) &&
+    (input.fbaFeeEstimate !== null || input.fbmCostEstimate !== null)
   const totalAmazonFeeEstimate =
     money(referralFeeEstimate.referralFeeAmount + fulfillment.fulfillmentCostEstimate)
   const totalCostEstimate =
@@ -554,11 +574,13 @@ export function buildAmazonFeesProfitGuardAssessment(
     money(totalCostEstimate + totalOperationalCostAddOn)
   const netProfitAfterOperationalAddOns =
     money(netProfitBeforeOperationalAddOns - totalOperationalCostAddOn)
+  const inventoryInvestmentBase = input.supplierCost +
+    input.shippingCostEstimate + input.prepPackagingCostEstimate
   const roi =
     buildAmazonRoiEstimate({
       netProfitEstimate,
       supplierCost:
-        input.supplierCost,
+        inventoryInvestmentBase,
       amazonSalePriceEstimate:
         input.amazonSalePriceEstimate,
     })
@@ -567,7 +589,7 @@ export function buildAmazonFeesProfitGuardAssessment(
       netProfitEstimate:
         netProfitAfterOperationalAddOns,
       supplierCost:
-        input.supplierCost,
+        inventoryInvestmentBase + totalOperationalCostAddOn,
       amazonSalePriceEstimate:
         input.amazonSalePriceEstimate,
     })
@@ -599,19 +621,31 @@ export function buildAmazonFeesProfitGuardAssessment(
         input.shippingCostEstimate,
       variableRate,
     })
-  const minimumProfitablePrice =
-    buildAmazonMinimumProfitablePrice({
-      breakEvenPrice,
-      minimumNetMarginPercent:
-        input.config.minimumNetMarginPercent,
-    })
+  const limits = calculateSellerOsPolicyLimitsV2({
+    purchaseCostUsd: input.supplierCost,
+    otherFixedCostUsd: fulfillment.fulfillmentCostEstimate +
+      input.prepPackagingCostEstimate + input.shippingCostEstimate,
+    investmentBaseAdditionalUsd: input.prepPackagingCostEstimate +
+      input.shippingCostEstimate,
+    variableCostRate: variableRate,
+  })
+  const limitsAfterOperationalAddOns = calculateSellerOsPolicyLimitsV2({
+    purchaseCostUsd: input.supplierCost,
+    otherFixedCostUsd: fulfillment.fulfillmentCostEstimate +
+      input.prepPackagingCostEstimate + input.shippingCostEstimate +
+      totalOperationalCostAddOn,
+    investmentBaseAdditionalUsd: input.prepPackagingCostEstimate +
+      input.shippingCostEstimate + totalOperationalCostAddOn,
+    variableCostRate: variableRate,
+  })
+  const minimumProfitablePrice = limits.minimumViablePriceUsd ??
+    buildAmazonMinimumProfitablePrice({ breakEvenPrice,
+      minimumNetMarginPercent: input.config.minimumNetMarginPercent })
   const minimumProfitablePriceAfterOperationalAddOns =
-    buildAmazonMinimumProfitablePrice({
-      breakEvenPrice:
+    limitsAfterOperationalAddOns.minimumViablePriceUsd ??
+      buildAmazonMinimumProfitablePrice({ breakEvenPrice:
         breakEvenPriceAfterOperationalAddOns,
-      minimumNetMarginPercent:
-        input.config.minimumNetMarginPercent,
-    })
+        minimumNetMarginPercent: input.config.minimumNetMarginPercent })
   const recommendedPriceRange =
     buildAmazonRecommendedPriceRange({
       minimumProfitablePrice,
@@ -636,18 +670,20 @@ export function buildAmazonFeesProfitGuardAssessment(
     !input.canProceedToListingPackage
   const canProceedToNextDecisionEngine =
     input.canProceedToFeesRoi &&
-    netProfitEstimate > 0 &&
+    costEvidenceComplete &&
+    roi.netMarginPercent >= input.config.minimumNetMarginPercent &&
+    roi.roiPercent >= input.config.minimumRoiPercent &&
     profitGuardDecision !== "REJECT_NEGATIVE_PROFIT" &&
     profitGuardDecision !== "REJECT_LOW_ROI" &&
     profitGuardDecision !== "PRICE_TOO_COMPETITIVE"
-  const priceCompetitivenessRisk: RiskLevel =
-    input.amazonSalePriceEstimate < minimumProfitablePrice
+  const priceCompetitivenessRisk: RiskLevel = !costEvidenceComplete
+    ? "UNPROVEN" : input.amazonSalePriceEstimate < minimumProfitablePrice
       ? "HIGH"
       : input.amazonSalePriceEstimate < minimumProfitablePrice * 1.08
         ? "MEDIUM"
         : "LOW"
-  const priceWarRisk: RiskLevel =
-    roi.netMarginPercent < input.config.minimumNetMarginPercent
+  const priceWarRisk: RiskLevel = !costEvidenceComplete
+    ? "UNPROVEN" : roi.netMarginPercent < input.config.minimumNetMarginPercent
       ? "HIGH"
       : roi.netMarginPercent < input.config.minimumNetMarginPercent + 5
         ? "MEDIUM"
@@ -658,6 +694,7 @@ export function buildAmazonFeesProfitGuardAssessment(
       !input.canProceedToFeesRoi ? "restriction gate blocks fees ROI continuation" : "",
       productsBlockedFromListingPackage ? "listing package remains blocked by prior gates" : "",
       fulfillment.missingDimensionsWeight ? "dimensions or weight needed for reliable FBA/FBM estimate" : "",
+      !costEvidenceComplete ? "complete supplier, inbound, prep, fulfillment, and reserve costs required; unknown is not zero" : "",
       netProfitEstimate <= 0 ? "estimated net profit is not positive" : "",
       roi.roiPercent < input.config.minimumRoiPercent ? "estimated ROI below guardrail" : "",
       input.amazonSalePriceEstimate < minimumProfitablePrice ? "sale price estimate below minimum profitable price" : "",
@@ -690,20 +727,20 @@ export function buildAmazonFeesProfitGuardAssessment(
       input.canProceedToFeesRoi,
     canProceedToListingPackage:
       false,
-    supplierCost:
-      input.supplierCost,
-    amazonSalePriceEstimate:
-      input.amazonSalePriceEstimate,
+    supplierCost: input.costEvidence.supplierCostKnown
+      ? input.supplierCost : null,
+    amazonSalePriceEstimate: input.costEvidence.salePriceKnown
+      ? input.amazonSalePriceEstimate : null,
     referralFeeScheduleVersion:
       referralFeeEstimate.referralFeeScheduleVersion,
     referralFeeCategory:
       referralFeeEstimate.categoryLabel,
     referralFeeRuleType:
       referralFeeEstimate.feeRuleType,
-    referralFeeAmount:
-      referralFeeEstimate.referralFeeAmount,
-    effectiveReferralFeePercent:
-      referralFeeEstimate.effectiveReferralFeePercent,
+    referralFeeAmount: input.costEvidence.salePriceKnown
+      ? referralFeeEstimate.referralFeeAmount : null,
+    effectiveReferralFeePercent: input.costEvidence.salePriceKnown
+      ? referralFeeEstimate.effectiveReferralFeePercent : null,
     referralFeeMinimumApplied:
       referralFeeEstimate.minimumFeeApplied,
     referralFeeCategoryConfidence:
@@ -733,42 +770,55 @@ export function buildAmazonFeesProfitGuardAssessment(
     packingMaterialCostStatus:
       operationalCostStack.fbmPackingMaterialCostStatus,
     totalOperationalCostAddOn,
-    netProfitBeforeOperationalAddOns,
-    netProfitAfterOperationalAddOns,
-    marginAfterOperationalAddOns:
-      roiAfterOperationalAddOns.netMarginPercent,
-    roiAfterOperationalAddOns:
-      roiAfterOperationalAddOns.roiPercent,
-    breakEvenPriceAfterOperationalAddOns,
-    minimumProfitablePriceAfterOperationalAddOns,
+    netProfitBeforeOperationalAddOns: costEvidenceComplete
+      ? netProfitBeforeOperationalAddOns : null,
+    netProfitAfterOperationalAddOns: costEvidenceComplete
+      ? netProfitAfterOperationalAddOns : null,
+    marginAfterOperationalAddOns: costEvidenceComplete
+      ? roiAfterOperationalAddOns.netMarginPercent : null,
+    roiAfterOperationalAddOns: costEvidenceComplete
+      ? roiAfterOperationalAddOns.roiPercent : null,
+    breakEvenPriceAfterOperationalAddOns: costEvidenceComplete
+      ? breakEvenPriceAfterOperationalAddOns : null,
+    minimumProfitablePriceAfterOperationalAddOns: costEvidenceComplete
+      ? minimumProfitablePriceAfterOperationalAddOns : null,
     operationalCostWarnings:
       operationalCostStack.warnings,
-    referralFeeEstimate:
-      referralFeeEstimate.referralFeeAmount,
-    fbaFeeEstimate,
-    fbmCostEstimate,
-    prepPackagingCostEstimate:
-      input.prepPackagingCostEstimate,
-    shippingCostEstimate:
-      input.shippingCostEstimate,
-    advertisingReserveEstimate,
-    returnReserveEstimate,
-    totalAmazonFeeEstimate,
-    totalCostEstimate,
-    totalCostAfterOperationalAddOns,
-    landedCostEstimate,
-    netProfitEstimate,
-    netMarginPercent:
-      roi.netMarginPercent,
-    roiPercent:
-      roi.roiPercent,
-    breakEvenPrice,
-    minimumProfitablePrice,
-    recommendedPriceRange,
-    priceFloor:
-      recommendedPriceRange.min,
-    priceCeiling:
-      recommendedPriceRange.max,
+    referralFeeEstimate: input.costEvidence.salePriceKnown
+      ? referralFeeEstimate.referralFeeAmount : null,
+    fbaFeeEstimate: input.fbaFeeEstimate,
+    fbmCostEstimate: input.fbmCostEstimate,
+    prepPackagingCostEstimate: input.costEvidence.prepPackagingCostKnown
+      ? input.prepPackagingCostEstimate : null,
+    shippingCostEstimate: input.costEvidence.shippingCostKnown
+      ? input.shippingCostEstimate : null,
+    advertisingReserveEstimate: input.costEvidence.salePriceKnown
+      ? advertisingReserveEstimate : null,
+    returnReserveEstimate: input.costEvidence.salePriceKnown
+      ? returnReserveEstimate : null,
+    totalAmazonFeeEstimate: costEvidenceComplete
+      ? totalAmazonFeeEstimate : null,
+    totalCostEstimate: costEvidenceComplete ? totalCostEstimate : null,
+    totalCostAfterOperationalAddOns: costEvidenceComplete
+      ? totalCostAfterOperationalAddOns : null,
+    landedCostEstimate: costEvidenceComplete ? landedCostEstimate : null,
+    netProfitEstimate: costEvidenceComplete ? netProfitEstimate : null,
+    netMarginPercent: costEvidenceComplete ? roi.netMarginPercent : null,
+    contributionMarginPercent: costEvidenceComplete
+      ? roi.netMarginPercent : null,
+    roiPercent: costEvidenceComplete ? roi.roiPercent : null,
+    investmentBase: "AMAZON_INVENTORY_INVESTMENT",
+    investmentBaseUsd: costEvidenceComplete
+      ? money(inventoryInvestmentBase) : null,
+    economicPolicy: limits.policy,
+    costEvidenceComplete,
+    breakEvenPrice: costEvidenceComplete ? breakEvenPrice : null,
+    minimumProfitablePrice: costEvidenceComplete
+      ? minimumProfitablePrice : null,
+    recommendedPriceRange: costEvidenceComplete
+      ? recommendedPriceRange : null,
+    priceFloor: costEvidenceComplete ? recommendedPriceRange.min : null,
+    priceCeiling: costEvidenceComplete ? recommendedPriceRange.max : null,
     priceCompetitivenessRisk,
     priceWarRisk,
     fulfillmentRecommendation:
@@ -861,23 +911,32 @@ export function summarizeAmazonFeesProfitGuardQueue(queue: ReturnType<typeof bui
     priceTooCompetitiveCandidates:
       assessments.filter(entry => entry.profitGuardDecision === "PRICE_TOO_COMPETITIVE").length,
     productsWithPositiveNetProfit:
-      assessments.filter(entry => entry.netProfitEstimate > 0).length,
+      assessments.filter(entry => entry.netProfitEstimate !== null &&
+        entry.netProfitEstimate > 0).length,
     productsWithNegativeNetProfit:
-      assessments.filter(entry => entry.netProfitEstimate <= 0).length,
+      assessments.filter(entry => entry.netProfitEstimate !== null &&
+        entry.netProfitEstimate <= 0).length,
     productsAboveMinimumMargin:
-      assessments.filter(entry => entry.netMarginPercent >= 18).length,
+      assessments.filter(entry => entry.netMarginPercent !== null &&
+        entry.netMarginPercent >= 15).length,
     productsBelowMinimumMargin:
-      assessments.filter(entry => entry.netMarginPercent < 18).length,
+      assessments.filter(entry => entry.netMarginPercent !== null &&
+        entry.netMarginPercent < 15).length,
     averageNetProfitEstimate:
-      average(assessments.map(entry => entry.netProfitEstimate)),
+      average(assessments.map(entry => entry.netProfitEstimate)
+        .filter((value): value is number => value !== null)),
     averageNetMarginPercent:
-      average(assessments.map(entry => entry.netMarginPercent)),
+      average(assessments.map(entry => entry.netMarginPercent)
+        .filter((value): value is number => value !== null)),
     averageRoiPercent:
-      average(assessments.map(entry => entry.roiPercent)),
+      average(assessments.map(entry => entry.roiPercent)
+        .filter((value): value is number => value !== null)),
     averageBreakEvenPrice:
-      average(assessments.map(entry => entry.breakEvenPrice)),
+      average(assessments.map(entry => entry.breakEvenPrice)
+        .filter((value): value is number => value !== null)),
     averageMinimumProfitablePrice:
-      average(assessments.map(entry => entry.minimumProfitablePrice)),
+      average(assessments.map(entry => entry.minimumProfitablePrice)
+        .filter((value): value is number => value !== null)),
     productsBlockedFromListingPackage:
       assessments.filter(entry => entry.productsBlockedFromListingPackage).length,
     productsAllowedToNextDecisionEngine:

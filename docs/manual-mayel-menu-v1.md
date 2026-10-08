@@ -45,8 +45,8 @@ Este flujo cambia la imagen principal y conserva las demás. No activa publicida
 Estos son los límites de la política:
 
 - **Mínimo % y Máximo %:** el rango de publicidad que quieres considerar.
-- **Beneficio mínimo $:** la ganancia mínima que quieres conservar por venta.
-- **Margen mínimo %:** la parte del precio de venta que quieres conservar como ganancia.
+- **ROI mínimo %:** debe ser al menos 30% sobre la inversión del pedido.
+- **Margen mínimo %:** debe ser al menos 15% de contribución sobre la venta.
 
 Los nombres de las políticas sólo rellenan esos límites. Revísalos antes de continuar. El sistema puede dejar productos fuera si falta información, no alcanza la ganancia o falta stock.
 

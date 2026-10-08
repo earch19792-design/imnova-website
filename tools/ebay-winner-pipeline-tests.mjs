@@ -1195,7 +1195,7 @@ test("product selection decision service: calcula economia V1 con defaults segur
   assert.equal(economics.feeEstimate.exactFee, false)
   assert.equal(
     economics.thresholds.minimumProfitUsd,
-    5
+    0
   )
   assert.equal(
     economics.thresholds.minimumRoiPercent,
@@ -1203,7 +1203,7 @@ test("product selection decision service: calcula economia V1 con defaults segur
   )
   assert.equal(
     economics.thresholds.recommendedNetMarginPercent,
-    20
+    15
   )
 })
 
@@ -24337,14 +24337,14 @@ test("Price Intelligence usa total domestico USA con free shipping como referenc
   )
 })
 
-test("Price semantics: costo proveedor actual no se trata como precio de venta eBay", () => {
+test("Price semantics: costo proveedor no se vuelve precio eBay aun si la política bloquea", () => {
   const profitScenario =
     calculateProfitScenario(
       {
         cost:
           11,
         estimated_sale_price:
-          19.99,
+          23.49,
         buyer_shipping_charge:
           0,
         shipping_cost:
@@ -24377,7 +24377,7 @@ test("Price semantics: costo proveedor actual no se trata como precio de venta e
       profitScenario,
       {
         recommended_sale_price:
-          19.99,
+          23.49,
         sold_median_price:
           25,
         source_confidence:
@@ -24401,7 +24401,7 @@ test("Price semantics: costo proveedor actual no se trata como precio de venta e
       null
     )
 
-  assert.notEqual(
+  assert.equal(
     advisor.pricing_strategy.launch_strategy,
     "blocked"
   )
@@ -24411,7 +24411,7 @@ test("Price semantics: costo proveedor actual no se trata como precio de venta e
   )
   assert.equal(
     advisor.target_price.evaluated_sale_price,
-    19.99
+    23.49
   )
   assert.match(
     advisor.human_summary,

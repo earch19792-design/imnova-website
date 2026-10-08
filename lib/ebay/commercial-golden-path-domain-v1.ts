@@ -10,6 +10,8 @@ import { goldenOwnerBaseIncludedUnitCountV1,
 import { goldenVisualComparisonForMarketEvidenceV1,
   type GoldenVisualOutcomeV1 } from "./commercial-golden-path-visual-comparison-v1"
 import { sanitizedSourceIdentifier } from "./ebay-luna-product-identity-enrichment"
+import { evaluateSellerOsRoiMarginPolicyV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 
 export const GOLDEN_PATH_V1 = "COMMERCIAL_GOLDEN_PATH_V1"
 export type GoldenRecord = Record<string, unknown>
@@ -363,7 +365,7 @@ export function classifyGoldenComparable(
   return { classification: "FAMILY" as const, reasonCodes: ["EXACT_CLOSE_IDENTITY_UNPROVEN"], priceEligible: false }
 }
 export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
-  if (!Number.isFinite(input.targetNetProfit) || input.targetNetProfit < 4 || input.targetNetProfit > 10000) throw Error("TARGET_NET_PROFIT_OUTSIDE_AUTHORIZED_BOUND")
+  if (!Number.isFinite(input.targetNetProfit) || input.targetNetProfit < 0 || input.targetNetProfit > 10000) throw Error("LEGACY_TARGET_NET_PROFIT_OUTSIDE_AUTHORIZED_BOUND")
   const { candidate: key, source, now } = input
   const reasons: string[] = [], holds: string[] = [], rejects: string[] = []
   const truth = verifiedGoldenFields(source, now)
@@ -479,9 +481,32 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
   const returns = marketPrice !== null && reserveRate !== null && reserveRate >= 0 && reserveRate <= 0.5 ? cents(marketPrice * reserveRate) : null
   const ready = exactBinding && truth.gate.traceProductTruthSufficient && !reasons.some(r => /SHIPPING|COST|FEE|RESERVE|COSTS/.test(r)) && marketPrice !== null && cost !== null && shippingCost !== null && fulfillmentCost !== null && fees !== null && returns !== null && promoted !== null && other !== null
   const net = ready ? Math.floor((marketPrice! - cost! - shippingCost! - fulfillmentCost! - fees! - returns! - promoted! - other! + 1e-9) * 100) / 100 : null
-  const floor = net !== null && reserveRate !== null ? Math.ceil((marketPrice! + (input.targetNetProfit - net) / (1 - reserveRate)) * 100) / 100 : null
-  // Fixed-price fee quote cannot prove an interval-wide floor; keep the threshold explicit instead.
-  if (net !== null && net < input.targetNetProfit) rejects.push("SOLD_MARKET_DOES_NOT_SUPPORT_TARGET_NET")
+  const economicPolicyEvaluation = evaluateSellerOsRoiMarginPolicyV2({
+    revenueUsd: marketPrice,
+    investmentBase: "EBAY_LUNA_ORDER_INVESTMENT",
+    investmentBaseUsd: cost !== null && shippingCost !== null &&
+        fulfillmentCost !== null
+      ? cost + shippingCost + fulfillmentCost : null,
+    costs: [
+      { key: "supplier_offer_cost", amountUsd: cost,
+        authority: "LUNA_PRODUCT_TRUTH", state: cost === null ? "UNKNOWN" : "KNOWN" },
+      { key: "supplier_shipping", amountUsd: shippingCost,
+        authority: "LUNA_QUOTE", state: shippingCost === null ? "UNKNOWN" : "KNOWN" },
+      { key: "buyer_fulfillment", amountUsd: fulfillmentCost,
+        authority: "FULFILLMENT_QUOTE", state: fulfillmentCost === null ? "UNKNOWN" : "KNOWN" },
+      { key: "ebay_fees", amountUsd: fees,
+        authority: "EBAY_FEE_AUTHORITY", state: fees === null ? "UNKNOWN" : "KNOWN" },
+      { key: "returns_reserve", amountUsd: returns,
+        authority: "OWNER_POLICY", state: returns === null ? "UNKNOWN" : "KNOWN" },
+      { key: "promoted_fee", amountUsd: promoted,
+        authority: "OWNER_POLICY", state: promoted === null ? "UNKNOWN" : "KNOWN" },
+      { key: "other_required_costs", amountUsd: other,
+        authority: "OWNER_POLICY", state: other === null ? "UNKNOWN" : "KNOWN" },
+    ],
+  })
+  if (ready && !economicPolicyEvaluation.passesPolicy) {
+    rejects.push(...economicPolicyEvaluation.blockerCodes)
+  }
   const complianceValid = input.compliance.status === "PROVEN" && input.compliance.productId === key.productId && input.compliance.variantId === key.variantId && input.compliance.supplierSku === key.supplierSku && input.compliance.supplierQuantity === key.supplierQuantity && input.compliance.sourceFingerprint === source?.source_fingerprint && Boolean(input.compliance.receiptId) && goldenFresh(input.compliance, now, 24 * 3600000)
   const blockers = Array.isArray(input.compliance.blockers) ? input.compliance.blockers.map(String) : []
   if (blockers.length) holds.push(...blockers)
@@ -498,7 +523,7 @@ export function evaluateGoldenCandidateV1(input: GoldenEvaluationInput) {
     duplicateGate: input.duplicate, supplier: { availability: truth.values.SUPPLIER_AVAILABILITY ?? null, unitCostUsd: unitCost, offerCostUsd: cost, stock: goldenNumber(truth.values.SUPPLIER_STOCK), stockStatus: truth.values.SUPPLIER_STOCK == null ? "UNPROVEN" : "PROVEN" },
     shipping: shippingValid ? input.shipping : { ...input.shipping, status: "UNPROVEN", amountUsd: null, supplierQuantity: key.supplierQuantity, reasonCode: input.shipping.reasonCode ?? "REAL_OFFER_SHIPPING_UNPROVEN", validationReasonCode: "REAL_OFFER_SHIPPING_UNPROVEN" },
     fulfillment: fulfillmentValid ? fulfillment : { ...fulfillment, status: "UNPROVEN", amountUsd: null, reasonCode: "BUYER_FULFILLMENT_SHIPPING_UNPROVEN" },
-    economics: { status: ready ? provisionalFee ? "PROVISIONAL_OWNER_POLICY" : "PROVEN" : "UNPROVEN", targetNetProfit: input.targetNetProfit, recommendedPrice: marketPrice, buyerShipping: 0, pricingStrategy: "FREE_BUYER_SHIPPING_WITHIN_OBSERVED_LANDED_PRICE", feeAuthority: input.fee, ebayFees: fees, returnsReserve: returns, promotedFee: promoted, promotedState: input.policy.promotedState ?? "UNKNOWN", otherExplicitCosts: other, buyerFulfillmentShipping: fulfillmentCost, expectedNetProfit: net, expectedNetProfitBasis: provisionalFee ? "OWNER_PROVISIONAL_FEE_POLICY_PLUS_REAL_INPUTS" : "PRE_SALE_EVIDENCE_AND_EXPLICIT_OWNER_RESERVES", realizedNetProfit: null, realizedNetProfitStatus: "UNPROVEN", realizedNetProfitReasonCode: "REALIZED_ORDER_AND_EXPENSE_AUTHORITY_REQUIRED", realizedProfitUsedForDecision: false, profitFloor: { netProfitUsd: input.targetNetProfit, requiredPrice: null, status: "INTERVAL_FEE_BOUND_UNPROVEN", diagnosticAtFixedFee: floor }, marginPercent: net !== null ? cents(net / marketPrice! * 100) : null, roiPercent: net !== null && cost! + shippingCost! + fulfillmentCost! > 0 ? cents(net / (cost! + shippingCost! + fulfillmentCost!) * 100) : null },
+    economics: { status: ready ? provisionalFee ? "PROVISIONAL_OWNER_POLICY" : "PROVEN" : "UNPROVEN", legacyTargetNetProfitIgnored: input.targetNetProfit, recommendedPrice: marketPrice, buyerShipping: 0, pricingStrategy: "FREE_BUYER_SHIPPING_WITHIN_OBSERVED_LANDED_PRICE", feeAuthority: input.fee, ebayFees: fees, returnsReserve: returns, promotedFee: promoted, promotedState: input.policy.promotedState ?? "UNKNOWN", otherExplicitCosts: other, buyerFulfillmentShipping: fulfillmentCost, expectedNetProfit: net, expectedNetProfitBasis: provisionalFee ? "OWNER_PROVISIONAL_FEE_POLICY_PLUS_REAL_INPUTS" : "PRE_SALE_EVIDENCE_AND_EXPLICIT_OWNER_RESERVES", realizedNetProfit: null, realizedNetProfitStatus: "UNPROVEN", realizedNetProfitReasonCode: "REALIZED_ORDER_AND_EXPENSE_AUTHORITY_REQUIRED", realizedProfitUsedForDecision: false, profitFloor: { netProfitUsd: null, requiredPrice: null, status: "NO_MONETARY_PROFIT_FLOOR" }, economicPolicyEvaluation, marginPercent: economicPolicyEvaluation.contributionMarginPercent, roiPercent: economicPolicyEvaluation.estimatedRoiPercent, investmentBase: economicPolicyEvaluation.investmentBase, investmentBaseUsd: economicPolicyEvaluation.investmentBaseUsd },
     productTruth: { status: truth.gate.traceProductTruthSufficient
         ? autonomousIdentity.status === "PROVEN"
           ? "CORE_PLUS_AUTONOMOUS_ENRICHMENT" : "CORE_PROVEN"

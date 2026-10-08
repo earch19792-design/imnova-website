@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto"
 import savedPolicy from "../../docs/commercial-trace-owner-price-policy-v1.json" with { type: "json" }
+import {
+  SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
+  sellerOsRoiMarginPolicyContractV2,
+} from "@/lib/marketplace/seller-os-roi-margin-policy-v2"
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/
 type R = Record<string, unknown>
@@ -127,6 +132,12 @@ export function resolveCommercialTraceOwnerPricePolicyV1(input: Readonly<{
     returnsReserve: { ...returns,
       ratePercent: Number(returns.rateFraction) * 100 },
     profitabilityGates: { ...gates,
-      minNetMarginPercent: Number(gates.minNetMarginFraction) * 100,
-      minRoiPercent: Number(gates.minRoiFraction) * 100 } })
+      minNetProfit: 0,
+      minNetMarginFraction:
+        SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 / 100,
+      minRoiFraction: SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 / 100,
+      minNetMarginPercent:
+        SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+      minRoiPercent: SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
+      sharedEconomicPolicy: sellerOsRoiMarginPolicyContractV2() } })
 }

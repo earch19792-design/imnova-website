@@ -288,7 +288,7 @@ export function calculatePricingPsychologyInputs(
   const needsData =
     getNeedsData(candidate)
   const minimumHealthyMarginPercent =
-    normalizeNumber(options.minimumHealthyMarginPercent, 0.22)
+    normalizeNumber(options.minimumHealthyMarginPercent, 0.15)
   const soldCount =
     soldPriceIntelligence.soldCountSample
   const priceWarRiskScore =

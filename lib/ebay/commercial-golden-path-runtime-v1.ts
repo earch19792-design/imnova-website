@@ -38,6 +38,8 @@ import { getEbayTaxonomyListingIntelligence } from "./ebay-seller-keyword-demand
 import { preflightEbayCategoryProductIdentifiers } from "./ebay-draft-only-gateway"
 import { getSupabaseAdminClient } from "../supabase-admin"
 import type { SellerOsControlPrincipalV1 } from "./teo-pre-research-control-oauth-v1"
+import { sellerOsRoiMarginPolicyContractV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 import { persistSellerOsCommercialOpportunityMemoryV1,
   projectGoldenEvaluationReceiptV1 } from
   "./seller-os-commercial-opportunity-memory-v1"
@@ -444,7 +446,7 @@ async function candidateAuthorities(ctx: GoldenContext, key: GoldenCandidateKey,
   const fulfillment = unavailable("BUYER_FULFILLMENT_SHIPPING_UNPROVEN")
   return { policy: normalizedPolicy, compliance, fee, fulfillment }
 }
-export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCandidateKey, targetNetProfit = 4, shared?: { sweep: OfficialSweep; market: Awaited<ReturnType<typeof marketEvidence>>; source: GoldenRecord }, ownerFeePolicy?: GoldenOwnerFeePolicyInput) {
+export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCandidateKey, targetNetProfit = 0, shared?: { sweep: OfficialSweep; market: Awaited<ReturnType<typeof marketEvidence>>; source: GoldenRecord }, ownerFeePolicy?: GoldenOwnerFeePolicyInput) {
   const source = shared?.source ?? await candidateSource(ctx, key)
   const [market, sweep, shipping, ownerTruth, visualEvidence,
     autonomousIdentity] = await Promise.all([
@@ -493,8 +495,8 @@ export async function evaluateGoldenRuntimeV1(ctx: GoldenContext, key: GoldenCan
     ctx, durableEvaluation)
   return Object.freeze({ ...durableEvaluation, commercialMemory })
 }
-export async function previewGoldenCategoryV1(ctx: GoldenContext, category: string, limit = 5, targetNetProfit = 4) {
-  if (!Number.isFinite(targetNetProfit) || targetNetProfit < 4 || targetNetProfit > 10_000) {
+export async function previewGoldenCategoryV1(ctx: GoldenContext, category: string, limit = 5, targetNetProfit = 0) {
+  if (!Number.isFinite(targetNetProfit) || targetNetProfit < 0 || targetNetProfit > 10_000) {
     throw Error("TARGET_NET_PROFIT_OUTSIDE_AUTHORIZED_BOUND")
   }
   // Read demand first. Supplier category is only a discovery filter; ranking uses classified SOLD evidence.
@@ -577,7 +579,29 @@ export async function previewGoldenCategoryV1(ctx: GoldenContext, category: stri
         && SELLER_OS_UNIT_FIRST_PACK_POLICY_V1.stopAfterFirstGo) break
     }
   }
-  return receipt(ctx, "OPPORTUNITIES", { contractVersion: GOLDEN_PATH_V1, category, targetNetProfit, observedAt: ctx.now.toISOString(), status: evaluated.some(c => goldenRecord(c.market).soldQuantity !== null && Number(goldenRecord(c.market).soldQuantity) > 0) ? "AVAILABLE_WITH_GATES" : "UNPROVEN", resultCount: sources.length ? evaluated.length : null, productCount: sources.length ? evaluatedProducts : null, packScenarioCount: sources.length ? packScenariosEvaluated : null, candidates: evaluated, deferredCandidates, bounded: { maximumSourceRows: MAX_SOURCE_ROWS, maximumMarketRows: MAX_MARKET_ROWS, maximumCandidates: MAX_CANDIDATES, maximumPackScenariosPerProduct: SELLER_OS_UNIT_FIRST_PACK_POLICY_V1.maximumPackScenariosPerProduct, candidateStartDeadlineMs: 120000, sourceTruncated: (read.data?.length ?? 0) > MAX_SOURCE_ROWS, marketTruncated: market.truncated, exhaustiveSearch: false }, packPolicy: SELLER_OS_UNIT_FIRST_PACK_POLICY_V1, noSupportedPackReason: packScenariosEvaluated === 0 ? "NO_ELIGIBLE_MARKET_EVIDENCED_PACK_FALLBACK_EVALUATED" : null, safety: { marketplaceWrites: 0, supplierPurchases: 0, draftIsLive: false } })
+  return receipt(ctx, "OPPORTUNITIES", { contractVersion: GOLDEN_PATH_V1,
+    category, economicPolicy: sellerOsRoiMarginPolicyContractV2(),
+    observedAt: ctx.now.toISOString(), status: evaluated.some(c =>
+      goldenRecord(c.market).soldQuantity !== null &&
+      Number(goldenRecord(c.market).soldQuantity) > 0)
+      ? "AVAILABLE_WITH_GATES" : "UNPROVEN",
+    resultCount: sources.length ? evaluated.length : null,
+    productCount: sources.length ? evaluatedProducts : null,
+    packScenarioCount: sources.length ? packScenariosEvaluated : null,
+    candidates: evaluated, deferredCandidates,
+    bounded: { maximumSourceRows: MAX_SOURCE_ROWS,
+      maximumMarketRows: MAX_MARKET_ROWS,
+      maximumCandidates: MAX_CANDIDATES,
+      maximumPackScenariosPerProduct:
+        SELLER_OS_UNIT_FIRST_PACK_POLICY_V1.maximumPackScenariosPerProduct,
+      candidateStartDeadlineMs: 120000,
+      sourceTruncated: (read.data?.length ?? 0) > MAX_SOURCE_ROWS,
+      marketTruncated: market.truncated, exhaustiveSearch: false },
+    packPolicy: SELLER_OS_UNIT_FIRST_PACK_POLICY_V1,
+    noSupportedPackReason: packScenariosEvaluated === 0
+      ? "NO_ELIGIBLE_MARKET_EVIDENCED_PACK_FALLBACK_EVALUATED" : null,
+    safety: { marketplaceWrites: 0, supplierPurchases: 0,
+      draftIsLive: false } })
 }
 
 async function persistFreshGoldenDraftV1(
@@ -615,17 +639,15 @@ export async function runGoldenStockingBatchV1(
     SELLER_OS_RAPID_STOCKING_POLICY_V1.targetQualifiedDrafts
   const scanLimit = input.scanLimit ??
     SELLER_OS_RAPID_STOCKING_POLICY_V1.maximumSupplierCandidatesPerBatch
-  const targetNetProfit = input.targetNetProfit ??
-    SELLER_OS_RAPID_STOCKING_POLICY_V1.minimumExpectedNetProfitUsd
+  const targetNetProfit = SELLER_OS_RAPID_STOCKING_POLICY_V1
+    .minimumExpectedNetProfitUsd
   if (!category.trim() || category.length > 100 ||
       !Number.isSafeInteger(targetDrafts) || targetDrafts < 1 ||
       targetDrafts > SELLER_OS_RAPID_STOCKING_POLICY_V1.targetQualifiedDrafts ||
       !Number.isSafeInteger(scanLimit) || scanLimit < targetDrafts ||
       scanLimit > SELLER_OS_RAPID_STOCKING_POLICY_V1
         .maximumSupplierCandidatesPerBatch ||
-      !Number.isFinite(targetNetProfit) || targetNetProfit <
-        SELLER_OS_RAPID_STOCKING_POLICY_V1.minimumExpectedNetProfitUsd ||
-      targetNetProfit > 10_000) {
+      input.targetNetProfit !== undefined && input.targetNetProfit !== 0) {
     throw Error("RAPID_STOCKING_BATCH_BOUNDS_INVALID")
   }
 
@@ -1085,7 +1107,7 @@ export async function prepareGoldenRuntimeV1(ctx: GoldenContext, evaluationRecei
   const previous = await loadReceipt(ctx, evaluationReceiptId, "EVALUATION")
   const key = goldenRecord(previous.candidate) as unknown as GoldenCandidateKey
   // A historical GO cannot authorize a new draft after evidence expires or LIVE duplicates appear.
-  const evaluation = await evaluateGoldenRuntimeV1(ctx, key, Number(goldenRecord(previous.economics).targetNetProfit ?? 4))
+  const evaluation = await evaluateGoldenRuntimeV1(ctx, key, 0)
   return persistFreshGoldenDraftV1(ctx, evaluation)
 }
 export async function reconcileGoldenRuntimeV1(ctx: GoldenContext, packageReceiptId: string, itemId: string | undefined, dryRun = true) {

@@ -371,9 +371,8 @@ export function evaluateApprovalQueueDecision(evidence: ApprovalQueueDecisionEvi
   const rejected = [
     evidence.verdict === "NO_GO" ? "LOOP1_NO_GO" : null,
     evidence.complianceBlocked ? "COMPLIANCE_BLOCKED" : null,
-    evidence.estimatedProfit !== null && evidence.estimatedProfit < 5 ? "PROFIT_BELOW_5_USD" : null,
     evidence.roiPercent !== null && evidence.roiPercent < 30 ? "ROI_BELOW_30_PERCENT" : null,
-    evidence.netMarginPercent !== null && evidence.netMarginPercent < 20 ? "NET_MARGIN_BELOW_20_PERCENT" : null,
+    evidence.netMarginPercent !== null && evidence.netMarginPercent < 15 ? "CONTRIBUTION_MARGIN_BELOW_15_PERCENT" : null,
     evidence.stockAvailable !== null && evidence.recommendedPackCount !== null &&
       evidence.stockAvailable < evidence.recommendedPackCount ? "PACK_STOCK_INSUFFICIENT" : null,
   ].filter((entry): entry is string => Boolean(entry))

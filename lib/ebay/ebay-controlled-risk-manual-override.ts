@@ -3,7 +3,7 @@ import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics, normaliz
 
 export const EBAY_CONTROLLED_RISK_OVERRIDE_VERSION =
   "EBAY_CONTROLLED_RISK_MANUAL_OVERRIDE_V1_2026_07_19"
-export const EBAY_CONTROLLED_RISK_MINIMUM_MARGIN_PERCENT = 10
+export const EBAY_CONTROLLED_RISK_MINIMUM_MARGIN_PERCENT = 15
 
 const ALLOWED_COMMERCIAL_BLOCKERS = new Set([
   "ECONOMICS_NOT_VIABLE",
@@ -50,9 +50,9 @@ export function controlledRiskEconomicsConfig(
   return normalizeEbayUnitEconomicsConfig({
     ...baseConfig,
     promotedListingsReserveRate: 0,
-    minimumNetProfit: 0.01,
+    minimumNetProfit: 0,
     minimumNetMarginPercent: EBAY_CONTROLLED_RISK_MINIMUM_MARGIN_PERCENT,
-    minimumRoiPercent: 0,
+    minimumRoiPercent: 30,
   })
 }
 

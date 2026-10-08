@@ -119,7 +119,7 @@ test("net profit, margin, and ROI formulas are deterministic", async () => {
   assert.ok(dm);
   assert.equal(dm.netProfitEstimate, Number((dm.amazonSalePriceEstimate - dm.totalCostEstimate).toFixed(2)));
   assert.equal(dm.netMarginPercent, Number(((dm.netProfitEstimate / dm.amazonSalePriceEstimate) * 100).toFixed(2)));
-  assert.equal(dm.roiPercent, Number(((dm.netProfitEstimate / dm.supplierCost) * 100).toFixed(2)));
+  assert.equal(dm.roiPercent, Number(((dm.netProfitEstimate / dm.investmentBaseUsd) * 100).toFixed(2)));
   assert.equal(dm.referralFeeCategory, "Home and Kitchen");
   assert.equal(dm.referralFeeAmount, 3.45);
   assert.equal(dm.effectiveReferralFeePercent, 15.01);
@@ -128,7 +128,7 @@ test("net profit, margin, and ROI formulas are deterministic", async () => {
   assert.equal(dm.totalOperationalCostAddOn, 1.3);
   assert.equal(dm.netProfitBeforeOperationalAddOns, 3.58);
   assert.equal(dm.netProfitAfterOperationalAddOns, 2.28);
-  assert.equal(dm.roiAfterOperationalAddOns, 31.67);
+  assert.equal(dm.roiAfterOperationalAddOns, 24.13);
   assert.equal(dm.sellerCentralFeeVerified, false);
   assert.equal(dm.spApiFeeVerified, false);
 });

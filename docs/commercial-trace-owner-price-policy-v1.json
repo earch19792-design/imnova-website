@@ -1,19 +1,19 @@
 {
   "contractVersion": "SELLER_OS_COMMERCIAL_TRACE_OWNER_PRICE_POLICY_V1",
-  "policyVersion": "OWNER_PRICE_POLICY_V1_20260923",
+  "policyVersion": "OWNER_PRICE_POLICY_V1_20261008_ROI_MARGIN_V2",
   "marketplace": "EBAY_US",
   "marketplaceAccountKey": "imnova-ebay-us-primary:cd8fd3dc2b4102d4aff320268c647fa895c6416df01013f9bb06b3a587709e12",
   "currency": "USD",
   "createdAt": "2026-09-23T19:36:02Z",
-  "updatedAt": "2026-09-23T19:36:02Z",
-  "effectiveAt": "2026-09-23T19:36:02Z",
+  "updatedAt": "2026-10-08T22:43:23Z",
+  "effectiveAt": "2026-10-08T22:43:23Z",
   "freshUntil": null,
   "source": "OWNER_CERTIFIED_ACCOUNT_PRICE_POLICY_V1",
   "approvedByOwner": true,
-  "approvalSource": "OWNER_EXPLICIT_P0_2_FINAL_CLOSURE_2026_09_23",
-  "approvalStatement": "OWNER approved USD pricing for this exact EBAY_US account: minimum net profit 5.00, minimum net margin 0.20, minimum ROI 0.30, returns reserve 0.04 of sale price, Promoted Listings opt-in with default NOT_APPLICABLE and no implicit advertising rate, other explicit costs default NOT_APPLICABLE unless a required cost is discovered, and UNKNOWN never means zero.",
-  "authorizationReferenceDigest": "sha256:eb21a851262a99665ad2354cdc38201fa260baa366b674e588181032cbaabc96",
-  "policyDigest": "sha256:a50be4f14712a7171f0f3a713f31c54764e986aba9e9dd705c9b8e9a6a773a51",
+  "approvalSource": "OWNER_EXPLICIT_SELLER_OS_ROI_MARGIN_POLICY_V2_2026_10_08",
+  "approvalStatement": "OWNER approved the shared EBAY_US economic policy: estimated ROI at least 0.30 AND contribution margin at least 0.15, with no mandatory monetary profit floor; returns reserve 0.04 of sale price, Promoted Listings opt-in with default NOT_APPLICABLE and no implicit advertising rate, other explicit costs default NOT_APPLICABLE unless proven otherwise, and UNKNOWN never means zero.",
+  "authorizationReferenceDigest": "sha256:3d78b6db6d501cb2c7bf49e5e5fb3407a7026f78b38da387616274ed1edc7a07",
+  "policyDigest": "sha256:b5c6b469b999559e5777d23409679787f2c5556019b2a8c046f6310c42269ff8",
   "promotedListings": {
     "mode": "OPT_IN",
     "defaultState": "NOT_APPLICABLE",
@@ -35,9 +35,9 @@
   },
   "profitabilityGates": {
     "state": "CONFIGURED",
-    "minNetProfit": 5,
-    "minNetMarginFraction": 0.2,
+    "minNetProfit": 0,
+    "minNetMarginFraction": 0.15,
     "minRoiFraction": 0.3,
-    "provenance": "OWNER_EXPLICIT_P0_2_FINAL_CLOSURE_2026_09_23"
+    "provenance": "OWNER_EXPLICIT_SELLER_OS_ROI_MARGIN_POLICY_V2_2026_10_08"
   }
 }

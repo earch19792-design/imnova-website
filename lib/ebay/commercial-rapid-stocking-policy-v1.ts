@@ -1,10 +1,13 @@
 import { goldenNumber, goldenRecord, type GoldenRecord } from
   "./commercial-golden-path-domain-v1"
+import { sellerOsRoiMarginPolicyContractV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 
 export const SELLER_OS_RAPID_STOCKING_POLICY_V1 = Object.freeze({
   contractVersion: "SELLER_OS_RAPID_STOCKING_POLICY_V1",
   marketplace: "EBAY_US",
-  minimumExpectedNetProfitUsd: 4,
+  minimumExpectedNetProfitUsd: 0,
+  economicPolicy: sellerOsRoiMarginPolicyContractV2(),
   targetQualifiedDrafts: 10,
   maximumSupplierCandidatesPerBatch: 100,
   maximumEvidenceAcquisitionCandidatesPerBatch: 30,
@@ -50,16 +53,15 @@ export function classifyRapidStockingEvaluationV1(
     ? evaluation.reasonCodes.map(String) : []
   const quantity = goldenNumber(candidate.supplierQuantity) ?? 1
   const expectedNet = goldenNumber(economics.expectedNetProfit)
+  const economicPolicy = goldenRecord(economics.economicPolicyEvaluation)
 
-  if (decision === "GO" && expectedNet !== null &&
-      expectedNet >= SELLER_OS_RAPID_STOCKING_POLICY_V1
-        .minimumExpectedNetProfitUsd) {
+  if (decision === "GO" && economicPolicy.passesPolicy === true) {
     return quantity > 1 ? "PROVEN_PACK_DRAFT" : "PROVEN_UNIT_DRAFT"
   }
   if (reasons.includes("SUPPLIER_OUT_OF_STOCK")) return "OUT_OF_STOCK"
-  if (reasons.includes("SOLD_MARKET_DOES_NOT_SUPPORT_TARGET_NET") ||
-      expectedNet !== null && expectedNet <
-        SELLER_OS_RAPID_STOCKING_POLICY_V1.minimumExpectedNetProfitUsd) {
+  if (reasons.includes("ROI_BELOW_30_PERCENT") ||
+      reasons.includes("CONTRIBUTION_MARGIN_BELOW_15_PERCENT") ||
+      expectedNet !== null && economicPolicy.passesPolicy === false) {
     return "REJECT_MARGIN"
   }
   if (decision === "REJECT") return reasons.some(reason =>

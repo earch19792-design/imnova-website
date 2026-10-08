@@ -34,6 +34,7 @@ export type SellerWhatsAppAlertFacts = {
   currentStock?: number | null
   previousStock?: number | null
   estimatedMarginPct?: number | null
+  estimatedRoiPct?: number | null
   estimatedNetProfit?: number | null
   costChangePct?: number | null
   hasExactEvidence?: boolean | null
@@ -76,15 +77,15 @@ function winnerDecision(
   const confidence = number(facts.confidenceScore)
   const stock = number(facts.currentStock)
   const margin = number(facts.estimatedMarginPct)
-  const profit = number(facts.estimatedNetProfit)
+  const roi = number(facts.estimatedRoiPct)
   const exactEvidence = facts.hasExactEvidence === true
   const blockers: string[] = []
 
   if (potential === null || potential < 75) blockers.push("potential_below_75")
   if (confidence === null || confidence < 70) blockers.push("confidence_below_70")
   if (stock === null || stock < 4) blockers.push("stock_below_4")
-  if (margin === null || margin < 20) blockers.push("margin_below_20")
-  if (profit === null || profit < 5) blockers.push("profit_below_5")
+  if (margin === null || margin < 15) blockers.push("contribution_margin_below_15")
+  if (roi === null || roi < 30) blockers.push("roi_below_30")
   if (!exactEvidence) blockers.push("exact_market_evidence_missing")
 
   return {
@@ -155,7 +156,7 @@ export function classifySellerWhatsAppAlert(
     const costChange = number(facts.costChangePct)
     const eligible = alertType === "price_up"
       ? facts.hasActiveListing === true && costChange !== null && costChange >= 5
-      : facts.hasActiveListing === true && margin !== null && margin < 20
+      : facts.hasActiveListing === true && margin !== null && margin < 15
     const critical = margin !== null && margin < 10
     return {
       eligible,

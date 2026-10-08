@@ -839,7 +839,7 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated,
         : /SHIPPING|QTY1/.test(code)
           ? "Falta el shipping real de una unidad; no se publicó."
           : /FEE|ECONOMICS|PROFIT|MARKET_PRICE/.test(code)
-            ? "Falta confirmar fees o la ganancia mínima de $4; no se publicó."
+            ? "Falta confirmar costos, ROI ≥30% o margen de contribución ≥15%; no se publicó."
             : /DUPLICATE|COLLISION|ANOTHER_OFFER/.test(code)
               ? "Se detectó riesgo de duplicado; Seller OS se detuvo."
               : /OUTCOME_UNKNOWN|READBACK|RECONCILIATION|IN_FLIGHT/.test(code)

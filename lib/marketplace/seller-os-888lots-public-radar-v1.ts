@@ -735,7 +735,7 @@ export async function get888LotsRadarDashboardV1(input: {
       researchPending: count("RESEARCH_PENDING"), buyReady: count("BUY_READY"),
       hold: count("HOLD"), rejected: count("REJECTED"), result: count("RESULT") },
     cards,
-    policy: { minimumNetProfitUsd: 4, clickOnlyMaximumTestUnits: 3,
+    policy: { minimumNetProfitUsd: 0, clickOnlyMaximumTestUnits: 3,
       exactVelocityCoverageDays: 14, supplierEstimateIsNotMarketProof: true,
       deliveredCostRequiresCartConfirmation: true,
       firstOrderPromotionIsNotRecurringEconomics: true },

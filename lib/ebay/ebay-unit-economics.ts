@@ -1,9 +1,16 @@
+import { calculateSellerOsPolicyLimitsV2,
+  evaluateSellerOsRoiMarginPolicyV2,
+  SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
+
 export type EbayUnitEconomicsConfig = {
   estimatedEbayFeeRate: number
   fixedOrderFee: number
   estimatedOutboundShipping: number
   returnsReserveRate: number
   promotedListingsReserveRate: number
+  /** @deprecated Compatibility-only. Policy V2 has no monetary profit floor. */
   minimumNetProfit: number
   minimumNetMarginPercent: number
   minimumRoiPercent: number
@@ -17,9 +24,10 @@ export const DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG: EbayUnitEconomicsConfig = {
   estimatedOutboundShipping: 6.99,
   returnsReserveRate: 0.04,
   promotedListingsReserveRate: 0.05,
-  minimumNetProfit: 4,
-  minimumNetMarginPercent: 20,
-  minimumRoiPercent: 30,
+  minimumNetProfit: 0,
+  minimumNetMarginPercent:
+    SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  minimumRoiPercent: SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
 }
 
 function finite(value: unknown) {
@@ -101,24 +109,10 @@ export function normalizeEbayUnitEconomicsConfig(
       0,
       0.50,
     ),
-    minimumNetProfit: bounded(
-      input.minimumNetProfit,
-      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetProfit,
-      0,
-      10_000,
-    ),
-    minimumNetMarginPercent: bounded(
-      input.minimumNetMarginPercent,
-      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetMarginPercent,
-      0,
-      95,
-    ),
-    minimumRoiPercent: bounded(
-      input.minimumRoiPercent,
-      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumRoiPercent,
-      0,
-      10_000,
-    ),
+    minimumNetProfit: 0,
+    minimumNetMarginPercent:
+      SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+    minimumRoiPercent: SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
   }
 }
 
@@ -157,23 +151,37 @@ export function calculateEbayUnitEconomics(
   const promotedListingsReserve = salePrice * config.promotedListingsReserveRate
   const estimatedNetProfit = salePrice - supplierCost - config.estimatedOutboundShipping -
     estimatedEbayFees - returnsReserve - promotedListingsReserve
-  const estimatedNetMarginPercent = (estimatedNetProfit / salePrice) * 100
-  const estimatedRoiPercent = supplierCost > 0
-    ? (estimatedNetProfit / supplierCost) * 100
-    : estimatedNetProfit > 0
-      ? Number.POSITIVE_INFINITY
-      : 0
   const variableRate = config.estimatedEbayFeeRate + config.returnsReserveRate +
     config.promotedListingsReserveRate
   const exactContributionBreakEvenPrice = contributionBreakEvenPrice(
     supplierCost, config.estimatedOutboundShipping, variableRate,
     config.fixedOrderFee)
-  const minimumProfitablePrice = (
-    supplierCost + config.estimatedOutboundShipping + appliedFixedOrderFee + config.minimumNetProfit
-  ) / Math.max(0.01, 1 - variableRate)
-  const passesProfitGate = estimatedNetProfit >= config.minimumNetProfit &&
-    estimatedNetMarginPercent >= config.minimumNetMarginPercent &&
-    estimatedRoiPercent >= config.minimumRoiPercent
+  const policyEvaluation = evaluateSellerOsRoiMarginPolicyV2({
+    revenueUsd: salePrice,
+    investmentBase: "EBAY_LUNA_ORDER_INVESTMENT",
+    investmentBaseUsd: supplierCost + config.estimatedOutboundShipping +
+      appliedFixedOrderFee,
+    costs: [
+      { key: "supplier_cost", amountUsd: supplierCost,
+        authority: "LUNA_OR_CONFIRMED_SUPPLIER_COST", state: "KNOWN" },
+      { key: "outbound_shipping",
+        amountUsd: config.estimatedOutboundShipping,
+        authority: "EBAY_UNIT_ECONOMICS_CONFIG", state: "ESTIMATED" },
+      { key: "ebay_fees", amountUsd: estimatedEbayFees,
+        authority: "EBAY_US_SELLING_FEE_ESTIMATE", state: "ESTIMATED" },
+      { key: "returns_reserve", amountUsd: returnsReserve,
+        authority: "SELLER_OS_RETURNS_RESERVE", state: "ESTIMATED" },
+      { key: "promoted_listings_reserve", amountUsd: promotedListingsReserve,
+        authority: "SELLER_OS_AD_RESERVE", state: "ESTIMATED" },
+    ],
+  })
+  const limits = calculateSellerOsPolicyLimitsV2({ revenueUsd: salePrice,
+    purchaseCostUsd: supplierCost,
+    otherFixedCostUsd: config.estimatedOutboundShipping + appliedFixedOrderFee,
+    investmentBaseAdditionalUsd:
+      config.estimatedOutboundShipping + appliedFixedOrderFee,
+    variableCostRate: variableRate })
+  const passesProfitGate = policyEvaluation.passesPolicy
 
   return {
     ready: true as const,
@@ -184,12 +192,16 @@ export function calculateEbayUnitEconomics(
     returnsReserve: money(returnsReserve),
     promotedListingsReserve: money(promotedListingsReserve),
     estimatedNetProfit: money(estimatedNetProfit),
-    estimatedNetMarginPercent: money(estimatedNetMarginPercent),
-    estimatedRoiPercent: Number.isFinite(estimatedRoiPercent)
-      ? money(estimatedRoiPercent)
-      : null,
+    estimatedNetMarginPercent: policyEvaluation.contributionMarginPercent,
+    contributionMarginPercent: policyEvaluation.contributionMarginPercent,
+    estimatedRoiPercent: policyEvaluation.estimatedRoiPercent,
+    investmentBase: policyEvaluation.investmentBase,
+    investmentBaseUsd: policyEvaluation.investmentBaseUsd,
     contributionBreakEvenPrice: exactContributionBreakEvenPrice,
-    minimumProfitablePrice: money(minimumProfitablePrice),
+    minimumProfitablePrice: limits.minimumViablePriceUsd,
+    minimumViablePrice: limits.minimumViablePriceUsd,
+    maximumPurchasePrice: limits.maximumPurchasePriceUsd,
+    policyEvaluation,
     passesProfitGate,
     config,
     feePolicy: {
@@ -225,22 +237,27 @@ export function calculateEbayMinimumOperatorPrice(
     config.promotedListingsReserveRate
   const appliedFixedOrderFee = Math.max(config.fixedOrderFee, 0.40)
   const fixedBase = supplierCost + config.estimatedOutboundShipping + appliedFixedOrderFee
-  const profitFloor = (fixedBase + config.minimumNetProfit) / Math.max(0.01, 1 - variableRate)
-  const marginRate = config.minimumNetMarginPercent / 100
-  const marginFloor = fixedBase / Math.max(0.01, 1 - variableRate - marginRate)
-  const roiRate = config.minimumRoiPercent / 100
-  const roiFloor = (supplierCost * (1 + roiRate) + config.estimatedOutboundShipping + appliedFixedOrderFee) /
-    Math.max(0.01, 1 - variableRate)
+  const limits = calculateSellerOsPolicyLimitsV2({
+    purchaseCostUsd: supplierCost,
+    otherFixedCostUsd: config.estimatedOutboundShipping + appliedFixedOrderFee,
+    investmentBaseAdditionalUsd:
+      config.estimatedOutboundShipping + appliedFixedOrderFee,
+    variableCostRate: variableRate,
+  })
 
   return {
     ready: true as const,
     supplierCost: money(supplierCost),
-    minimumOperatorPrice: minimumMoney(Math.max(profitFloor, marginFloor, roiFloor)),
+    minimumOperatorPrice: limits.minimumViablePriceUsd === null
+      ? null : minimumMoney(limits.minimumViablePriceUsd),
     components: {
-      minimumNetProfitPrice: minimumMoney(profitFloor),
-      minimumNetMarginPrice: minimumMoney(marginFloor),
-      minimumRoiPrice: minimumMoney(roiFloor),
+      minimumNetProfitPrice: null,
+      minimumNetMarginPrice: limits.minimumPriceByContributionMarginUsd,
+      minimumContributionMarginPrice:
+        limits.minimumPriceByContributionMarginUsd,
+      minimumRoiPrice: limits.minimumPriceByRoiUsd,
     },
+    policy: limits.policy,
     config,
     feePolicy: {
       version: "EBAY_US_SELLING_FEES_2026_07_01_PRE_TAXONOMY_RESERVE_V1",

@@ -102,6 +102,7 @@ function safeFacts(facts: SellerWhatsAppAlertFacts) {
     currentStock: numeric(facts.currentStock),
     previousStock: numeric(facts.previousStock),
     estimatedMarginPct: numeric(facts.estimatedMarginPct),
+    estimatedRoiPct: numeric(facts.estimatedRoiPct),
     estimatedNetProfit: numeric(facts.estimatedNetProfit),
     costChangePct: numeric(facts.costChangePct),
     hasExactEvidence: facts.hasExactEvidence === true,

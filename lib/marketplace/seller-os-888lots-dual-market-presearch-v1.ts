@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { sellerOsRoiMarginPolicyContractV2 } from
+  "./seller-os-roi-margin-policy-v2"
 
 import {
   get888LotsRadarDashboardV1,
@@ -81,7 +83,7 @@ export type SellerOs888LotsPreSearchResultV1 = Readonly<{
   evidencePolicy: Readonly<{
     noFalseZeros: true
     supplierEstimateSeparatedFromMarketplaceEvidence: true
-    minimumNetProfitUsd: 4
+    economicPolicy: ReturnType<typeof sellerOsRoiMarginPolicyContractV2>
     clickOnlyMaximumTestUnits: 3
     exactVelocityCoverageDays: 14
   }>
@@ -312,7 +314,7 @@ export function build888LotsDualMarketPreSearchResultV1(input: {
     evidencePolicy: {
       noFalseZeros: true as const,
       supplierEstimateSeparatedFromMarketplaceEvidence: true as const,
-      minimumNetProfitUsd: 4 as const,
+      economicPolicy: sellerOsRoiMarginPolicyContractV2(),
       clickOnlyMaximumTestUnits: 3 as const,
       exactVelocityCoverageDays: 14 as const,
     },
@@ -524,7 +526,7 @@ export async function get888LotsAmazonStarCandidatesV1(input: {
         supplierExcludedFromNewRecommendations: true as const,
         historicalEvidencePreserved: true as const,
       },
-      policy: { minimumNetProfitUsd: 4 as const,
+      policy: { economicPolicy: sellerOsRoiMarginPolicyContractV2(),
         clickOnlyMaximumTestUnits: 3 as const,
         exactVelocityCoverageDays: 14 as const },
       safety: { readOnly: true as const, supplierReads: 0 as const,
@@ -578,7 +580,7 @@ export async function get888LotsAmazonStarCandidatesV1(input: {
         supplierEstimateIsMarketProof: false as const,
         maximumSupplierUnitCostUsd:
           candidate.commercialMaxSupplierUnitCostUsd,
-        minimumNetProfitUsd: 4 as const,
+        economicPolicy: sellerOsRoiMarginPolicyContractV2(),
         preSearchStatus: !preSearchAvailable ? "NOT_RUN" as const
           : preSearchFresh ? "FRESH" as const : "STALE" as const,
         preSearchCompletedAt: completedAt || null,
@@ -618,7 +620,7 @@ export async function get888LotsAmazonStarCandidatesV1(input: {
       ownerMustConfirmAmazonEligibilityDemandPriceAndFees: true as const,
       deliveredCostMustBeConfirmedInSupplierCart: true as const,
     },
-    policy: { minimumNetProfitUsd: 4 as const,
+    policy: { economicPolicy: sellerOsRoiMarginPolicyContractV2(),
       clickOnlyMaximumTestUnits: 3 as const,
       exactVelocityCoverageDays: 14 as const },
     safety: { readOnly: true as const, supplierPurchases: 0 as const,

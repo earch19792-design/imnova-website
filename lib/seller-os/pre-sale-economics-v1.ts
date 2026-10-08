@@ -4,6 +4,9 @@ import { consumeListingFeeAuthorityV1 } from "./listing-fee-authority-v1"
 import { EBAY_FEE_AUTHORITY_V1, feeRecordV1 as record } from "./ebay-fee-producer-v1"
 import { listingEconomicsV1, validatePromotionPolicyV1, type Economics, type PromotionPolicy } from "./listing-treatment-engine-v1"
 import { safeAdCapacityV1 } from "./ad-rate-economics-v1"
+import { SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 const down = (n: number) => Math.floor(n * 100 + 1e-9) / 100
 const ceil = (n: number) => Math.ceil(n * 100 - 1e-9) / 100
 export const economicAmountV1 = (v: unknown): number | null => (typeof v === "number" || typeof v === "string" && /^\d+(\.\d+)?$/.test(v)) && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null
@@ -12,31 +15,36 @@ const arr = (v: unknown) => Array.isArray(v) ? v.map(record) : []
 /** All values must come from the server's current authority, never UI amounts.
  * The ad basis may be a conservative bound larger than the item sale price. */
 export function adsCanaryEconomicsV1(e: Economics, policy: PromotionPolicy, recommendedRate: number | null) {
-  validatePromotionPolicyV1(policy)
+  const normalizedPolicy = validatePromotionPolicyV1(policy)
   const result = listingEconomicsV1(e)
   const empty = { ...result, maxSafeAdRatePct: null as number | null, allowedAdRate: null as number | null,
     proposedAdRatePct: null as number | null, projectedAdCost: null as number | null,
     projectedProfitAfterAds: null as number | null, projectedMarginAfterAds: null as number | null,
+    projectedRoiAfterAds: null as number | null,
     promotionBlockedMargin: false, status: "BLOCKED_EVIDENCE" }
   if (result.economicsUnproven || !e.adFeeBasis.fresh || !e.adFeeBasis.reference || e.adFeeBasis.value === null || e.adFeeBasis.value < e.salePrice.value!) return empty
   // A cent of reserved profit cannot be spent by rounding the fee up.
-  const room = down(result.profitBeforeAds! - Math.max(policy.minProfit, e.salePrice.value! * policy.minMargin / 100))
+  const room = down(result.profitBeforeAds! - Math.max(
+    e.salePrice.value! * SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 / 100,
+    result.investmentBase! * SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 / 100))
   const maxSafeAdRatePct = safeAdCapacityV1(e, policy).maxSafeAdRatePct!
   const cap = recommendedRate === null || !Number.isFinite(recommendedRate) || recommendedRate < 0 || recommendedRate > 100 ? null :
-    Math.min(recommendedRate, policy.maxRate, maxSafeAdRatePct)
+    Math.min(recommendedRate, normalizedPolicy.maxRate, maxSafeAdRatePct)
   const rate = cap === null ? null : Math.floor(cap * 10 + 1e-9) / 10
-  const blockedMargin = room < 0 || maxSafeAdRatePct < policy.minRate
-  if (blockedMargin || rate === null || rate < policy.minRate || rate < contract.adRate.apiMinPct)
+  const blockedMargin = room < 0 || maxSafeAdRatePct < normalizedPolicy.minRate
+  if (blockedMargin || rate === null || rate < normalizedPolicy.minRate || rate < contract.adRate.apiMinPct)
     return { ...empty, maxSafeAdRatePct, allowedAdRate: cap, promotionBlockedMargin: blockedMargin,
       status: blockedMargin ? "BLOCKED_MARGIN" : rate === null ? "RECOMMENDED_RATE_REQUIRED" : "NO_REPRESENTABLE_RATE_IN_POLICY" }
   const projectedAdCost = ceil(e.adFeeBasis.value * rate / 100)
   const projectedProfitAfterAds = down(result.profitBeforeAds! - projectedAdCost)
   const projectedMarginAfterAds = projectedProfitAfterAds / e.salePrice.value! * 100
-  const safe = projectedProfitAfterAds + 1e-9 >= policy.minProfit && projectedMarginAfterAds + 1e-9 >= policy.minMargin
+  const projectedRoiAfterAds = projectedProfitAfterAds / result.investmentBase! * 100
+  const safe = projectedRoiAfterAds + 1e-9 >= SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2 && projectedMarginAfterAds + 1e-9 >= SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2
   return { ...empty, maxSafeAdRatePct, allowedAdRate: cap, proposedAdRatePct: safe ? rate : null,
     projectedAdCost: safe ? projectedAdCost : null, projectedProfitAfterAds: safe ? projectedProfitAfterAds : null,
-    projectedMarginAfterAds: safe ? projectedMarginAfterAds : null, promotionBlockedMargin: !safe,
-    status: !safe ? "BLOCKED_MARGIN" : policy.mode === "OFF" ? "POLICY_OFF" : "PREVIEW_READY" }
+    projectedMarginAfterAds: safe ? projectedMarginAfterAds : null,
+    projectedRoiAfterAds: safe ? projectedRoiAfterAds : null, promotionBlockedMargin: !safe,
+    status: !safe ? "BLOCKED_MARGIN" : normalizedPolicy.mode === "OFF" ? "POLICY_OFF" : "PREVIEW_READY" }
 }
 
 

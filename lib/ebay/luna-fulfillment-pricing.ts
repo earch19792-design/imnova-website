@@ -12,8 +12,8 @@ const PACK_SCENARIO_DEFAULT_ECONOMICS_CONFIG: EbayUnitEconomicsConfig = {
   estimatedOutboundShipping: 0,
   returnsReserveRate: .04,
   promotedListingsReserveRate: .05,
-  minimumNetProfit: 4,
-  minimumNetMarginPercent: 20,
+  minimumNetProfit: 0,
+  minimumNetMarginPercent: 15,
   minimumRoiPercent: 30,
 }
 
@@ -122,12 +122,9 @@ function calculatePackScenarioEconomics(
       PACK_SCENARIO_DEFAULT_ECONOMICS_CONFIG.returnsReserveRate, 0, .5),
     promotedListingsReserveRate: boundedNumber(overrides.promotedListingsReserveRate,
       PACK_SCENARIO_DEFAULT_ECONOMICS_CONFIG.promotedListingsReserveRate, 0, .5),
-    minimumNetProfit: boundedNumber(overrides.minimumNetProfit,
-      PACK_SCENARIO_DEFAULT_ECONOMICS_CONFIG.minimumNetProfit, 0, 10_000),
-    minimumNetMarginPercent: boundedNumber(overrides.minimumNetMarginPercent,
-      PACK_SCENARIO_DEFAULT_ECONOMICS_CONFIG.minimumNetMarginPercent, 0, 95),
-    minimumRoiPercent: boundedNumber(overrides.minimumRoiPercent,
-      PACK_SCENARIO_DEFAULT_ECONOMICS_CONFIG.minimumRoiPercent, 0, 10_000),
+    minimumNetProfit: 0,
+    minimumNetMarginPercent: 15,
+    minimumRoiPercent: 30,
   }
   const appliedFixedOrderFee = salePrice <= 10
     ? Math.min(config.fixedOrderFee, .3)
@@ -141,9 +138,10 @@ function calculatePackScenarioEconomics(
   const estimatedRoiPercent = exactPackCostUsd > 0
     ? (estimatedNetProfit / exactPackCostUsd) * 100
     : estimatedNetProfit > 0 ? null : 0
-  const passesProfitGate = estimatedNetProfit >= config.minimumNetProfit &&
-    estimatedNetMarginPercent >= config.minimumNetMarginPercent &&
-    (estimatedRoiPercent === null || estimatedRoiPercent >= config.minimumRoiPercent)
+  const passesProfitGate = estimatedNetMarginPercent >=
+      config.minimumNetMarginPercent &&
+    estimatedRoiPercent !== null &&
+    estimatedRoiPercent >= config.minimumRoiPercent
   return {
     ready: true as const,
     salePrice: money(salePrice),

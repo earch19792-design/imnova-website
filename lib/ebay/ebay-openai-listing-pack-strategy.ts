@@ -920,7 +920,7 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
     ].filter((entry): entry is string => Boolean(entry))
     const meetsProfit = sellerProfit === null ? null : sellerProfit >= 5
     const meetsRoi = roiPercent === null ? null : roiPercent >= 30
-    const meetsMargin = netMarginPercent === null ? null : netMarginPercent >= 20
+    const meetsMargin = netMarginPercent === null ? null : netMarginPercent >= 15
     const evidenceLevel = confidence(active.length, sold.length)
     const demandScore = Math.min(100, sold.length * 25 + (verifiedSoldQuantity ?? 0) * 3 + active.length * 4)
     const competitionScore = Math.min(100, active.length * 12)

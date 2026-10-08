@@ -58,7 +58,7 @@ export const DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY:
   minimumImpressionsForEngagementReview: 100,
   minimumViewsForConversionReview: 30,
   minimumWatchersForSaleReview: 3,
-  marginRiskBelowPercent: 20,
+  marginRiskBelowPercent: 15,
   stockRiskAtOrBelowUnits: 3,
   optimizationCooldownHours: 7 * 24,
   operationalRiskCooldownHours: 24,

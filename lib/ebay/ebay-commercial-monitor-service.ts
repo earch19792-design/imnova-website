@@ -312,7 +312,7 @@ export function normalizeCommercialThresholds(value: unknown): CommercialThresho
     acceleratedUnits24h: thresholdNumber(source, "acceleratedUnits24h", 2, 1, 100_000),
     lowStockMinimum: thresholdNumber(source, "lowStockMinimum", 1, 0, 1_000_000),
     lowStockMaximum: thresholdNumber(source, "lowStockMaximum", 3, 0, 1_000_000),
-    marginRiskPercent: thresholdNumber(source, "marginRiskPercent", 20, -1_000, 100),
+    marginRiskPercent: thresholdNumber(source, "marginRiskPercent", 15, -1_000, 100),
     marginCriticalPercent: thresholdNumber(source, "marginCriticalPercent", 10, -1_000, 100),
   }
 }

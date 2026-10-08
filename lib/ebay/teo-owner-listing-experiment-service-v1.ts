@@ -792,7 +792,7 @@ export async function readTeoPreparedReplacementV1(
     },
     currentLiveValidation: text(readiness.currentLiveValidation) ??
       "CURRENT_UNAVAILABLE",
-    minimumNetProfitUsd: 4 as const,
+    minimumNetProfitUsd: 0 as const,
     tradingReads: 0 as const,
     marketplaceWrites: 0 as const,
     listingEnds: 0 as const,

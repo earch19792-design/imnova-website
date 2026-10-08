@@ -61,6 +61,11 @@ function percent(value: unknown) {
     ? `${Math.round(value * 100)}%` : "Sin evidencia"
 }
 
+function percentPoints(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${value.toFixed(1)}%` : "Sin evidencia"
+}
+
 function date(value: unknown) {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "Nunca"
   return new Intl.DateTimeFormat("es-US", { dateStyle: "medium",
@@ -101,6 +106,9 @@ export default function ConnieAmazonPerformancePage() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [linking, setLinking] = useState(false)
+  const [scouting, setScouting] = useState(false)
+  const [scout, setScout] = useState<Json>({})
+  const [scoutQuery, setScoutQuery] = useState("")
   const [cost, setCost] = useState<CostForm>(emptyCost)
   const [message, setMessage] = useState("")
 
@@ -165,12 +173,32 @@ export default function ConnieAmazonPerformancePage() {
     } finally { setLinking(false) }
   }
 
+  async function runScout() {
+    setScouting(true); setMessage("")
+    try {
+      const response = await request({ method: "POST", body: JSON.stringify({
+        action: "SCOUT_AMAZON_WHOLESALE_OPPORTUNITIES", limit: 10,
+        ...(scoutQuery.trim() ? { query: scoutQuery.trim() } : {}),
+      }) })
+      const payload = await response.json() as Json
+      if (!response.ok || payload.success !== true) {
+        throw new Error(String(payload.error ?? "No se pudo explorar Amazon."))
+      }
+      setScout(object(payload.scout))
+      setMessage("Exploración terminada sin comprar, publicar ni cambiar inventario.")
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message :
+        "No se pudo explorar Amazon.")
+    } finally { setScouting(false) }
+  }
+
   const summary = object(monitor.summary)
   const purchaseGateSummary = object(summary.purchaseGate)
   const automation = object(monitor.automation)
   const syncState = object(automation.sync)
   const cards = list(monitor.cards)
   const proposalInbox = list(monitor.proposalInbox)
+  const scoutOpportunities = list(scout.opportunities)
   const proposalOptions = [
     ...proposalInbox.map((candidate) => ({
       sellerSku: String(candidate.seller_sku ?? ""),
@@ -269,7 +297,7 @@ export default function ConnieAmazonPerformancePage() {
     <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.06] p-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div><p className="text-xs font-black uppercase tracking-[0.15em] text-emerald-100/60">
-          Purchase Gate · mínimo $4 netos
+          Purchase Gate · ROI ≥30% y margen de contribución ≥15%
         </p><h2 className="mt-2 text-xl font-black">Qué conviene comprar</h2></div>
         <p className="text-xs text-white/45">Siempre requiere revisión del owner</p>
       </div>
@@ -279,6 +307,78 @@ export default function ConnieAmazonPerformancePage() {
         <Metric title="Esperar" value={loading ? "…" : Number(purchaseGateSummary.wait ?? 0)} note="Nunca convierte faltantes en cero" />
         <Metric title="Descartar" value={loading ? "…" : Number(purchaseGateSummary.reject ?? 0)} />
       </div>
+    </section>
+
+    <section className="rounded-3xl border border-sky-200/20 bg-sky-200/[0.06] p-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.15em] text-sky-100/60">
+            Amazon Wholesale Opportunity Scout
+          </p>
+          <h2 className="mt-2 text-xl font-black">Descubrir sin aportar ASIN</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
+            Cruza el catálogo de proveedores con Amazon, prioriza Florida y
+            devuelve hasta diez oportunidades. Un precio de catálogo es una
+            oferta pendiente, no una cotización verificada. Keepa sólo se usa
+            cuando ya existe acceso autorizado; esta acción no activa gastos.
+          </p>
+        </div>
+        <span className="rounded-full bg-sky-200/10 px-3 py-1 text-xs font-black text-sky-100">
+          SÓLO LECTURA
+        </span>
+      </div>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+        <input value={scoutQuery} onChange={(event) =>
+          setScoutQuery(event.target.value)}
+          placeholder="Filtro opcional: marca, categoría o producto"
+          className="min-h-11 flex-1 rounded-xl border border-white/15 bg-black/20 px-3" />
+        <button type="button" onClick={() => void runScout()}
+          disabled={scouting || !ready}
+          className="min-h-11 rounded-xl bg-sky-200 px-4 font-black text-sky-950 disabled:opacity-40">
+          {scouting ? "Cruzando catálogos…" : "Buscar hasta 10 oportunidades"}
+        </button>
+      </div>
+      {scoutOpportunities.length > 0 && <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        {scoutOpportunities.map((entry) => {
+          const supplier = object(entry.supplier)
+          const offer = object(entry.offer)
+          const amazon = object(entry.amazon)
+          const economics = object(entry.economics)
+          const ownSales = object(entry.ownSalesProbable)
+          const identity = object(entry.identity)
+          return <article key={String(entry.opportunityDigest)}
+            className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div><h3 className="font-black">{String(entry.title)}</h3>
+                <p className="mt-1 text-xs text-white/45">ASIN {String(entry.asin)} · coincidencia {String(identity.matchType ?? "pendiente")}</p></div>
+              <span className="rounded-full bg-white/[0.07] px-2 py-1 text-[10px] font-black">
+                {String(entry.recommendation ?? "CONTINUE_RESEARCH")}
+              </span>
+            </div>
+            <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg bg-white/[0.04] p-2"><dt className="text-white/40">Proveedor posible</dt><dd className="mt-1 font-bold">{String(supplier.name ?? "Sin evidencia")} · {String(supplier.locationPriority ?? "UNPROVEN")}</dd></div>
+              <div className="rounded-lg bg-white/[0.04] p-2"><dt className="text-white/40">Estado de oferta</dt><dd className="mt-1 font-bold">{String(offer.state ?? "PENDING_VERIFICATION")}</dd></div>
+              <div className="rounded-lg bg-white/[0.04] p-2"><dt className="text-white/40">Costo / Buy Box</dt><dd className="mt-1 font-bold">{money(offer.unitCostUsd)} / {money(amazon.featuredOfferPriceUsd)}</dd></div>
+              <div className="rounded-lg bg-white/[0.04] p-2"><dt className="text-white/40">Fees Amazon</dt><dd className="mt-1 font-bold">{money(amazon.estimatedAmazonFeesUsd)}</dd></div>
+              <div className="rounded-lg bg-white/[0.04] p-2"><dt className="text-white/40">Contribución / margen</dt><dd className="mt-1 font-bold">{money(economics.contributionUsd)} / {percentPoints(economics.contributionMarginPercent)}</dd></div>
+              <div className="rounded-lg bg-white/[0.04] p-2"><dt className="text-white/40">ROI / compra máxima</dt><dd className="mt-1 font-bold">{percentPoints(economics.estimatedRoiPercent)} / {money(economics.maximumPurchasePriceUsd)}</dd></div>
+              <div className="rounded-lg bg-white/[0.04] p-2"><dt className="text-white/40">Ventas propias probables</dt><dd className="mt-1 font-bold">{ownSales.ownUnitsBase == null ? "Sin evidencia" : `${String(ownSales.ownUnitsLow)}–${String(ownSales.ownUnitsHigh)} / mes`}</dd></div>
+              <div className="rounded-lg bg-white/[0.04] p-2"><dt className="text-white/40">Cantidad prudente / inversión</dt><dd className="mt-1 font-bold">{entry.prudentQuantity == null ? "Sin recomendar" : String(entry.prudentQuantity)} / {money(entry.investmentUsd)}</dd></div>
+            </dl>
+            <p className="mt-3 text-[11px] leading-4 text-white/40">
+              La demanda total del ASIN nunca se presenta como ventas propias.
+              El MOQ no se recomienda por defecto. Costos faltantes bloquean
+              contribución, ROI, precio máximo e inversión; no se convierten en cero.
+            </p>
+            <p className="mt-3 rounded-xl bg-amber-200/10 p-3 text-xs font-bold text-amber-50">
+              Siguiente: {String(entry.nextBestEvidence ?? "Revisar evidencia")}
+            </p>
+          </article>
+        })}
+      </div>}
+      {scout.returnedCount === 0 && Boolean(scout.status) && <p className="mt-4 rounded-xl bg-white/[0.04] p-3 text-sm text-white/55">
+        Estado: {String(scout.status)}. No se fabricaron oportunidades ni ceros.
+      </p>}
     </section>
 
     <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
@@ -406,7 +506,8 @@ export default function ConnieAmazonPerformancePage() {
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Tarifas estimadas Amazon</dt><dd className="mt-1 font-bold">{money(economics.estimatedAmazonFeesPerUnitUsd)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Ganancia tras Amazon*</dt><dd className="mt-1 font-bold">{money(economics.contributionAfterAmazonFeesPerUnitUsd)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Neto proyectado</dt><dd className="mt-1 font-bold">{money(economics.projectedNetProfitPerUnitUsd)}</dd></div>
-              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Presupuesto restante para logística y conservar $4</dt><dd className="mt-1 font-bold">{money(economics.maximumAdditionalCostForMinimumProfitUsd)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Margen de contribución / ROI</dt><dd className="mt-1 font-bold">{percentPoints(economics.contributionMarginPercent)} / {percentPoints(economics.estimatedRoiPercent)}</dd></div>
+              <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Compra máxima / precio mínimo viable</dt><dd className="mt-1 font-bold">{money(object(purchaseGate.economics).maximumSupplierUnitCostUsd)} / {money(object(purchaseGate.economics).minimumViablePriceUsd)}</dd></div>
               <div className="rounded-xl bg-white/[0.04] p-3"><dt className="text-white/40">Cantidad sugerida</dt><dd className="mt-1 font-bold">{purchaseGate.recommendedPurchaseQuantity == null ? "Sin autorizar" : `${String(purchaseGate.recommendedPurchaseQuantity)} unidades`}</dd></div>
             </dl>
             <p className="mt-2 text-[11px] text-white/40">* Buy Box menos costo del producto y tarifas estimadas de Amazon. El neto final sólo aparece cuando los costos externos de logística/preparación están probados.</p>

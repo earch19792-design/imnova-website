@@ -48,16 +48,12 @@ export async function POST(request: Request) {
       : Number(body.scanLimit)
     const targetDrafts = body.targetDrafts === undefined ? 10
       : Number(body.targetDrafts)
-    const targetNetProfit = body.targetNetProfit === undefined
-      ? 4 : Number(body.targetNetProfit)
     if (body.action !== "RUN_STOCKING_BATCH" || !category ||
         category.length > 100 ||
         /[\u0000-\u001f\u007f]/.test(category) ||
         !Number.isSafeInteger(scanLimit) || scanLimit < 10 ||
         scanLimit > 100 || !Number.isSafeInteger(targetDrafts) ||
-        targetDrafts < 1 || targetDrafts > 10 || scanLimit < targetDrafts ||
-        !Number.isFinite(targetNetProfit) || targetNetProfit < 4 ||
-        targetNetProfit > 10_000) {
+        targetDrafts < 1 || targetDrafts > 10 || scanLimit < targetDrafts) {
       return response({ success: false,
         error: "AUTONOMOUS_CATEGORY_ANALYSIS_REQUEST_INVALID" }, 400)
     }
@@ -71,7 +67,7 @@ export async function POST(request: Request) {
         scopes: Object.freeze(["owner_admin"]) },
       now: new Date(),
       invocationSource: "OWNER_ADMIN_UI",
-    }, category, { scanLimit, targetDrafts, targetNetProfit })
+    }, category, { scanLimit, targetDrafts, targetNetProfit: 0 })
 
     return response({ success: true, result,
       safety: { marketplaceWrites: 0, supplierPurchases: 0,

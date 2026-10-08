@@ -8,10 +8,10 @@ export const WINNER_ECONOMICS_CONFIG_VERSION =
   "EBAY_WINNER_ECONOMICS_US_V3_2026_07_18"
 
 export const WINNER_ECONOMICS_CONFIG = Object.freeze({
-  minimumProfitUsd: 5,
+  minimumProfitUsd: 0,
   idealProfitUsd: 7,
   minimumRoiPercent: 30,
-  minimumNetMarginPercent: 20,
+  minimumNetMarginPercent: 15,
   estimatedEbayFeeRate: 0.153,
   fixedOrderFee: 0.40,
   returnsReserveRate: 0.04,
@@ -629,8 +629,7 @@ function economicsAtPrice(price: number | null, totalBaseCost: number | null) {
     estimatedProfit: roundMoney(profit),
     estimatedNetMarginPercent: roundPercent(margin),
     estimatedRoiPercent: roi === null ? null : roundPercent(roi),
-    passes: profit >= WINNER_ECONOMICS_CONFIG.minimumProfitUsd &&
-      margin >= WINNER_ECONOMICS_CONFIG.minimumNetMarginPercent &&
+    passes: margin >= WINNER_ECONOMICS_CONFIG.minimumNetMarginPercent &&
       roi !== null && roi >= WINNER_ECONOMICS_CONFIG.minimumRoiPercent,
   }
 }

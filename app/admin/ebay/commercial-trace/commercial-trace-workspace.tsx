@@ -541,7 +541,7 @@ function CommercialDossier({ view, error }: {
         ]} />
         {Object.keys(dossier.economics.floor).length > 0 && <details className="mt-4 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><summary className="cursor-pointer font-semibold text-slate-200">Ver ecuación completa del piso económico</summary><div className="mt-4"><DefinitionGrid items={[
           ["Gate vinculante", display(dossier.economics.floor.bindingGate)],
-          ["Piso de utilidad", money(asRecord(dossier.economics.floor.candidateFloors).minimumNetProfitPrice)],
+          ["Precio mínimo viable", money(dossier.economics.floor.minimumOperatorPrice)],
           ["Piso de margen", money(asRecord(dossier.economics.floor.candidateFloors).minimumNetMarginPrice)],
           ["Piso de ROI", money(asRecord(dossier.economics.floor.candidateFloors).minimumRoiPrice)],
           ["Fee allowance", money(asRecord(dossier.economics.floor.policyAssumptions).marketplaceFeeAllowance)],

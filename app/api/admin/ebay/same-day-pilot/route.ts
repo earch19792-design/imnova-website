@@ -473,7 +473,7 @@ export async function POST(req: Request) {
         continuation,
         autoResumed: true,
         safety: {
-          minimumNetMarginPercent: 10,
+          minimumNetMarginPercent: 15,
           promotionAllowed: false,
           manualPublicationOnly: false,
           finalHumanAuthorizationRequired: true,

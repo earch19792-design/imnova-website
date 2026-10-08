@@ -401,7 +401,8 @@ export function buildSellerOsCommercialOpportunityMemoryV1(
     economics: {
       ...evidenceReference(evaluation.economics),
       expectedNetProfit: finite(economics.expectedNetProfit),
-      targetNetProfit: finite(economics.targetNetProfit),
+      targetNetProfit: null,
+      economicPolicyEvaluation: economics.economicPolicyEvaluation ?? null,
       feeAuthority: evidenceReference(economics.feeAuthority),
     },
     duplicateGate: evidenceReference(evaluation.duplicateGate),
@@ -413,7 +414,8 @@ export function buildSellerOsCommercialOpportunityMemoryV1(
       evaluationReceiptId: text(receipt.receiptId, 100),
       evaluationEvidenceDigest: text(receipt.evidenceDigest, 80),
       sourceEvaluationEvidenceDigest: text(evaluation.evidenceDigest, 80),
-      minimumNetProfitUsd: finite(economics.targetNetProfit),
+      minimumNetProfitUsd: null,
+      economicPolicyEvaluation: economics.economicPolicyEvaluation ?? null,
       failClosed: true,
       lifecycleArtifactReceiptId: text(
         lifecycleArtifact.lifecycleArtifactReceiptId, 100),

@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto"
 
 import { goldenDigest } from "./commercial-golden-path-domain-v1"
+import { SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2,
+  SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2,
+  sellerOsRoiMarginPolicyContractV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 
 export const SELLER_OS_REPLACEMENT_READINESS_VERSION =
   "SELLER_OS_REPLACEMENT_READINESS_V1" as const
-export const SELLER_OS_REPLACEMENT_MINIMUM_NET_PROFIT_USD = 4 as const
+/** @deprecated Policy V2 has no monetary profit floor. */
+export const SELLER_OS_REPLACEMENT_MINIMUM_NET_PROFIT_USD = 0 as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -123,8 +128,13 @@ function candidateProjection(row: SellerOsReplacementCandidateRowV1,
   const memoryDigest = text(row.commercial_memory_digest, 80)
   const { memoryDigest: _storedMemoryDigest, ...memoryWithoutDigest } = memory
   const expectedNetProfit = finite(economics.expectedNetProfit)
-  const targetNetProfit = finite(economics.targetNetProfit) ??
-    finite(record(memory.decisionProvenance).minimumNetProfitUsd)
+  const contributionMarginPercent = finite(economics.marginPercent)
+  const estimatedRoiPercent = finite(economics.roiPercent)
+  const economicPolicyReady = contributionMarginPercent !== null &&
+    contributionMarginPercent >=
+      SELLER_OS_MINIMUM_CONTRIBUTION_MARGIN_PERCENT_V2 &&
+    estimatedRoiPercent !== null && estimatedRoiPercent >=
+      SELLER_OS_MINIMUM_ESTIMATED_ROI_PERCENT_V2
   const blockers = stringArray(row.commercial_blockers)
   const nonLiveBlockers = blockers.filter((blocker) =>
     !allowedLiveBlocker(blocker))
@@ -144,10 +154,7 @@ function candidateProjection(row: SellerOsReplacementCandidateRowV1,
   const internalEvidenceReady = durableMemory && demand.status === "PROVEN" &&
     provenProductFit(memory.productFit) && shipping.status === "PROVEN" &&
     fresh(shipping, now) && provenAuthority(economics) &&
-    expectedNetProfit !== null &&
-    expectedNetProfit >= SELLER_OS_REPLACEMENT_MINIMUM_NET_PROFIT_USD &&
-    targetNetProfit !== null &&
-    targetNetProfit >= SELLER_OS_REPLACEMENT_MINIMUM_NET_PROFIT_USD &&
+    expectedNetProfit !== null && economicPolicyReady &&
     provenAuthority(fee) && fresh(fee, now) &&
     compliance.status === "PROVEN" && fresh(compliance, now) &&
     nonLiveBlockers.length === 0
@@ -168,7 +175,7 @@ function candidateProjection(row: SellerOsReplacementCandidateRowV1,
       "RESOLVE_BLOCKER",
     evidenceFreshness: text(row.commercial_evidence_freshness, 40) ??
       "UNPROVEN",
-    expectedNetProfit, targetNetProfit,
+    expectedNetProfit, contributionMarginPercent, estimatedRoiPercent,
     soldQuantity: finite(demand.soldQuantity), duplicateStatus,
     evaluationReceiptId: text(row.commercial_evaluation_receipt_id, 100),
     memoryDigest, observedAt: text(row.commercial_observed_at, 48),
@@ -269,6 +276,7 @@ export function buildSellerOsReplacementReadinessV1(input: Readonly<{
     generatedAt: now.toISOString(),
     currentLiveValidation: input.currentLiveState,
     minimumNetProfitUsd: SELLER_OS_REPLACEMENT_MINIMUM_NET_PROFIT_USD,
+    economicPolicy: sellerOsRoiMarginPolicyContractV2(),
     targetCount: targets.length,
     preparedCount: pairs.length,
     readyForOwnerReviewCount: pairs.filter((entry) =>
@@ -280,6 +288,7 @@ export function buildSellerOsReplacementReadinessV1(input: Readonly<{
       noFalseZeroWhenUpstreamUnavailable: true as const,
       sameFamilyRequired: true as const, oneCandidatePerListing: true as const,
       minimumNetProfitUsd: SELLER_OS_REPLACEMENT_MINIMUM_NET_PROFIT_USD,
+      economicPolicy: sellerOsRoiMarginPolicyContractV2(),
       marketplaceWrites: 0 as const, listingEnds: 0 as const,
       publications: 0 as const, repricing: 0 as const }),
   })

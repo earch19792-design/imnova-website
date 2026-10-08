@@ -285,7 +285,7 @@ function ControlledRiskOverrideAuthorization({ summary, working, onAuthorize }: 
   return <section aria-label="Autorización excepcional de riesgo controlado"
     className="mt-4 rounded-2xl border border-amber-200/35 bg-amber-200/[0.075] p-4">
     <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/65">Última instancia · autorización manual</p>
-    <h5 className="mt-1 font-black text-amber-50">Prueba competitiva con margen neto mínimo de 10%</h5>
+    <h5 className="mt-1 font-black text-amber-50">Prueba competitiva con ROI ≥30% y margen de contribución ≥15%</h5>
     <p className="mt-2 text-xs leading-5 text-white/65">La decisión normal continúa siendo NO_GO. Esta excepción sólo permite preparar un paquete manual porque existen ventas exactas confirmadas y una ventana de precio que todavía conserva el 10%.</p>
     <div className="mt-3 grid gap-2 sm:grid-cols-3">
       <Metric label="Piso propio 10%" value={`$${Number(preview.minimumRiskPrice).toFixed(2)}`} />
@@ -1332,7 +1332,7 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
       <p className="mt-2 font-black">{String(competitivenessLabels[String(recommendation.competitiveness)] ?? recommendation.competitiveness ?? "N/D")}</p>
       <p className="mt-1 text-cyan-100/70">Fuente: {sourceLabel} · muestra {Number(market.sampleSize ?? 0)} · vendedores {Number(market.sellerCount ?? 0)} · confianza {String(market.confidence ?? "limitada").toLowerCase()}. Se usa el agregado; nunca el precio de un vendedor individual.</p>
       {excludedOutlierCount > 0 && <p className="mt-1 text-cyan-100/65">Seller OS excluyó {excludedOutlierCount} oferta(s) activa(s) atípica(s) del rango competitivo. La evidencia permanece auditada, pero no puede distorsionar el precio recomendado.</p>}
-      {controlledRiskActiveMarket && <p className="mt-2 rounded-lg border border-amber-200/30 bg-amber-200/[0.07] p-2 font-bold text-amber-50">El piso normal no compite. La única ventana viable usa margen neto mínimo 10%, publicidad 0%, cantidad 1, monitoreo y aprobación humana para cada cambio. No hay margen para aplicar promoción.</p>}
+      {controlledRiskActiveMarket && <p className="mt-2 rounded-lg border border-amber-200/30 bg-amber-200/[0.07] p-2 font-bold text-amber-50">El precio viable exige ROI ≥30% y margen de contribución ≥15%, publicidad 0%, cantidad 1, monitoreo y aprobación humana para cada cambio. No hay margen para aplicar promoción.</p>}
       {nonCompetitiveControlledRisk && <p className="mt-2 rounded-lg border border-red-300/35 bg-red-300/[0.08] p-2 font-bold text-red-100">NO RECOMENDADO: incluso el piso excepcional de 10% queda por encima del mercado equivalente. Puedes continuar expresamente, pero Seller OS fija publicidad en 0%, cantidad 1 y monitoreo; nunca lo aprobará de forma automática.</p>}
       {controlledRiskActiveMarket && Number(recommendation.competitiveTolerancePercent) > 0 && <p className="mt-1 text-amber-100/70">El precio excepcional entra en la tolerancia competitiva agregada de hasta {Number(recommendation.competitiveTolerancePercent).toFixed(0)}%; si la supera, Seller OS no autoriza la prueba.</p>}
       {!marketReferenceUsed && controlledExploratoryFloorUsed && <p className="mt-2 rounded-lg border border-violet-200/30 bg-violet-200/[0.07] p-2 font-bold text-violet-50">No apareció una referencia equivalente suficiente. Esto no bloquea el producto: ${ownCostFloor.toFixed(2)} será el precio inicial calculado por costos, sujeto a aprobación humana, cantidad 1 y monitoreo comercial.</p>}

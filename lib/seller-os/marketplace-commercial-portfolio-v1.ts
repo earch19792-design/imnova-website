@@ -1,5 +1,5 @@
-import { SELLER_OS_MINIMUM_NET_PROFIT_USD_V1 } from
-  "../marketplace/seller-os-commercial-policy-v1"
+import { sellerOsRoiMarginPolicyContractV2 } from
+  "../marketplace/seller-os-roi-margin-policy-v2"
 
 export const SELLER_OS_MARKETPLACE_COMMERCIAL_PORTFOLIO_V1 =
   "SELLER_OS_MARKETPLACE_COMMERCIAL_PORTFOLIO_V1" as const
@@ -256,7 +256,7 @@ export function buildSellerOsMarketplaceCommercialPortfolioV1(input: {
 
   return Object.freeze({
     contractVersion: SELLER_OS_MARKETPLACE_COMMERCIAL_PORTFOLIO_V1,
-    minimumNetProfitUsd: SELLER_OS_MINIMUM_NET_PROFIT_USD_V1,
+    economicPolicy: sellerOsRoiMarginPolicyContractV2(),
     ebay: Object.freeze({ marketplace: "EBAY_US" as const,
       status: text(ebaySales.status, 40) ?? "UNAVAILABLE",
       freshness: text(ebaySales.freshness, 40) ?? "UNKNOWN",
@@ -289,7 +289,7 @@ export function buildSellerOsMarketplaceCommercialPortfolioV1(input: {
     }),
     safety: Object.freeze({ readOnly: true as const, marketplaceWrites: 0,
       supplierPurchases: 0, automaticReorders: 0,
-      minimumProfitFloorPreserved: true as const,
+      roiMarginPolicyPreserved: true as const,
       falseZeroGuard: true as const }),
   })
 }

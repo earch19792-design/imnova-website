@@ -428,6 +428,134 @@ export async function readAmazonCatalogDemandSignalsV1(
   return signals
 }
 
+export type AmazonCatalogSearchItemV1 = Readonly<{
+  asin: string
+  title: string
+  brand: string | null
+  modelNumber: string | null
+  partNumber: string | null
+  manufacturerPartNumber: string | null
+  upc: string | null
+  ean: string | null
+  gtin: string | null
+  productType: string | null
+  category: string | null
+  size: string | null
+  color: string | null
+  packCount: number | null
+  marketplace: "amazon us"
+  source: "AMAZON_CATALOG_ITEMS_2022_04_01"
+}>
+
+function attributeText(value: unknown) {
+  const values = array(value).map(record)
+  const raw = values[0]?.value ?? values[0]?.displayValue
+  return typeof raw === "number" && Number.isFinite(raw)
+    ? String(raw) : clean(raw, 300)
+}
+
+export function parseAmazonCatalogSearchV1(value: unknown) {
+  return Object.freeze(array(record(value).items).map(record).flatMap((item) => {
+    const asin = clean(item.asin, 20)?.toUpperCase()
+    const summary = record(array(item.summaries)[0])
+    const title = clean(summary.itemName, 500)
+    if (!asin || !/^[A-Z0-9]{10}$/.test(asin) || !title) return []
+    const identifiers = array(record(array(item.identifiers)[0]).identifiers)
+      .map(record)
+    const identifier = (kind: RegExp) => clean(identifiers.find((entry) =>
+      kind.test(String(entry.identifierType ?? "")))?.identifier, 40)
+    const attributes = record(item.attributes)
+    const productType = clean(record(array(item.productTypes)[0])
+      .productType, 160)
+    const packCountRaw = numeric(attributeText(attributes.item_package_quantity))
+    return [Object.freeze({ asin, title,
+      brand: clean(summary.brand, 160) ?? attributeText(attributes.brand),
+      modelNumber: clean(summary.modelNumber, 160) ??
+        attributeText(attributes.item_model_number),
+      partNumber: clean(summary.partNumber, 160) ??
+        attributeText(attributes.part_number),
+      manufacturerPartNumber:
+        attributeText(attributes.manufacturer_part_number),
+      upc: identifier(/UPC/i), ean: identifier(/EAN/i),
+      gtin: identifier(/GTIN/i), productType,
+      category: clean(summary.websiteDisplayGroupName, 200) ?? productType,
+      size: attributeText(attributes.size) ??
+        attributeText(attributes.item_dimensions),
+      color: attributeText(attributes.color),
+      packCount: packCountRaw === null ? null : Math.trunc(packCountRaw),
+      marketplace: "amazon us" as const,
+      source: "AMAZON_CATALOG_ITEMS_2022_04_01" as const,
+    })]
+  }))
+}
+
+export async function searchAmazonCatalogItemsV1(
+  client: AmazonSpApiReadOnlyClientV1,
+  input: { keywords?: string | null; identifier?: string | null;
+    pageSize?: number },
+) {
+  const identifier = clean(input.identifier, 40)?.replace(/[^A-Za-z0-9]/g, "")
+  const keywords = clean(input.keywords, 500)
+  if (!identifier && !keywords) return Object.freeze([])
+  const identifierType = identifier && /^\d{12}$/.test(identifier) ? "UPC"
+    : identifier && /^\d{13}$/.test(identifier) ? "EAN"
+      : identifier && /^[A-Z0-9]{10}$/.test(identifier.toUpperCase())
+        ? "ASIN" : identifier ? "GTIN" : undefined
+  const response = await client.requestJson("/catalog/2022-04-01/items", {
+    query: {
+      marketplaceIds: client.configuration.marketplaceId,
+      includedData:
+        "attributes,identifiers,images,productTypes,salesRanks,summaries",
+      pageSize: Math.min(10, Math.max(1, Math.trunc(input.pageSize ?? 5))),
+      ...(identifier ? { identifiers: identifier,
+        identifiersType: identifierType } : { keywords: keywords as string }),
+    },
+  })
+  return parseAmazonCatalogSearchV1(response)
+}
+
+export type AmazonListingRestrictionV1 = Readonly<{
+  asin: string
+  state: "ELIGIBLE" | "RESTRICTED" | "UNAVAILABLE"
+  reasonCodes: readonly string[]
+}>
+
+export function parseAmazonListingRestrictionsV1(asin: string,
+  value: unknown): AmazonListingRestrictionV1 {
+  const restrictions = array(record(value).restrictions).map(record)
+  const reasonCodes = restrictions.flatMap((entry) =>
+    array(entry.reasons).map(record).flatMap((reason) => {
+      const code = clean(reason.reasonCode, 160)
+      return code ? [code] : []
+    }))
+  return Object.freeze({ asin,
+    state: restrictions.length === 0 ? "ELIGIBLE" as const
+      : reasonCodes.length ? "RESTRICTED" as const : "UNAVAILABLE" as const,
+    reasonCodes: Object.freeze([...new Set(reasonCodes)]),
+  })
+}
+
+export async function readAmazonListingRestrictionsV1(
+  client: AmazonSpApiReadOnlyClientV1, asins: readonly string[],
+) {
+  const results = new Map<string, AmazonListingRestrictionV1>()
+  for (const asin of [...new Set(asins.map((value) => value.toUpperCase()))]
+    .filter((value) => /^[A-Z0-9]{10}$/.test(value)).slice(0, 10)) {
+    try {
+      const response = await client.requestJson(
+        "/listings/2021-08-01/restrictions", { query: { asin,
+          sellerId: client.configuration.sellerId ?? undefined,
+          marketplaceIds: client.configuration.marketplaceId,
+          conditionType: "new_new" } })
+      results.set(asin, parseAmazonListingRestrictionsV1(asin, response))
+    } catch {
+      results.set(asin, Object.freeze({ asin, state: "UNAVAILABLE" as const,
+        reasonCodes: Object.freeze(["AMAZON_RESTRICTION_READ_UNAVAILABLE"]) }))
+    }
+  }
+  return results
+}
+
 export type AmazonFeeEstimateV1 = Readonly<{
   identifier: string
   asin: string

@@ -516,7 +516,7 @@ async function setControlledRiskPromotionBlock(input: {
     status: input.status,
     source: "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD",
     commercialEventId: input.eventId,
-    minimumNetMarginPercent: 10,
+    minimumNetMarginPercent: 15,
     promotion: "DO_NOT_PROMOTE",
     activeMarketNotConfirmedSale: true,
     activeMarketMedianLandedPrice: input.activeMarketMedianLandedPrice,

@@ -4705,7 +4705,7 @@ export async function authorizeSameDayControlledRiskOverride(input: {
       authorized: true,
       version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
       authorizedAt: approvedAt,
-      minimumNetMarginPercent: 10,
+      minimumNetMarginPercent: 15,
       minimumRiskPrice: controlledRisk.evaluation.minimumRiskPrice,
       maximumCompetitivePrice: controlledRisk.evaluation.maximumCompetitivePrice,
       confirmedSoldExactQuantity: controlledRisk.evaluation.confirmedSoldExactQuantity,
@@ -4754,7 +4754,7 @@ export async function authorizeSameDayControlledRiskOverride(input: {
     checkpoint: {
       version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
       operatorPriceApproved: true,
-      minimumNetMarginPercent: 10,
+      minimumNetMarginPercent: 15,
       promotionAllowed: false,
       voluntaryReturnsPolicyAcknowledged: true,
       ebayMoneyBackGuaranteeAcknowledged: true,
@@ -4787,7 +4787,7 @@ export async function authorizeSameDayControlledRiskOverride(input: {
       event_payload: {
         candidateId: candidate.id,
         version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
-        minimumNetMarginPercent: 10,
+        minimumNetMarginPercent: 15,
         promotionAllowed: false,
         voluntaryReturns: "NOT_ACCEPTED_WHERE_EBAY_ALLOWS",
         ebayMoneyBackGuaranteeStillApplies: true,
@@ -4917,7 +4917,7 @@ export async function decideSameDayProduct(input: {
       evidenceBasis: nonCompetitiveControlledRiskReady
         ? "NON_COMPETITIVE_EQUIVALENT_PACK_ACTIVE_MULTI_SELLER_MARKET_OPERATOR_EXCEPTION"
         : "FRESH_EQUIVALENT_PACK_ACTIVE_MULTI_SELLER_MARKET",
-      minimumNetMarginPercent: 10,
+      minimumNetMarginPercent: 15,
       minimumRiskPrice: pricingRecommendation.controlledRiskMinimumPrice,
       maximumCompetitivePrice: record(pricingRecommendation.marketReference).maximumPrice,
       confirmedSoldExactQuantity: 0,
