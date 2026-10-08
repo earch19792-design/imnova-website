@@ -17,7 +17,10 @@ export const SELLER_OS_DEV_STATUS_TOOL_V1 = Object.freeze({
 
 export const SELLER_OS_CANONICAL_REPOSITORY_V1 = Object.freeze({
   id: "SELLER_OS_CANONICAL_REPOSITORY",
-  directory: "/home/earch/imnova-seller-os-canonical-integration-foundation-v1",
+  // The connector executes from this immutable deployment worktree. The
+  // historical integration checkout intentionally remains untouched because
+  // it contains unrelated local work and is not the active runtime subject.
+  directory: "/home/earch/imnova-seller-os-tunnel-runtime",
 })
 
 const GIT_EXECUTABLE = "/usr/bin/git"
