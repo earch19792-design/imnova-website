@@ -31,6 +31,9 @@ import {
 import { getSupabaseAdminClient } from "../supabase-admin"
 import { readSellerOsRevenueControlPlaneV1 } from
   "./seller-os-revenue-control-plane-v1"
+import { FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1,
+  readFastLunaTestBatchV1, startFastLunaTestBatchV1 } from
+  "./ebay-autonomous-stocking-batch-server-v1"
 
 export const SELLER_OS_CONTROL_TOOL_NAMES_V1 = Object.freeze([
   "seller_os_request_pre_research_batch",
@@ -40,21 +43,24 @@ export const SELLER_OS_CONTROL_TOOL_NAMES_V1 = Object.freeze([
   "seller_os_request_commercial_trace",
   "seller_os_get_commercial_trace",
   "seller_os_get_revenue_control_plane",
+  "seller_os_publish_luna_test_batch_v1",
+  "seller_os_get_luna_test_batch_v1",
 ] as const)
 
 const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
-  "X-Seller-OS-Control-Mode": "BOUNDED_PRE_RESEARCH_AND_COMMERCIAL_TRACE_V1",
-  "X-Seller-OS-Marketplace-Write-Capability": "ABSENT" })
+  "X-Seller-OS-Control-Mode": "BOUNDED_OWNER_CONTROL_V1",
+  "X-Seller-OS-Marketplace-Write-Capability":
+    "OWNER_AUTHORIZED_FAST_LUNA_TEST_BATCH_ONLY" })
 const securitySchemes = [{ type: "oauth2" as const,
   scopes: ["openid", "profile"] }]
-export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.4.0"
+export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.5.0"
 export function readSellerOsControlRegisteredCatalogV1(server: McpServer, resource: string) {
   // The pinned SDK registry reflects actual successful registration. This is a
   // diagnostic readback, never a substitute for ChatGPT's imported tools/list.
   const registry = goldenRecord((server as unknown as { _registeredTools?: unknown })._registeredTools)
   const names = Object.keys(registry).filter(name => goldenRecord(registry[name]).enabled === true).sort()
   const goldenNames = names.filter(name => (GOLDEN_PATH_MCP_TOOL_NAMES_V1 as readonly string[]).includes(name))
-  return { source: "AUTHENTICATED_MCP_SERVER_REGISTRATION_READBACK", discoveryScope: "SERVER_REGISTRY_NOT_CHATGPT_IMPORTED_CATALOG", serverVersion: SELLER_OS_CONTROL_SERVER_VERSION_V1, resource, toolCount: names.length, toolNames: names, goldenToolNames: goldenNames, goldenRegistrationStatus: goldenNames.length === GOLDEN_PATH_MCP_TOOL_NAMES_V1.length ? "COMPLETE" : "UNPROVEN", catalogDigest: goldenDigest({ serverVersion: SELLER_OS_CONTROL_SERVER_VERSION_V1, resource, names }), marketplaceWriteCapability: "ABSENT" }
+  return { source: "AUTHENTICATED_MCP_SERVER_REGISTRATION_READBACK", discoveryScope: "SERVER_REGISTRY_NOT_CHATGPT_IMPORTED_CATALOG", serverVersion: SELLER_OS_CONTROL_SERVER_VERSION_V1, resource, toolCount: names.length, toolNames: names, goldenToolNames: goldenNames, goldenRegistrationStatus: goldenNames.length === GOLDEN_PATH_MCP_TOOL_NAMES_V1.length ? "COMPLETE" : "UNPROVEN", catalogDigest: goldenDigest({ serverVersion: SELLER_OS_CONTROL_SERVER_VERSION_V1, resource, names }), marketplaceWriteCapability: "OWNER_AUTHORIZED_FAST_LUNA_TEST_BATCH_ONLY" }
 }
 const candidate = z.object({ productId: z.string().regex(/^\d{1,30}$/),
   variantId: z.string().regex(/^\d{1,30}$/),
@@ -184,6 +190,49 @@ export function createServer(principal: SellerOsControlPrincipalV1) {
       accountAlias: account.accountAlias })
     return toolResult(result,
       `Seller OS returned ${result.portfolioCount ?? "unavailable"} current LIVE portfolio rows.`)
+  })
+  server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[7], {
+    title: "Publish 1 to 4 Luna controlled-test listings",
+    description: "Authorize one idempotent owner-bound batch of 1 to 4 Luna listings through the existing CURRENT publisher. Selection uses fresh exact Luna Product Truth without querying eBay market or demand. Complete costs, canonical economics, stock, duplicate, category, compliance, image, account policy, official publication readback and zero-write replay gates remain fail-closed.",
+    inputSchema: z.object({
+      targetCount: z.number().int().min(1)
+        .max(FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1),
+      clientIdempotencyKey: z.string().regex(/^[A-Za-z0-9._:-]{8,160}$/),
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: true,
+      idempotentHint: true, openWorldHint: true },
+    _meta: { securitySchemes },
+  }, async (args) => {
+    const current = context()
+    const result = await startFastLunaTestBatchV1({
+      supabase: current.supabase,
+      accountKey: current.accountKey,
+      ownerUserId: current.principal.ownerUserId,
+      commandClientId: current.principal.commandClientId,
+      targetCount: args.targetCount,
+      clientIdempotencyKey: args.clientIdempotencyKey,
+      confirmation: `PUBLICAR ${args.targetCount} LISTINGS DE LUNA`,
+    })
+    return toolResult(result,
+      `Seller OS authorized the owner-bound Luna test batch for ${args.targetCount} listings.`)
+  })
+  server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[8], {
+    title: "Get Luna controlled-test batch",
+    description: "Read the durable batch, each child, blockers, listing IDs, official readback and idempotent replay for one owner-authorized Luna test batch.",
+    inputSchema: z.object({ batchId: z.string().uuid() }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false,
+      idempotentHint: true, openWorldHint: false },
+    _meta: { securitySchemes },
+  }, async (args) => {
+    const current = context()
+    const result = await readFastLunaTestBatchV1({
+      supabase: current.supabase,
+      accountKey: current.accountKey,
+      ownerUserId: current.principal.ownerUserId,
+      batchId: args.batchId,
+    })
+    return toolResult(result,
+      "Seller OS returned the durable Luna test batch readback.")
   })
   return server
 }

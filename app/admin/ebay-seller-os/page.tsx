@@ -9,6 +9,14 @@ import { CommercialTraceWorkspace } from
 
 const actions = [
   {
+    href: "/admin/ebay/fast-luna-batch",
+    eyebrow: "Nuevo · publicación directa",
+    title: "Publicar 1–4 productos de Luna",
+    copy: "Autoriza un lote de prueba con un botón. No usa demanda de eBay para elegir y conserva todos los controles de publicación.",
+    tone: "border-amber-200/25 bg-amber-200/[0.08]",
+    cta: "Publicar lote →",
+  },
+  {
     href: "/admin/ebay/mobile-review",
     eyebrow: "Empieza aquí · móvil",
     title: "Centro de mando",
@@ -90,12 +98,12 @@ export default async function EbaySellerOsHubPage({ searchParams }: {
           <div className="flex flex-wrap items-center justify-between gap-3"><a href="/admin" className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">← Inicio</a><span className="rounded-full border border-emerald-200/25 bg-emerald-200/[0.07] px-3 py-2 text-[11px] font-black text-emerald-50">MODO SEGURO</span></div>
           <p className="mt-6 text-xs font-black uppercase tracking-[0.24em] text-emerald-100/60">eBay Seller OS</p>
           <h1 className="mt-2 max-w-3xl text-2xl font-black leading-tight sm:text-3xl">Supervisa la operación; Seller OS ejecuta el trabajo permitido</h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/65">Luna informa disponibilidad y costo; eBay aporta evidencia propia y de mercado. Tú autorizas las decisiones indispensables.</p>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/65">Luna informa identidad, disponibilidad y costo. Tú puedes ordenar una prueba directa sin esperar evidencia de mercado; Seller OS conserva los controles económicos y de publicación.</p>
         </header>
 
         <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">
           <p className="text-xs font-black uppercase tracking-widest text-amber-100/65">Ruta rápida</p>
-          <ol className="mt-3 grid grid-cols-2 gap-2 text-center text-[13px] font-black uppercase sm:grid-cols-4"><li className="rounded-xl bg-violet-200 px-2 py-3 text-black">1<br />Descubrir</li><li className="rounded-xl bg-cyan-200 px-2 py-3 text-black">2<br />Validar</li><li className="rounded-xl bg-emerald-200 px-2 py-3 text-black">3<br />Preparar</li><li className="rounded-xl border border-white/15 px-2 py-3 text-white/65">4<br />Borrador manual</li></ol>
+          <ol className="mt-3 grid grid-cols-2 gap-2 text-center text-[13px] font-black uppercase sm:grid-cols-4"><li className="rounded-xl bg-violet-200 px-2 py-3 text-black">1<br />Elegir cantidad</li><li className="rounded-xl bg-cyan-200 px-2 py-3 text-black">2<br />Validar</li><li className="rounded-xl bg-emerald-200 px-2 py-3 text-black">3<br />Publicar</li><li className="rounded-xl border border-white/15 px-2 py-3 text-white/65">4<br />Confirmar eBay</li></ol>
         </section>
 
         <section id="commercial-decision-loop" aria-labelledby="commercial-decision-loop-heading" className="scroll-mt-4">
@@ -111,8 +119,8 @@ export default async function EbaySellerOsHubPage({ searchParams }: {
 
         <section id="operacion" aria-labelledby="operation-heading" className="scroll-mt-4 rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4">
           <p className="text-[13px] font-black uppercase tracking-widest text-cyan-100/65">Operación · publicaciones</p>
-          <h2 id="operation-heading" className="mt-1 text-xl font-black">De la primera publicación manual a borradores reutilizables</h2>
-          <p className="mt-2 text-sm leading-6 text-white/65">Registra lo que eBay aceptó una sola vez; el OS podrá proponer esos campos en productos compatibles, siempre con revisión humana.</p>
+          <h2 id="operation-heading" className="mt-1 text-xl font-black">Publicación rápida y operación diaria</h2>
+          <p className="mt-2 text-sm leading-6 text-white/65">Publica lotes controlados desde Luna o revisa la operación con evidencia y trazabilidad.</p>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {operationLinks.map((item) => (
               <a key={item.href} href={item.href} className="rounded-2xl border border-white/10 bg-black/25 p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
@@ -132,10 +140,10 @@ export default async function EbaySellerOsHubPage({ searchParams }: {
             <CommercialMonitorPanel />
           </div>
           <SellerOsDisasterRecoveryCard />
-          <details className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4"><summary className="cursor-pointer font-black">Ver detalles de seguridad</summary><ul className="mt-3 space-y-2 text-sm text-white/60"><li>OpenAI estratégico: lectura y razonamiento acotado</li><li>Generación de imágenes AI: desactivada</li><li>Escrituras eBay: desactivadas</li><li>Producción: sin cambios</li><li>Publicación: requiere autorización separada</li></ul></details>
+          <details className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4"><summary className="cursor-pointer font-black">Ver detalles de seguridad</summary><ul className="mt-3 space-y-2 text-sm text-white/60"><li>OpenAI estratégico: lectura y razonamiento acotado</li><li>Generación de imágenes AI: desactivada</li><li>Escrituras eBay: sólo el lote Luna autorizado explícitamente</li><li>Cantidad máxima por orden: 4 listings</li><li>Publicación: secuencial, fail-closed y con readback oficial</li></ul></details>
         </section>
 
-        <aside className="rounded-3xl border border-white/10 bg-white/[0.035] p-4"><h2 className="font-black">Regla de seguridad</h2><p className="mt-2 text-sm leading-6 text-white/60">Los análisis, revisiones y paquetes internos pueden automatizarse. Crear o activar una publicación en eBay requiere una autorización separada y revisión humana.</p></aside>
+        <aside className="rounded-3xl border border-white/10 bg-white/[0.035] p-4"><h2 className="font-black">Regla de seguridad</h2><p className="mt-2 text-sm leading-6 text-white/60">Una orden explícita de 1–4 listings autoriza sólo ese lote. Seller OS no compra inventario, no hace repricing y no salta identidad, costos, rentabilidad, duplicados, cumplimiento ni readback oficial.</p></aside>
       </section>
 
       <SellerOsMobileNav active="sales" />

@@ -72,6 +72,18 @@ const queueJob = Object.freeze({
   durableClaim: false,
 })
 
+const fastLunaBatchJob = Object.freeze({
+  name: "fast-luna-test-batch",
+  path: "/api/cron/quick-pick-runtime-recovery",
+  method: "POST",
+  everySeconds: 10,
+  timeoutMs: 1_800_000,
+  runtimeLane: "FAST_LUNA_TEST_BATCH_V1",
+  // The durable batch and child ledgers already own single-flight,
+  // idempotency, official readback and replay state.
+  durableClaim: false,
+})
+
 function validatedOrigin(value) {
   const url = new URL(value)
   if (!["http:", "https:"].includes(url.protocol) || url.username ||
@@ -241,6 +253,8 @@ async function invoke(job, slot, triggerKind = "SCHEDULE") {
         Authorization: `Bearer ${cronSecret}`,
         "X-Ebay-Commercial-Authorization": `Bearer ${cronSecret}`,
         "User-Agent": "imnova-selfhost-scheduler/2.0",
+        ...(job.runtimeLane
+          ? { "X-Seller-OS-Runtime-Lane": job.runtimeLane } : {}),
       },
       signal: AbortSignal.timeout(job.timeoutMs),
     })
@@ -343,10 +357,23 @@ async function runQueueLoop() {
   }
 }
 
+async function runFastLunaBatchLoop() {
+  while (true) {
+    const slotMs = fastLunaBatchJob.everySeconds * 1_000
+    const slot = Math.floor(Date.now() / slotMs)
+    await invoke(fastLunaBatchJob, slot, "AUTHORIZED_BATCH")
+    await new Promise((resolve) => setTimeout(
+      resolve,
+      slotMs + 50 - (Date.now() % slotMs),
+    ))
+  }
+}
+
 safeLog("scheduler_started", {
   dryRun,
   cronJobCount: cronJobs.length,
   queuePollingSeconds: queueJob.everySeconds,
+  fastLunaBatchPollingSeconds: fastLunaBatchJob.everySeconds,
   originHost: origin.hostname,
   durableResume: !dryRun,
 })
@@ -357,8 +384,11 @@ if (once) {
   await Promise.allSettled([
     ...cronJobs.map((job) => invoke(job, slot, "ONCE")),
     invoke(queueJob, Math.floor(Date.now() / 5_000), "QUEUE"),
+    invoke(fastLunaBatchJob, Math.floor(Date.now() / 10_000),
+      "AUTHORIZED_BATCH"),
   ])
 } else {
   void runCatchUpPlan(catchUpPlan)
-  await Promise.all([runCronLoop(), runQueueLoop(), runHeartbeatLoop()])
+  await Promise.all([runCronLoop(), runQueueLoop(), runFastLunaBatchLoop(),
+    runHeartbeatLoop()])
 }
