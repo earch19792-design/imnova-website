@@ -259,6 +259,7 @@ export async function reconcileQuickPickProductResearchHandoffV1(
     supabase: SupabaseClient
     accountKey: string
     candidateKeys?: readonly string[]
+    maximumReconciliations?: number
     now?: Date
     dependencies?: Readonly<{
       readRows?: ReadRows
@@ -280,7 +281,10 @@ export async function reconcileQuickPickProductResearchHandoffV1(
   const eligible = durableRows.map((row) => ({ row,
     eligibility: projectQuickPickProductResearchEligibilityV1(row) }))
     .filter((entry) => entry.eligibility.eligible)
-    .slice(0, MAXIMUM_RECONCILIATIONS)
+    .slice(0, Number.isInteger(input.maximumReconciliations)
+      ? Math.min(MAXIMUM_RECONCILIATIONS,
+          Math.max(1, Number(input.maximumReconciliations)))
+      : MAXIMUM_RECONCILIATIONS)
   const outcomes: JsonRecord[] = []
   for (const entry of eligible) {
     try {

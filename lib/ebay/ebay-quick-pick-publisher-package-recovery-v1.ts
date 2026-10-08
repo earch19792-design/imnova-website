@@ -95,6 +95,7 @@ async function readCandidateCardV1(input: Readonly<{
 export async function recoverQuickPickPublisherPackagesV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
+  maximumRecoveryRows?: number
   actorUserId?: string
   now?: Date
   dependencies?: Readonly<{
@@ -132,7 +133,10 @@ export async function recoverQuickPickPublisherPackagesV1(input: Readonly<{
   const eligible = cards.map((card) => ({ card,
     projection: projectQuickPickPublisherPackageRecoveryV1(card) }))
     .filter((entry) => entry.projection.eligible)
-    .slice(0, MAXIMUM_RECOVERY_ROWS)
+    .slice(0, Number.isInteger(input.maximumRecoveryRows)
+      ? Math.min(MAXIMUM_RECOVERY_ROWS,
+          Math.max(1, Number(input.maximumRecoveryRows)))
+      : MAXIMUM_RECOVERY_ROWS)
   const outcomes: JsonRecord[] = []
   for (const entry of eligible) {
     const listingPackageId = String(entry.projection.listingPackageId)

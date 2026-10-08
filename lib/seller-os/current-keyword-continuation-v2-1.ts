@@ -295,9 +295,12 @@ export async function reconcileCurrentFactoryKeywordContinuationsV2_1(
     supabase: SupabaseClient
     accountKey: string
     packageIds?: readonly string[]
+    maximumPackages?: number
     now?: Date
   }>,
 ) {
+  const maximumPackages = Number.isInteger(input.maximumPackages)
+    ? Math.min(100, Math.max(1, Number(input.maximumPackages))) : 100
   let query = input.supabase.from("ebay_current_listing_packages_v1")
     .select("id,account_key,opportunity_id,candidate_key,package_data")
     .eq("account_key", input.accountKey)
@@ -305,7 +308,9 @@ export async function reconcileCurrentFactoryKeywordContinuationsV2_1(
       version: "SELLER_OS_CURRENT_PUBLICATION_FACTORY_V1",
       authorityPolicy: "CURRENT_ONLY", reuseLegacyPreparation: false,
     } })
-    .order("created_at", { ascending: true }).limit(100)
+    // Oldest-updated first makes repeated bounded recovery calls rotate over
+    // the durable backlog instead of reprocessing the same first page.
+    .order("updated_at", { ascending: true }).limit(maximumPackages)
   const ids = [...new Set((input.packageIds ?? []).filter((value) =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(value)))]

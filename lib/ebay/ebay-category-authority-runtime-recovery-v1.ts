@@ -127,6 +127,7 @@ export async function recoverFalseExactCategoryAuthorityRuntimeV1(
   input: Readonly<{
     supabase: SupabaseClient
     accountKey: string
+    maximumRecoveryRows?: number
     taxonomyReader: RadarMarketplaceTaxonomyReaderV1
     productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
     dependencies?: Readonly<{
@@ -143,7 +144,10 @@ export async function recoverFalseExactCategoryAuthorityRuntimeV1(
   const eligible = durableRows.map((row) => ({ row,
     projection: projectFalseExactCategoryAuthorityRecoveryV1(row) }))
     .filter((entry) => entry.projection.eligible)
-    .slice(0, MAXIMUM_RECOVERY_ROWS)
+    .slice(0, Number.isInteger(input.maximumRecoveryRows)
+      ? Math.min(MAXIMUM_RECOVERY_ROWS,
+          Math.max(1, Number(input.maximumRecoveryRows)))
+      : MAXIMUM_RECOVERY_ROWS)
   const outcomes: JsonRecord[] = []
   const rematerializedCandidateKeys: string[] = []
   for (const entry of eligible) {

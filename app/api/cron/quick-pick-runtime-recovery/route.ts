@@ -55,6 +55,10 @@ import { knownBuyerShippingV1 } from
 import { keywordRecord as record } from
   "@/lib/seller-os/keyword-intelligence-handoff-v1"
 
+// Recovery is deliberately incremental. A workstation wake-up must never
+// replay the entire historical Quick Pick portfolio in one HTTP request.
+const SELFHOST_RECOVERY_BATCH_SIZE = 3
+
 function authorized(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? ""
   const runtimeSecret = process.env.SELLER_OS_RUNTIME_RECOVERY_SECRET
@@ -714,6 +718,7 @@ export async function POST(req: Request) {
     const currentKeywordHandoff =
       await reconcileCurrentFactoryKeywordContinuationsV2_1({
         supabase, accountKey,
+        maximumPackages: SELFHOST_RECOVERY_BATCH_SIZE,
       }).catch(() => Object.freeze({
         contractVersion: "CURRENT_FACTORY_KEYWORD_CONTINUATION_V2_1",
         status: "FAIL" as const,
@@ -727,6 +732,7 @@ export async function POST(req: Request) {
     const productResearchHandoff =
       await reconcileQuickPickProductResearchHandoffV1({
         supabase, accountKey,
+        maximumReconciliations: SELFHOST_RECOVERY_BATCH_SIZE,
       }).catch(() => Object.freeze({
         contractVersion: "QUICK_PICK_PRODUCT_RESEARCH_HANDOFF_V1",
         status: "FAIL" as const,
@@ -754,16 +760,19 @@ export async function POST(req: Request) {
     }
     const interruptedClaims = await recoverInterruptedLunaQuickPickRuntimeV1({
       supabase, accountKey,
+      maximumRecoveryClaims: SELFHOST_RECOVERY_BATCH_SIZE,
       taxonomyReader: getEbayTaxonomyListingIntelligence,
       productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
     })
     const categoryAuthority = await recoverFalseExactCategoryAuthorityRuntimeV1({
       supabase, accountKey,
+      maximumRecoveryRows: SELFHOST_RECOVERY_BATCH_SIZE,
       taxonomyReader: getEbayTaxonomyListingIntelligence,
       productIdentifierPolicyReader: preflightEbayCategoryProductIdentifiers,
     })
     const publisherPackages = await recoverQuickPickPublisherPackagesV1({
       supabase, accountKey,
+      maximumRecoveryRows: SELFHOST_RECOVERY_BATCH_SIZE,
     })
     const success = interruptedClaims.status === "PASS"
       && categoryAuthority.status === "PASS"
@@ -784,7 +793,10 @@ export async function POST(req: Request) {
       safety: { marketplaceWrites: 0, listingPublications: 0,
         manualFactInjection: 0, codexProductDecisions: 0,
         codexCategorySelection: 0, itemSpecificPatches: 0 } },
-    { status: success ? 200 : 503 })
+    { status: success ? 200 : 423,
+      headers: { "X-Seller-OS-Runtime-Outcome": success
+        ? "QUICK_PICK_RECOVERY_COMPLETE"
+        : "QUICK_PICK_RECOVERY_PARTIAL" } })
   } catch (error) {
     const code = error instanceof Error ? error.message : ""
     return NextResponse.json({ success: false,

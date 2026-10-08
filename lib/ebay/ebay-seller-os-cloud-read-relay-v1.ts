@@ -274,9 +274,12 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
   if (args.limit !== undefined) {
     const starLimit = toolName ===
       "seller_os_get_888lots_amazon_star_candidates"
+    const analyticalLimit = toolName ===
+      "seller_os_get_analytical_sales_advisor"
     if (!Number.isInteger(args.limit) || starLimit &&
         ![10, 20].includes(Number(args.limit)) || !starLimit &&
-        (Number(args.limit) < 1 || Number(args.limit) > 100)) {
+        (Number(args.limit) < 1 || Number(args.limit) >
+          (analyticalLimit ? 20 : 100))) {
       throw new Error("SELLER_OS_RELAY_LIMIT_INVALID")
     }
     normalized.limit = Number(args.limit)
@@ -624,6 +627,8 @@ export async function handleSellerOsCloudReadRelayRequestV1(
       args: Record<string, unknown>) => Promise<unknown>
     amazonContributorPerformanceCollector?: (
       args: Record<string, unknown>) => Promise<unknown>
+    analyticalSalesAdvisorCollector?: (
+      args: Record<string, unknown>) => Promise<unknown>
     systemReviewDrilldownEnricher?: (bundle: unknown) => Promise<unknown>
   } = {},
 ) {
@@ -755,6 +760,24 @@ export async function handleSellerOsCloudReadRelayRequestV1(
         })
       result = await collector()
     } else if (envelope.toolName ===
+        SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1 ||
+        envelope.toolName === SELLER_OS_TEO_DAILY_OPERATING_CYCLE_RELAY_OPERATION_V1 ||
+        envelope.toolName === SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1 &&
+        envelope.arguments.view !== "REPLACEMENT_FOR") {
+      const monitorLoader = options.monitorLoader ?? (async () => {
+        const runtime = await import("./ebay-seller-os-assistant-runtime")
+        return runtime.loadSellerOsAssistantMonitorSnapshotV1()
+      })
+      const monitor = await monitorLoader()
+      const service = await import("./teo-analytical-sales-advisor-v1")
+      const limit = typeof envelope.arguments.limit === "number"
+        ? envelope.arguments.limit : 10
+      result = envelope.toolName === SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1
+        ? service.buildTeoPortfolioActionsV1(monitor, limit)
+        : envelope.toolName === SELLER_OS_TEO_DAILY_OPERATING_CYCLE_RELAY_OPERATION_V1
+          ? service.buildTeoDailyOperatingCycleV1(monitor, limit)
+          : service.buildTeoOperationsGatewayV1(monitor, envelope.arguments)
+    } else if (envelope.toolName ===
         SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1 ||
         envelope.toolName === SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1 &&
         envelope.arguments.view === "REPLACEMENT_FOR") {
@@ -795,6 +818,20 @@ export async function handleSellerOsCloudReadRelayRequestV1(
             supabase: supabaseModule.getSupabaseAdminClient(),
             accountKey: account.accountKey,
             limit: service.assert888LotsAmazonStarLimitV1(args.limit),
+          })
+        })
+      result = await collector(envelope.arguments)
+    } else if (envelope.toolName ===
+        "seller_os_get_analytical_sales_advisor") {
+      const collector = options.analyticalSalesAdvisorCollector ??
+        (async (args: Record<string, unknown>) => {
+          const runtime = await import("./ebay-seller-os-assistant-runtime")
+          const service = await import("./teo-analytical-sales-advisor-v1")
+          const supabaseModule = await import("../supabase-admin")
+          return service.collectTeoAnalyticalSalesAdvisorV1({
+            supabase: supabaseModule.getSupabaseAdminClient(),
+            monitor: await runtime.loadSellerOsAssistantMonitorSnapshotV1(),
+            limit: typeof args.limit === "number" ? args.limit : 10,
           })
         })
       result = await collector(envelope.arguments)

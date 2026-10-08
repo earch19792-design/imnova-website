@@ -1,7 +1,8 @@
 "use client"
 
-import { AlertTriangle, ArrowLeft, ChevronRight, MessageCircle,
-  PackageSearch, ShieldCheck, Warehouse, Workflow } from "lucide-react"
+import { Activity, AlertTriangle, ArrowLeft, ChevronRight, Clock3, Laptop,
+  MessageCircle, PackageSearch, RotateCcw, ShieldCheck, Warehouse,
+  Workflow } from "lucide-react"
 import Link from "next/link"
 import { useEffect, useState } from "react"
 
@@ -20,7 +21,8 @@ type ReadinessPayload = { success?: boolean; capabilities?: Record<string, strin
   result?: Record<string, unknown>; error?: string; diagnosis?: Record<string, unknown>;
   operationalIntegrity?: Record<string, unknown> | null;
   runtimeScheduler?: Record<string, unknown> | null;
-  runtimeAssurance?: Record<string, unknown> | null }
+  runtimeAssurance?: Record<string, unknown> | null;
+  selfhostRuntime?: Record<string, unknown> | null }
 type HumanPreview = { title?: string; subject?: string; problem?: string; evidence?: string;
   recommendedAction?: string; observedAt?: string; deepLinkLabel?: string; deepLink?: string }
 
@@ -45,6 +47,25 @@ function shownDate(value: unknown) {
   return Number.isFinite(parsed) ? new Intl.DateTimeFormat("es-NI", {
     timeZone: "America/Managua", dateStyle: "short", timeStyle: "short",
   }).format(new Date(parsed)) : "—"
+}
+
+function shownDuration(value: unknown) {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds < 0) return "—"
+  if (seconds < 120) return `${Math.round(seconds)} segundos`
+  if (seconds < 7_200) return `${Math.round(seconds / 60)} minutos`
+  return `${Math.round(seconds / 3_600)} horas`
+}
+
+function jobLabel(value: unknown) {
+  const labels: Record<string, string> = {
+    "amazon-connie-readonly-sync": "Amazon y Connie",
+    "quick-pick-runtime-recovery": "Recuperación de Quick Pick",
+    "commercial-monitor": "Monitor comercial de eBay",
+    "commercial-alert-dispatcher": "Alertas comerciales",
+    "owner-sale-alerts": "Alertas de venta al propietario",
+  }
+  return labels[String(value)] ?? String(value ?? "Trabajo")
 }
 
 export default function OperationalReadinessPage() {
@@ -103,6 +124,12 @@ export default function OperationalReadinessPage() {
   const unhealthyCapabilities = capabilityMatrix.filter((entry) =>
     entry.finalHealthState !== "HEALTHY")
   const assuranceCounts = object(assuranceReceipt.counts)
+  const selfhostRuntime = object(payload?.selfhostRuntime)
+  const selfhostSession = object(selfhostRuntime.session)
+  const selfhostCounts = object(selfhostRuntime.counts)
+  const selfhostJobs = Array.isArray(selfhostRuntime.jobs)
+    ? selfhostRuntime.jobs.map(object) : []
+  const selfhostOnline = selfhostRuntime.runtimeStatus === "ONLINE"
   const lowStockPreview = whatsappResults.LOW_STOCK_CONFIRMED?.humanPreview as HumanPreview | undefined
   const stalePreview = whatsappResults.STALE_EVIDENCE?.humanPreview as HumanPreview | undefined
 
@@ -119,6 +146,28 @@ export default function OperationalReadinessPage() {
       <section id="extensions" className="rounded-2xl border border-slate-200 bg-white p-5">
         <div><p className="text-[13px] font-black uppercase tracking-wider text-violet-700">Extensiones</p><h2 className="mt-1 text-lg font-black">Puentes de navegador</h2><p className="mt-1 text-sm text-slate-500">La conexión sólo acredita el canal. La capacidad operativa se comprueba contra cola, binding y receipts.</p></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2"><Link href="/admin/ebay/luna-shipping-capture" className="rounded-xl border border-slate-200 p-4 hover:border-cyan-400"><strong>Luna Shipping Capture</strong><p className="mt-1 text-sm text-slate-500">Binding, cola, ejecución y trazas durables.</p></Link><Link href="/admin/ebay/mobile-review/product-research-capture" className="rounded-xl border border-slate-200 p-4 hover:border-cyan-400"><strong>Product Research</strong><p className="mt-1 text-sm text-slate-500">Plan de consultas y receipts de captura.</p></Link></div>
+      </section>
+      <section id="local-runtime" className="rounded-2xl border border-slate-200 bg-white p-5"
+        data-selfhost-runtime-read-only>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><p className="text-[13px] font-black uppercase tracking-wider text-indigo-700">Centro de salud local</p><h2 className="mt-1 text-lg font-black">Docker, reanudación y trabajos durables</h2><p className="mt-1 text-sm text-slate-500">Al volver de hibernación, Seller OS recupera una sola ejecución pendiente por tarea y conserva un recibo verificable.</p></div>
+          <span className={`rounded-full px-3 py-1 text-[13px] font-black ${selfhostOnline ? "bg-emerald-50 text-emerald-700" : selfhostRuntime.runtimeStatus === "OFFLINE_OR_HIBERNATING" ? "bg-slate-100 text-slate-700" : "bg-amber-50 text-amber-700"}`}>
+            {selfhostOnline ? "Docker activo" : selfhostRuntime.runtimeStatus === "OFFLINE_OR_HIBERNATING" ? "En hibernación o apagado" : selfhostRuntime.runtimeStatus === "NOT_STARTED" ? "Pendiente de primer inicio" : "Por comprobar"}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <article className="rounded-xl bg-slate-50 p-4"><Laptop size={18} className="text-indigo-700" /><p className="mt-2 text-[13px] font-black text-slate-500">Coordinador local</p><p className="mt-1 font-black">{selfhostOnline ? "Operando" : "Sin señal reciente"}</p><p className="mt-1 text-xs text-slate-500">Última señal: {shownDate(selfhostSession.lastHeartbeatAt)}</p></article>
+          <article className="rounded-xl bg-slate-50 p-4"><RotateCcw size={18} className="text-cyan-700" /><p className="mt-2 text-[13px] font-black text-slate-500">Última reanudación</p><p className="mt-1 font-black">{selfhostSession.resumedFromGap === true ? "Recuperada" : "Arranque normal"}</p><p className="mt-1 text-xs text-slate-500">Pausa detectada: {shownDuration(selfhostSession.resumeGapSeconds)}</p></article>
+          <article className="rounded-xl bg-slate-50 p-4"><Activity size={18} className="text-emerald-700" /><p className="mt-2 text-[13px] font-black text-slate-500">Trabajo en curso</p><p className="mt-1 font-black">{String(selfhostCounts.running ?? 0)} activos</p><p className="mt-1 text-xs text-slate-500">{String(selfhostCounts.stale ?? 0)} reclamos vencidos</p></article>
+          <article className="rounded-xl bg-slate-50 p-4"><Clock3 size={18} className="text-amber-700" /><p className="mt-2 text-[13px] font-black text-slate-500">Recuperación acotada</p><p className="mt-1 font-black">{String(selfhostSession.catchUpCandidateCount ?? 0)} candidatos</p><p className="mt-1 text-xs text-slate-500">{String(selfhostCounts.failedLast24Hours ?? 0)} fallos en 24 horas</p></article>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          {selfhostJobs.map((job) => <article key={String(job.name)} className="rounded-xl border border-slate-200 p-3 text-sm">
+            <div className="flex items-start justify-between gap-3"><strong>{jobLabel(job.name)}</strong><span className={`text-[12px] font-black ${job.status === "SUCCEEDED" ? "text-emerald-700" : job.status === "RUNNING" ? "text-cyan-700" : "text-amber-700"}`}>{job.status === "SUCCEEDED" ? "Completado" : job.status === "RUNNING" ? "En curso" : job.status === "STALE" ? "Listo para retomar" : "Requiere reintento"}</span></div>
+            <p className="mt-1 text-xs text-slate-500">Último inicio: {shownDate(job.startedAt)} · intento {String(job.attemptCount ?? 1)} · {String(job.triggerKind ?? "—").replaceAll("_", " ").toLowerCase()}</p>
+          </article>)}
+        </div>
+        {selfhostJobs.length === 0 && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">La infraestructura está preparada; aparecerán recibos después del primer arranque con la nueva versión.</p>}
       </section>
       <section id="runtime" className="rounded-2xl border border-slate-200 bg-white p-5"
         data-operational-integrity-read-only>

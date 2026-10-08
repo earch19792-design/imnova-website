@@ -179,6 +179,7 @@
     "app/api/runtime/health-attestation/route.ts",
     "app/api/runtime/operational-integrity/route.ts",
     "app/api/runtime/publisher-batch/route.ts",
+    "app/api/runtime/selfhost-control/route.ts",
     "app/api/runtime/stockguard-read/route.ts",
     "app/api/seller-os/assistant/cloud-read-relay/route.ts",
     "app/api/seller-os/assistant/mcp/route.ts",

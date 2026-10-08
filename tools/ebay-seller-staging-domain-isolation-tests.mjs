@@ -271,6 +271,8 @@ test("route and bundle surface regress downward", () => {
   // Runtime assurance adds its authenticated POST-only evaluator plus one
   // authenticated POST-only ingestion route for the exact local
   // SELLER_OS_RUNTIME_HEALTH_V1 receipt.
+  // The self-hosted coordinator adds one secret-authenticated POST-only
+  // control route for durable resume claims, heartbeats, and receipts.
   // Production StockGuard adds exactly one separately authenticated GET-only
   // durable reader. The general eBay Pro production isolation stays intact.
   const productionStockReadApi = exists("app/api/runtime/stockguard-read/route.ts")

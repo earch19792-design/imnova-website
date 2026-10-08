@@ -111,6 +111,11 @@ import { getLunaCatalogCandidatesV1, getLunaCatalogDeltaV1,
   getLunaCatalogPreflightV1, getLunaCatalogStatusV1,
   LUNA_CATALOG_MCP_TOOLS_V1, LUNA_CATALOG_PREFLIGHT_STATUSES_V1 } from
   "./luna-catalog-snapshot-v1"
+import { createUnavailableSellerOsSelfhostRuntimeStatusV1,
+  readSellerOsSelfhostRuntimeStatusV1,
+  SELLER_OS_WORKSTATION_STATUS_TOOL_V1,
+  type SellerOsSelfhostRuntimeStatusV1 } from
+  "../seller-os/selfhost-runtime-status-v1"
 
 const REPLACEMENT_FOR_TOOL_V1 = Object.freeze({
   name: SELLER_OS_REPLACEMENT_FOR_RELAY_OPERATION_V1,
@@ -151,7 +156,7 @@ const TEO_DAILY_OPERATING_CYCLE_TOOL_V1 = Object.freeze({
 })
 
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
-  "SELLER_OS_MCP_READONLY_V1_2026_09_20_TRACE_PRODUCT_TRUTH_READBACK"
+  "SELLER_OS_MCP_READONLY_V1_2026_10_08_ANALYTICAL_SELLER"
 export const SELLER_OS_CHATGPT_CONNECTION_STATE = Object.freeze({
   code: "CODE_COMPLETE" as const,
   humanConnection: "READY_FOR_HUMAN_CONNECTION_AFTER_APPROVED_AUTH_SETUP" as const,
@@ -185,6 +190,7 @@ const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
   ...SELLER_OS_ASSISTANT_TOOLS_V1,
   ...SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1,
   SELLER_OS_RUNTIME_HEALTH_TOOL_V1,
+  SELLER_OS_WORKSTATION_STATUS_TOOL_V1,
   SELLER_OS_DEV_STATUS_TOOL_V1,
   SELLER_OS_CI_STATUS_TOOL_V1,
   SELLER_OS_DATA_STATUS_TOOL_V1,
@@ -206,6 +212,7 @@ const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
   ...SELLER_OS_ASSISTANT_TOOLS_V1.map((tool) => tool.name),
   ...SELLER_OS_AUDIT_OBSERVABILITY_TOOLS_V1.map((tool) => tool.name),
   SELLER_OS_RUNTIME_HEALTH_TOOL_V1.name,
+  SELLER_OS_WORKSTATION_STATUS_TOOL_V1.name,
   SELLER_OS_DEV_STATUS_TOOL_V1.name,
   SELLER_OS_CI_STATUS_TOOL_V1.name,
   SELLER_OS_DATA_STATUS_TOOL_V1.name,
@@ -456,6 +463,7 @@ export function createSellerOsMcpServerV1(options: {
   applicationAuthMode?: SellerOsMcpApplicationAuthModeV1
   toolExecutor?: SellerOsAssistantToolExecutorV1
   runtimeHealthCollector?: () => Promise<SellerOsRuntimeHealthV1>
+  workstationStatusCollector?: () => Promise<SellerOsSelfhostRuntimeStatusV1>
   devStatusCollector?: () => Promise<SellerOsDevStatusV1>
   ciStatusCollector?: () => Promise<SellerOsCiStatusV1>
   dataStatusCollector?: () => Promise<SellerOsDataStatusV1>
@@ -496,7 +504,7 @@ export function createSellerOsMcpServerV1(options: {
   )
   const server = new McpServer({ name: "seller-os-private-readonly",
     version: SELLER_OS_MCP_ENDPOINT_VERSION }, {
-    instructions: "Private Seller OS canonical read-only evidence plus one separately-scoped bounded Luna pre-research command. Preserve unavailable and unproven states. The command only creates or reuses internal Product Research work for exact authoritative Luna candidates; it cannot perform marketplace, inventory, supplier, Registry, Product Case, buyer-message, WhatsApp, OAuth, environment, SQL, publication, purchase, shipping, or arbitrary URL mutations.",
+    instructions: "Private Seller OS canonical read-only evidence plus one separately-scoped bounded Luna pre-research command. For broad commercial questions, use seller_os_get_analytical_sales_advisor first and explain the ranked evidence, blockers, and safest next action. Preserve unavailable and unproven states. TEO may analyze and prepare recommendations but cannot publish, buy, reprice, end listings, reorder, spend money, or enable automations. The Luna command only creates or reuses internal Product Research work for exact authoritative Luna candidates; it cannot perform marketplace, inventory, supplier, Registry, Product Case, buyer-message, WhatsApp, OAuth, environment, SQL, publication, purchase, shipping, or arbitrary URL mutations.",
   })
   if (SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1.length !==
       SELLER_OS_MCP_EXPECTED_CATALOG_COUNT_V1 ||
@@ -531,6 +539,39 @@ export function createSellerOsMcpServerV1(options: {
           limit: typeof input.arguments.limit === "number"
             ? input.arguments.limit : 50,
         }))
+      : input.toolName === "seller_os_get_analytical_sales_advisor"
+      ? import("./teo-analytical-sales-advisor-v1").then(async (service) =>
+          service.collectTeoAnalyticalSalesAdvisorV1({
+            supabase: getSupabaseAdminClient(), monitor: await monitor(),
+            limit: typeof input.arguments.limit === "number"
+              ? input.arguments.limit : 10,
+          }))
+      : input.toolName === SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1 ||
+        input.toolName === SELLER_OS_TEO_DAILY_OPERATING_CYCLE_RELAY_OPERATION_V1 ||
+        input.toolName === SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1
+      ? (async () => {
+          if (input.toolName === SELLER_OS_TEO_OPERATIONS_GATEWAY_RELAY_OPERATION_V1 &&
+              input.arguments.view === "REPLACEMENT_FOR") {
+            const service = await import(
+              "./teo-owner-listing-experiment-service-v1")
+            return service.readTeoPreparedReplacementV1(
+              getSupabaseAdminClient(), {
+                itemId: typeof input.arguments.itemId === "string"
+                  ? input.arguments.itemId : undefined,
+                sku: typeof input.arguments.sku === "string"
+                  ? input.arguments.sku : undefined,
+              })
+          }
+          const service = await import("./teo-analytical-sales-advisor-v1")
+          const current = await monitor()
+          const limit = typeof input.arguments.limit === "number"
+            ? input.arguments.limit : 10
+          return input.toolName === SELLER_OS_PORTFOLIO_ACTIONS_RELAY_OPERATION_V1
+            ? service.buildTeoPortfolioActionsV1(current, limit)
+            : input.toolName === SELLER_OS_TEO_DAILY_OPERATING_CYCLE_RELAY_OPERATION_V1
+              ? service.buildTeoDailyOperatingCycleV1(current, limit)
+              : service.buildTeoOperationsGatewayV1(current, input.arguments)
+        })()
       : input.toolName === "seller_os_prepare_listing_optimization_preview"
       ? (await import("../seller-os/revenue-first-preview-v1")).loadRevenueFirstListingPreviewV1(String(input.arguments.itemId ?? ""))
       :     input.toolName === "seller_os_get_product_case" ||
@@ -588,6 +629,8 @@ export function createSellerOsMcpServerV1(options: {
     const needsCase = descriptor.name === "seller_os_get_opportunity_case"
     const is888LotsStars = descriptor.name ===
       "seller_os_get_888lots_amazon_star_candidates"
+    const isAnalyticalSalesAdvisor = descriptor.name ===
+      "seller_os_get_analytical_sales_advisor"
     const config = { title: descriptor.title,
       description: descriptor.description,
       inputSchema: { ...(needsItem ? { itemId: z.string().regex(/^\d{9,19}$/) } : {}),
@@ -596,7 +639,8 @@ export function createSellerOsMcpServerV1(options: {
         ) } : {}),
         limit: is888LotsStars
           ? z.union([z.literal(10), z.literal(20)]).optional()
-          : z.number().int().min(1).max(100).optional() },
+          : z.number().int().min(1).max(isAnalyticalSalesAdvisor ? 20 : 100)
+            .optional() },
       annotations: descriptor.annotations, securitySchemes,
       _meta: { securitySchemes },
     }
@@ -862,6 +906,28 @@ export function createSellerOsMcpServerV1(options: {
       text: "Seller OS returned bounded read-only local runtime health evidence." }] }
     })
   registeredToolNames.add(SELLER_OS_RUNTIME_HEALTH_TOOL_V1.name)
+  const workstationStatusCollector = options.workstationStatusCollector ??
+    (() => readSellerOsSelfhostRuntimeStatusV1(getSupabaseAdminClient()))
+  const workstationStatusConfig = {
+    title: SELLER_OS_WORKSTATION_STATUS_TOOL_V1.title,
+    description: SELLER_OS_WORKSTATION_STATUS_TOOL_V1.description,
+    inputSchema: z.object({}).strict(),
+    annotations: SELLER_OS_WORKSTATION_STATUS_TOOL_V1.annotations,
+    securitySchemes,
+    _meta: { securitySchemes },
+  }
+  server.registerTool(SELLER_OS_WORKSTATION_STATUS_TOOL_V1.name,
+    workstationStatusConfig, async () => {
+    let result: SellerOsSelfhostRuntimeStatusV1
+    try {
+      result = await workstationStatusCollector()
+    } catch {
+      result = createUnavailableSellerOsSelfhostRuntimeStatusV1()
+    }
+    return { structuredContent: { result }, content: [{ type: "text" as const,
+      text: "Seller OS returned sanitized local workstation, resume, and durable job status." }] }
+  })
+  registeredToolNames.add(SELLER_OS_WORKSTATION_STATUS_TOOL_V1.name)
   const devStatusCollector = options.devStatusCollector ?? collectSellerOsDevStatusV1
   const devStatusConfig = {
     title: SELLER_OS_DEV_STATUS_TOOL_V1.title,

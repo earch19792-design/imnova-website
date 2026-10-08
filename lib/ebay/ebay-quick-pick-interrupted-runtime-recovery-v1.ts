@@ -76,6 +76,7 @@ type RuntimeContinuation = typeof continueLunaQuickPickPostShippingRuntimeV1
 export async function recoverInterruptedLunaQuickPickRuntimeV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
+  maximumRecoveryClaims?: number
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
   productIdentifierPolicyReader?: RadarProductIdentifierPolicyReaderV1
   dependencies?: Readonly<{
@@ -92,7 +93,10 @@ export async function recoverInterruptedLunaQuickPickRuntimeV1(input: Readonly<{
     .filter((entry) => entry.claim.eligible)
     .sort((left, right) => String(left.claim.claimedAt)
       .localeCompare(String(right.claim.claimedAt)))
-    .slice(0, MAXIMUM_RECOVERY_CLAIMS)
+    .slice(0, Number.isInteger(input.maximumRecoveryClaims)
+      ? Math.min(MAXIMUM_RECOVERY_CLAIMS,
+          Math.max(1, Number(input.maximumRecoveryClaims)))
+      : MAXIMUM_RECOVERY_CLAIMS)
   const grouped = new Map<string, string[]>()
   for (const entry of reclaimable) {
     const group = entry.claim.batchId ?? "UNBATCHED_DURABLE_QUICK_PICK"
