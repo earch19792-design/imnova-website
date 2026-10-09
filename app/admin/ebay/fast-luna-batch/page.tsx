@@ -112,6 +112,7 @@ export default function FastLunaBatchPage() {
       })
       setBatch(await readJson(response))
     } catch (cause) {
+      setOverlayOpen(false)
       setError(cause instanceof Error ? cause.message :
         "No se pudo autorizar el lote.")
     } finally {
@@ -208,11 +209,11 @@ export default function FastLunaBatchPage() {
               <p aria-live="polite" className="mt-3 text-sm text-white/60">{busy ? "Resolviendo identidades, stock y autoridad…" : `${completed} de ${target} listings confirmados oficialmente`}</p>
             </div>
             <div className="mt-8 h-2 overflow-hidden rounded-full bg-white/10">
-              <div className="progress-glow h-full rounded-full bg-gradient-to-r from-violet-400 via-cyan-300 to-emerald-300 transition-[width] duration-700" style={{ width: `${progress}%` }} />
+              <div className="progress-glow h-full rounded-full bg-gradient-to-r from-violet-400 via-cyan-300 to-emerald-300 transition-[width] duration-700" style={{ width: `${busy ? 0 : progress}%` }} />
             </div>
             <div className="mt-7 grid gap-3 sm:grid-cols-2">
               {busy && !batch?.batch && <article className="signal-card rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-4"><strong>Preparando lote durable</strong><p className="mt-2 text-xs text-white/50">Sin marketplace writes todavía</p></article>}
-              {batch?.children.map((child) => <article key={child.id} className="signal-card rounded-2xl border border-white/10 bg-black/25 p-4">
+              {!busy && batch?.children.map((child) => <article key={child.id} className="signal-card rounded-2xl border border-white/10 bg-black/25 p-4">
                 <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-widest text-white/40">Canal {String(child.sequence_no).padStart(2, "0")}</p><strong className="mt-1 block">{child.title ?? child.supplier_sku ?? "Producto Luna"}</strong></div><span className={`mt-1 h-3 w-3 shrink-0 rounded-full ${child.official_readback_pass ? "bg-emerald-300 shadow-[0_0_18px_#6ee7b7]" : "status-pulse bg-cyan-300 shadow-[0_0_18px_#67e8f9]"}`} /></div>
                 <p className="mt-3 text-xs font-bold text-cyan-100/70">{childLabel(child.status)}</p>
                 {child.listing_id && <p className="mt-2 text-xs text-emerald-200">eBay {child.listing_id}</p>}
