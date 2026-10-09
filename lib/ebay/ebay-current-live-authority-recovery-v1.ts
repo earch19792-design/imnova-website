@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -154,6 +154,71 @@ function isTradingQuota518(value: unknown): value is string {
   return typeof value === "string" && TRADING_QUOTA_518.test(value)
 }
 
+async function persistOfficialReadFailureReceiptV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  runId: string
+  errorCode: string
+  live: EbayCommercialMonitorLiveReadonlyResult | null
+  quota: TradingQuotaAuthorityV1 | null
+}>) {
+  const call = [...(input.live?.calls ?? [])].reverse().find((entry) =>
+    entry.providerResponse !== undefined)
+  if (!call?.providerResponse) return Object.freeze({
+    status: "ORIGINAL_RESPONSE_UNAVAILABLE" as const,
+    receiptId: null, evidenceDigest: null,
+  })
+  const receiptId = randomUUID()
+  const evidence = Object.freeze({
+    contractVersion: "SELLER_OS_EBAY_OFFICIAL_READ_FAILURE_RECEIPT_V1",
+    source: "ORIGINAL_PROVIDER_RESPONSE_REDACTED" as const,
+    accountScopeDigest: `sha256:${createHash("sha256")
+      .update(input.accountKey).digest("hex")}`,
+    runId: input.runId,
+    errorCode: input.errorCode,
+    operation: call.operation,
+    requestedAt: call.requestedAt ?? null,
+    respondedAt: call.observedAt,
+    httpStatus: call.httpStatus,
+    providerErrorCode: call.providerErrorCode ?? null,
+    providerResponse: call.providerResponse,
+    quotaAuthority: input.quota ? Object.freeze({
+      gateState: input.quota.gateState,
+      ebay518BucketIdentity: input.quota.ebay518BucketIdentity,
+      nextSafeTradingProbeAt: input.quota.nextSafeTradingProbeAt,
+    }) : null,
+    rawXmlStored: false as const,
+    credentialsIncluded: false as const,
+  })
+  const evidenceDigest = `sha256:${createHash("sha256")
+    .update(JSON.stringify(evidence)).digest("hex")}`
+  try {
+    const write = await input.supabase.from(
+      "seller_os_ebay_official_read_failure_receipts_v1").insert({
+        receipt_id: receiptId,
+        account_key: input.accountKey,
+        recovery_run_id: input.runId,
+        error_code: input.errorCode,
+        observed_at: call.observedAt,
+        operation: call.operation,
+        http_status: call.httpStatus,
+        evidence,
+        evidence_digest: evidenceDigest,
+      }).select("receipt_id,evidence_digest").single()
+    if (write.error || !write.data ||
+        write.data.receipt_id !== receiptId ||
+        write.data.evidence_digest !== evidenceDigest) {
+      return Object.freeze({ status: "PERSISTENCE_FAILED" as const,
+        receiptId: null, evidenceDigest: null })
+    }
+    return Object.freeze({ status: "PERSISTED" as const,
+      receiptId, evidenceDigest })
+  } catch {
+    return Object.freeze({ status: "PERSISTENCE_FAILED" as const,
+      receiptId: null, evidenceDigest: null })
+  }
+}
+
 function boundedQuotaRetryAt(now: Date, resetAt: string | null) {
   const minimum = now.getTime() + RETRY_DELAY_MS
   const maximum = now.getTime() + RETRY_MAXIMUM_DELAY_MS
@@ -286,7 +351,13 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
     live: EbayCommercialMonitorLiveReadonlyResult | null
     status: TStatus
     officialReadAttempted: boolean
+    tradingQuota?: TradingQuotaAuthorityV1 | null
   }>) => {
+    const officialFailureReceipt = await persistOfficialReadFailureReceiptV1({
+      supabase: input.supabase, accountKey: input.accountKey, runId,
+      errorCode: failure.errorCode, live: failure.live,
+      quota: failure.tradingQuota ?? null,
+    })
     const failed = await input.supabase.rpc(
       "record_ebay_current_live_authority_failure_v1", {
         p_account_key: input.accountKey, p_run_id: runId,
@@ -301,7 +372,9 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
       live: failure.live, now: failure.now })
     return Object.freeze({ status: failure.status, authority,
       live: failure.live, officialReadAttempted: failure.officialReadAttempted,
-      databaseWrites: 1, marketplaceWrites: 0 as const })
+      officialFailureReceipt,
+      databaseWrites: officialFailureReceipt.status === "PERSISTED" ? 2 : 1,
+      marketplaceWrites: 0 as const })
   }
   try {
     if (priorTradingQuota518) {
@@ -318,6 +391,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
             ? "WAITING_FOR_TRADING_QUOTA_RESET" as const
             : "CURRENT_UNAVAILABLE_TRADING_QUOTA_UNPROVEN" as const,
           officialReadAttempted: false,
+          tradingQuota: quota,
         })
       }
     }
@@ -359,6 +433,7 @@ export async function runCurrentLiveAuthorityRecoveryV1(input: Readonly<{
           ? "CURRENT_UNAVAILABLE_CLOCK_SKEW" as const
           : "CURRENT_UNAVAILABLE" as const,
         officialReadAttempted: true,
+        tradingQuota: quota,
       })
     }
     const rows = rowsForPersistence(live)

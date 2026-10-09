@@ -21,6 +21,7 @@ import {
   type EbayItemMarketplaceCertificationStatus,
   type EbayMonitorReadonlyCallEvidence,
   type EbayMonitorReadonlyOperation,
+  type EbayMonitorTradingReadOperation,
   type SafeEbayInventoryErrorMetadata,
   type SafeLiveEbayOrder,
 } from "./ebay-commercial-monitor-live-readonly-domain"
@@ -2764,6 +2765,7 @@ function canonicalTradingCredentials(environment: NodeJS.ProcessEnv) {
 
 function callEvidence(input: {
   latencyMs?: number
+  requestedAt?: string
   operation: EbayMonitorReadonlyOperation
   method: "GET" | "POST"
   endpoint: string
@@ -2808,6 +2810,7 @@ async function allowlistedFetch(input: {
   })
   const budget = requestBudgets.get(input.calls)
   const startedAt = Date.now()
+  const requestedAt = input.clock().toISOString()
   const remainingMs = budget ? budget.deadlineAt - Date.now() : REQUEST_TIMEOUT_MS
   if (budget && (budget.signal?.aborted || budget.callsRemaining <= 0 || remainingMs < 250)) {
     throw new Error("EBAY_MONITOR_REQUEST_BUDGET_EXHAUSTED")
@@ -2829,6 +2832,7 @@ async function allowlistedFetch(input: {
     })
     const evidence = callEvidence({
       ...(budget?.reuseCredentialReads ? { latencyMs: Date.now() - startedAt } : {}),
+      requestedAt,
       operation: input.operation,
       method: input.method,
       endpoint: new URL(input.url).pathname,
@@ -2866,6 +2870,83 @@ function markResponseCallFailed(
       call.providerErrorCode = providerErrorCode
     }
   }
+}
+
+function boundedRedactedProviderText(value: string | null) {
+  if (!value) return null
+  const normalized = value.replace(/<[^>]*>/g, " ")
+    .replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&").replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'").replace(/\s+/g, " ").trim().slice(0, 600)
+  if (!normalized) return null
+  if (/(?:private|password|secret|credential|access[_ -]?token|refresh[_ -]?token)/i
+      .test(normalized)) return "[REDACTED_SENSITIVE_PROVIDER_MESSAGE]"
+  return normalized
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,
+      "[REDACTED_EMAIL]")
+    .replace(/[A-Za-z0-9_+/=-]{40,}/g, "[REDACTED_OPAQUE_VALUE]")
+}
+
+function xmlDiagnosticValue(xml: string, element: string) {
+  const escaped = element.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return boundedRedactedProviderText(xml.match(new RegExp(
+    `<${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${escaped}>`, "i"))?.[1] ?? null)
+}
+
+function safeResponseHeader(response: Response, names: readonly string[]) {
+  for (const name of names) {
+    const value = boundedRedactedProviderText(response.headers.get(name))
+    if (value) return value.slice(0, 240)
+  }
+  return null
+}
+
+function captureTradingFailureResponseV1(input: Readonly<{
+  response: Response
+  xml: string
+  tradingCallName: EbayMonitorTradingReadOperation
+  page: number | null
+  entriesPerPage: number | null
+  endTimeFrom: string | null
+  endTimeTo: string | null
+}>) {
+  const call = callEvidenceByResponse.get(input.response)
+  if (!call) return
+  const quotaHeaders: Record<string, string> = {}
+  for (const [name, raw] of input.response.headers.entries()) {
+    const normalized = name.toLowerCase()
+    if (!/^x-ebay-(?:api|soa|c)-(?:rate|ratelimit|rate-limit|quota)/.test(
+      normalized)) continue
+    const value = boundedRedactedProviderText(raw)
+    if (value && Object.keys(quotaHeaders).length < 12) {
+      quotaHeaders[normalized] = value.slice(0, 240)
+    }
+  }
+  call.providerResponse = Object.freeze({
+    schemaVersion: "EBAY_TRADING_REDACTED_FAILURE_RESPONSE_V1",
+    tradingCallName: input.tradingCallName,
+    request: Object.freeze({ page: input.page,
+      entriesPerPage: input.entriesPerPage,
+      endTimeFrom: input.endTimeFrom, endTimeTo: input.endTimeTo }),
+    responseBodySha256: `sha256:${createHash("sha256").update(input.xml)
+      .digest("hex")}`,
+    ack: xmlDiagnosticValue(input.xml, "Ack"),
+    errorCode: xmlDiagnosticValue(input.xml, "ErrorCode"),
+    shortMessageRedacted: xmlDiagnosticValue(input.xml, "ShortMessage"),
+    longMessageRedacted: xmlDiagnosticValue(input.xml, "LongMessage"),
+    severityCode: xmlDiagnosticValue(input.xml, "SeverityCode"),
+    requestId: safeResponseHeader(input.response, [
+      "x-ebay-api-request-id", "x-ebay-soa-request-id",
+      "x-ebay-c-request-id", "x-ebay-c-tracking-id",
+    ]),
+    correlationId: safeResponseHeader(input.response, [
+      "x-ebay-api-correlation-id", "x-ebay-soa-correlation-id",
+      "x-ebay-c-correlation-id",
+    ]),
+    quotaHeaders: Object.freeze(quotaHeaders),
+    rawXmlStored: false,
+    credentialsIncluded: false,
+  })
 }
 
 async function readJsonResponse(input: {
@@ -3100,6 +3181,9 @@ async function verifyAccount(input: {
   const parsed = parseEbayTradingGetUser(xml)
   if (!response.ok) {
     markResponseCallFailed(response)
+    captureTradingFailureResponseV1({ response, xml,
+      tradingCallName: "GetUser", page: null, entriesPerPage: null,
+      endTimeFrom: null, endTimeTo: null })
     throw new Error(
       `EBAY_MONITOR_ACCOUNT_IDENTITY_HTTP_${response.status}`,
     )
@@ -3110,6 +3194,9 @@ async function verifyAccount(input: {
       /<ErrorCode(?:\s[^>]*)?>(\d{1,12})<\/ErrorCode>/i,
     )?.[1]
     markResponseCallFailed(response, providerCode)
+    captureTradingFailureResponseV1({ response, xml,
+      tradingCallName: "GetUser", page: null, entriesPerPage: null,
+      endTimeFrom: null, endTimeTo: null })
     if (providerCode === "518" &&
         input.fulfillmentSellerIdentityFallback === true) {
       const window = orderWindow(input.clock())
@@ -3308,6 +3395,12 @@ async function sellerWideDiscovery(input: {
           /<ErrorCode(?:\s[^>]*)?>(\d{1,12})<\/ErrorCode>/i,
         )?.[1]
         markResponseCallFailed(response, providerCode)
+        captureTradingFailureResponseV1({ response, xml, tradingCallName,
+          page, entriesPerPage: SELLER_WIDE_PAGE_SIZE,
+          endTimeFrom: operation === "TRADING_GET_SELLER_LIST"
+            ? sellerListEndTimeFrom : null,
+          endTimeTo: operation === "TRADING_GET_SELLER_LIST"
+            ? sellerListEndTimeTo : null })
         if (providerCode === "518" && page === 1 &&
             operation === "TRADING_GET_MY_EBAY_SELLING") {
           operation = "TRADING_GET_SELLER_LIST"

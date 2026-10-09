@@ -55,7 +55,7 @@ const HEADERS = Object.freeze({ "Cache-Control": "private, no-store, max-age=0",
     "OWNER_AUTHORIZED_FAST_LUNA_TEST_BATCH_ONLY" })
 const securitySchemes = [{ type: "oauth2" as const,
   scopes: ["openid", "profile"] }]
-export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.6.0"
+export const SELLER_OS_CONTROL_SERVER_VERSION_V1 = "1.7.0"
 export function readSellerOsControlRegisteredCatalogV1(server: McpServer, resource: string) {
   // The pinned SDK registry reflects actual successful registration. This is a
   // diagnostic readback, never a substitute for ChatGPT's imported tools/list.
@@ -194,8 +194,8 @@ export function createServer(principal: SellerOsControlPrincipalV1) {
       `Seller OS returned ${result.portfolioCount ?? "unavailable"} current LIVE portfolio rows.`)
   })
   server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[7], {
-    title: "Publish 1 to 4 Luna controlled-test listings",
-    description: "Authorize one idempotent owner-bound batch of 1 to 4 Luna listings through the existing CURRENT publisher. Selection uses fresh exact Luna Product Truth without querying eBay market or demand. Complete costs, canonical economics, stock, duplicate, category, compliance, image, account policy, official publication readback and zero-write replay gates remain fail-closed.",
+    title: "Publish 1 or 2 Luna controlled-test listings",
+    description: "Authorize one idempotent owner-bound batch of at most two new Luna listings through the existing CURRENT publisher under SUNSHINE_EBAY_CONTROL_PARITY_AND_PUBLISHER_CERTIFICATION_V2. Selection uses fresh exact Luna Product Truth without querying eBay market or demand. Complete costs, canonical ROI of at least 30% and contribution margin of at least 15% with no monetary profit floor, stock, duplicate, category, compliance, image, account policy, official publication readback and zero-write replay gates remain fail-closed.",
     inputSchema: z.object({
       targetCount: z.number().int().min(1)
         .max(FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1),
@@ -237,8 +237,8 @@ export function createServer(principal: SellerOsControlPrincipalV1) {
       "Seller OS returned the durable Luna test batch readback.")
   })
   server.registerTool(SELLER_OS_CONTROL_TOOL_NAMES_V1[9], {
-    title: "Publish any 1 to 4 Luna products",
-    description: "Use this when the owner says 'TEO publícame N productos de Luna en eBay'. With no productReferences, Seller OS selects N fresh in-stock Luna products. With SKU/ITEM or Luna URLs, it resolves and publishes exactly those products in the requested order. It does not require eBay market or demand evidence. Stock, complete traceable cost, canonical ROI and margin, duplicate, category, compliance, images, eBay permission, official readback and idempotent replay remain fail-closed.",
+    title: "Publish any 1 or 2 Luna products",
+    description: "Use this only for the owner-authorized SUNSHINE_EBAY_CONTROL_PARITY_AND_PUBLISHER_CERTIFICATION_V2 order, with a cumulative maximum of two new listings. With no productReferences, Seller OS selects fresh in-stock Luna products. With SKU/ITEM or Luna URLs, it resolves exactly those products in order. Stock, complete traceable cost, ROI of at least 30% and contribution margin of at least 15% simultaneously with no monetary profit floor, official duplicate authority, category, compliance, images, eBay permission, official LIVE readback, Registry, StockGuard and idempotent replay remain fail-closed.",
     inputSchema: z.object({
       targetCount: z.number().int().min(1)
         .max(FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1),

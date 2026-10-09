@@ -34,6 +34,28 @@ export type EbayMonitorReadonlyOperation =
 export type EbayMonitorReadonlyCallEvidence = {
   latencyMs?: number
   providerErrorCode?: string | null
+  requestedAt?: string
+  providerResponse?: Readonly<{
+    schemaVersion: "EBAY_TRADING_REDACTED_FAILURE_RESPONSE_V1"
+    tradingCallName: EbayMonitorTradingReadOperation
+    request: Readonly<{
+      page: number | null
+      entriesPerPage: number | null
+      endTimeFrom: string | null
+      endTimeTo: string | null
+    }>
+    responseBodySha256: string
+    ack: string | null
+    errorCode: string | null
+    shortMessageRedacted: string | null
+    longMessageRedacted: string | null
+    severityCode: string | null
+    requestId: string | null
+    correlationId: string | null
+    quotaHeaders: Readonly<Record<string, string>>
+    rawXmlStored: false
+    credentialsIncluded: false
+  }>
   operation: EbayMonitorReadonlyOperation
   method: "GET" | "POST"
   endpoint: string

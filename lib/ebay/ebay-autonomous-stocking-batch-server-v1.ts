@@ -53,7 +53,9 @@ type RuntimeResult = Readonly<{ body: Row; status: number }>
 const CONTRACT = "AUTONOMOUS_EBAY_STOCKING_BATCH_V1"
 export const FAST_LUNA_TEST_BATCH_CONTRACT_V1 =
   "FAST_LUNA_TEST_BATCH_CONTROL_V1" as const
-export const FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1 = 4
+export const FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1 = 2
+export const SUNSHINE_EBAY_PUBLISHER_AUTHORIZATION_V2 =
+  "SUNSHINE_EBAY_CONTROL_PARITY_AND_PUBLISHER_CERTIFICATION_V2" as const
 export const UNIVERSAL_LUNA_DIRECT_PUBLISHER_CONTRACT_V1 =
   "UNIVERSAL_LUNA_DIRECT_PUBLISHER_V1" as const
 const RECOVERABLE_SHIPPING_BLOCKERS = Object.freeze([
@@ -288,6 +290,8 @@ export async function readFastLunaTestBatchV1(input: Readonly<{
     batch: Object.freeze(batch),
     children: Object.freeze(rows(childrenRead.data)),
     selectionPolicy: Object.freeze({
+      authorizationReference: SUNSHINE_EBAY_PUBLISHER_AUTHORIZATION_V2,
+      authorizedMaximumCount: FAST_LUNA_TEST_BATCH_MAXIMUM_COUNT_V1,
       source: "LUNA_CATALOG_PRODUCT_TRUTH" as const,
       mode: requestedProducts.length > 0
         ? "EXACT_OWNER_SELECTION" as const : "AUTOMATIC" as const,
@@ -357,6 +361,11 @@ export async function startFastLunaTestBatchV1(input: Readonly<{
     }
     if (message.includes("IDEMPOTENCY_CONFLICT")) {
       throw new Error("FAST_LUNA_TEST_BATCH_IDEMPOTENCY_CONFLICT")
+    }
+    if (message.includes(
+        "SUNSHINE_EBAY_PUBLISHER_AUTHORIZATION_ALREADY_CONSUMED")) {
+      throw new Error(
+        "SUNSHINE_EBAY_PUBLISHER_AUTHORIZATION_ALREADY_CONSUMED")
     }
     throw new Error("FAST_LUNA_TEST_BATCH_DURABLE_WRITE_FAILED")
   }
@@ -444,6 +453,11 @@ export async function startUniversalLunaDirectBatchV1(input: Readonly<{
     }
     if (message.includes("IDEMPOTENCY_CONFLICT")) {
       throw new Error("UNIVERSAL_LUNA_DIRECT_IDEMPOTENCY_CONFLICT")
+    }
+    if (message.includes(
+        "SUNSHINE_EBAY_PUBLISHER_AUTHORIZATION_ALREADY_CONSUMED")) {
+      throw new Error(
+        "SUNSHINE_EBAY_PUBLISHER_AUTHORIZATION_ALREADY_CONSUMED")
     }
     throw new Error("UNIVERSAL_LUNA_DIRECT_DURABLE_WRITE_FAILED")
   }
