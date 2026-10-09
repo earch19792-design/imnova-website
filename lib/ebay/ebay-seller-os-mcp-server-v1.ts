@@ -1340,7 +1340,11 @@ export function createSellerOsMcpServerV1(options: {
       (row) => row.id === id,
     )
     const listingMatch = /^seller-os:\/\/listing\/(\d{9,19})$/.exec(id)
-    const toolMatch = /^seller-os:\/\/tool\/(seller_os_get_[a-z_]+)$/.exec(id)
+    // Parsing only establishes the internal Seller OS URI shape. The exact
+    // descriptor lookup below remains the closed allowlist, so accepting the
+    // full family of advertised read-only tool names does not proxy arbitrary
+    // URLs or make unregistered tools callable.
+    const toolMatch = /^seller-os:\/\/tool\/(seller_os_[a-z0-9_]+)$/.exec(id)
     const descriptor = toolMatch ? [
       ...SELLER_OS_ASSISTANT_TOOLS_V1,
       ...DEDICATED_READ_TOOLS,
