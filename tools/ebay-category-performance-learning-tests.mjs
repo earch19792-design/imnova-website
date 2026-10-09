@@ -675,10 +675,14 @@ test("migration, performance route and scan enforce the conservative learning pa
   assert.doesNotMatch(scanCron, /index > 0/)
   assert.doesNotMatch(vercel, /ebay-seller-performance-learning/)
   assert.deepEqual(JSON.parse(vercel).crons, [
+    { path: "/api/cron/amazon-connie-readonly-sync-schedule",
+      schedule: "23 */6 * * *" },
     { path: "/api/cron/ebay-commercial-monitor-schedule",
       schedule: "*/5 * * * *" },
     { path: "/api/cron/commercial-alert-dispatcher-schedule",
       schedule: "* * * * *" },
+    { path: "/api/cron/ebay-owner-sale-alerts-schedule",
+      schedule: "*/5 * * * *" },
   ])
   assert.match(scheduler,
     /QUICK_PICK_RUNTIME_RECOVERY[\s\S]*20 7 \* \* \*/)

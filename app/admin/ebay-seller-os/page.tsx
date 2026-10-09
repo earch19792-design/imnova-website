@@ -11,7 +11,7 @@ const actions = [
   {
     href: "/admin/ebay/fast-luna-batch",
     eyebrow: "Nuevo · publicación directa",
-    title: "Publicar 1–4 productos de Luna",
+    title: "Publicar 1–2 productos de Luna",
     copy: "Autoriza un lote de prueba con un botón. No usa demanda de eBay para elegir y conserva todos los controles de publicación.",
     tone: "border-amber-200/25 bg-amber-200/[0.08]",
     cta: "Publicar lote →",
@@ -140,10 +140,10 @@ export default async function EbaySellerOsHubPage({ searchParams }: {
             <CommercialMonitorPanel />
           </div>
           <SellerOsDisasterRecoveryCard />
-          <details className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4"><summary className="cursor-pointer font-black">Ver detalles de seguridad</summary><ul className="mt-3 space-y-2 text-sm text-white/60"><li>OpenAI estratégico: lectura y razonamiento acotado</li><li>Generación de imágenes AI: desactivada</li><li>Escrituras eBay: sólo el lote Luna autorizado explícitamente</li><li>Cantidad máxima por orden: 4 listings</li><li>Publicación: secuencial, fail-closed y con readback oficial</li></ul></details>
+          <details className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4"><summary className="cursor-pointer font-black">Ver detalles de seguridad</summary><ul className="mt-3 space-y-2 text-sm text-white/60"><li>OpenAI estratégico: lectura y razonamiento acotado</li><li>Generación de imágenes AI: desactivada</li><li>Crear o activar una publicación en eBay requiere una autorización separada</li><li>Escrituras eBay: sólo el lote Luna autorizado explícitamente</li><li>Cantidad máxima por orden: 2 listings</li><li>Publicación: secuencial, fail-closed y con readback oficial</li></ul></details>
         </section>
 
-        <aside className="rounded-3xl border border-white/10 bg-white/[0.035] p-4"><h2 className="font-black">Regla de seguridad</h2><p className="mt-2 text-sm leading-6 text-white/60">Una orden explícita de 1–4 listings autoriza sólo ese lote. Seller OS no compra inventario, no hace repricing y no salta identidad, costos, rentabilidad, duplicados, cumplimiento ni readback oficial.</p></aside>
+        <aside className="rounded-3xl border border-white/10 bg-white/[0.035] p-4"><h2 className="font-black">Regla de seguridad</h2><p className="mt-2 text-sm leading-6 text-white/60">Una orden explícita de 1–2 listings autoriza sólo ese lote. Seller OS no compra inventario, no hace repricing y no salta identidad, costos, rentabilidad, duplicados, cumplimiento ni readback oficial.</p></aside>
       </section>
 
       <SellerOsMobileNav active="sales" />

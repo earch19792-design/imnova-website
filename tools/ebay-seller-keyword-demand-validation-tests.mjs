@@ -15,6 +15,7 @@ const fixture = JSON.parse(
     "utf8"
   )
 )
+const fixtureAsOf = "2026-07-15T12:00:00.000Z"
 
 test("builds a product-specific search query instead of a fixed keyword vocabulary", () => {
   const query = buildEbaySellerKeywordSearchQuery(fixture.candidate)
@@ -30,6 +31,7 @@ test("ranks equivalent sold listings and rejects a conflicting size", () => {
     candidate: fixture.candidate,
     comparables: fixture.comparables,
     insightsAvailability: "AVAILABLE",
+    asOf: fixtureAsOf,
   })
   assert.equal(report.evidenceLevel, "VERIFIED_SOLD_HISTORY")
   assert.equal(report.topSellingListings[0].comparableId, "v1|100000000001|0")
@@ -44,6 +46,7 @@ test("weights keywords by real seller sales evidence", () => {
     candidate: fixture.candidate,
     comparables: fixture.comparables,
     insightsAvailability: "AVAILABLE",
+    asOf: fixtureAsOf,
   })
   const hairSpray = report.keywordsBringingSales.find((keyword) => keyword.term === "hair spray")
   assert.ok(hairSpray)

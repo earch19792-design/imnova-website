@@ -137,10 +137,14 @@ test("cron cadence preserves priority while respecting the serverless budget", (
   assert.match(lunaCron, /limit: 300/)
   assert.match(lunaCron, /finishSellerAutomationRun/)
   assert.deepEqual(vercel.crons, [
+    { path: "/api/cron/amazon-connie-readonly-sync-schedule",
+      schedule: "23 */6 * * *" },
     { path: "/api/cron/ebay-commercial-monitor-schedule",
       schedule: "*/5 * * * *" },
     { path: "/api/cron/commercial-alert-dispatcher-schedule",
       schedule: "* * * * *" },
+    { path: "/api/cron/ebay-owner-sale-alerts-schedule",
+      schedule: "*/5 * * * *" },
   ])
   for (const [lane, path, schedule] of [
     ["QUICK_PICK_RUNTIME_RECOVERY", "quick-pick-runtime-recovery", "20 7"],

@@ -3,71 +3,25 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import ts from "typescript"
 
-const contentPatchSource = readFileSync(new URL("../lib/seller-os/mayel-content-patch-v1.ts", import.meta.url), "utf8")
-
-const snapshotSource = readFileSync(
-  new URL("../lib/ebay/ebay-draft-only-preflight-snapshot.ts", import.meta.url),
-  "utf8",
-)
-const economicsSource = readFileSync(
-  new URL("../lib/ebay/ebay-unit-economics.ts", import.meta.url),
-  "utf8",
-)
-const environmentBoundarySource = readFileSync(
-  new URL("../lib/ebay/environment-boundaries.ts", import.meta.url),
-  "utf8",
-)
-const tradingIdentityProofSource = readFileSync(
-  new URL("../lib/ebay/ebay-trading-identity-proof.ts", import.meta.url),
-  "utf8",
-)
-const skuSource = readFileSync(
-  new URL("../lib/ebay/ebay-sku.ts", import.meta.url),
-  "utf8",
-)
-const categoryProductIdentifierSource = readFileSync(
-  new URL(
-    "../lib/ebay/ebay-category-product-identifier-preflight-v1.ts",
-    import.meta.url,
-  ),
-  "utf8",
-)
-const publisherSemanticReadbackSource = readFileSync(
-  new URL(
-    "../lib/ebay/ebay-publisher-semantic-readback-v1.ts",
-    import.meta.url,
-  ),
-  "utf8",
-)
-
-function embedSnapshotModule(source, includeCategoryProductIdentifiers = false) {
-  const withoutImport = source
-    .replace('from "./ebay-current-package-preparation-v1"', `from ${JSON.stringify(new URL("../lib/ebay/ebay-current-package-preparation-v1.ts", import.meta.url).href)}`)
-    .replace('import { validateMayelContentPatchV1 } from "../seller-os/mayel-content-patch-v1"\n', "")
-    .replace('import { readCurrentPrepublicationArtifactAuthorityV1 } from "./ebay-current-prepublication-artifact-policy-v1"\n', "")
-    .replace(/import \{[^}\n]*\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
-    .replace(/import \{\n(?:\s+[A-Za-z0-9_]+,?\n)+\} from "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
-    .replace(/import \{\n  calculateEbayUnitEconomics,\n  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,\n  normalizeEbayUnitEconomicsConfig,\n  type EbayUnitEconomicsConfig,\n\} from "\.\/ebay-unit-economics"\n/, "")
-    .replace('import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"\n', "")
-    .replace('import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"\n', "")
-    .replace(/import \{\n  canonicalEbayPackageSku,\n  isCanonicalEbayPackageSku,\n\} from "\.\/ebay-sku"\n/, "")
-    .replace('import { isCanonicalEbayPackageSku } from "./ebay-sku"\n', "")
-    .replace(/import \{ evaluateEbayCategoryProductIdentifierPreflightV1 \} from\n  "\.\/ebay-category-product-identifier-preflight-v1"\n/, "")
-    .replace(/import \{\n  compareEbayInventoryItemReadbackV1,\n  compareEbayOfferReadbackV1,\n  compareEbayPublisherReadbackV1,\n\} from "\.\/ebay-publisher-semantic-readback-v1"\n/, "")
-  const categorySource = includeCategoryProductIdentifiers
-    ? `${categoryProductIdentifierSource}\n`
-    : ""
-  return `${contentPatchSource}\n${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${publisherSemanticReadbackSource}\n${categorySource}\nfunction readCurrentPrepublicationArtifactAuthorityV1() { return null }\n${withoutImport}`
+function sourceWithAbsoluteTypeScriptImports(source, sourceUrl) {
+  return source.replace(/from\s+"(\.\.?\/[^"\n]+)"/g,
+    (_match, specifier) => `from ${JSON.stringify(new URL(
+      specifier.endsWith(".ts") ? specifier : `${specifier}.ts`, sourceUrl,
+    ).href)}`)
 }
 
-const readinessSource = embedSnapshotModule(readFileSync(
-  new URL("../lib/ebay/ebay-draft-only-readiness.ts", import.meta.url),
-  "utf8",
-))
-const gatewaySource = embedSnapshotModule(readFileSync(
-  new URL("../lib/ebay/ebay-draft-only-gateway.ts", import.meta.url),
-  "utf8",
-), true)
+const snapshotUrl = new URL(
+  "../lib/ebay/ebay-draft-only-preflight-snapshot.ts", import.meta.url)
+const snapshotSource = sourceWithAbsoluteTypeScriptImports(
+  readFileSync(snapshotUrl, "utf8"), snapshotUrl)
+const readinessUrl = new URL(
+  "../lib/ebay/ebay-draft-only-readiness.ts", import.meta.url)
+const readinessSource = sourceWithAbsoluteTypeScriptImports(
+  readFileSync(readinessUrl, "utf8"), readinessUrl)
+const gatewayUrl = new URL(
+  "../lib/ebay/ebay-draft-only-gateway.ts", import.meta.url)
+const gatewaySource = sourceWithAbsoluteTypeScriptImports(
+  readFileSync(gatewayUrl, "utf8"), gatewayUrl)
 const routeSource = readFileSync(
   new URL("../app/api/admin/ebay/draft-only/route.ts", import.meta.url),
   "utf8",

@@ -103,7 +103,7 @@ test("mobile navigation exposes one hybrid opportunity view, protects work and r
 })
 
 test("listing entry points use one safe name and remain gated", () => {
-  assert.match(hub, /Publicar 1–4 productos de Luna/)
+  assert.match(hub, /Publicar 1–2 productos de Luna/)
   assert.match(hub, /Confirmar eBay/)
   assert.match(hub, /\/admin\/ebay\/listings\/register/)
   assert.match(mobile, /Registrar listing manual/)

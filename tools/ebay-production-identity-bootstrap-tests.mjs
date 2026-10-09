@@ -1,5 +1,4 @@
 import assert from "node:assert/strict"
-import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 import ts from "typescript"
@@ -7,6 +6,9 @@ import ts from "typescript"
 import {
   EBAY_SELLER_OS_API_PATHS,
 } from "../lib/ebay/environment-boundaries.ts"
+import {
+  ebayProductionAccountFingerprint,
+} from "../lib/ebay/ebay-seller-account-scope.ts"
 
 function moduleUrl(source) {
   const javascript = ts.transpileModule(source, {
@@ -235,9 +237,7 @@ test("identity probe calls only Production OAuth and Trading GetUser", async () 
     }
 
     const result = await probeEbayProductionIdentityReadOnly(fetchMock)
-    const expectedFingerprint = createHash("sha256")
-      .update(`PRODUCTION:${fullUserId}`)
-      .digest("hex")
+    const expectedFingerprint = ebayProductionAccountFingerprint(fullUserId)
 
     assert.deepEqual(result, {
       oauthValid: true,
@@ -284,9 +284,7 @@ test("identity probe calls only Production OAuth and Trading GetUser", async () 
 
 test("configured Production fingerprint matches in constant-time probe output", async () => {
   const fullUserId = "shopOfficialSellerMart"
-  const expectedFingerprint = createHash("sha256")
-    .update(`PRODUCTION:${fullUserId}`)
-    .digest("hex")
+  const expectedFingerprint = ebayProductionAccountFingerprint(fullUserId)
   const accessToken = "access-token-sensitive"
   const clientSecret = "client-secret-sensitive"
   const refreshToken = "refresh-token-sensitive"

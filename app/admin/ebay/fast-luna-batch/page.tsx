@@ -124,7 +124,7 @@ export default function FastLunaBatchPage() {
   const completed = batch?.batch?.publication_write_count ?? 0
   const target = batch?.batch?.target_published_count ?? 0
   const progress = target > 0 ? Math.min(100, completed / target * 100) : 0
-  const canPublishExact = references.length >= 1 && references.length <= 4
+  const canPublishExact = references.length >= 1 && references.length <= 2
 
   return (
     <main className="min-h-screen bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6">
@@ -133,14 +133,14 @@ export default function FastLunaBatchPage() {
           <a href="/admin/ebay-seller-os" className="text-sm font-black text-cyan-100">← Seller OS</a>
           <p className="mt-6 text-xs font-black uppercase tracking-[0.22em] text-emerald-100/60">Universal Luna Direct Publisher V1</p>
           <h1 className="mt-2 text-3xl font-black">Publicar productos de Luna</h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/65">Elige 1–4 productos automáticamente o pega los SKU/ITEM/enlaces exactos. Seller OS los recorre uno por uno y sólo termina cuando eBay confirma la publicación.</p>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/65">Elige 1–2 productos automáticamente o pega los SKU/ITEM/enlaces exactos. Seller OS los recorre uno por uno y sólo termina cuando eBay confirma la publicación.</p>
         </header>
 
         <section className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.05] p-5">
           <h2 className="text-xl font-black">TEO, publícame…</h2>
           <p className="mt-2 text-sm leading-6 text-white/65">Selección automática del catálogo fresco de Luna, sin exigir demanda ni vendidos de eBay.</p>
-          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[1, 2, 3, 4].map((count) => (
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            {[1, 2].map((count) => (
               <button key={count} type="button" disabled={busy || active}
                 onClick={() => void publish(count)}
                 className="min-h-16 rounded-2xl bg-white px-3 text-sm font-black text-black transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-40">
@@ -152,14 +152,14 @@ export default function FastLunaBatchPage() {
 
         <section className="rounded-3xl border border-violet-300/20 bg-violet-300/[0.05] p-5">
           <h2 className="text-xl font-black">O publica productos exactos</h2>
-          <p className="mt-2 text-sm leading-6 text-white/65">Pega hasta cuatro SKU/ITEM o enlaces de Luna, uno por línea. El orden escrito será el orden de publicación.</p>
+          <p className="mt-2 text-sm leading-6 text-white/65">Pega hasta dos SKU/ITEM o enlaces de Luna, uno por línea. El orden escrito será el orden de publicación.</p>
           <textarea value={referencesText}
             onChange={(event) => setReferencesText(event.target.value)}
             placeholder={"ITEM5919\nITEM1234\nhttps://lunaportex.com/products/…"}
             className="mt-4 min-h-32 w-full rounded-2xl border border-white/15 bg-black/35 p-4 text-sm text-white outline-none placeholder:text-white/25 focus:border-violet-200/60" />
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <p className={`text-xs font-bold ${references.length > 4
-              ? "text-rose-200" : "text-white/50"}`}>{references.length} de 4 referencias</p>
+            <p className={`text-xs font-bold ${references.length > 2
+              ? "text-rose-200" : "text-white/50"}`}>{references.length} de 2 referencias</p>
             <button type="button"
               disabled={busy || active || !canPublishExact}
               onClick={() => void publish(references.length, references)}
